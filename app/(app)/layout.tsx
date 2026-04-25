@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import Header from "@/components/Header";
-import { Sidebar, BottomNav, getNavItems } from "@/components/Nav";
-
+import { Sidebar, BottomNav } from "@/components/Nav";
+import { getNavItems } from "@/components/nav-config";
 export default async function ProtectedLayout({
   children,
 }: {
