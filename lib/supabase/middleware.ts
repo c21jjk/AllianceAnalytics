@@ -1,0 +1,73 @@
+/**
+ * Helper used by middleware.ts to refresh Supabase auth cookies
+ * on every request, so server components see fresh session state.
+ */
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+import type { Database } from "./types";
+
+const PUBLIC_PATHS = new Set<string>(["/login"]);
+
+function isPublicPath(pathname: string) {
+  if (PUBLIC_PATHS.has(pathname)) return true;
+  if (pathname.startsWith("/_next")) return true;
+  if (pathname.startsWith("/favicon")) return true;
+  // Public assets in /public/* are served before middleware in most cases,
+  // but be permissive about file-extension paths just in case.
+  if (/\.[a-zA-Z0-9]{2,5}$/.test(pathname)) return true;
+  return false;
+}
+
+export async function updateSession(request: NextRequest) {
+  let response = NextResponse.next({ request });
+
+  const supabase = createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(
+          cookiesToSet: { name: string; value: string; options?: CookieOptions }[],
+        ) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value),
+          );
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options),
+          );
+        },
+      },
+    },
+  );
+
+  // IMPORTANT: do not run code between createServerClient() and getUser().
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { pathname } = request.nextUrl;
+
+  // Unauthenticated → bounce to /login (preserve intended destination).
+  if (!user && !isPublicPath(pathname)) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    if (pathname !== "/") {
+      url.searchParams.set("next", pathname + request.nextUrl.search);
+    }
+    return NextResponse.redirect(url);
+  }
+
+  // Authenticated user hitting /login → send to dashboard.
+  if (user && pathname === "/login") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+
+  return response;
+}

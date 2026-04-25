@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --background: #FCFCFB;
+  --surface: #FFFFFF;
+  --border: #E5E5E2;
+  --text-primary: #18181B;
+  --text-secondary: #525250;
+  --text-muted: #737370;
+  --accent: #C9A961;
+  --accent-hover: #B69552;
+  --accent-soft: #FBF7EE;
+  --danger: #B83C3C;
+  --success: #2F8F5C;
+}
+
+html, body {
+  background: var(--background);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-gold-500 px-4 py-2.5
+           text-sm font-medium text-white shadow-sm transition
+           hover:bg-gold-600 focus:outline-none focus:ring-2 focus:ring-gold-500/40
+           disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-neutral-200
+           bg-white px-4 py-2.5 text-sm font-medium text-neutral-700 shadow-sm transition
+           hover:bg-neutral-50 hover:border-neutral-300 focus:outline-none focus:ring-2
+           focus:ring-gold-500/30 disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .input {
+    @apply block w-full rounded-lg border border-neutral-200 bg-white px-3.5 py-2.5
+           text-sm text-neutral-900 placeholder:text-neutral-400
+           focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30
+           disabled:bg-neutral-50 disabled:text-neutral-500;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-neutral-700 mb-1.5;
+  }
+
+  .card {
+    @apply rounded-xl border border-neutral-200 bg-white shadow-card;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply badge bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100;
+  }
+
+  .badge-neutral {
+    @apply badge bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200;
+  }
+
+  .badge-error {
+    @apply badge bg-rose-50 text-rose-700 ring-1 ring-rose-100;
+  }
+}
