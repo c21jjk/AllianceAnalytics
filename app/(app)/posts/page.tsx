@@ -1,5 +1,6 @@
 import PageHeader from "@/components/PageHeader";
-import EmptyPlaceholder from "@/components/EmptyPlaceholder";
+import PostStream from "@/components/PostStream";
+import { POSTS } from "@/lib/fixtures/posts";
 
 export const metadata = { title: "Posts — Alliance Social" };
 
@@ -8,13 +9,9 @@ export default function PostsPage() {
     <div>
       <PageHeader
         title="Posts"
-        description="Social posts pulled from connected accounts will appear here, with engagement metrics and the property each post is linked to."
-        phaseTag="Coming in Phase 3"
+        description="Every post pulled from your connected Facebook, Instagram, and TikTok accounts. Use the filters to slice by platform, date range, or property — tap a row for full analytics."
       />
-      <EmptyPlaceholder
-        title="No posts yet"
-        body="Once API ingestion is wired up in Phase 2 and Phase 3, your synced posts will land here."
-      />
+      <PostStream posts={POSTS} pageSize={12} />
     </div>
   );
 }

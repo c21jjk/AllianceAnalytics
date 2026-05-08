@@ -58,6 +58,17 @@ const config: Config = {
         card: "0 1px 2px rgba(24, 24, 27, 0.04), 0 1px 3px rgba(24, 24, 27, 0.06)",
         "card-hover":
           "0 2px 4px rgba(24, 24, 27, 0.06), 0 4px 12px rgba(24, 24, 27, 0.08)",
+        elevated:
+          "0 4px 8px rgba(24, 24, 27, 0.06), 0 12px 24px rgba(24, 24, 27, 0.08)",
+      },
+      keyframes: {
+        "fade-in-up": {
+          "0%": { opacity: "0", transform: "translateY(4px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        "fade-in-up": "fade-in-up 0.25s ease-out",
       },
       borderRadius: {
         xl: "0.875rem",
