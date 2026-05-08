@@ -34,7 +34,9 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  SELECT extensions.http_post(
+  -- pg_net registers its functions in the `net` schema regardless of the
+  -- extension wrapper's schema (set in migration 001). Use net.http_post.
+  SELECT net.http_post(
     url := project_url || '/functions/v1/' || fn_name,
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
