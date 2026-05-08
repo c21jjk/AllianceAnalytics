@@ -1,6 +1,5 @@
 import "server-only";
 import type { AccountHealth, Post } from "@/lib/types/post";
-import { isLive } from "./source";
 import {
   POSTS as FIXTURE_POSTS,
   ACCOUNT_HEALTH as FIXTURE_HEALTH,
@@ -9,30 +8,42 @@ import {
 /**
  * Single entry point for page components to fetch posts + account health.
  *
- * - When ALLIANCE_DATA_SOURCE=fixtures (default), returns the typed mock data.
- * - When ALLIANCE_DATA_SOURCE=db, queries Supabase via lib/data/posts-db.
+ * Auto-detects: tries Supabase first; falls back to fixtures if the DB
+ * returns 0 rows (cold-start case) OR if the admin client isn't configured
+ * (preview deploys without service-role-key, etc).
  *
- * Pages call `getPosts()` / `getAccountHealth()` and remain agnostic.
+ * No env var required — the presence of real rows in the DB is what flips
+ * the dashboard from mock to live.
  *
- * Migration plan:
- *   1. Run first sync → some real posts in `posts` table.
- *   2. Set ALLIANCE_DATA_SOURCE=db on Vercel.
- *   3. Pages render real data; mock fixtures still importable for tests.
+ * To force fixtures (for screenshots, demos, etc) set:
+ *   ALLIANCE_DATA_SOURCE=fixtures
  */
+function isForcedFixtures(): boolean {
+  return process.env.ALLIANCE_DATA_SOURCE?.toLowerCase() === "fixtures";
+}
+
 export async function getPosts(): Promise<Post[]> {
-  if (!isLive()) return FIXTURE_POSTS;
-  const { fetchPosts } = await import("./posts-db");
-  const rows = await fetchPosts();
-  // If DB is empty (fresh project), gracefully fall back to fixtures so the
-  // dashboard isn't a wall of empty states during the cutover window.
-  if (rows.length === 0) return FIXTURE_POSTS;
-  return rows;
+  if (isForcedFixtures()) return FIXTURE_POSTS;
+  try {
+    const { fetchPosts } = await import("./posts-db");
+    const rows = await fetchPosts();
+    if (rows.length === 0) return FIXTURE_POSTS;
+    return rows;
+  } catch (e) {
+    console.error("getPosts: falling back to fixtures —", e);
+    return FIXTURE_POSTS;
+  }
 }
 
 export async function getAccountHealth(): Promise<AccountHealth[]> {
-  if (!isLive()) return FIXTURE_HEALTH;
-  const { fetchAccountHealth } = await import("./posts-db");
-  const rows = await fetchAccountHealth();
-  if (rows.length === 0) return FIXTURE_HEALTH;
-  return rows;
+  if (isForcedFixtures()) return FIXTURE_HEALTH;
+  try {
+    const { fetchAccountHealth } = await import("./posts-db");
+    const rows = await fetchAccountHealth();
+    if (rows.length === 0) return FIXTURE_HEALTH;
+    return rows;
+  } catch (e) {
+    console.error("getAccountHealth: falling back to fixtures —", e);
+    return FIXTURE_HEALTH;
+  }
 }
