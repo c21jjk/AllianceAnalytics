@@ -3,6 +3,7 @@ import type { AccountHealth, Post } from "@/lib/types/post";
 import {
   POSTS as FIXTURE_POSTS,
   ACCOUNT_HEALTH as FIXTURE_HEALTH,
+  findPost as findFixturePost,
 } from "@/lib/fixtures/posts";
 
 /**
@@ -32,6 +33,20 @@ export async function getPosts(): Promise<Post[]> {
   } catch (e) {
     console.error("getPosts: falling back to fixtures —", e);
     return FIXTURE_POSTS;
+  }
+}
+
+export async function getPostById(id: string): Promise<Post | undefined> {
+  if (isForcedFixtures()) return findFixturePost(id);
+  try {
+    const { fetchPostById } = await import("./posts-db");
+    const post = await fetchPostById(id);
+    if (post) return post;
+    // Fall back to fixtures only if the id matches a fixture id (for cold-start)
+    return findFixturePost(id);
+  } catch (e) {
+    console.error("getPostById: falling back to fixtures —", e);
+    return findFixturePost(id);
   }
 }
 

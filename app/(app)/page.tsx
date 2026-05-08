@@ -1,10 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import {
-  ACCOUNT_HEALTH,
-  POSTS,
-  aggregateKpis,
-} from "@/lib/fixtures/posts";
+import { aggregateKpis } from "@/lib/fixtures/posts";
+import { getPosts, getAccountHealth } from "@/lib/data";
 import { getTopRecommendation } from "@/lib/fixtures/strategy";
 import {
   formatCompactNumber,
@@ -25,8 +22,13 @@ export default async function DashboardPage() {
   const firstName =
     profile.full_name?.split(" ")[0] ?? profile.email.split("@")[0];
 
-  const kpis7 = aggregateKpis(POSTS, 7);
-  const kpis14_7 = aggregateKpis(POSTS, 14);
+  const [posts, accountHealth] = await Promise.all([
+    getPosts(),
+    getAccountHealth(),
+  ]);
+
+  const kpis7 = aggregateKpis(posts, 7);
+  const kpis14_7 = aggregateKpis(posts, 14);
   // Prior 7-day window = days 8–14 = full 14 minus most recent 7
   const priorReach = Math.max(kpis14_7.reach - kpis7.reach, 0);
   const reachDelta =
@@ -57,7 +59,7 @@ export default async function DashboardPage() {
             Welcome back, {firstName}.
           </h1>
         </div>
-        <AccountSyncBar health={ACCOUNT_HEALTH} />
+        <AccountSyncBar health={accountHealth} />
       </div>
 
       {/* Compact KPI strip */}
@@ -94,7 +96,7 @@ export default async function DashboardPage() {
           label="Posts published"
           value={kpis7.postCount.toString()}
           delta={{
-            text: `${POSTS.length} in last 30d`,
+            text: `${posts.length} in last 30d`,
             direction: "flat",
           }}
         />
@@ -149,7 +151,7 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        <PostStream posts={POSTS} pageSize={8} />
+        <PostStream posts={posts} pageSize={8} />
       </section>
     </div>
   );

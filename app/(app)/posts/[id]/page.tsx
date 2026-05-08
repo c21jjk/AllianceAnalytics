@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { findPost } from "@/lib/fixtures/posts";
+import { getPostById } from "@/lib/data";
 import {
   formatCompactNumber,
   formatDuration,
@@ -21,7 +21,7 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params;
-  const post = findPost(id);
+  const post = await getPostById(id);
   if (!post) return { title: "Post — Alliance Social" };
   return {
     title: `${platformLabel(post.platform)} post — Alliance Social`,
@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: PageProps) {
 export default async function PostDetailPage({ params }: PageProps) {
   await requireUser();
   const { id } = await params;
-  const post = findPost(id);
+  const post = await getPostById(id);
   if (!post) notFound();
 
   const totalEngagements =

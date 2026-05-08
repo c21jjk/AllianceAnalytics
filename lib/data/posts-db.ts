@@ -209,6 +209,47 @@ export async function fetchPosts(): Promise<Post[]> {
   );
 }
 
+export async function fetchPostById(id: string): Promise<Post | undefined> {
+  const supabase = createAdminClient();
+  const { data: row, error } = await supabase
+    .from("posts")
+    .select(
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !row) return undefined;
+
+  // Property lookup
+  let property: PropertyRef | undefined;
+  if (row.property_id) {
+    const { data: p } = await supabase
+      .from("properties")
+      .select("id, mls_number, address, city, state, list_price")
+      .eq("id", row.property_id)
+      .maybeSingle();
+    if (p) property = rowToPropertyRef(p as DbPropertyRow);
+  }
+
+  // Daily metrics (last 60 days for the sparkline + 30-day chart)
+  const cutoff = new Date(Date.now() - 60 * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+  const { data: daily } = await supabase
+    .from("post_metrics_daily")
+    .select(
+      "post_id, captured_date, reach, impressions, likes, comments, shares, saves",
+    )
+    .eq("post_id", row.id)
+    .gte("captured_date", cutoff);
+
+  return rowToPost(
+    row as DbPostRow,
+    property,
+    (daily ?? []) as DbMetricsDailyRow[],
+  );
+}
+
 export async function fetchAccountHealth(): Promise<AccountHealth[]> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
