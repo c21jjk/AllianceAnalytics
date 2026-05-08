@@ -5,6 +5,8 @@ import type {
   Platform,
   Post,
   PostAudience,
+  PostCategory,
+  PostLinkMethod,
   PostMetrics,
   PropertyRef,
 } from "@/lib/types/post";
@@ -34,6 +36,8 @@ interface DbPostRow {
   hashtags: string[] | null;
   metrics: Record<string, unknown> | null;
   audience: Record<string, unknown> | null;
+  category: string | null;
+  link_method: string | null;
 }
 
 interface DbPropertyRow {
@@ -43,6 +47,7 @@ interface DbPropertyRow {
   city: string | null;
   state: string | null;
   list_price: number | null;
+  hero_image_url: string | null;
 }
 
 interface DbMetricsDailyRow {
@@ -65,6 +70,7 @@ function rowToPropertyRef(row: DbPropertyRow): PropertyRef {
       row.list_price === null || row.list_price === undefined
         ? undefined
         : Number(row.list_price),
+    hero_image_url: row.hero_image_url ?? undefined,
   };
 }
 
@@ -128,6 +134,32 @@ function asAudience(json: Record<string, unknown> | null): PostAudience | undefi
   return json as unknown as PostAudience;
 }
 
+function asCategory(value: string | null): PostCategory | undefined {
+  if (
+    value === "property" ||
+    value === "educational" ||
+    value === "marketing" ||
+    value === "community" ||
+    value === "sold" ||
+    value === "other"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function asLinkMethod(value: string | null): PostLinkMethod | undefined {
+  if (
+    value === "manual" ||
+    value === "auto_mls" ||
+    value === "auto_address_full" ||
+    value === "auto_address_partial"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function rowToPost(
   row: DbPostRow,
   property: PropertyRef | undefined,
@@ -144,6 +176,8 @@ function rowToPost(
     caption: row.caption ?? "",
     hashtags: row.hashtags ?? [],
     property,
+    category: asCategory(row.category),
+    link_method: asLinkMethod(row.link_method),
     metrics: flattenMetricsJsonb(row.metrics),
     daily: daily
       .slice()
@@ -163,7 +197,7 @@ export async function fetchPosts(): Promise<Post[]> {
   const { data: posts, error } = await supabase
     .from("posts")
     .select(
-      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience",
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method",
     )
     .order("posted_at", { ascending: false })
     .limit(500);
@@ -174,7 +208,7 @@ export async function fetchPosts(): Promise<Post[]> {
 
   const { data: properties } = await supabase
     .from("properties")
-    .select("id, mls_number, address, city, state, list_price");
+    .select("id, mls_number, address, city, state, list_price, hero_image_url");
   const propMap = new Map<string, PropertyRef>();
   for (const p of (properties ?? []) as DbPropertyRow[]) {
     propMap.set(p.id, rowToPropertyRef(p));
@@ -214,7 +248,7 @@ export async function fetchPostById(id: string): Promise<Post | undefined> {
   const { data: row, error } = await supabase
     .from("posts")
     .select(
-      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience",
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method",
     )
     .eq("id", id)
     .maybeSingle();
@@ -225,7 +259,7 @@ export async function fetchPostById(id: string): Promise<Post | undefined> {
   if (row.property_id) {
     const { data: p } = await supabase
       .from("properties")
-      .select("id, mls_number, address, city, state, list_price")
+      .select("id, mls_number, address, city, state, list_price, hero_image_url")
       .eq("id", row.property_id)
       .maybeSingle();
     if (p) property = rowToPropertyRef(p as DbPropertyRow);

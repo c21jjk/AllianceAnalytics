@@ -7,6 +7,7 @@ const ICON: Record<string, ReactNode> = {
     dashboard: h("svg", SVG_PROPS, h("path", { d: "M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10", ...STROKE, strokeLinecap: "round", strokeLinejoin: "round" })),
     posts: h("svg", SVG_PROPS, [h("rect", { key: "r", x: "3.5", y: "4.5", width: "17", height: "15", rx: "2.5", ...STROKE }), h("path", { key: "p", d: "M3.5 10h17M8 4.5v15", ...STROKE, strokeLinecap: "round" })]),
     properties: h("svg", SVG_PROPS, h("path", { d: "M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1v-9z", ...STROKE, strokeLinejoin: "round" })),
+    listings: h("svg", SVG_PROPS, [h("path", { key: "tag", d: "M11 3H5a2 2 0 00-2 2v6l9 9 8-8-9-9z", ...STROKE, strokeLinejoin: "round" }), h("circle", { key: "dot", cx: "8", cy: "8", r: "1.4", fill: "currentColor" })]),
     coach: h(
         "svg",
         { ...SVG_PROPS, fill: "currentColor" },
@@ -23,6 +24,7 @@ export function getNavItems(role: "admin" | "user"): NavItem[] {
         { href: "/", label: "Dashboard", icon: ICON.dashboard },
         { href: "/posts", label: "Posts", icon: ICON.posts },
         { href: "/properties", label: "Properties", icon: ICON.properties },
+        { href: "/listings", label: "Listings", icon: ICON.listings, adminOnly: true },
         { href: "/coach", label: "Coach", icon: ICON.coach },
         { href: "/reports", label: "Reports", icon: ICON.reports },
         { href: "/settings", label: "Settings", icon: ICON.settings, adminOnly: true },

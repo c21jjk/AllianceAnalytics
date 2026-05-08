@@ -427,6 +427,14 @@ export type Database = {
     }
     Functions: {
       is_admin: { Args: never; Returns: boolean }
+      run_auto_linker: {
+        Args: never
+        Returns: {
+          matched_addr_full: number
+          matched_addr_partial: number
+          matched_mls: number
+        }[]
+      }
     }
     Enums: {
       credential_platform:

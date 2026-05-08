@@ -11,6 +11,25 @@ export type Platform = "facebook" | "instagram" | "tiktok";
 
 export type MediaType = "image" | "video" | "carousel";
 
+/**
+ * Editorial category for a post. Property-tied posts will also have property_id;
+ * non-property posts (educational, marketing, etc) will not.
+ */
+export type PostCategory =
+  | "property"
+  | "educational"
+  | "marketing"
+  | "community"
+  | "sold"
+  | "other";
+
+/** How a post got tied to a listing — manual override, or one of the auto-linkers. */
+export type PostLinkMethod =
+  | "manual"
+  | "auto_mls"
+  | "auto_address_full"
+  | "auto_address_partial";
+
 export interface PropertyRef {
   /** MLS number, e.g. "NJBL2078123" */
   mls: string;
@@ -18,6 +37,8 @@ export interface PropertyRef {
   address: string;
   /** Optional list price for surfacing on chips */
   list_price?: number;
+  /** Optional hero photo URL — used as the cover on seller property reports */
+  hero_image_url?: string;
 }
 
 export interface PostMetrics {
@@ -74,6 +95,10 @@ export interface Post {
   caption: string;
   hashtags: string[];
   property?: PropertyRef;
+  /** Editorial classification. May be undefined for unclassified posts. */
+  category?: PostCategory;
+  /** How property_id was set. NULL when no link. */
+  link_method?: PostLinkMethod;
   metrics: PostMetrics;
   /** 30-day daily reach + engagement series following posted_at */
   daily?: DailyMetric[];

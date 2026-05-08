@@ -14,6 +14,7 @@ import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
 import PropertyChip from "@/components/PropertyChip";
 import MetricSparkline from "@/components/MetricSparkline";
 import AiAnalysisPanel from "@/components/AiAnalysisPanel";
+import PropertyClassifyPanel from "@/components/PropertyClassifyPanel";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -289,35 +290,27 @@ export default async function PostDetailPage({ params }: PageProps) {
 
         {/* Right rail */}
         <aside className="space-y-4">
-          <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">
-            <h3 className="text-sm font-semibold text-neutral-900">
-              Linked property
-            </h3>
-            {post.property ? (
+          {post.property ? (
+            <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">
+              <h3 className="text-sm font-semibold text-neutral-900">
+                Linked property
+              </h3>
               <div className="mt-3">
                 <PropertyChip property={post.property} variant="full" />
                 <p className="mt-3 text-xs text-neutral-500">
-                  Performance from this post will roll up into the property's
+                  Performance from this post rolls up into the property&apos;s
                   report card on the Reports tab.
                 </p>
               </div>
-            ) : (
-              <div className="mt-3">
-                <p className="text-sm text-neutral-500">
-                  This post isn't tied to a listing yet. Link it by MLS number
-                  to roll its performance into a property report.
-                </p>
-                <button
-                  type="button"
-                  className="mt-3 btn-secondary text-xs w-full justify-center"
-                  disabled
-                  title="Manual MLS linking lands with the Properties redesign."
-                >
-                  Link to MLS#…
-                </button>
-              </div>
-            )}
-          </div>
+            </div>
+          ) : null}
+
+          <PropertyClassifyPanel
+            postId={post.id}
+            initialProperty={post.property}
+            initialCategory={post.category}
+            initialLinkMethod={post.link_method}
+          />
 
           <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">
             <h3 className="text-sm font-semibold text-neutral-900">
