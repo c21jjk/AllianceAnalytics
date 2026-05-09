@@ -17,6 +17,7 @@ export type MediaType = "image" | "video" | "carousel";
  */
 export type PostCategory =
   | "property"
+  | "agent"
   | "educational"
   | "marketing"
   | "community"
@@ -97,6 +98,8 @@ export interface Post {
   property?: PropertyRef;
   /** Editorial classification. May be undefined for unclassified posts. */
   category?: PostCategory;
+  /** Agent name when category is 'agent' (agent-promotion posts). */
+  agent_name?: string;
   /** How property_id was set. NULL when no link. */
   link_method?: PostLinkMethod;
   metrics: PostMetrics;

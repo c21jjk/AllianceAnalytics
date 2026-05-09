@@ -38,6 +38,8 @@ interface DbPostRow {
   audience: Record<string, unknown> | null;
   category: string | null;
   link_method: string | null;
+  agent_name: string | null;
+  group_id: string | null;
 }
 
 interface DbPropertyRow {
@@ -137,6 +139,7 @@ function asAudience(json: Record<string, unknown> | null): PostAudience | undefi
 function asCategory(value: string | null): PostCategory | undefined {
   if (
     value === "property" ||
+    value === "agent" ||
     value === "educational" ||
     value === "marketing" ||
     value === "community" ||
@@ -177,6 +180,7 @@ function rowToPost(
     hashtags: row.hashtags ?? [],
     property,
     category: asCategory(row.category),
+    agent_name: row.agent_name ?? undefined,
     link_method: asLinkMethod(row.link_method),
     metrics: flattenMetricsJsonb(row.metrics),
     daily: daily
@@ -197,7 +201,7 @@ export async function fetchPosts(): Promise<Post[]> {
   const { data: posts, error } = await supabase
     .from("posts")
     .select(
-      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method",
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id",
     )
     .order("posted_at", { ascending: false })
     .limit(500);
@@ -248,7 +252,7 @@ export async function fetchPostById(id: string): Promise<Post | undefined> {
   const { data: row, error } = await supabase
     .from("posts")
     .select(
-      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method",
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id",
     )
     .eq("id", id)
     .maybeSingle();

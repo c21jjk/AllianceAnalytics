@@ -26,31 +26,20 @@ interface Props {
   initialProperty?: PropertyRef;
   initialCategory?: PostCategory;
   initialLinkMethod?: PostLinkMethod;
+  initialAgentName?: string;
 }
 
 const CATEGORY_OPTIONS: Array<{
   value: PostCategory;
   label: string;
-  hint: string;
 }> = [
-  { value: "property", label: "Property", hint: "Tied to a specific listing" },
-  {
-    value: "educational",
-    label: "Educational",
-    hint: "Tips, advice, market explainers",
-  },
-  {
-    value: "marketing",
-    label: "Marketing",
-    hint: "Brand promo, agent spotlights",
-  },
-  {
-    value: "community",
-    label: "Community",
-    hint: "Local events, neighborhood content",
-  },
-  { value: "sold", label: "Sold", hint: "Just-sold celebrations" },
-  { value: "other", label: "Other", hint: "Doesn't fit elsewhere" },
+  { value: "property", label: "Property Promotion" },
+  { value: "agent", label: "Agent Promotion" },
+  { value: "marketing", label: "Company Promotion" },
+  { value: "educational", label: "Real Estate Educational Tips" },
+  { value: "sold", label: "Sold / Just Sold" },
+  { value: "community", label: "Community / Local" },
+  { value: "other", label: "Other" },
 ];
 
 const LINK_METHOD_LABEL: Record<PostLinkMethod, string> = {
@@ -65,6 +54,7 @@ export default function PropertyClassifyPanel({
   initialProperty,
   initialCategory,
   initialLinkMethod,
+  initialAgentName,
 }: Props) {
   const [category, setCategory] = useState<PostCategory>(
     initialCategory ?? (initialProperty ? "property" : "other"),
@@ -75,6 +65,7 @@ export default function PropertyClassifyPanel({
   const [linkedRef, setLinkedRef] = useState<PropertyRef | null>(
     initialProperty ?? null,
   );
+  const [agentName, setAgentName] = useState<string>(initialAgentName ?? "");
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ListingResult[]>([]);
@@ -88,6 +79,7 @@ export default function PropertyClassifyPanel({
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const showSearch = category === "property" || category === "sold";
+  const showAgentName = category === "agent";
 
   useEffect(() => {
     if (!showSearch) {
@@ -165,6 +157,9 @@ export default function PropertyClassifyPanel({
     if (linkedMls && (category === "property" || category === "sold")) {
       fd.set("mls_number", linkedMls);
     }
+    if (category === "agent" && agentName.trim().length > 0) {
+      fd.set("agent_name", agentName.trim());
+    }
     startTransition(async () => {
       const result = await classifyPostAction(fd);
       if (result.ok) {
@@ -176,9 +171,12 @@ export default function PropertyClassifyPanel({
     });
   }
 
+  const initialCategoryResolved =
+    initialCategory ?? (initialProperty ? "property" : "other");
   const dirty =
-    category !== (initialCategory ?? (initialProperty ? "property" : "other")) ||
-    (linkedMls ?? null) !== (initialProperty?.mls ?? null);
+    category !== initialCategoryResolved ||
+    (linkedMls ?? null) !== (initialProperty?.mls ?? null) ||
+    (showAgentName && agentName.trim() !== (initialAgentName ?? "").trim());
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5 space-y-4">
@@ -194,34 +192,45 @@ export default function PropertyClassifyPanel({
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-2">
-        {CATEGORY_OPTIONS.map((c) => {
-          const active = category === c.value;
-          return (
-            <button
-              key={c.value}
-              type="button"
-              onClick={() => setCategory(c.value)}
-              className={
-                "flex flex-col items-start text-left rounded-lg border px-3 py-2 transition-colors " +
-                (active
-                  ? "border-gold-500 bg-gold-50 ring-1 ring-gold-200"
-                  : "border-neutral-200 bg-white hover:border-neutral-300")
-              }
-            >
-              <span
-                className={
-                  "text-xs font-semibold " +
-                  (active ? "text-gold-800" : "text-neutral-800")
-                }
-              >
-                {c.label}
-              </span>
-              <span className="text-[11px] text-neutral-500">{c.hint}</span>
-            </button>
-          );
-        })}
+      <div>
+        <label
+          htmlFor="classify-category"
+          className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
+        >
+          Category
+        </label>
+        <select
+          id="classify-category"
+          value={category}
+          onChange={(e) => setCategory(e.target.value as PostCategory)}
+          className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
+        >
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
       </div>
+
+      {showAgentName ? (
+        <div>
+          <label
+            htmlFor="classify-agent-name"
+            className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
+          >
+            Agent name
+          </label>
+          <input
+            id="classify-agent-name"
+            type="text"
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
+            placeholder="e.g. Jane Doe"
+            className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
+          />
+        </div>
+      ) : null}
 
       {showSearch ? (
         <div ref={wrapperRef} className="relative">

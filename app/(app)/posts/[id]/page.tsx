@@ -310,6 +310,7 @@ export default async function PostDetailPage({ params }: PageProps) {
             initialProperty={post.property}
             initialCategory={post.category}
             initialLinkMethod={post.link_method}
+            initialAgentName={post.agent_name}
           />
 
           <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">

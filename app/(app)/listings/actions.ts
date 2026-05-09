@@ -225,7 +225,15 @@ export async function classifyPostAction(form: FormData): Promise<{
   if (!postId) return { ok: false, error: "Missing post id" };
 
   const category = readString(form, "category");
-  const validCats = ["property", "educational", "marketing", "community", "sold", "other"];
+  const validCats = [
+    "property",
+    "agent",
+    "educational",
+    "marketing",
+    "community",
+    "sold",
+    "other",
+  ];
   if (category && !validCats.includes(category)) {
     return { ok: false, error: `Invalid category: ${category}` };
   }
@@ -250,6 +258,10 @@ export async function classifyPostAction(form: FormData): Promise<{
     propertyId = prop.id;
   }
 
+  // Agent name: only persist when category is 'agent'; otherwise clear.
+  const agentNameRaw = readString(form, "agent_name");
+  const agentName = category === "agent" ? agentNameRaw : null;
+
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("posts")
@@ -260,11 +272,13 @@ export async function classifyPostAction(form: FormData): Promise<{
       category:
         (category as
           | "property"
+          | "agent"
           | "educational"
           | "marketing"
           | "community"
           | "sold"
           | "other") ?? null,
+      agent_name: agentName,
       updated_at: new Date().toISOString(),
     })
     .eq("id", postId);

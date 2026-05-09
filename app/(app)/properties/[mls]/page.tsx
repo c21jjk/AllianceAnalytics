@@ -13,6 +13,8 @@ import AudienceReachRollup from "@/components/AudienceReachRollup";
 import ReportNarrativeBlock from "@/components/ReportNarrativeBlock";
 import ReportActionBar from "@/components/ReportActionBar";
 import DeliveryStatusPill from "@/components/DeliveryStatusPill";
+import GenerateReportButton from "@/components/GenerateReportButton";
+import SendToAgentButton from "@/components/SendToAgentButton";
 import { formatRelativeTime } from "@/lib/format";
 
 interface PageProps {
@@ -45,6 +47,27 @@ export default async function PropertyDetailPage({ params }: PageProps) {
     deliveries.find((d) => d.status === "sent") ??
     deliveries[0];
 
+  // Compute newest post age (days since the most recent post in the group)
+  const NOW = new Date();
+  const newestPostAgeDays =
+    posts.length > 0
+      ? Math.floor(
+          (NOW.getTime() -
+            posts.reduce(
+              (max, p) => Math.max(max, new Date(p.posted_at).getTime()),
+              0,
+            )) /
+            86_400_000,
+        )
+      : null;
+
+  const flyerUrl = sharedDelivery
+    ? `/r/${sharedDelivery.share_token}/flyer`
+    : "";
+  const pdfUrl = sharedDelivery
+    ? `/r/${sharedDelivery.share_token}/flyer.pdf`
+    : "";
+
   return (
     <div className="space-y-6">
       {/* Breadcrumb */}
@@ -74,6 +97,20 @@ export default async function PropertyDetailPage({ params }: PageProps) {
           <ReportActionBar shareToken={sharedDelivery.share_token} />
         </div>
       ) : null}
+
+      {/* Generate + send-to-agent controls */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3">
+        <GenerateReportButton
+          mls={property.mls}
+          newestPostAgeDays={newestPostAgeDays}
+        />
+        <SendToAgentButton
+          propertyAddress={property.address}
+          flyerUrl={flyerUrl}
+          pdfUrl={pdfUrl}
+          disabled={!sharedDelivery}
+        />
+      </div>
 
       {/* Hero */}
       <PropertyReportHero report={report} property={property} />

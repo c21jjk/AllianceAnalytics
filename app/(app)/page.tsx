@@ -1,158 +1,105 @@
-import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { aggregateKpis } from "@/lib/fixtures/posts";
-import { getPosts, getAccountHealth } from "@/lib/data";
-import { getTopRecommendation } from "@/lib/fixtures/strategy";
-import {
-  formatCompactNumber,
-  formatPercent,
-} from "@/lib/format";
+import { getAccountHealth } from "@/lib/data";
+import { getGroupsLastNDays } from "@/lib/data/groups";
 import AccountSyncBar from "@/components/AccountSyncBar";
-import KpiInline from "@/components/KpiInline";
-import PostStream from "@/components/PostStream";
-import AiInsightCard from "@/components/AiInsightCard";
-import StrategySnapshotCard from "@/components/StrategySnapshotCard";
+import GroupCard from "@/components/GroupCard";
+import PageHeader from "@/components/PageHeader";
+import TimeRangeToggle from "@/components/TimeRangeToggle";
 
 export const metadata = {
-  title: "Dashboard — Alliance Social",
+  title: "Alliance Social — Operational view",
 };
 
-export default async function DashboardPage() {
-  const profile = await requireUser();
-  const firstName =
-    profile.full_name?.split(" ")[0] ?? profile.email.split("@")[0];
+const ALLOWED_RANGES = [7, 14, 30] as const;
 
-  const [posts, accountHealth] = await Promise.all([
-    getPosts(),
+interface HomePageProps {
+  searchParams: Promise<{ range?: string }>;
+}
+
+/**
+ * Operational homepage: rolling timeline of post-groups (cross-platform
+ * campaigns merged into one card). Default window is 7 days; toggle picks
+ * 14d / 30d.
+ */
+export default async function HomePage({ searchParams }: HomePageProps) {
+  await requireUser();
+  const { range } = await searchParams;
+  const days = parseRange(range);
+
+  const [groups, accountHealth] = await Promise.all([
+    getGroupsLastNDays(days),
     getAccountHealth(),
   ]);
 
-  const kpis7 = aggregateKpis(posts, 7);
-  const kpis14_7 = aggregateKpis(posts, 14);
-  // Prior 7-day window = days 8–14 = full 14 minus most recent 7
-  const priorReach = Math.max(kpis14_7.reach - kpis7.reach, 0);
-  const reachDelta =
-    priorReach === 0 ? 0 : (kpis7.reach - priorReach) / priorReach;
-
-  const priorEngagements = Math.max(
-    kpis14_7.engagements - kpis7.engagements,
-    0,
-  );
-  const engagementDelta =
-    priorEngagements === 0
-      ? 0
-      : (kpis7.engagements - priorEngagements) / priorEngagements;
+  const description = describeWindow(groups.length, days);
 
   return (
     <div className="space-y-6">
-      {/* Slim greeting header */}
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-        <div>
-          <p className="text-sm text-neutral-500">
-            {new Date().toLocaleDateString(undefined, {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            })}
-          </p>
-          <h1 className="mt-1 text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
-            Welcome back, {firstName}.
-          </h1>
-        </div>
-        <AccountSyncBar health={accountHealth} />
+      <PageHeader
+        title="Alliance Social"
+        description={description}
+        actions={<TimeRangeToggle value={days} />}
+      />
+
+      <AccountSyncBar health={accountHealth} />
+
+      {groups.length === 0 ? (
+        <EmptyState days={days} />
+      ) : (
+        <section className="space-y-3">
+          {groups.map((g) => (
+            <GroupCard key={g.id} group={g} />
+          ))}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function parseRange(raw: string | undefined): number {
+  const parsed = Number(raw);
+  if (
+    Number.isFinite(parsed) &&
+    (ALLOWED_RANGES as readonly number[]).includes(parsed)
+  ) {
+    return parsed;
+  }
+  return 7;
+}
+
+function describeWindow(count: number, days: number): string {
+  if (count === 0) {
+    return `Looking back ${days} days. No campaigns to show yet.`;
+  }
+  const noun = count === 1 ? "campaign" : "campaigns";
+  return `${count} ${noun} in the last ${days} days. Same-day posts across platforms are merged into a single card.`;
+}
+
+function EmptyState({ days }: { days: number }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white p-8 text-center shadow-card">
+      <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-neutral-100 text-neutral-500">
+        <svg
+          viewBox="0 0 24 24"
+          className="w-5 h-5"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M4 7h16M4 12h16M4 17h10"
+            stroke="currentColor"
+            strokeWidth={1.6}
+            strokeLinecap="round"
+          />
+        </svg>
       </div>
-
-      {/* Compact KPI strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiInline
-          label="7-day reach"
-          value={formatCompactNumber(kpis7.reach)}
-          delta={
-            reachDelta === 0
-              ? undefined
-              : {
-                  text: `${formatPercent(Math.abs(reachDelta), 1)} vs prior 7d`,
-                  direction: reachDelta > 0 ? "up" : "down",
-                }
-          }
-        />
-        <KpiInline
-          label="Engagements"
-          value={formatCompactNumber(kpis7.engagements)}
-          delta={
-            engagementDelta === 0
-              ? undefined
-              : {
-                  text: `${formatPercent(Math.abs(engagementDelta), 1)} vs prior 7d`,
-                  direction: engagementDelta > 0 ? "up" : "down",
-                }
-          }
-        />
-        <KpiInline
-          label="Engagement rate"
-          value={formatPercent(kpis7.engagementRate, 1)}
-        />
-        <KpiInline
-          label="Posts published"
-          value={kpis7.postCount.toString()}
-          delta={{
-            text: `${posts.length} in last 30d`,
-            direction: "flat",
-          }}
-        />
-      </div>
-
-      {/* Claude AI seeds: weekly insight + Coach snapshot, side-by-side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <AiInsightCard
-          isPlaceholder
-          headline="Weekly performance summary, written for you"
-          body="Once Claude is connected, this card will surface a plain-English read on your week — what worked, what didn't, and which posts to reshare or repurpose."
-          bullets={[
-            "Top performing post and why it landed",
-            "One pattern across your last 7 posts",
-            "One concrete content idea for next week",
-          ]}
-        />
-        <StrategySnapshotCard recommendation={getTopRecommendation()} />
-      </div>
-
-      {/* The post stream — the main attraction */}
-      <section className="space-y-3">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
-              Recent posts
-            </h2>
-            <p className="text-sm text-neutral-500">
-              Tap a thumbnail to open the original post · tap the row for full
-              analytics.
-            </p>
-          </div>
-          <Link
-            href="/posts"
-            className="text-sm font-medium text-gold-700 hover:text-gold-800 inline-flex items-center gap-1"
-          >
-            Advanced view
-            <svg
-              viewBox="0 0 24 24"
-              className="w-4 h-4"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M9 6l6 6-6 6"
-                stroke="currentColor"
-                strokeWidth={1.8}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </Link>
-        </div>
-
-        <PostStream posts={posts} pageSize={8} />
-      </section>
+      <h2 className="text-base font-semibold text-neutral-900">
+        No campaigns this week
+      </h2>
+      <p className="mt-1 text-sm text-neutral-500 max-w-sm mx-auto">
+        Nothing posted in the last {days} days. New posts will land here as
+        they sync from Instagram, TikTok, and Facebook.
+      </p>
     </div>
   );
 }
