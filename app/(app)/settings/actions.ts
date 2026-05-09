@@ -202,6 +202,116 @@ export async function upsertMlsFeed(
 }
 
 /**
+ * Trigger an immediate sync for one MLS feed. Admin-only.
+ *
+ * Invokes the mls-rets-sync Edge Function (CMC + SJSR only — Bright is RESO
+ * Web API and not yet wired up here). Returns the raw result so the UI can
+ * surface counts + class-level errors without polling.
+ *
+ * The Edge Function itself updates mls_feeds.last_sync_at /
+ * last_validated_at / last_validated_ok and writes a sync_runs audit row per
+ * (feed × property class), so the feed-edit page just needs to revalidate.
+ */
+export interface MlsFeedSyncResult {
+  ok: boolean;
+  feed_short_code: string;
+  feed_name: string;
+  duration_ms: number;
+  classes: Array<{
+    class: string;
+    records_seen: number;
+    records_upserted: number;
+    error?: string;
+  }>;
+  errors: string[];
+}
+
+export async function syncMlsFeed(
+  shortCode: string,
+): Promise<MlsFeedSyncResult> {
+  await requireAdmin();
+  if (!shortCode) {
+    return {
+      ok: false,
+      feed_short_code: "",
+      feed_name: "",
+      duration_ms: 0,
+      classes: [],
+      errors: ["Missing feed short_code"],
+    };
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    return {
+      ok: false,
+      feed_short_code: shortCode,
+      feed_name: "",
+      duration_ms: 0,
+      classes: [],
+      errors: [
+        "Missing Supabase env vars (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).",
+      ],
+    };
+  }
+
+  // Bright handled separately (RESO Web API, not RETS).
+  if (shortCode !== "cmc" && shortCode !== "sjsr") {
+    return {
+      ok: false,
+      feed_short_code: shortCode,
+      feed_name: "",
+      duration_ms: 0,
+      classes: [],
+      errors: [
+        `Sync now is currently wired for CMC + SJSR only. (${shortCode} feed type is not yet supported.)`,
+      ],
+    };
+  }
+
+  const fnUrl = `${url}/functions/v1/mls-rets-sync`;
+  try {
+    const res = await fetch(fnUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ feed_short_code: shortCode }),
+      cache: "no-store",
+    });
+    const body = await res.text();
+    let parsed: MlsFeedSyncResult;
+    try {
+      parsed = JSON.parse(body) as MlsFeedSyncResult;
+    } catch {
+      parsed = {
+        ok: false,
+        feed_short_code: shortCode,
+        feed_name: "",
+        duration_ms: 0,
+        classes: [],
+        errors: [`HTTP ${res.status}: ${body.slice(0, 300)}`],
+      };
+    }
+    revalidatePath("/settings");
+    revalidatePath(`/settings/feeds/${shortCode}/edit`);
+    revalidatePath("/listings");
+    return parsed;
+  } catch (e) {
+    return {
+      ok: false,
+      feed_short_code: shortCode,
+      feed_name: "",
+      duration_ms: 0,
+      classes: [],
+      errors: [(e as Error).message],
+    };
+  }
+}
+
+/**
  * Toggle the is_active flag for one feed. Admin-only.
  * Form must POST with field "is_active" = "1" | "0".
  */

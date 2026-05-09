@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { getMlsFeed } from "@/lib/data/mls-feeds";
 import PageHeader from "@/components/PageHeader";
 import MlsFeedForm from "@/components/MlsFeedForm";
+import MlsFeedSyncNow from "@/components/MlsFeedSyncNow";
 import { upsertMlsFeed } from "../../../actions";
 
 interface PageProps {
@@ -26,6 +27,23 @@ export default async function EditMlsFeedPage({ params }: PageProps) {
 
   const boundAction = upsertMlsFeed.bind(null, decoded);
 
+  // Sync Now is wired to the mls-rets-sync Edge Function which currently
+  // handles CMC + SJSR (Paragon RETS). Bright (RESO Web API) will get its
+  // own function later — disable the button for now.
+  const isRets = feed.feed_type === "rets";
+  const isParagon = decoded === "cmc" || decoded === "sjsr";
+  const syncDisabled = !feed.is_active || !isRets || !isParagon;
+  let syncDisabledReason: string | undefined;
+  if (!feed.is_active) {
+    syncDisabledReason = "Feed is inactive — toggle it on to enable Sync now.";
+  } else if (!isRets) {
+    syncDisabledReason =
+      "Sync now is currently only wired for Paragon RETS feeds (CMC, SJSR). Bright will be added next.";
+  } else if (!isParagon) {
+    syncDisabledReason =
+      "Sync now is currently wired for the cmc and sjsr feeds only.";
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-neutral-500">
@@ -44,6 +62,18 @@ export default async function EditMlsFeedPage({ params }: PageProps) {
       />
 
       <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-6">
+        <div className="mb-6 pb-6 border-b border-neutral-200">
+          <h3 className="text-sm font-semibold text-neutral-800 mb-3">
+            Sync status
+          </h3>
+          <MlsFeedSyncNow
+            shortCode={decoded}
+            lastSyncAt={feed.last_sync_at}
+            lastValidatedOk={feed.last_validated_ok}
+            disabled={syncDisabled}
+            disabledReason={syncDisabledReason}
+          />
+        </div>
         <MlsFeedForm feed={feed} action={boundAction} />
       </div>
     </div>
