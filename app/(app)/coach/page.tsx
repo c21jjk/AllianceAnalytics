@@ -5,15 +5,22 @@ import {
   TREND_NOTES,
 } from "@/lib/fixtures/strategy";
 import { findProperty } from "@/lib/fixtures/posts";
+import { listOffices } from "@/lib/data/offices";
 import CoachIntroCard from "@/components/CoachIntroCard";
 import RecommendationCard from "@/components/RecommendationCard";
 import BudgetSplitChart from "@/components/BudgetSplitChart";
 import TrendNoteList from "@/components/TrendNoteList";
+import PlanGenerator from "@/components/PlanGenerator";
 
 export const metadata = { title: "Coach — Alliance Social" };
 
 export default async function CoachPage() {
   await requireUser();
+  const offices = await listOffices({ active_only: true });
+  const officeOptions = offices.map((o) => ({
+    short_code: o.short_code,
+    display_name: o.display_name ?? o.name,
+  }));
 
   // Sort recs by priority so high-priority surfaces float to the top.
   const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
@@ -24,6 +31,9 @@ export default async function CoachPage() {
   return (
     <div className="space-y-6">
       <CoachIntroCard />
+
+      {/* AI plan generator (Claude Opus) */}
+      <PlanGenerator offices={officeOptions} />
 
       {/* Spend recommendations */}
       <section className="space-y-3" aria-labelledby="recs-heading">

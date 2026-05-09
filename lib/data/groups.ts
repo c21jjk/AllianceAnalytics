@@ -480,3 +480,238 @@ export async function getGroupsLastNDays(
     return [];
   }
 }
+
+/**
+ * A candidate post that could be manually merged INTO an existing group.
+ *
+ * The dialog uses these to render a list of posts the staff can drag in
+ * after the auto-grouper missed them (caption rewrites, low-overlap
+ * hashtags, etc.).
+ */
+export interface MergeCandidate {
+  id: string;
+  platform: Platform;
+  caption_preview: string;
+  thumbnail_url: string | null;
+  posted_at: string | null;
+  media_type: string | null;
+  /** If the candidate is currently in a different group, this is that group's id. */
+  current_group_id: string | null;
+  /** 'auto' | 'manual' | null. null when candidate is a singleton. */
+  current_group_method: string | null;
+}
+
+/**
+ * Internal options used by both findMergeCandidates and the API route. Kept
+ * private to this module — caller never needs to override the limit today.
+ */
+interface FindMergeCandidatesOpts {
+  limit?: number;
+}
+
+/**
+ * NY-local YYYY-MM-DD bracket for a given posted_date. We compare *calendar
+ * days* in America/New_York because that's what the auto-grouper uses, but
+ * the underlying posts.posted_at is UTC-ish ISO. We allow ±1 day on either
+ * side and re-filter in code so DST edges and post-midnight posts aren't
+ * dropped.
+ */
+function nyDayWindow(postedDate: string): { gteIso: string; ltIso: string } {
+  // postedDate is YYYY-MM-DD. Treat it as an NY day; brackets are loose
+  // (-1d..+1d) so DST edges + tz drift never silently drop matches.
+  const start = new Date(`${postedDate}T00:00:00Z`);
+  const gte = new Date(start.getTime() - 86400_000).toISOString();
+  const lt = new Date(start.getTime() + 2 * 86400_000).toISOString();
+  return { gteIso: gte, ltIso: lt };
+}
+
+const NY_TZ = "America/New_York";
+
+function toNyDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  // en-CA gives YYYY-MM-DD ordering for free.
+  return d.toLocaleDateString("en-CA", { timeZone: NY_TZ });
+}
+
+function mediaBucket(mediaType: string | null | undefined): "video" | "still" {
+  if (mediaType === "video" || mediaType === "reel") return "video";
+  return "still";
+}
+
+function captionPreview(caption: string | null | undefined): string {
+  const c = (caption ?? "").trim();
+  if (c.length <= 140) return c;
+  return c.slice(0, 137) + "...";
+}
+
+/**
+ * Find ungrouped (or singleton-in-another-auto-group) posts that could
+ * plausibly be merged into the target group.
+ *
+ * Rules:
+ *   - Same calendar day (America/New_York) as the group's posted_date.
+ *   - Different platform than any current member of the group.
+ *   - Same media bucket (video vs still) as the group.
+ *   - Excludes posts already in this group, and posts in a manual/locked group.
+ *
+ * Returns up to 8 results sorted by recency.
+ */
+export async function findMergeCandidates(
+  groupId: string,
+  opts: FindMergeCandidatesOpts = {},
+): Promise<MergeCandidate[]> {
+  const limit = opts.limit ?? 8;
+
+  try {
+    const supabase = createAdminClient();
+
+    // 1. Look up the group + its members.
+    const { data: group, error: gErr } = await supabase
+      .from("post_groups")
+      .select("id, posted_date")
+      .eq("id", groupId)
+      .maybeSingle();
+    if (gErr || !group || !group.posted_date) {
+      return [];
+    }
+
+    const { data: memberRows, error: memberErr } = await supabase
+      .from("posts")
+      .select("id, platform, media_type, posted_at")
+      .eq("group_id", groupId);
+    if (memberErr || !memberRows || memberRows.length === 0) {
+      return [];
+    }
+
+    const memberPlatforms = new Set<string>(
+      memberRows.map((r) => r.platform).filter(Boolean),
+    );
+    // Bucket the group by the dominant media type of its members. If any
+    // member is video, treat the campaign as video; otherwise still.
+    const groupBucket = memberRows.some(
+      (r) => r.media_type === "video" || r.media_type === "reel",
+    )
+      ? "video"
+      : "still";
+
+    if (memberPlatforms.size >= 3) {
+      // Already covers FB+IG+TT — nothing to merge.
+      return [];
+    }
+
+    const { gteIso, ltIso } = nyDayWindow(group.posted_date);
+
+    // 2. Pull candidate posts in the loose date window. We re-filter in code
+    //    for NY-local-day match + media bucket + platform constraints.
+    const { data: candRows, error: cErr } = await supabase
+      .from("posts")
+      .select(
+        "id, platform, media_type, posted_at, caption, thumbnail_url, media_url, group_id",
+      )
+      .gte("posted_at", gteIso)
+      .lt("posted_at", ltIso)
+      .order("posted_at", { ascending: false })
+      .limit(200);
+    if (cErr || !candRows) return [];
+
+    // 3. Build a quick lookup for any auto/manual group_ids the candidates
+    //    might already belong to, so we can:
+    //      - skip locked (manual) groups
+    //      - surface current_group_method to the UI
+    const candidateGroupIds = Array.from(
+      new Set(
+        candRows
+          .map((r) => r.group_id)
+          .filter((g): g is string => !!g && g !== groupId),
+      ),
+    );
+    const groupMethodById = new Map<string, string>();
+    const lockedGroupIds = new Set<string>();
+    if (candidateGroupIds.length > 0) {
+      const { data: groupMetaRows } = await supabase
+        .from("post_groups")
+        .select("id, group_method, is_locked")
+        .in("id", candidateGroupIds);
+      for (const gm of groupMetaRows ?? []) {
+        if (gm.id) {
+          groupMethodById.set(gm.id, gm.group_method);
+          if (gm.is_locked) lockedGroupIds.add(gm.id);
+        }
+      }
+
+      // We also need to know how many posts each candidate group has — we
+      // only want singletons (group of 1) from another auto group; merging a
+      // post out of a 2+ member group would orphan its other members.
+    }
+    // Member counts for candidate groups (so we only allow singletons).
+    const groupMemberCount = new Map<string, number>();
+    if (candidateGroupIds.length > 0) {
+      const { data: countRows } = await supabase
+        .from("posts")
+        .select("group_id")
+        .in("group_id", candidateGroupIds);
+      for (const r of countRows ?? []) {
+        if (!r.group_id) continue;
+        groupMemberCount.set(
+          r.group_id,
+          (groupMemberCount.get(r.group_id) ?? 0) + 1,
+        );
+      }
+    }
+
+    const targetNyDate = group.posted_date; // already YYYY-MM-DD NY day per grouper
+    const out: MergeCandidate[] = [];
+    for (const r of candRows) {
+      if (!r.posted_at) continue;
+      // Same NY calendar day
+      if (toNyDate(r.posted_at) !== targetNyDate) continue;
+      // Different platform than any current member
+      if (memberPlatforms.has(r.platform)) continue;
+      // Same media bucket
+      if (mediaBucket(r.media_type) !== groupBucket) continue;
+      // Skip if already in this group
+      if (r.group_id === groupId) continue;
+      // Skip if already in a locked / manual group
+      if (r.group_id && lockedGroupIds.has(r.group_id)) continue;
+      // If candidate is in another group, only allow singletons (count === 1).
+      if (r.group_id) {
+        const count = groupMemberCount.get(r.group_id) ?? 0;
+        if (count > 1) continue;
+        const method = groupMethodById.get(r.group_id);
+        if (method === "manual") continue;
+      }
+
+      out.push({
+        id: r.id,
+        platform: asPlatform(r.platform),
+        caption_preview: captionPreview(r.caption),
+        thumbnail_url: r.thumbnail_url ?? r.media_url ?? null,
+        posted_at: r.posted_at,
+        media_type: r.media_type,
+        current_group_id: r.group_id,
+        current_group_method: r.group_id
+          ? groupMethodById.get(r.group_id) ?? null
+          : null,
+      });
+      if (out.length >= limit) break;
+    }
+
+    return out;
+  } catch (e) {
+    console.error("findMergeCandidates: fatal —", e);
+    return [];
+  }
+}
+
+/**
+ * Same body as findMergeCandidates — the dialog calls this via the API route.
+ * Kept as a separate exported symbol so the route handler can import a stable
+ * name even if we ever specialize the dialog flow.
+ */
+export async function findManualMergeCandidatesForGroup(
+  groupId: string,
+): Promise<MergeCandidate[]> {
+  return findMergeCandidates(groupId);
+}

@@ -4,11 +4,14 @@ import type { PostGroup } from "@/lib/types/group";
 import type { Platform } from "@/lib/types/post";
 import AiInsightStrip from "./AiInsightStrip";
 import GroupCardActions from "./GroupCardActions";
+import GroupCardMergeButton from "./GroupCardMergeButton";
 import PlatformMetricCell from "./PlatformMetricCell";
 import PropertyChip from "./PropertyChip";
 
 interface GroupCardProps {
   group: PostGroup;
+  /** When true, this group's id is a synthetic 'solo-{post_id}' singleton. */
+  /* derived inside the component */
 }
 
 /**
@@ -31,6 +34,13 @@ export default function GroupCard({ group }: GroupCardProps) {
 
   // Date display: "Apr 21 · Tuesday"
   const dateLabel = formatDateLabel(group.posted_date);
+
+  // Merge controls: only relevant for real groups (synthetic singletons use a
+  // 'solo-{post_id}' id) AND when at least one platform isn't already covered.
+  const isRealGroup = !group.id.startsWith("solo-");
+  const distinctPlatforms = new Set(group.postings.map((p) => p.platform));
+  const canMergeMore = distinctPlatforms.size < 3;
+  const showMergeButton = isRealGroup && canMergeMore;
 
   return (
     <article
@@ -83,23 +93,36 @@ export default function GroupCard({ group }: GroupCardProps) {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              {!hasProperty ? (
-                <Link
-                  href={firstPostHref(group)}
-                  className="inline-flex items-center gap-1 rounded-md bg-white ring-1 ring-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                >
-                  Link property
-                </Link>
-              ) : null}
-              {reportEligible && group.property ? (
-                <Link
-                  href={`/properties/${encodeURIComponent(group.property.mls)}`}
-                  className="inline-flex items-center gap-1 rounded-md bg-gold-500 hover:bg-gold-600 text-white px-2.5 py-1 text-xs font-medium"
-                >
-                  Generate report
-                  <ArrowUpRight />
-                </Link>
+            <div className="flex flex-col items-end gap-1 shrink-0">
+              <div className="flex items-center gap-2">
+                {group.is_locked ? (
+                  <span
+                    className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
+                    title="This group was manually merged and is locked from the auto-grouper."
+                  >
+                    Manual
+                  </span>
+                ) : null}
+                {!hasProperty ? (
+                  <Link
+                    href={firstPostHref(group)}
+                    className="inline-flex items-center gap-1 rounded-md bg-white ring-1 ring-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                  >
+                    Link property
+                  </Link>
+                ) : null}
+                {reportEligible && group.property ? (
+                  <Link
+                    href={`/properties/${encodeURIComponent(group.property.mls)}`}
+                    className="inline-flex items-center gap-1 rounded-md bg-gold-500 hover:bg-gold-600 text-white px-2.5 py-1 text-xs font-medium"
+                  >
+                    Generate report
+                    <ArrowUpRight />
+                  </Link>
+                ) : null}
+              </div>
+              {showMergeButton ? (
+                <GroupCardMergeButton groupId={group.id} />
               ) : null}
             </div>
           </div>

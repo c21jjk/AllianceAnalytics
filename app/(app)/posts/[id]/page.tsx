@@ -14,6 +14,7 @@ import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
 import PropertyChip from "@/components/PropertyChip";
 import MetricSparkline from "@/components/MetricSparkline";
 import AiAnalysisPanel from "@/components/AiAnalysisPanel";
+import AiInsightStrip from "@/components/AiInsightStrip";
 import PropertyClassifyPanel from "@/components/PropertyClassifyPanel";
 import { listOffices } from "@/lib/data/offices";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -168,6 +169,9 @@ export default async function PostDetailPage({ params }: PageProps) {
               </div>
             </div>
           </article>
+
+          {/* Live AI insight strip — fetches /api/ai/insight, hides if not configured. */}
+          <AiInsightStrip postId={post.id} />
 
           {/* Full analytics */}
           <section

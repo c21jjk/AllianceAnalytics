@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getPdfRedirectTarget } from "@/lib/reports/pdf";
+import { buildReportPayload } from "@/lib/reports/build";
+import { getPdfRedirectTarget, renderReportPdf } from "@/lib/reports/pdf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,16 +13,19 @@ interface RouteContext {
 /**
  * Public PDF endpoint for a property report flyer.
  *
- * Today this resolves the report by token, best-effort bumps the latest
- * delivery's view_count, then redirects to the print-styled HTML flyer at
- * /r/{token}/flyer?print=1. Browsers' built-in "Save as PDF" produces a
- * file that matches the on-screen flyer.
+ * 1. Resolve the report by token (reports.report_token first, then a
+ *    report_deliveries.share_token fallback for older deliveries).
+ * 2. Best-effort bump view_count on the most recent delivery for telemetry.
+ * 3. Build the report payload and render a real PDF via @react-pdf/renderer.
+ * 4. If PDF rendering throws (font issue, image fetch failure, layout
+ *    blow-up), fall back to a 302-redirect to the print-styled HTML flyer at
+ *    /r/{token}/flyer?print=1 so the user always gets a printable view.
  *
- * When `lib/reports/pdf.ts:renderReportPdf` is wired up to
- * @react-pdf/renderer, swap the redirect for a streamed application/pdf
- * response — the rest of this handler stays the same.
+ * Telemetry: a `?via=pdf` or `?via=html_fallback` query indicator is added to
+ * the redirect URL when we fall back, and a console.log records which path
+ * was taken for ops debugging.
  */
-export async function GET(_req: Request, ctx: RouteContext) {
+export async function GET(req: Request, ctx: RouteContext) {
   const { token } = await ctx.params;
   if (!token) {
     return new NextResponse("Missing token", { status: 400 });
@@ -31,12 +35,16 @@ export async function GET(_req: Request, ctx: RouteContext) {
 
   // 1) Resolve the report — try report_token on the reports table first
   let reportId: string | null = null;
+  let propertyId: string | null = null;
   const { data: reportRow } = await supabase
     .from("reports")
-    .select("id")
+    .select("id, property_id")
     .eq("report_token", token)
     .maybeSingle();
-  if (reportRow) reportId = reportRow.id;
+  if (reportRow) {
+    reportId = reportRow.id;
+    propertyId = reportRow.property_id;
+  }
 
   // 2) Fall back to a delivery share_token lookup (older deliveries may carry the token)
   if (!reportId) {
@@ -45,10 +53,18 @@ export async function GET(_req: Request, ctx: RouteContext) {
       .select("report_id")
       .eq("share_token", token)
       .maybeSingle();
-    if (deliveryRow) reportId = deliveryRow.report_id;
+    if (deliveryRow) {
+      reportId = deliveryRow.report_id;
+      const { data: indirectReport } = await supabase
+        .from("reports")
+        .select("id, property_id")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (indirectReport) propertyId = indirectReport.property_id;
+    }
   }
 
-  if (!reportId) {
+  if (!reportId || !propertyId) {
     return new NextResponse("Report not found", { status: 404 });
   }
 
@@ -75,19 +91,32 @@ export async function GET(_req: Request, ctx: RouteContext) {
     // best-effort; never block the flyer on telemetry
   }
 
-  // 4) Redirect to the HTML flyer in print mode.
-  //    When react-pdf is wired up, swap this for a streamed PDF buffer:
-  //
-  //      const payload = await buildReportPayload(...);
-  //      const bytes = await renderReportPdf(payload);
-  //      return new NextResponse(bytes, {
-  //        headers: {
-  //          "Content-Type": "application/pdf",
-  //          "Content-Disposition": `inline; filename="alliance-property-report.pdf"`,
-  //        },
-  //      });
-  return NextResponse.redirect(
-    new URL(getPdfRedirectTarget(token), _req.url),
-    { status: 302 },
-  );
+  // 4) Build payload + render PDF. On any failure, fall back to the HTML
+  //    print view so the user is never blocked.
+  try {
+    const payload = await buildReportPayload(propertyId);
+    const bytes = await renderReportPdf(payload);
+    const filename = `alliance-property-report-${payload.property.mls}.pdf`;
+    console.log(
+      `[flyer.pdf] via=pdf token=${token} mls=${payload.property.mls} bytes=${bytes.byteLength}`,
+    );
+    // Cast to BodyInit-compatible type. Uint8Array is a valid Response body.
+    return new Response(bytes as unknown as BodyInit, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${filename}"`,
+        "Cache-Control": "private, max-age=0, no-store",
+      },
+    });
+  } catch (err) {
+    console.error(
+      `[flyer.pdf] via=html_fallback token=${token} error=${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    const fallback = new URL(getPdfRedirectTarget(token), req.url);
+    fallback.searchParams.set("via", "html_fallback");
+    return NextResponse.redirect(fallback, { status: 302 });
+  }
 }

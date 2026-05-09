@@ -35,7 +35,7 @@ export interface PlatformPosting {
   shortcode?: string;
 }
 
-export type AiInsightTone = "info" | "success" | "quiet";
+export type AiInsightTone = "info" | "success" | "warning" | "quiet";
 
 export interface AiInsight {
   tone: AiInsightTone;
