@@ -15,6 +15,8 @@ import PropertyChip from "@/components/PropertyChip";
 import MetricSparkline from "@/components/MetricSparkline";
 import AiAnalysisPanel from "@/components/AiAnalysisPanel";
 import PropertyClassifyPanel from "@/components/PropertyClassifyPanel";
+import { listOffices } from "@/lib/data/offices";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -34,6 +36,27 @@ export default async function PostDetailPage({ params }: PageProps) {
   const { id } = await params;
   const post = await getPostById(id);
   if (!post) notFound();
+
+  // Fetch active offices + the post's current office_id for the Classify
+  // panel. office_id isn't on the Post type yet — read directly.
+  const [offices, postOfficeRow] = await Promise.all([
+    listOffices({ active_only: true }),
+    (async () => {
+      const supabase = createAdminClient();
+      const { data } = await supabase
+        .from("posts")
+        .select("office_id")
+        .eq("id", id)
+        .maybeSingle();
+      return data ?? null;
+    })(),
+  ]);
+  const officeOptions = offices.map((o) => ({
+    id: o.id,
+    short_code: o.short_code,
+    name: o.name,
+  }));
+  const initialOfficeId = postOfficeRow?.office_id ?? null;
 
   const totalEngagements =
     post.metrics.likes +
@@ -311,6 +334,8 @@ export default async function PostDetailPage({ params }: PageProps) {
             initialCategory={post.category}
             initialLinkMethod={post.link_method}
             initialAgentName={post.agent_name}
+            offices={officeOptions}
+            initialOfficeId={initialOfficeId}
           />
 
           <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">

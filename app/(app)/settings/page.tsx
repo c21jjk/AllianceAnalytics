@@ -1,10 +1,13 @@
+import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import MlsFeedCard from "@/components/MlsFeedCard";
 import CredentialCard from "@/components/CredentialCard";
+import OfficeCard from "@/components/OfficeCard";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listMlsFeeds } from "@/lib/data/mls-feeds";
 import { listCredentials } from "@/lib/data/credentials";
+import { listOffices } from "@/lib/data/offices";
 import { PLATFORMS } from "./credentialSchemas";
 
 export const metadata = { title: "Settings — Alliance Social" };
@@ -15,9 +18,10 @@ export default async function SettingsPage() {
 
   const admin = createAdminClient();
 
-  const [feeds, credentials] = await Promise.all([
+  const [feeds, credentials, offices] = await Promise.all([
     listMlsFeeds(),
     listCredentials(),
+    listOffices({ active_only: false }),
   ]);
 
   // Build platform → summary map for the credential cards.
@@ -50,6 +54,39 @@ export default async function SettingsPage() {
         title="Settings"
         description="Manage MLS feeds, API credentials, and team access."
       />
+
+      <section>
+        <div className="mb-4 flex items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
+              Offices
+            </h2>
+            <p className="mt-1 text-sm text-neutral-500 max-w-2xl">
+              Each office is its own market. Fill in market profiles so the AI
+              consultant tailors recommendations to the office that owns each
+              post.
+            </p>
+          </div>
+          <Link
+            href="/settings/offices"
+            className="btn-secondary text-xs whitespace-nowrap"
+          >
+            Manage offices
+          </Link>
+        </div>
+        {offices.length === 0 ? (
+          <EmptyState
+            title="No offices configured yet"
+            body="Offices are seeded from the database. Run the seed migration if missing."
+          />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {offices.slice(0, 4).map((office) => (
+              <OfficeCard key={office.id} office={office} />
+            ))}
+          </div>
+        )}
+      </section>
 
       <section>
         <SectionHeading

@@ -1,8 +1,10 @@
 import { requireUser } from "@/lib/auth";
 import { getAccountHealth } from "@/lib/data";
 import { getGroupsLastNDays } from "@/lib/data/groups";
+import { listOffices } from "@/lib/data/offices";
 import AccountSyncBar from "@/components/AccountSyncBar";
 import GroupCard from "@/components/GroupCard";
+import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import TimeRangeToggle from "@/components/TimeRangeToggle";
 
@@ -13,25 +15,30 @@ export const metadata = {
 const ALLOWED_RANGES = [7, 14, 30] as const;
 
 interface HomePageProps {
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{ range?: string; office?: string }>;
 }
 
 /**
  * Operational homepage: rolling timeline of post-groups (cross-platform
  * campaigns merged into one card). Default window is 7 days; toggle picks
- * 14d / 30d.
+ * 14d / 30d. Office filter pills above the timeline narrow to one office.
  */
 export default async function HomePage({ searchParams }: HomePageProps) {
   await requireUser();
-  const { range } = await searchParams;
+  const { range, office } = await searchParams;
   const days = parseRange(range);
 
+  const offices = await listOffices({ active_only: true });
+  const validShortCodes = new Set(offices.map((o) => o.short_code));
+  const officeFilter =
+    office && validShortCodes.has(office) ? office : null;
+
   const [groups, accountHealth] = await Promise.all([
-    getGroupsLastNDays(days),
+    getGroupsLastNDays(days, { office_short_code: officeFilter }),
     getAccountHealth(),
   ]);
 
-  const description = describeWindow(groups.length, days);
+  const description = describeWindow(groups.length, days, officeFilter, offices);
 
   return (
     <div className="space-y-6">
@@ -40,6 +47,16 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         description={description}
         actions={<TimeRangeToggle value={days} />}
       />
+
+      {offices.length > 0 ? (
+        <OfficeFilterChips
+          options={offices.map((o) => ({
+            short_code: o.short_code,
+            name: o.name,
+          }))}
+          value={officeFilter}
+        />
+      ) : null}
 
       <AccountSyncBar health={accountHealth} />
 
@@ -67,12 +84,21 @@ function parseRange(raw: string | undefined): number {
   return 7;
 }
 
-function describeWindow(count: number, days: number): string {
+function describeWindow(
+  count: number,
+  days: number,
+  officeShortCode: string | null,
+  offices: { short_code: string; name: string }[],
+): string {
+  const officeName = officeShortCode
+    ? offices.find((o) => o.short_code === officeShortCode)?.name ?? null
+    : null;
+  const scope = officeName ? ` for ${officeName}` : "";
   if (count === 0) {
-    return `Looking back ${days} days. No campaigns to show yet.`;
+    return `Looking back ${days} days${scope}. No campaigns to show yet.`;
   }
   const noun = count === 1 ? "campaign" : "campaigns";
-  return `${count} ${noun} in the last ${days} days. Same-day posts across platforms are merged into a single card.`;
+  return `${count} ${noun} in the last ${days} days${scope}. Same-day posts across platforms are merged into a single card.`;
 }
 
 function EmptyState({ days }: { days: number }) {

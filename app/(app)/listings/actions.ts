@@ -262,6 +262,14 @@ export async function classifyPostAction(form: FormData): Promise<{
   const agentNameRaw = readString(form, "agent_name");
   const agentName = category === "agent" ? agentNameRaw : null;
 
+  // Office: empty string -> null (brand-wide). Otherwise we expect a uuid;
+  // we trust the form value since it's selected from a server-rendered list.
+  const officeIdRaw = form.get("office_id");
+  const officeId =
+    typeof officeIdRaw === "string" && officeIdRaw.trim().length > 0
+      ? officeIdRaw.trim()
+      : null;
+
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("posts")
@@ -279,6 +287,7 @@ export async function classifyPostAction(form: FormData): Promise<{
           | "sold"
           | "other") ?? null,
       agent_name: agentName,
+      office_id: officeId,
       updated_at: new Date().toISOString(),
     })
     .eq("id", postId);

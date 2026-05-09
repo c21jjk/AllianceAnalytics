@@ -233,21 +233,46 @@ function buildAiInsight(
   };
 }
 
+interface DbPostRowWithOffice extends DbPostRow {
+  office_id: string | null;
+}
+
 /**
  * Reads post_groups + their member posts for a rolling window of N days,
  * plus any singleton (group_id IS NULL) posts in that window so the timeline
  * has no gaps.
  *
  * @param days Time window in days. Caller is expected to pass 7/14/30.
+ * @param opts.office_short_code Optional. When provided, only return groups
+ *   whose member posts include at least one post tagged with that office.
  * @returns Up to 50 PostGroup rows, newest first by posted_date.
  */
-export async function getGroupsLastNDays(days: number): Promise<PostGroup[]> {
+export async function getGroupsLastNDays(
+  days: number,
+  opts: { office_short_code?: string | null } = {},
+): Promise<PostGroup[]> {
   try {
     const supabase = createAdminClient();
     const now = new Date();
     const cutoffDate = new Date(now.getTime() - days * 86400_000)
       .toISOString()
       .slice(0, 10);
+
+    // Resolve office_short_code -> office_id once up front.
+    let officeFilterId: string | null = null;
+    if (opts.office_short_code) {
+      const { data: officeRow } = await supabase
+        .from("offices")
+        .select("id")
+        .eq("short_code", opts.office_short_code)
+        .maybeSingle();
+      if (officeRow) {
+        officeFilterId = officeRow.id;
+      } else {
+        // Unknown office filter — return empty rather than ignoring.
+        return [];
+      }
+    }
 
     // 1. Fetch groups in window
     const { data: groupRows, error: groupErr } = await supabase
@@ -274,7 +299,7 @@ export async function getGroupsLastNDays(days: number): Promise<PostGroup[]> {
     const { data: postRows, error: postErr } = await supabase
       .from("posts")
       .select(
-        "id, platform, permalink, thumbnail_url, media_url, media_type, caption, posted_at, agent_name, category, link_method, property_id, group_id, metrics, platform_post_id",
+        "id, platform, permalink, thumbnail_url, media_url, media_type, caption, posted_at, agent_name, category, link_method, property_id, group_id, metrics, platform_post_id, office_id",
       )
       .or(orFilter)
       .order("posted_at", { ascending: false })
@@ -283,7 +308,21 @@ export async function getGroupsLastNDays(days: number): Promise<PostGroup[]> {
       console.error("getGroupsLastNDays: posts error", postErr);
       return [];
     }
-    const posts = (postRows ?? []) as DbPostRow[];
+    const posts = (postRows ?? []) as DbPostRowWithOffice[];
+
+    // If filtering by office, narrow the post set first; then drop any
+    // groups whose remaining members are empty.
+    let allowedGroupIds: Set<string> | null = null;
+    let allowedSingletonIds: Set<string> | null = null;
+    if (officeFilterId) {
+      const matching = posts.filter((p) => p.office_id === officeFilterId);
+      allowedGroupIds = new Set(
+        matching.map((p) => p.group_id).filter((g): g is string => !!g),
+      );
+      allowedSingletonIds = new Set(
+        matching.filter((p) => !p.group_id).map((p) => p.id),
+      );
+    }
 
     // 3. Collect all property ids referenced by groups or posts; fetch in one go.
     const propIds = new Set<string>();
@@ -322,6 +361,7 @@ export async function getGroupsLastNDays(days: number): Promise<PostGroup[]> {
     // 5. Build "real" PostGroup rows from groupRows
     const realGroups: PostGroup[] = groups
       .map((g): PostGroup | null => {
+        if (allowedGroupIds && !allowedGroupIds.has(g.id)) return null;
         const memberRows = postsByGroup.get(g.id) ?? [];
         if (memberRows.length === 0) return null;
         const postings = memberRows
@@ -391,7 +431,11 @@ export async function getGroupsLastNDays(days: number): Promise<PostGroup[]> {
       .filter((g): g is PostGroup => g !== null);
 
     // 6. Synthesize singleton "groups" so the timeline is gap-free
-    const soloGroups: PostGroup[] = singletons.map((row): PostGroup => {
+    const soloGroups: PostGroup[] = singletons
+      .filter((row) =>
+        allowedSingletonIds ? allowedSingletonIds.has(row.id) : true,
+      )
+      .map((row): PostGroup => {
       const posting = postingFromRow(row);
       const totalReach = posting.reach;
       const totalEngagements = posting.engagements;

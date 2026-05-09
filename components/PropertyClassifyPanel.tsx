@@ -21,12 +21,22 @@ interface ListingResult {
   hero_image_url: string | null;
 }
 
+export interface OfficeOption {
+  id: string;
+  short_code: string;
+  name: string;
+}
+
 interface Props {
   postId: string;
   initialProperty?: PropertyRef;
   initialCategory?: PostCategory;
   initialLinkMethod?: PostLinkMethod;
   initialAgentName?: string;
+  /** Active offices for the dropdown. Server should pass these prefetched. */
+  offices?: OfficeOption[];
+  /** Currently saved office_id on the post (or null). */
+  initialOfficeId?: string | null;
 }
 
 const CATEGORY_OPTIONS: Array<{
@@ -55,6 +65,8 @@ export default function PropertyClassifyPanel({
   initialCategory,
   initialLinkMethod,
   initialAgentName,
+  offices = [],
+  initialOfficeId = null,
 }: Props) {
   const [category, setCategory] = useState<PostCategory>(
     initialCategory ?? (initialProperty ? "property" : "other"),
@@ -66,6 +78,7 @@ export default function PropertyClassifyPanel({
     initialProperty ?? null,
   );
   const [agentName, setAgentName] = useState<string>(initialAgentName ?? "");
+  const [officeId, setOfficeId] = useState<string>(initialOfficeId ?? "");
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ListingResult[]>([]);
@@ -160,6 +173,7 @@ export default function PropertyClassifyPanel({
     if (category === "agent" && agentName.trim().length > 0) {
       fd.set("agent_name", agentName.trim());
     }
+    fd.set("office_id", officeId);
     startTransition(async () => {
       const result = await classifyPostAction(fd);
       if (result.ok) {
@@ -176,7 +190,8 @@ export default function PropertyClassifyPanel({
   const dirty =
     category !== initialCategoryResolved ||
     (linkedMls ?? null) !== (initialProperty?.mls ?? null) ||
-    (showAgentName && agentName.trim() !== (initialAgentName ?? "").trim());
+    (showAgentName && agentName.trim() !== (initialAgentName ?? "").trim()) ||
+    officeId !== (initialOfficeId ?? "");
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5 space-y-4">
@@ -229,6 +244,35 @@ export default function PropertyClassifyPanel({
             placeholder="e.g. Jane Doe"
             className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
           />
+        </div>
+      ) : null}
+
+      {offices.length > 0 ? (
+        <div>
+          <label
+            htmlFor="classify-office"
+            className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
+          >
+            Origin office
+          </label>
+          <select
+            id="classify-office"
+            value={officeId}
+            onChange={(e) => setOfficeId(e.target.value)}
+            className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
+          >
+            <option value="">Brand-wide / no office</option>
+            {offices.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-neutral-500">
+            {category === "marketing" || category === "educational"
+              ? "Optional — leave blank for brand-wide content."
+              : "Tag the office that owns this post so AI recommendations stay office-specific."}
+          </p>
         </div>
       ) : null}
 

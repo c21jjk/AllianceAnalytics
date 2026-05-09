@@ -120,6 +120,84 @@ export type Database = {
         }
         Relationships: []
       }
+      offices: {
+        Row: {
+          address: string | null
+          city: string | null
+          created_at: string
+          display_name: string | null
+          id: string
+          is_active: boolean
+          name: string
+          notes: string | null
+          phone: string | null
+          price_range_high: number | null
+          price_range_median: number | null
+          price_range_min: number | null
+          primary_buyer_demo: string | null
+          primary_contact: string | null
+          primary_seller_demo: string | null
+          seasonal_pattern: string | null
+          short_code: string
+          signature_angles: string[] | null
+          state: string | null
+          towns_served: string[] | null
+          updated_at: string
+          zip: string | null
+          zip_codes_served: string[] | null
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          notes?: string | null
+          phone?: string | null
+          price_range_high?: number | null
+          price_range_median?: number | null
+          price_range_min?: number | null
+          primary_buyer_demo?: string | null
+          primary_contact?: string | null
+          primary_seller_demo?: string | null
+          seasonal_pattern?: string | null
+          short_code: string
+          signature_angles?: string[] | null
+          state?: string | null
+          towns_served?: string[] | null
+          updated_at?: string
+          zip?: string | null
+          zip_codes_served?: string[] | null
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          price_range_high?: number | null
+          price_range_median?: number | null
+          price_range_min?: number | null
+          primary_buyer_demo?: string | null
+          primary_contact?: string | null
+          primary_seller_demo?: string | null
+          seasonal_pattern?: string | null
+          short_code?: string
+          signature_angles?: string[] | null
+          state?: string | null
+          towns_served?: string[] | null
+          updated_at?: string
+          zip?: string | null
+          zip_codes_served?: string[] | null
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           created_at: string
@@ -287,6 +365,7 @@ export type Database = {
           media_url: string | null
           metrics: Json
           mls_number_parsed: string | null
+          office_id: string | null
           permalink: string | null
           platform: Database["public"]["Enums"]["post_platform"]
           platform_post_id: string | null
@@ -310,6 +389,7 @@ export type Database = {
           media_url?: string | null
           metrics?: Json
           mls_number_parsed?: string | null
+          office_id?: string | null
           permalink?: string | null
           platform: Database["public"]["Enums"]["post_platform"]
           platform_post_id?: string | null
@@ -333,6 +413,7 @@ export type Database = {
           media_url?: string | null
           metrics?: Json
           mls_number_parsed?: string | null
+          office_id?: string | null
           permalink?: string | null
           platform?: Database["public"]["Enums"]["post_platform"]
           platform_post_id?: string | null
@@ -347,6 +428,13 @@ export type Database = {
             columns: ["group_id"]
             isOneToOne: false
             referencedRelation: "post_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "posts_office_id_fkey"
+            columns: ["office_id"]
+            isOneToOne: false
+            referencedRelation: "offices"
             referencedColumns: ["id"]
           },
           {
@@ -398,6 +486,7 @@ export type Database = {
           listing_date: string | null
           mls_number: string
           notes: string | null
+          office_id: string | null
           state: string | null
           status: Database["public"]["Enums"]["property_status"]
           updated_at: string
@@ -415,6 +504,7 @@ export type Database = {
           listing_date?: string | null
           mls_number: string
           notes?: string | null
+          office_id?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           updated_at?: string
@@ -432,12 +522,21 @@ export type Database = {
           listing_date?: string | null
           mls_number?: string
           notes?: string | null
+          office_id?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           updated_at?: string
           zip?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "properties_office_id_fkey"
+            columns: ["office_id"]
+            isOneToOne: false
+            referencedRelation: "offices"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       report_deliveries: {
         Row: {
