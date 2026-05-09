@@ -74,11 +74,7 @@ export default async function PostDetailPage({ params }: PageProps) {
           Dashboard
         </Link>
         <span aria-hidden="true">/</span>
-        <Link href="/posts" className="hover:text-neutral-800">
-          Posts
-        </Link>
-        <span aria-hidden="true">/</span>
-        <span className="text-neutral-700 truncate max-w-xs">{post.id}</span>
+        <span className="text-neutral-700 truncate max-w-xs">Post {post.id}</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-6">
@@ -181,8 +177,8 @@ export default async function PostDetailPage({ params }: PageProps) {
                       />
                     </svg>
                   </a>
-                  <Link href="/posts" className="btn-secondary text-sm">
-                    Back to posts
+                  <Link href="/" className="btn-secondary text-sm">
+                    Back to dashboard
                   </Link>
                 </div>
               </div>

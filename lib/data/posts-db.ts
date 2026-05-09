@@ -198,15 +198,42 @@ function rowToPost(
   };
 }
 
-export async function fetchPosts(): Promise<Post[]> {
+export interface FetchPostsOptions {
+  /** Restrict to posts whose office_id matches this office.short_code. */
+  office_short_code?: string | null;
+  /** Inclusive lower bound on posted_at (ISO timestamp). */
+  since?: string | null;
+  /** Max rows to return. Defaults to 500. */
+  limit?: number;
+}
+
+export async function fetchPosts(opts: FetchPostsOptions = {}): Promise<Post[]> {
   const supabase = createAdminClient();
-  const { data: posts, error } = await supabase
+
+  // Resolve office_short_code → office_id once, server-side.
+  let officeFilterId: string | null = null;
+  if (opts.office_short_code) {
+    const { data: officeRow } = await supabase
+      .from("offices")
+      .select("id")
+      .eq("short_code", opts.office_short_code)
+      .maybeSingle();
+    if (!officeRow) return []; // unknown office → empty result, not silent ignore
+    officeFilterId = officeRow.id;
+  }
+
+  let query = supabase
     .from("posts")
     .select(
-      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id, mls_number_parsed",
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id, mls_number_parsed, office_id",
     )
     .order("posted_at", { ascending: false })
-    .limit(500);
+    .limit(opts.limit ?? 500);
+
+  if (opts.since) query = query.gte("posted_at", opts.since);
+  if (officeFilterId) query = query.eq("office_id", officeFilterId);
+
+  const { data: posts, error } = await query;
   if (error || !posts) {
     console.error("fetchPosts:", error);
     return [];

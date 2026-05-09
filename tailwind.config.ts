@@ -66,9 +66,14 @@ const config: Config = {
           "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        "slide-in-right": {
+          "0%": { opacity: "0", transform: "translateX(24px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
       },
       animation: {
         "fade-in-up": "fade-in-up 0.25s ease-out",
+        "slide-in": "slide-in-right 0.22s ease-out",
       },
       borderRadius: {
         xl: "0.875rem",

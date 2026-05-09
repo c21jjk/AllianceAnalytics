@@ -1,18 +1,12 @@
-import PageHeader from "@/components/PageHeader";
-import PostStream from "@/components/PostStream";
-import { getPosts } from "@/lib/data";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Posts — Alliance Social" };
-
-export default async function PostsPage() {
-  const posts = await getPosts();
-  return (
-    <div>
-      <PageHeader
-        title="Posts"
-        description="Every post pulled from your connected Facebook, Instagram, and TikTok accounts. Use the filters to slice by platform, date range, or property — tap a row for full analytics."
-      />
-      <PostStream posts={posts} pageSize={12} />
-    </div>
-  );
+/**
+ * Legacy redirect: the standalone Posts tab was consolidated into the
+ * Dashboard list view (`/?view=list`). Anyone landing on /posts goes there.
+ *
+ * Per-post detail at /posts/[id] still resolves through the standalone
+ * route (or via the @modal intercept when navigated to from inside (app)).
+ */
+export default function PostsRedirectPage() {
+  redirect("/?view=list");
 }

@@ -4,8 +4,10 @@ import { Sidebar, BottomNav } from "@/components/Nav";
 import { getNavItems } from "@/components/nav-config";
 export default async function ProtectedLayout({
   children,
+  modal,
 }: {
   children: React.ReactNode;
+  modal: React.ReactNode;
 }) {
   const profile = await requireUser();
   const items = getNavItems(profile.role);
@@ -20,6 +22,9 @@ export default async function ProtectedLayout({
         </main>
       </div>
       <BottomNav items={items} />
+      {/* @modal parallel slot: renders the post-detail drawer overlay when an
+          intercepting (.)posts/[id] route is matched. Empty otherwise. */}
+      {modal}
     </div>
   );
 }

@@ -23,12 +23,39 @@ function isForcedFixtures(): boolean {
   return process.env.ALLIANCE_DATA_SOURCE?.toLowerCase() === "fixtures";
 }
 
-export async function getPosts(): Promise<Post[]> {
-  if (isForcedFixtures()) return FIXTURE_POSTS;
+export interface GetPostsOptions {
+  office_short_code?: string | null;
+  /** Inclusive lower bound on posted_at (ISO). */
+  since?: string | null;
+}
+
+export async function getPosts(opts: GetPostsOptions = {}): Promise<Post[]> {
+  if (isForcedFixtures()) {
+    // Apply same filters in-memory against fixtures so demo mode behaves
+    // like prod from the caller's perspective.
+    let rows = FIXTURE_POSTS;
+    if (opts.since) {
+      const cutoff = new Date(opts.since).getTime();
+      rows = rows.filter(
+        (p) => new Date(p.posted_at).getTime() >= cutoff,
+      );
+    }
+    return rows;
+  }
   try {
     const { fetchPosts } = await import("./posts-db");
-    const rows = await fetchPosts();
-    if (rows.length === 0) return FIXTURE_POSTS;
+    const rows = await fetchPosts({
+      office_short_code: opts.office_short_code ?? null,
+      since: opts.since ?? null,
+    });
+    // Only fall back to fixtures when called with NO filter and DB is empty.
+    if (
+      rows.length === 0 &&
+      !opts.office_short_code &&
+      !opts.since
+    ) {
+      return FIXTURE_POSTS;
+    }
     return rows;
   } catch (e) {
     console.error("getPosts: falling back to fixtures —", e);

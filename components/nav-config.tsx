@@ -22,7 +22,6 @@ const ICON: Record<string, ReactNode> = {
 export function getNavItems(role: "admin" | "user"): NavItem[] {
     const base: NavItem[] = [
         { href: "/", label: "Dashboard", icon: ICON.dashboard },
-        { href: "/posts", label: "Posts", icon: ICON.posts },
         { href: "/properties", label: "Properties", icon: ICON.properties },
         { href: "/listings", label: "Listings", icon: ICON.listings, adminOnly: true },
         { href: "/coach", label: "Coach", icon: ICON.coach },

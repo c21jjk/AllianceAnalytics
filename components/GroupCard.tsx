@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import Link from "next/link";
-import type { PostGroup } from "@/lib/types/group";
+import type { PlatformPosting, PostGroup } from "@/lib/types/group";
 import type { Platform } from "@/lib/types/post";
 import AiInsightStrip from "./AiInsightStrip";
 import GroupCardActions from "./GroupCardActions";
@@ -8,6 +8,24 @@ import GroupCardMergeButton from "./GroupCardMergeButton";
 import MlsNumberInline from "./MlsNumberInline";
 import PlatformMetricCell from "./PlatformMetricCell";
 import PropertyChip from "./PropertyChip";
+
+/**
+ * Pick the "primary" posting for the card-level click target. Preference order:
+ * Instagram → Facebook → TikTok, falling back to first by array order. This
+ * gives a stable representative when a multi-platform group is clicked from
+ * blank space; per-platform tiles still link to their own postings.
+ */
+function pickPrimaryPosting(
+  postings: PlatformPosting[],
+): PlatformPosting | undefined {
+  if (postings.length === 0) return undefined;
+  const order: Platform[] = ["instagram", "facebook", "tiktok"];
+  for (const p of order) {
+    const hit = postings.find((x) => x.platform === p);
+    if (hit) return hit;
+  }
+  return postings[0];
+}
 
 interface GroupCardProps {
   group: PostGroup;
@@ -43,20 +61,37 @@ export default function GroupCard({ group }: GroupCardProps) {
   const canMergeMore = distinctPlatforms.size < 3;
   const showMergeButton = isRealGroup && canMergeMore;
 
+  // Primary posting for the card-level click target. The drawer overlay opens
+  // /posts/[that-post-id] when the user clicks blank space on the card body.
+  // Per-platform tiles below have their own click targets.
+  const primaryPosting = pickPrimaryPosting(group.postings);
+
   return (
     <article
       className={clsx(
-        "rounded-xl border border-neutral-200 bg-white shadow-card",
-        "hover:border-gold-200 transition-colors",
+        "relative group rounded-xl border border-neutral-200 bg-white shadow-card",
+        "hover:border-gold-200 hover:shadow-card-hover transition-all",
       )}
     >
-      <div className="flex flex-col md:flex-row gap-4 p-4">
-        {/* Hero (client) */}
+      {/* Stretched link layer — covers the whole card. Interactive children
+          re-enable pointer events with pointer-events-auto. */}
+      {primaryPosting ? (
+        <Link
+          href={`/posts/${primaryPosting.post_id}`}
+          className="absolute inset-0 z-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/40"
+          aria-label="Open post detail"
+        />
+      ) : null}
+
+      <div className="relative pointer-events-none flex flex-col md:flex-row gap-4 p-4">
+        {/* Hero (client) — pointer-events-auto so the InlineVideoModal trigger
+            fires instead of the wrapping stretched link. */}
         <GroupCardActions
           postings={group.postings}
           thumbnailUrl={group.representative_thumbnail}
           caption={group.representative_caption}
           isVideo={isVideo}
+          className="pointer-events-auto"
         />
 
         {/* Body */}
@@ -79,9 +114,9 @@ export default function GroupCard({ group }: GroupCardProps) {
                     {group.agent_name}
                   </span>
                 ) : null}
-                {group.postings[0] ? (
+                {primaryPosting ? (
                   <MlsNumberInline
-                    postId={group.postings[0].post_id}
+                    postId={primaryPosting.post_id}
                     currentMls={group.mls_number_parsed ?? null}
                     isLinked={Boolean(group.property)}
                     compact
@@ -89,7 +124,9 @@ export default function GroupCard({ group }: GroupCardProps) {
                   />
                 ) : null}
                 {group.property ? (
-                  <PropertyChip property={group.property} />
+                  <span className="pointer-events-auto">
+                    <PropertyChip property={group.property} />
+                  </span>
                 ) : null}
                 {group.category ? (
                   <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700 capitalize">
@@ -103,7 +140,7 @@ export default function GroupCard({ group }: GroupCardProps) {
               </div>
             </div>
 
-            <div className="flex flex-col items-end gap-1 shrink-0">
+            <div className="flex flex-col items-end gap-1 shrink-0 pointer-events-auto">
               <div className="flex items-center gap-2">
                 {group.is_locked ? (
                   <span
@@ -137,11 +174,14 @@ export default function GroupCard({ group }: GroupCardProps) {
             </div>
           </div>
 
-          {/* Metrics row: FB | IG | TT | Total */}
+          {/* Metrics row: FB | IG | TT | Total. Each platform tile that has
+              actual postings is its own click target → that platform's post
+              detail. Empty tiles + the Total tile remain inert and let the
+              wrapping card link fire. */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <PlatformMetricCell platform="facebook" postings={fbPostings} />
-            <PlatformMetricCell platform="instagram" postings={igPostings} />
-            <PlatformMetricCell platform="tiktok" postings={ttPostings} />
+            <PlatformMetricLink platform="facebook" postings={fbPostings} />
+            <PlatformMetricLink platform="instagram" postings={igPostings} />
+            <PlatformMetricLink platform="tiktok" postings={ttPostings} />
             <PlatformMetricCell
               platform="total"
               totalReach={group.total_reach}
@@ -160,8 +200,40 @@ export default function GroupCard({ group }: GroupCardProps) {
 
 function firstPostHref(group: PostGroup): string {
   const first = group.postings[0];
-  if (!first) return "/posts";
+  if (!first) return "/";
   return `/posts/${first.post_id}`;
+}
+
+/**
+ * PlatformMetricCell wrapped in a Link when there are postings on that
+ * platform. Empty platforms render the cell directly so the wrapping card
+ * link can take over. We use stopPropagation so the link goes to *this*
+ * platform's post detail, not the card's primary posting.
+ */
+function PlatformMetricLink({
+  platform,
+  postings,
+}: {
+  platform: Platform;
+  postings: PlatformPosting[];
+}) {
+  if (postings.length === 0) {
+    return <PlatformMetricCell platform={platform} postings={postings} />;
+  }
+  // Use the first posting on this platform as the click target. In the
+  // overwhelmingly-common single-posting-per-platform case, that's exactly
+  // right.
+  const target = postings[0];
+  return (
+    <Link
+      href={`/posts/${target.post_id}`}
+      onClick={(e) => e.stopPropagation()}
+      className="pointer-events-auto block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/40 hover:opacity-90 transition"
+      aria-label={`Open ${platform} post detail`}
+    >
+      <PlatformMetricCell platform={platform} postings={postings} />
+    </Link>
+  );
 }
 
 function formatDateLabel(isoDate: string): string {
