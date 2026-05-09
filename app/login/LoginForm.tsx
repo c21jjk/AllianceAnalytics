@@ -6,12 +6,17 @@ import { signIn } from "./actions";
 export default function LoginForm({
   searchParamsPromise,
 }: {
-  searchParamsPromise: Promise<{ next?: string }>;
+  searchParamsPromise: Promise<{ next?: string; error?: string }>;
 }) {
   const params = use(searchParamsPromise);
   const next = params.next ?? "/";
 
-  const [error, setError] = useState<string | null>(null);
+  const initialError =
+    params.error === "disabled"
+      ? "Your account has been disabled. Contact an admin if this is unexpected."
+      : null;
+
+  const [error, setError] = useState<string | null>(initialError);
   const [isPending, startTransition] = useTransition();
 
   function onSubmit(formData: FormData) {

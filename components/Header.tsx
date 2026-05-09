@@ -30,20 +30,26 @@ export default function Header({ profile }: { profile: AuthProfile }) {
         <div className="hidden md:block" />
 
         <div className="flex items-center gap-3">
-          <div className="hidden sm:flex flex-col items-end leading-tight">
+          <Link
+            href="/settings/security"
+            className="hidden sm:flex flex-col items-end leading-tight hover:opacity-80 transition"
+            title="My account · change password"
+          >
             <span className="text-sm font-medium text-neutral-800">
               {profile.full_name ?? profile.email.split("@")[0]}
             </span>
             <span className="text-xs text-neutral-500 capitalize">
               {profile.role}
             </span>
-          </div>
-          <span
-            className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-gold-100 text-gold-700 text-xs font-semibold"
-            aria-hidden="true"
+          </Link>
+          <Link
+            href="/settings/security"
+            className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-gold-100 text-gold-700 text-xs font-semibold hover:bg-gold-200 transition"
+            aria-label="My account"
+            title="My account"
           >
             {initials}
-          </span>
+          </Link>
           <form action={signOut}>
             <button type="submit" className="btn-secondary text-xs px-3 py-1.5">
               Sign out

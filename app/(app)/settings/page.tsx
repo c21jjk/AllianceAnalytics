@@ -29,12 +29,15 @@ export default async function SettingsPage() {
     credentials.map((c) => [c.platform, c] as const),
   );
 
-  // Users — unchanged from prior settings page.
+  // Users — summary count for the link card. Detailed table + invite form
+  // live on /settings/users now.
   const { data: users } = await admin
     .from("profiles")
-    .select("id, email, full_name, role, created_at")
-    .order("role", { ascending: true })
-    .order("email", { ascending: true });
+    .select("id, role, is_active");
+  const userCount = users?.length ?? 0;
+  const adminCount = (users ?? []).filter(
+    (u) => u.role === "admin" && u.is_active,
+  ).length;
 
   // Group platforms into MLS-style and API-style. The new "MLS / RETS Feeds"
   // section is sourced from mls_feeds; the older paragon_mls / bright_mls
@@ -125,58 +128,59 @@ export default async function SettingsPage() {
 
       <section>
         <SectionHeading
-          title="Users"
-          subtitle="Accounts with access to Alliance Social."
+          title="Account & access"
+          subtitle="Manage who can sign in and update your own password."
         />
-        <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-neutral-500 border-b border-neutral-100">
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Role</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(users ?? []).length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={3}
-                    className="px-4 py-6 text-center text-neutral-500"
-                  >
-                    No users yet.
-                  </td>
-                </tr>
-              ) : (
-                (users ?? []).map((u) => (
-                  <tr
-                    key={u.id}
-                    className="border-b border-neutral-50 last:border-0"
-                  >
-                    <td className="px-4 py-3 text-neutral-900">
-                      {u.full_name ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-neutral-700">{u.email}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={
-                          u.role === "admin"
-                            ? "badge bg-gold-50 text-gold-700 ring-1 ring-gold-100 text-[10px]"
-                            : "badge-neutral text-[10px]"
-                        }
-                      >
-                        {u.role}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Link
+            href="/settings/users"
+            className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-neutral-900 group-hover:text-gold-700">
+                Users
+              </h3>
+              <span className="text-xs text-neutral-400 group-hover:text-gold-600">
+                Manage →
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500">
+              Invite new accounts, change roles, disable or delete users.
+            </p>
+            <div className="mt-2 flex items-center gap-3 text-xs text-neutral-600">
+              <span>
+                <span className="font-semibold text-neutral-900">
+                  {userCount}
+                </span>{" "}
+                total
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>
+                <span className="font-semibold text-neutral-900">
+                  {adminCount}
+                </span>{" "}
+                admin
+              </span>
+            </div>
+          </Link>
+
+          <Link
+            href="/settings/security"
+            className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-neutral-900 group-hover:text-gold-700">
+                My account
+              </h3>
+              <span className="text-xs text-neutral-400 group-hover:text-gold-600">
+                Open →
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500">
+              Change your password and view your account details.
+            </p>
+          </Link>
         </div>
-        <p className="mt-2 text-xs text-neutral-500">
-          New users are provisioned via Supabase. Self-signup is disabled.
-        </p>
       </section>
     </div>
   );

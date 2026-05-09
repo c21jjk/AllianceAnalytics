@@ -19,10 +19,29 @@ export async function signIn(formData: FormData): Promise<SignInResult> {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error, data } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-  if (error) {
+  if (error || !data.user) {
     return { ok: false, error: "Invalid email or password." };
+  }
+
+  // Refuse sessions for disabled accounts. Tear down before any cookies are
+  // committed so the disabled user never sees an authenticated state.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", data.user.id)
+    .maybeSingle<{ is_active: boolean }>();
+  if (!profile || profile.is_active === false) {
+    await supabase.auth.signOut().catch(() => undefined);
+    return {
+      ok: false,
+      error:
+        "Your account has been disabled. Contact an admin if this is unexpected.",
+    };
   }
 
   revalidatePath("/", "layout");

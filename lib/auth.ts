@@ -9,11 +9,17 @@ export interface AuthProfile {
   email: string;
   full_name: string | null;
   role: UserRole;
+  is_active: boolean;
 }
 
 /**
  * Returns the authenticated user + their profile row.
- * Returns null if not signed in or if the profile row is missing.
+ * Returns null if not signed in OR if the profile row is missing.
+ *
+ * NOTE: Does NOT enforce is_active — callers should use requireUser() if they
+ * want disabled accounts bounced. This helper exists for read-only contexts
+ * where it's safer to render an "account disabled" message than to redirect
+ * mid-render.
  */
 export async function getCurrentProfile(): Promise<AuthProfile | null> {
   const supabase = await createClient();
@@ -24,7 +30,7 @@ export async function getCurrentProfile(): Promise<AuthProfile | null> {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("id, email, full_name, role")
+    .select("id, email, full_name, role, is_active")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -33,12 +39,19 @@ export async function getCurrentProfile(): Promise<AuthProfile | null> {
 }
 
 /**
- * Hard-redirects to /login if not authenticated. Use this in server components
- * for any route that requires sign-in.
+ * Hard-redirects to /login if not authenticated, OR if the profile row is
+ * marked inactive. Disabled accounts are signed out so they can't keep using
+ * a stale session.
  */
 export async function requireUser(): Promise<AuthProfile> {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
+  if (!profile.is_active) {
+    // Tear down the session so the user can't keep hitting protected pages.
+    const supabase = await createClient();
+    await supabase.auth.signOut().catch(() => undefined);
+    redirect("/login?error=disabled");
+  }
   return profile;
 }
 

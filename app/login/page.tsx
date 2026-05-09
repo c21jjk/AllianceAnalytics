@@ -8,7 +8,7 @@ export const metadata = {
 export default function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-neutral-25">
