@@ -1,10 +1,11 @@
 import PageHeader from "@/components/PageHeader";
+import MlsFeedCard from "@/components/MlsFeedCard";
+import CredentialCard from "@/components/CredentialCard";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import ApiConnectionCard, {
-  type ConnectionSnapshot,
-} from "./ApiConnectionCard";
-import { PLATFORMS, type CredentialPlatform } from "./credentialSchemas";
+import { listMlsFeeds } from "@/lib/data/mls-feeds";
+import { listCredentials } from "@/lib/data/credentials";
+import { PLATFORMS } from "./credentialSchemas";
 
 export const metadata = { title: "Settings — Alliance Social" };
 export const dynamic = "force-dynamic";
@@ -14,62 +15,82 @@ export default async function SettingsPage() {
 
   const admin = createAdminClient();
 
-  // Fetch credential rows. We deliberately do NOT select the `credentials`
-  // column to keep raw secrets off the server-render path. We derive
-  // configured_keys from a separate, sanitized projection (server-side only),
-  // so no secret value is ever serialized into the page payload.
-  const { data: credRows } = await admin
-    .from("api_credentials")
-    .select("platform, is_active, last_validated_at, credentials");
+  const [feeds, credentials] = await Promise.all([
+    listMlsFeeds(),
+    listCredentials(),
+  ]);
 
-  // Build a sanitized snapshot map. `credentials` itself is dropped; we keep
-  // only the *keys* that are present (so we can show "N stored fields").
-  const snapshotByPlatform = new Map<CredentialPlatform, ConnectionSnapshot>();
-  for (const row of credRows ?? []) {
-    const credObj =
-      row.credentials && typeof row.credentials === "object"
-        ? (row.credentials as Record<string, unknown>)
-        : {};
-    snapshotByPlatform.set(row.platform as CredentialPlatform, {
-      platform: row.platform as CredentialPlatform,
-      is_active: !!row.is_active,
-      last_validated_at: row.last_validated_at ?? null,
-      configured_keys: Object.keys(credObj),
-    });
-  }
+  // Build platform → summary map for the credential cards.
+  const credByPlatform = new Map(
+    credentials.map((c) => [c.platform, c] as const),
+  );
 
-  // Users
+  // Users — unchanged from prior settings page.
   const { data: users } = await admin
     .from("profiles")
     .select("id, email, full_name, role, created_at")
     .order("role", { ascending: true })
     .order("email", { ascending: true });
 
+  // Group platforms into MLS-style and API-style. The new "MLS / RETS Feeds"
+  // section is sourced from mls_feeds; the older paragon_mls / bright_mls
+  // entries in api_credentials are legacy and not surfaced here unless they
+  // already have a row.
+  const apiKeyPlatforms = PLATFORMS.filter(
+    (p) =>
+      p.platform === "facebook" ||
+      p.platform === "instagram" ||
+      p.platform === "tiktok" ||
+      p.platform === "claude",
+  );
+
   return (
     <div className="space-y-10">
       <PageHeader
         title="Settings"
-        description="Manage platform connections, users, and notifications."
+        description="Manage MLS feeds, API credentials, and team access."
       />
 
       <section>
         <SectionHeading
-          title="API Connections"
+          title="MLS / RETS Feeds"
+          subtitle="Source of truth for active listings. Each feed is pulled on a schedule and replicated into the analytics properties table for auto-linking."
+        />
+        {feeds.length === 0 ? (
+          <EmptyState
+            title="No feeds configured yet"
+            body="MLS feeds are seeded from the database. If you don't see CMC, SJSR, and Bright here, run the seed migration."
+          />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {feeds.map((feed) => (
+              <MlsFeedCard key={feed.id} feed={feed} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <SectionHeading
+          title="API Keys & Tokens"
           subtitle="Credentials are stored encrypted at rest in Supabase and only accessible via server-side service-role calls."
         />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {PLATFORMS.map((def) => (
-            <ApiConnectionCard
+          {apiKeyPlatforms.map((def) => (
+            <CredentialCard
               key={def.platform}
               def={def}
-              snapshot={snapshotByPlatform.get(def.platform) ?? null}
+              summary={credByPlatform.get(def.platform) ?? null}
             />
           ))}
         </div>
       </section>
 
       <section>
-        <SectionHeading title="Users" subtitle="Accounts with access to Alliance Social." />
+        <SectionHeading
+          title="Users"
+          subtitle="Accounts with access to Alliance Social."
+        />
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -120,30 +141,6 @@ export default async function SettingsPage() {
           New users are provisioned via Supabase. Self-signup is disabled.
         </p>
       </section>
-
-      <section>
-        <SectionHeading
-          title="Notifications"
-          subtitle="Toggle delivery channels (placeholder — wired up in a later phase)."
-        />
-        <div className="card divide-y divide-neutral-100">
-          <ToggleRow
-            title="Email digest"
-            description="Weekly summary of post performance."
-            disabled
-          />
-          <ToggleRow
-            title="New report ready"
-            description="Notify when a property report is generated."
-            disabled
-          />
-          <ToggleRow
-            title="API connection errors"
-            description="Alert when a platform credential fails validation."
-            disabled
-          />
-        </div>
-      </section>
     </div>
   );
 }
@@ -167,30 +164,11 @@ function SectionHeading({
   );
 }
 
-function ToggleRow({
-  title,
-  description,
-  disabled,
-}: {
-  title: string;
-  description: string;
-  disabled?: boolean;
-}) {
+function EmptyState({ title, body }: { title: string; body: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3.5">
-      <div>
-        <p className="text-sm font-medium text-neutral-900">{title}</p>
-        <p className="text-xs text-neutral-500">{description}</p>
-      </div>
-      <button
-        type="button"
-        disabled={disabled}
-        aria-disabled={disabled}
-        className="relative inline-flex h-5 w-9 items-center rounded-full bg-neutral-200 disabled:opacity-60 disabled:cursor-not-allowed"
-        title="Coming in a later phase"
-      >
-        <span className="inline-block h-3.5 w-3.5 translate-x-1 rounded-full bg-white shadow-sm" />
-      </button>
+    <div className="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 p-6 text-center">
+      <p className="text-sm font-medium text-neutral-700">{title}</p>
+      <p className="mt-1 text-xs text-neutral-500">{body}</p>
     </div>
   );
 }

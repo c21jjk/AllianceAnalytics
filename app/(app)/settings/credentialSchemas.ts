@@ -11,7 +11,8 @@ export type CredentialPlatform =
   | "instagram"
   | "tiktok"
   | "paragon_mls"
-  | "bright_mls";
+  | "bright_mls"
+  | "claude";
 
 export interface CredentialField {
   key: string;
@@ -178,6 +179,33 @@ export const PLATFORMS: PlatformDef[] = [
       },
       { key: "api_key", label: "API Key", required: true, secret: true },
       { key: "dataset_id", label: "Dataset ID", required: false, secret: false },
+    ],
+  },
+  {
+    platform: "claude",
+    label: "Claude",
+    description:
+      "Anthropic API key powering AI insights, post coaching, and report narratives.",
+    setup_note:
+      "Generate a key at console.anthropic.com — should be scoped to the Alliance Analytics workspace. Used by /coach and report generation.",
+    fields: [
+      {
+        key: "api_key",
+        label: "API Key",
+        required: true,
+        secret: true,
+        placeholder: "sk-ant-…",
+        helper:
+          "Anthropic API key (sk-ant-…). Stored encrypted; only used server-side from Edge Functions and route handlers.",
+      },
+      {
+        key: "model",
+        label: "Default Model",
+        required: false,
+        secret: false,
+        placeholder: "claude-opus-4-5",
+        helper: "Optional default model id. Falls back to a hardcoded default if blank.",
+      },
     ],
   },
 ];
