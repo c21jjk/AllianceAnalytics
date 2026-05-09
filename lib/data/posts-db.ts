@@ -40,6 +40,7 @@ interface DbPostRow {
   link_method: string | null;
   agent_name: string | null;
   group_id: string | null;
+  mls_number_parsed: string | null;
 }
 
 interface DbPropertyRow {
@@ -179,6 +180,7 @@ function rowToPost(
     caption: row.caption ?? "",
     hashtags: row.hashtags ?? [],
     property,
+    mls_number_parsed: row.mls_number_parsed ?? undefined,
     category: asCategory(row.category),
     agent_name: row.agent_name ?? undefined,
     link_method: asLinkMethod(row.link_method),
@@ -201,7 +203,7 @@ export async function fetchPosts(): Promise<Post[]> {
   const { data: posts, error } = await supabase
     .from("posts")
     .select(
-      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id",
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id, mls_number_parsed",
     )
     .order("posted_at", { ascending: false })
     .limit(500);
@@ -252,7 +254,7 @@ export async function fetchPostById(id: string): Promise<Post | undefined> {
   const { data: row, error } = await supabase
     .from("posts")
     .select(
-      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id",
+      "id, platform, platform_post_id, property_id, caption, media_url, thumbnail_url, media_type, posted_at, permalink, hashtags, metrics, audience, category, link_method, agent_name, group_id, mls_number_parsed",
     )
     .eq("id", id)
     .maybeSingle();

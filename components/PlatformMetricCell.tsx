@@ -78,7 +78,11 @@ export default function PlatformMetricCell({
     );
   }
 
-  // Pending state: no postings on this platform yet
+  // Empty state: no postings on this platform for this group.
+  // We deliberately do NOT label this "pending / re-pair needed" — that
+  // implied a feed-level breakage. Most of the time the post simply wasn't
+  // shared to this platform (e.g., a still photo skips TikTok). Feed-level
+  // health lives on /settings; this tile just acknowledges the absence.
   if (postings.length === 0) {
     return (
       <div
@@ -90,11 +94,11 @@ export default function PlatformMetricCell({
         <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
           {HEADER[platform]}
         </div>
-        <div className="text-sm font-semibold tabular-nums text-neutral-400 leading-tight">
-          — pending
+        <div className="text-sm font-medium text-neutral-500 leading-tight">
+          Not posted
         </div>
-        <div className="text-[11px] text-neutral-400 italic">
-          re-pair needed
+        <div className="text-[11px] text-neutral-400">
+          on {HEADER[platform]}
         </div>
       </div>
     );

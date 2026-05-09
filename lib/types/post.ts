@@ -96,6 +96,17 @@ export interface Post {
   caption: string;
   hashtags: string[];
   property?: PropertyRef;
+  /**
+   * Canonical MLS# parsed from the caption (or set manually via the inline
+   * editor). Three accepted forms:
+   *   - "NJBL2078123" (Bright)
+   *   - "CMC230456"   (CMC, Paragon)
+   *   - "SJSR571832"  (SJSR, Paragon)
+   *
+   * May be set even when `property` is undefined (Larissa hashtagged a listing
+   * RETS hasn't synced yet — auto-link fires on the next RETS sync).
+   */
+  mls_number_parsed?: string;
   /** Editorial classification. May be undefined for unclassified posts. */
   category?: PostCategory;
   /** Agent name when category is 'agent' (agent-promotion posts). */

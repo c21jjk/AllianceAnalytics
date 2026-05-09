@@ -4,12 +4,17 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createListing, updateListing } from "@/lib/listings";
+import {
+  extractMlsNumber,
+  parseCanonicalMls,
+} from "@/lib/linker/auto-linker";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type {
   ActiveListingInsert,
   ListingStatus,
   MlsSource,
 } from "@/lib/supabase/listings-types";
+import type { Database } from "@/lib/supabase/types";
 
 const VALID_STATUS: ListingStatus[] = [
   "active",
@@ -73,6 +78,7 @@ async function replicateToAnalytics(
     list_agent_email: string | null;
     hero_image_url: string | null;
     status: ListingStatus;
+    source_mls: MlsSource;
   },
 ): Promise<void> {
   try {
@@ -96,6 +102,7 @@ async function replicateToAnalytics(
           agent_email: listing.list_agent_email,
           hero_image_url: listing.hero_image_url,
           status: propertyStatus,
+          source_mls: listing.source_mls,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "mls_number" },
@@ -151,6 +158,7 @@ export async function createListingAction(
     list_agent_email: result.row.list_agent_email,
     hero_image_url: result.row.hero_image_url,
     status: result.row.status,
+    source_mls: result.row.source_mls,
   });
 
   // Best-effort: run the auto-linker so any unlinked posts mentioning this
@@ -204,6 +212,7 @@ export async function updateListingAction(
     list_agent_email: result.row.list_agent_email,
     hero_image_url: result.row.hero_image_url,
     status: result.row.status,
+    source_mls: result.row.source_mls,
   });
 
   revalidatePath("/listings");
@@ -297,4 +306,176 @@ export async function classifyPostAction(form: FormData): Promise<{
   revalidatePath(`/posts/${postId}`);
   revalidatePath("/posts");
   return { ok: true };
+}
+
+/**
+ * Set or clear the MLS number on a single post.
+ *
+ * Accepts any of the three hashtag conventions:
+ *   - Bright: NJBL2078123 (with or without `#`)
+ *   - CMC:    CMC230456   (with or without `#`)
+ *   - SJSR:   SJSR571832  (with or without `#`)
+ *
+ * Behavior:
+ *   - Stores the canonical form in posts.mls_number_parsed.
+ *   - Looks up the matching properties row by (source_mls, raw mls_number);
+ *     if found, sets posts.property_id + link_method='manual'.
+ *   - If a property row is found AND posts.category IN (NULL, 'other'), flips
+ *     category to 'property'. (Never overrides an admin's deliberate choice.)
+ *   - If no property row exists yet (e.g., RETS hasn't synced this listing
+ *     today), the MLS# is still stored on the post — the next RETS sync's
+ *     run_auto_linker call will attach the property_id.
+ *   - Empty input clears: mls_number_parsed, property_id, link_method.
+ *
+ * Used by the inline `MlsNumberInline` chip on PostListRow + the post detail
+ * page header.
+ */
+export interface SetPostMlsResult {
+  ok: boolean;
+  error?: string;
+  /** Canonical MLS form stored on the post (e.g. "CMC230456"), or null when cleared. */
+  canonical_mls?: string | null;
+  /** Property uuid when a matching row was found; null when only the text was stored. */
+  property_id?: string | null;
+  /** True when category was auto-flipped to 'property' as part of this save. */
+  category_flipped?: boolean;
+  /** True when a property row WAS found and linked. */
+  linked?: boolean;
+}
+
+export async function setPostMlsNumber(
+  postId: string,
+  rawInput: string,
+): Promise<SetPostMlsResult> {
+  await requireAdmin();
+  if (!postId) return { ok: false, error: "Missing post id" };
+
+  const trimmed = (rawInput ?? "").trim();
+  const supabase = createAdminClient();
+
+  // Empty → clear everything MLS-related on the post.
+  if (trimmed.length === 0) {
+    const { error } = await supabase
+      .from("posts")
+      .update({
+        mls_number_parsed: null,
+        property_id: null,
+        link_method: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", postId);
+    if (error) return { ok: false, error: error.message };
+    revalidatePath(`/posts/${postId}`);
+    revalidatePath("/posts");
+    revalidatePath("/");
+    revalidatePath("/properties");
+    return {
+      ok: true,
+      canonical_mls: null,
+      property_id: null,
+      linked: false,
+      category_flipped: false,
+    };
+  }
+
+  // Parse into canonical form. Reuse the linker's regex so admin entry behaves
+  // identically to caption parsing.
+  const canonical = extractMlsNumber(trimmed);
+  if (!canonical) {
+    return {
+      ok: false,
+      error:
+        `"${trimmed}" doesn't look like a recognized MLS#. Use NJBL2078123 ` +
+        "(Bright), CMC230456, or SJSR571832 — with or without the # prefix.",
+    };
+  }
+
+  const parsed = parseCanonicalMls(canonical);
+  if (!parsed) {
+    // extractMlsNumber and parseCanonicalMls are mirror images; this branch
+    // should be unreachable, but TypeScript needs the narrowing.
+    return { ok: false, error: "Could not parse MLS number." };
+  }
+
+  // Look up the matching properties row (best-effort — non-fatal if missing).
+  let propertyId: string | null = null;
+  let linked = false;
+
+  if (parsed.source_mls === "bright") {
+    const { data: prop } = await supabase
+      .from("properties")
+      .select("id")
+      .eq("mls_number", parsed.mls_number)
+      .maybeSingle();
+    if (prop) {
+      propertyId = prop.id;
+      linked = true;
+    }
+  } else {
+    // CMC/SJSR: match on (source_mls, mls_number) pair.
+    const { data: prop } = await supabase
+      .from("properties")
+      .select("id")
+      .eq("source_mls", parsed.source_mls)
+      .eq("mls_number", parsed.mls_number)
+      .maybeSingle();
+    if (prop) {
+      propertyId = prop.id;
+      linked = true;
+    }
+  }
+
+  // Determine if we should flip category to 'property'.
+  let categoryFlipped = false;
+  let categoryUpdate: "property" | undefined = undefined;
+  if (linked) {
+    const { data: existing } = await supabase
+      .from("posts")
+      .select("category")
+      .eq("id", postId)
+      .maybeSingle();
+    const cur = existing?.category ?? null;
+    if (cur === null || cur === "other") {
+      categoryUpdate = "property";
+      categoryFlipped = true;
+    }
+  }
+
+  const patch: Database["public"]["Tables"]["posts"]["Update"] = {
+    mls_number_parsed: canonical,
+    updated_at: new Date().toISOString(),
+  };
+  if (propertyId) {
+    patch.property_id = propertyId;
+    patch.link_method = "manual";
+    if (categoryUpdate) patch.category = categoryUpdate;
+  }
+
+  const { error } = await supabase
+    .from("posts")
+    .update(patch)
+    .eq("id", postId);
+  if (error) return { ok: false, error: error.message };
+
+  // Re-run the post grouper so the newly-linked post folds into any existing
+  // (date+property) group. Best-effort.
+  if (propertyId) {
+    try {
+      await supabase.rpc("run_post_grouper");
+    } catch (e) {
+      console.error("run_post_grouper (post-set-mls):", e);
+    }
+  }
+
+  revalidatePath(`/posts/${postId}`);
+  revalidatePath("/posts");
+  revalidatePath("/");
+  revalidatePath("/properties");
+  return {
+    ok: true,
+    canonical_mls: canonical,
+    property_id: propertyId,
+    linked,
+    category_flipped: categoryFlipped,
+  };
 }

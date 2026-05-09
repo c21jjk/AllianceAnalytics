@@ -59,6 +59,14 @@ export interface PostGroup {
   agent_name?: string;
   property?: PropertyRef;
   link_method?: PostLinkMethod;
+  /**
+   * Canonical MLS# parsed from at least one posting's caption (or set manually
+   * via the inline editor on any posting in the group). Three accepted forms:
+   * "NJBL2078123" (Bright), "CMC230456", "SJSR571832". Set even when
+   * `property` is undefined (the listing exists in our feed but RETS hasn't
+   * synced it yet).
+   */
+  mls_number_parsed?: string;
   is_locked: boolean;
   postings: PlatformPosting[];
   total_reach: number;

@@ -38,6 +38,7 @@ interface DbPostRow {
   group_id: string | null;
   metrics: Record<string, unknown> | null;
   platform_post_id: string | null;
+  mls_number_parsed: string | null;
 }
 
 interface DbGroupRow {
@@ -299,7 +300,7 @@ export async function getGroupsLastNDays(
     const { data: postRows, error: postErr } = await supabase
       .from("posts")
       .select(
-        "id, platform, permalink, thumbnail_url, media_url, media_type, caption, posted_at, agent_name, category, link_method, property_id, group_id, metrics, platform_post_id, office_id",
+        "id, platform, permalink, thumbnail_url, media_url, media_type, caption, posted_at, agent_name, category, link_method, property_id, group_id, metrics, platform_post_id, office_id, mls_number_parsed",
       )
       .or(orFilter)
       .order("posted_at", { ascending: false })
@@ -388,6 +389,10 @@ export async function getGroupsLastNDays(
           .map((r) => asLinkMethod(r.link_method))
           .find((m) => m !== undefined);
 
+        const mlsParsed = memberRows
+          .map((r) => r.mls_number_parsed)
+          .find((m) => m && m.length > 0) ?? undefined;
+
         const agentName = memberRows
           .map((r) => r.agent_name)
           .find((n) => n && n.length > 0) ?? undefined;
@@ -414,6 +419,7 @@ export async function getGroupsLastNDays(
           agent_name: agentName ?? undefined,
           property,
           link_method: linkMethod,
+          mls_number_parsed: mlsParsed,
           is_locked: g.is_locked,
           postings,
           total_reach: totalReach,
@@ -455,6 +461,7 @@ export async function getGroupsLastNDays(
         agent_name: row.agent_name ?? undefined,
         property,
         link_method: asLinkMethod(row.link_method),
+        mls_number_parsed: row.mls_number_parsed ?? undefined,
         is_locked: false,
         postings: [posting],
         total_reach: totalReach,

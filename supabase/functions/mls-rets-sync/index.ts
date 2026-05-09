@@ -551,6 +551,7 @@ async function replicateToProperties(
     agent_email: r.list_agent_email,
     hero_image_url: r.hero_image_url,
     status: r.status === "withdrawn" ? "expired" : r.status,
+    source_mls: r.source_mls,
     updated_at: new Date().toISOString(),
   }));
   const { error } = await client

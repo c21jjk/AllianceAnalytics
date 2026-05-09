@@ -12,6 +12,7 @@ import {
 } from "@/lib/format";
 import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
 import PropertyChip from "@/components/PropertyChip";
+import MlsNumberInline from "@/components/MlsNumberInline";
 import MetricSparkline from "@/components/MetricSparkline";
 import AiAnalysisPanel from "@/components/AiAnalysisPanel";
 import AiInsightStrip from "@/components/AiInsightStrip";
@@ -120,6 +121,24 @@ export default async function PostDetailPage({ params }: PageProps) {
                   <span className="text-xs text-neutral-400 capitalize">
                     · {post.media_type}
                   </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <MlsNumberInline
+                    postId={post.id}
+                    currentMls={post.mls_number_parsed ?? null}
+                    isLinked={Boolean(post.property)}
+                    compact={false}
+                    size="md"
+                  />
+                  {post.property ? (
+                    <>
+                      <span className="text-neutral-300" aria-hidden="true">
+                        ·
+                      </span>
+                      <PropertyChip property={post.property} />
+                    </>
+                  ) : null}
                 </div>
 
                 <p className="text-sm md:text-base text-neutral-900 leading-relaxed whitespace-pre-line">

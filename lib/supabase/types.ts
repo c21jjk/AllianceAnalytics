@@ -498,6 +498,7 @@ export type Database = {
           mls_number: string
           notes: string | null
           office_id: string | null
+          source_mls: string | null
           state: string | null
           status: Database["public"]["Enums"]["property_status"]
           updated_at: string
@@ -516,6 +517,7 @@ export type Database = {
           mls_number: string
           notes?: string | null
           office_id?: string | null
+          source_mls?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           updated_at?: string
@@ -534,6 +536,7 @@ export type Database = {
           mls_number?: string
           notes?: string | null
           office_id?: string | null
+          source_mls?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           updated_at?: string

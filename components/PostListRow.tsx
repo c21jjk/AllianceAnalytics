@@ -8,6 +8,7 @@ import {
 } from "@/lib/format";
 import PlatformBadge, { platformLabel } from "./PlatformBadge";
 import PropertyChip from "./PropertyChip";
+import MlsNumberInline from "./MlsNumberInline";
 import MetricCell from "./MetricCell";
 import MetricSparkline from "./MetricSparkline";
 
@@ -98,19 +99,20 @@ export default function PostListRow({ post }: PostListRowProps) {
               </p>
               <div className="mt-1.5 flex items-center gap-2 flex-wrap text-xs text-neutral-500">
                 <span>{formatRelativeTime(post.posted_at)}</span>
+                <span aria-hidden="true">·</span>
+                <MlsNumberInline
+                  postId={post.id}
+                  currentMls={post.mls_number_parsed ?? null}
+                  isLinked={Boolean(post.property)}
+                  compact
+                  size="sm"
+                />
                 {post.property ? (
                   <>
                     <span aria-hidden="true">·</span>
                     <PropertyChip property={post.property} />
                   </>
-                ) : (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="italic text-neutral-400">
-                      No property linked
-                    </span>
-                  </>
-                )}
+                ) : null}
               </div>
               {post.hashtags.length > 0 ? (
                 <div className="mt-1 text-[11px] text-neutral-400 truncate">

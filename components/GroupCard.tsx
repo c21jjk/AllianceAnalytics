@@ -5,6 +5,7 @@ import type { Platform } from "@/lib/types/post";
 import AiInsightStrip from "./AiInsightStrip";
 import GroupCardActions from "./GroupCardActions";
 import GroupCardMergeButton from "./GroupCardMergeButton";
+import MlsNumberInline from "./MlsNumberInline";
 import PlatformMetricCell from "./PlatformMetricCell";
 import PropertyChip from "./PropertyChip";
 
@@ -77,6 +78,15 @@ export default function GroupCard({ group }: GroupCardProps) {
                     <PersonIcon />
                     {group.agent_name}
                   </span>
+                ) : null}
+                {group.postings[0] ? (
+                  <MlsNumberInline
+                    postId={group.postings[0].post_id}
+                    currentMls={group.mls_number_parsed ?? null}
+                    isLinked={Boolean(group.property)}
+                    compact
+                    size="sm"
+                  />
                 ) : null}
                 {group.property ? (
                   <PropertyChip property={group.property} />
