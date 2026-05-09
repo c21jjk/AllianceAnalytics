@@ -223,11 +223,17 @@ function PlatformMetricLink({
   // Use the first posting on this platform as the click target. In the
   // overwhelmingly-common single-posting-per-platform case, that's exactly
   // right.
+  //
+  // No onClick / stopPropagation here — GroupCard is a server component and
+  // can't pass function props to <Link> (a client component). It's also
+  // unnecessary: the outer stretched <Link> is a SIBLING of the content
+  // wrapper, not an ancestor, so clicks on this inner Link don't bubble to
+  // it. pointer-events-auto on this element is what wins the hit test against
+  // the outer link's pointer-events-none subtree.
   const target = postings[0];
   return (
     <Link
       href={`/posts/${target.post_id}`}
-      onClick={(e) => e.stopPropagation()}
       className="pointer-events-auto block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/40 hover:opacity-90 transition"
       aria-label={`Open ${platform} post detail`}
     >

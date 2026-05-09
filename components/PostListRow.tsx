@@ -62,7 +62,6 @@ export default function PostListRow({ post }: PostListRowProps) {
             "group/thumb",
           )}
           aria-label={`Open original post on ${platformLabel(post.platform)}`}
-          onClick={(e) => e.stopPropagation()}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
