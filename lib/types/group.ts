@@ -49,6 +49,19 @@ export interface AiInsight {
   action_href?: string;
 }
 
+/** Audience attribution kind for a campaign. */
+export type AudienceScopeKind = "company" | "division" | "office";
+
+export interface AudienceScope {
+  kind: AudienceScopeKind;
+  /**
+   * For division: the division slug ("shore", "south_jersey").
+   * For office:   the office short_code ("WWC", "OCN", etc.).
+   * For company:  null/undefined.
+   */
+  value?: string | null;
+}
+
 export interface PostGroup {
   id: string;
   /** YYYY-MM-DD */
@@ -57,7 +70,17 @@ export interface PostGroup {
   representative_thumbnail?: string;
   category?: PostCategory;
   agent_name?: string;
+  /** Single-property convenience (back-compat). Equal to properties[0] when present. */
   property?: PropertyRef;
+  /**
+   * All linked properties. When `post_groups.property_ids` is set this is the
+   * authoritative list (Open House campaigns with multiple homes). When empty
+   * we fall back to the union of member posts' property_id values, so the
+   * single-property auto-linker keeps working.
+   */
+  properties: PropertyRef[];
+  /** Audience attribution from post_groups.audience_scope. Null when unscoped. */
+  audience_scope?: AudienceScope | null;
   link_method?: PostLinkMethod;
   /**
    * Canonical MLS# parsed from at least one posting's caption (or set manually

@@ -48,8 +48,25 @@ interface DbGroupRow {
   representative_thumbnail: string | null;
   category: string | null;
   property_id: string | null;
+  property_ids: string[] | null;
+  audience_scope: string | null;
   is_locked: boolean;
   group_method: string;
+}
+
+/** Parse the on-wire `audience_scope` string into a typed AudienceScope. */
+function parseAudienceScope(
+  raw: string | null,
+): import("@/lib/types/group").AudienceScope | null {
+  if (!raw) return null;
+  if (raw === "company") return { kind: "company" };
+  if (raw.startsWith("division:")) {
+    return { kind: "division", value: raw.slice("division:".length) };
+  }
+  if (raw.startsWith("office:")) {
+    return { kind: "office", value: raw.slice("office:".length) };
+  }
+  return null;
 }
 
 interface DbPropertyRow {
@@ -279,7 +296,7 @@ export async function getGroupsLastNDays(
     const { data: groupRows, error: groupErr } = await supabase
       .from("post_groups")
       .select(
-        "id, posted_date, representative_caption, representative_thumbnail, category, property_id, is_locked, group_method",
+        "id, posted_date, representative_caption, representative_thumbnail, category, property_id, property_ids, audience_scope, is_locked, group_method",
       )
       .gte("posted_date", cutoffDate)
       .order("posted_date", { ascending: false })
@@ -329,6 +346,7 @@ export async function getGroupsLastNDays(
     const propIds = new Set<string>();
     for (const g of groups) {
       if (g.property_id) propIds.add(g.property_id);
+      if (g.property_ids) for (const id of g.property_ids) propIds.add(id);
     }
     for (const p of posts) {
       if (p.property_id) propIds.add(p.property_id);
@@ -410,6 +428,19 @@ export async function getGroupsLastNDays(
           memberRows.find((r) => r.media_url)?.media_url ??
           undefined;
 
+        // Build the multi-property list. When post_groups.property_ids is
+        // non-empty it's authoritative (Open House campaigns); otherwise
+        // fall back to the single derived `property` so existing data still
+        // populates an array of length 0 or 1.
+        const properties: PropertyRef[] =
+          g.property_ids && g.property_ids.length > 0
+            ? g.property_ids
+                .map((id) => propMap.get(id))
+                .filter((p): p is PropertyRef => !!p)
+            : property
+              ? [property]
+              : [];
+
         return {
           id: g.id,
           posted_date: postedDate,
@@ -418,6 +449,8 @@ export async function getGroupsLastNDays(
           category: asCategory(g.category),
           agent_name: agentName ?? undefined,
           property,
+          properties,
+          audience_scope: parseAudienceScope(g.audience_scope),
           link_method: linkMethod,
           mls_number_parsed: mlsParsed,
           is_locked: g.is_locked,
@@ -457,6 +490,10 @@ export async function getGroupsLastNDays(
         representative_caption: row.caption ?? "",
         representative_thumbnail:
           row.thumbnail_url ?? row.media_url ?? undefined,
+        // Singletons: no group-level property_ids[] yet, so reflect single
+        // property into the array.
+        properties: property ? [property] : [],
+        audience_scope: null,
         category: asCategory(row.category),
         agent_name: row.agent_name ?? undefined,
         property,

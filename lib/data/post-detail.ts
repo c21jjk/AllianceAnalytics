@@ -410,6 +410,11 @@ export async function fetchGroupDetailBundleForPost(
     category,
     agent_name: agentName ?? undefined,
     property,
+    // Multi-property + audience_scope: groupBuilder here doesn't yet read the
+    // post_groups columns; falls back to single-property array. Right rail
+    // build-out will replace this with a proper fetch.
+    properties: property ? [property] : [],
+    audience_scope: null,
     link_method: linkMethod,
     mls_number_parsed: mlsParsed,
     is_locked: group?.is_locked ?? false,
