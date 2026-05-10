@@ -178,8 +178,18 @@ export default function GroupCard({
             />
           </div>
 
-          {/* AI insight strip */}
-          <AiInsightStrip insight={group.ai_insight} />
+          {/* AI insight strip — live coaching from Opus 4.6, scoped to the
+              office market profile + cross-platform siblings + agent/office
+              baselines. The strip handles its own loading skeleton + 30-min
+              client cache, and silently hides if Anthropic isn't configured. */}
+          {primaryPosting ? (
+            <AiInsightStrip
+              postId={primaryPosting.post_id}
+              insight={group.ai_insight}
+            />
+          ) : (
+            <AiInsightStrip insight={group.ai_insight} />
+          )}
         </div>
 
         {/* Right rail — housekeeping (multi-MLS, audience scope, status) */}

@@ -86,8 +86,8 @@ export async function isAnthropicConfigured(): Promise<boolean> {
 
 /** Models pinned for this codebase. */
 export const ANTHROPIC_MODELS = {
-  /** Fast, cheap — used for per-post insights and analysis. */
-  sonnet: "claude-sonnet-4-5-20250929",
-  /** Heavyweight — used for /coach long-form strategy plans. */
-  opus: "claude-opus-4-1-20250805",
+  /** Fast, cheap — used for batch / low-stakes calls. */
+  sonnet: "claude-sonnet-4-6",
+  /** Heavyweight coaching — per-post insights and /coach long-form plans. */
+  opus: "claude-opus-4-6",
 } as const;

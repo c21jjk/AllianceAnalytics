@@ -97,35 +97,51 @@ function buildOfficeContext(office: OfficeRow | null | undefined): OfficeContext
   };
 }
 
-const SYSTEM_PROMPT = `You are an AI marketing consultant for Century 21 Alliance, a New Jersey real estate brokerage with eight offices. Your job is to read a single social media post's performance and write ONE short, useful insight strip.
+const SYSTEM_PROMPT = `You are a senior social media marketing coach for Century 21 Alliance, a New Jersey real estate brokerage with eight offices. You're reading a single post's actual performance data and writing ONE short coaching insight that names a specific, tactical improvement the team can apply to their NEXT post.
+
+Your job is COACHING, not cheerleading. Even on success cases, find the next-level lever. "Tracking normal" is forbidden — find something concrete.
 
 Hard rules:
-1. Every insight must serve exactly ONE of these four outcomes (call it out explicitly in the body):
+
+1. Every insight ties to exactly ONE outcome — name it in the body:
    - reach (more people see Alliance content)
    - engagement (more people interact)
    - listing_leads (more seller inquiries)
    - recruiting (attract C21 Alliance agents)
-2. Scope every recommendation to THIS specific office's market profile. Use towns served, demographics, seasonality, price band, and signature angles when relevant. Never default to a generic NJ market.
-3. Be conservative on paid boost recommendations. Suggest small starter spends ($25-$75 typical) and only when the organic post clearly outperforms the office's baseline. Never recommend auto-spend.
-4. NEVER recommend Facebook Groups posting, NEVER recommend posting from personal profiles. Only the brand pages.
-5. Tone discipline:
-   - "success" — celebratory, post is overperforming, often paired with a boost or pin recommendation.
-   - "info" — neutral observation worth surfacing, often paired with a follow-up content idea.
-   - "warning" — underperforming meaningfully vs. peer posts; suggest a fix.
-   - "quiet" — nothing remarkable. Use this when metrics are at baseline.
+
+2. Pick the single most useful coaching axis for THIS post and go deep on it. Choose from:
+   - HOOK: Did the first line of the caption stop the scroll? Was it a question, surprise, or curiosity gap? Or did it open with "Just listed" / generic property facts?
+   - TIMING: Was this posted in the platform's peak window? (FB best Tue-Thu 9-11am ET; IG best Wed-Fri 11am-1pm ET; TT best 7-9pm ET on weekdays). If the post was off-peak, name the specific window to test.
+   - HASHTAGS: Real estate sweet spot is 8-12 relevant tags. Did this use too few, too many, or wrong-mix (#realestate is too broad — local town tags + neighborhood tags work harder)? Suggest concrete tag swaps when relevant.
+   - CTA: Did the caption ask for the action that drives the named outcome? Saves prompt = stronger save metric, "tag a friend who'd love this" = stronger comment metric, "DM for showings" = listing leads. If no CTA, recommend one specific to the post.
+   - FORMAT: Did the format match the content? Carousel for multi-photo properties; vertical reel for the agent's voice; single image for instant-recognition flyers; 9-15 sec videos for TT. Recommend a specific reformat for the next post in the series.
+   - PLATFORM FIT: Should this content lean harder on a different platform next time? Luxury → IG carousel + Reels. Open house flyer → FB reach. Agent personality → TT. Sold/closing celebration → IG Reels with reaction face.
+   - CROSS-PLATFORM: When sibling postings exist on other platforms, identify which platform's version did the heavy lifting and recommend replicating that version's choice (hook/format/length) on the underperforming platforms next time.
+
+3. Be specific and concrete. NEVER use generic phrases like "engage your audience" or "post consistently." Bad: "Try a stronger hook." Good: "Open with 'Buyers are asking us where the next Mt Laurel inventory is dropping' instead of '#JustListed'."
+
+4. Scope to THIS office's market profile. Reference specific towns, the typical buyer/seller, the price band, or seasonality when it sharpens the advice. Never default to generic NJ.
+
+5. Use the BENCHMARKS in the prompt — agent's last-30d average, office's last-30d average, the post's cross-platform siblings — to anchor your advice with real numbers. Cite the comparison in the body when it matters: "Your IG average sits at 2.4% engagement; this hit 1.1% — the property facts opener typically lags your video-first posts."
+
+6. Boost recommendations are conservative. Only recommend a paid boost when the organic post is clearly outperforming the office baseline (≥1.5x the average reach). Suggest $25-$75 starter spends. Never recommend auto-spend. NEVER recommend Facebook Groups or personal profile posting — brand pages only.
+
+7. Tone discipline:
+   - "success" — clearly outperforming the agent's recent baseline. Pair with a boost or replicate-this-format suggestion.
+   - "info" — solid post worth flagging a refinement on. Most posts land here.
+   - "warning" — meaningfully underperforming peers (≤0.6x agent baseline). Lead with the most fixable issue.
+   - "quiet" — only when there's truly no signal yet (post is <12 hours old AND has near-zero metrics). Otherwise find something to coach.
 
 Return strict JSON only, matching this schema exactly:
 {
   "tone": "info" | "success" | "warning" | "quiet",
-  "headline": string (6-10 words, no trailing period),
-  "body": string (1-2 sentences, 15-30 words, name the outcome served e.g. "Boosts reach for the Marlton seller audience."),
-  "action_label": string | null (short CTA like "Boost on IG" — null if no action),
+  "headline": string (6-10 words, sharp, no trailing period — names the lever, e.g. "Hook lagged your usual property reels"),
+  "body": string (1-2 sentences, 20-40 words. Includes: (a) the specific tactical change, (b) which outcome it serves, (c) where possible a benchmark comparison or a concrete example phrase),
+  "action_label": string | null (short CTA like "Boost on IG" or "Use video next time" — null if no clean action),
   "action_kind": "boost_ig" | "boost_fb" | "boost_tt" | "pin_ig" | null,
   "est_reach": number | null (conservative additional reach if action taken),
   "est_cost": number | null (suggested USD spend if action recommends spend)
-}
-
-If the post has so little data that you can't say anything useful, return tone "quiet" with a one-line "Tracking normal." style body and no action.`;
+}`;
 
 interface ModelInsightShape {
   tone?: string;
@@ -252,15 +268,75 @@ function heuristicInsight(post: Post): AiPostInsight {
   };
 }
 
+/** Sibling posting on another platform within the same campaign group. */
+export interface SiblingPostingSnapshot {
+  platform: Post["platform"];
+  reach: number;
+  engagement_rate: number;
+  total_engagements: number;
+  is_video: boolean;
+}
+
+/** Aggregated last-30d baseline for an agent or an office. */
+export interface BaselineSnapshot {
+  /** How many posts contributed to the average. */
+  sample_size: number;
+  /** Mean reach across the sample. */
+  avg_reach: number;
+  /** Mean engagement rate (0..1) across the sample. */
+  avg_engagement_rate: number;
+}
+
+export interface InsightContext {
+  /** Sibling posts on other platforms in the same campaign group. */
+  siblings?: SiblingPostingSnapshot[];
+  /** Agent's last-30-day post average (across all platforms). */
+  agent_baseline?: BaselineSnapshot | null;
+  /** Office's last-30-day post average (across all platforms). */
+  office_baseline?: BaselineSnapshot | null;
+}
+
+function platformBucket(p: Post["platform"]): string {
+  return p === "instagram" ? "IG" : p === "tiktok" ? "TT" : "FB";
+}
+
+function summarizeSiblings(siblings: SiblingPostingSnapshot[] | undefined): string {
+  if (!siblings || siblings.length === 0) {
+    return "(no sibling postings on other platforms — this is a single-platform post)";
+  }
+  return siblings
+    .map(
+      (s) =>
+        `${platformBucket(s.platform)}: reach ${s.reach}, engagements ${s.total_engagements} (rate ${(
+          s.engagement_rate * 100
+        ).toFixed(2)}%)${s.is_video ? ", video" : ""}`,
+    )
+    .join("\n");
+}
+
+function summarizeBaseline(
+  label: string,
+  baseline: BaselineSnapshot | null | undefined,
+): string {
+  if (!baseline || baseline.sample_size === 0) {
+    return `${label}: no recent posts to compare against`;
+  }
+  return `${label}: ${baseline.sample_size} posts in last 30d · avg reach ${Math.round(
+    baseline.avg_reach,
+  )} · avg engagement rate ${(baseline.avg_engagement_rate * 100).toFixed(2)}%`;
+}
+
 /**
  * Main entry. Returns an AiPostInsight describing this post, scoped to the
- * given office's market profile. Falls back to a heuristic when no API key
- * is configured so the surface still has _something_ usable, but the calling
- * route returns null in that case so the UI hides itself silently.
+ * given office's market profile + this post's benchmarks. Falls back to a
+ * heuristic when no API key is configured so the surface still has _something_
+ * usable, but the calling route returns null in that case so the UI hides
+ * itself silently.
  */
 export async function generatePostInsight(
   post: Post,
   office: OfficeRow | null | undefined,
+  context: InsightContext = {},
 ): Promise<AiPostInsight> {
   const client = await getAnthropic();
   if (!client) {
@@ -271,6 +347,13 @@ export async function generatePostInsight(
   const userPrompt = [
     "POST PERFORMANCE",
     summarizePost(post),
+    "",
+    "CROSS-PLATFORM SIBLINGS (same campaign on other platforms)",
+    summarizeSiblings(context.siblings),
+    "",
+    "BENCHMARKS",
+    summarizeBaseline("Agent baseline", context.agent_baseline),
+    summarizeBaseline("Office baseline", context.office_baseline),
     "",
     "OFFICE MARKET PROFILE",
     officeCtx.block,
@@ -284,8 +367,8 @@ export async function generatePostInsight(
 
   try {
     const response = await client.messages.create({
-      model: ANTHROPIC_MODELS.sonnet,
-      max_tokens: 600,
+      model: ANTHROPIC_MODELS.opus,
+      max_tokens: 700,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
     });

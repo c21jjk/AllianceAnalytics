@@ -15,8 +15,14 @@ import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { getPostById } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { generatePostInsight } from "@/lib/ai/insight";
+import {
+  generatePostInsight,
+  type BaselineSnapshot,
+  type InsightContext,
+  type SiblingPostingSnapshot,
+} from "@/lib/ai/insight";
 import { isAnthropicConfigured } from "@/lib/ai/anthropic";
+import type { Platform } from "@/lib/types/post";
 
 export const dynamic = "force-dynamic";
 
@@ -116,7 +122,12 @@ export async function POST(request: Request) {
       }
     }
 
-    const insight = await generatePostInsight(post, office);
+    // Build the coaching context: cross-platform siblings + agent + office
+    // baselines. All three are optional — the prompt handles missing data
+    // gracefully — but the more we feed in, the sharper the insight.
+    const context = await buildInsightContext(supabase, post, postId);
+
+    const insight = await generatePostInsight(post, office, context);
     writeCache(postId, insight);
     return NextResponse.json({ insight, configured: true });
   } catch (e) {
@@ -126,5 +137,124 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Coaching context builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Pull cross-platform siblings + agent + office baselines for the model.
+ * All queries are best-effort; failures degrade to no-context rather than
+ * blocking the insight.
+ */
+async function buildInsightContext(
+  supabase: ReturnType<typeof createAdminClient>,
+  post: Awaited<ReturnType<typeof getPostById>>,
+  postId: string,
+): Promise<InsightContext> {
+  if (!post) return {};
+  const ctx: InsightContext = {};
+
+  try {
+    // Find this post's group_id, then fetch the other postings in the group.
+    const { data: thisRow } = await supabase
+      .from("posts")
+      .select("group_id, agent_name, office_id, posted_at")
+      .eq("id", postId)
+      .maybeSingle();
+
+    if (thisRow?.group_id) {
+      const { data: siblingRows } = await supabase
+        .from("posts")
+        .select("platform, metrics, media_type")
+        .eq("group_id", thisRow.group_id)
+        .neq("id", postId);
+      const siblings: SiblingPostingSnapshot[] = ((siblingRows ?? []) as Array<{
+        platform: Platform;
+        metrics: Record<string, unknown> | null;
+        media_type: string | null;
+      }>).map((r) => {
+        const m = (r.metrics ?? {}) as Record<string, unknown>;
+        const reach = Number(m.reach ?? 0) || 0;
+        const eng =
+          (Number(m.likes ?? 0) || 0) +
+          (Number(m.comments ?? 0) || 0) +
+          (Number(m.shares ?? 0) || 0) +
+          (Number(m.saves ?? 0) || 0);
+        const rate = reach > 0 ? eng / reach : 0;
+        return {
+          platform: r.platform,
+          reach,
+          engagement_rate: rate,
+          total_engagements: eng,
+          is_video:
+            r.media_type === "video" || r.media_type === "reel",
+        };
+      });
+      if (siblings.length > 0) ctx.siblings = siblings;
+    }
+
+    const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
+
+    // Agent baseline — average reach + engagement rate across the same agent's
+    // last 30d of posts (excluding this one).
+    if (thisRow?.agent_name) {
+      const { data: agentRows } = await supabase
+        .from("posts")
+        .select("metrics, posted_at")
+        .eq("agent_name", thisRow.agent_name)
+        .neq("id", postId);
+      ctx.agent_baseline = aggregateBaseline(agentRows, cutoff);
+    }
+
+    // Office baseline — same shape, scoped to office_id.
+    if (thisRow?.office_id) {
+      const { data: officeRows } = await supabase
+        .from("posts")
+        .select("metrics, posted_at")
+        .eq("office_id", thisRow.office_id)
+        .neq("id", postId);
+      ctx.office_baseline = aggregateBaseline(officeRows, cutoff);
+    }
+  } catch (e) {
+    console.error("[insight] buildInsightContext failed:", e);
+  }
+
+  return ctx;
+}
+
+function aggregateBaseline(
+  rows: unknown,
+  cutoffIso: string,
+): BaselineSnapshot | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  let count = 0;
+  let totalReach = 0;
+  let totalRate = 0;
+  for (const r of rows as Array<{
+    metrics: Record<string, unknown> | null;
+    posted_at: string | null;
+  }>) {
+    if (!r.posted_at || r.posted_at < cutoffIso) continue;
+    const m = (r.metrics ?? {}) as Record<string, unknown>;
+    const reach = Number(m.reach ?? 0) || 0;
+    if (reach === 0) continue; // skip zero-reach posts to avoid skewing low
+    const eng =
+      (Number(m.likes ?? 0) || 0) +
+      (Number(m.comments ?? 0) || 0) +
+      (Number(m.shares ?? 0) || 0) +
+      (Number(m.saves ?? 0) || 0);
+    const rate = eng / reach;
+    totalReach += reach;
+    totalRate += rate;
+    count++;
+  }
+  if (count === 0) return null;
+  return {
+    sample_size: count,
+    avg_reach: totalReach / count,
+    avg_engagement_rate: totalRate / count,
+  };
 }
 
