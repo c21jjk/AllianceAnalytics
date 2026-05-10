@@ -13,6 +13,11 @@ interface SyncResult {
   duration_ms: number;
 }
 
+interface GrouperResult {
+  groups_created: number;
+  posts_assigned: number;
+}
+
 interface SyncNowButtonProps {
   className?: string;
 }
@@ -35,14 +40,18 @@ interface SyncNowButtonProps {
 export default function SyncNowButton({ className }: SyncNowButtonProps) {
   const [isPending, startTransition] = useTransition();
   const [results, setResults] = useState<SyncResult[] | null>(null);
+  const [grouper, setGrouper] = useState<GrouperResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function handleClick() {
     setError(null);
+    setResults(null);
+    setGrouper(null);
     startTransition(async () => {
       try {
         const r = await syncAll();
-        setResults(r);
+        setResults(r.results);
+        setGrouper(r.grouper);
       } catch (e) {
         setError((e as Error).message);
       }
@@ -59,16 +68,17 @@ export default function SyncNowButton({ className }: SyncNowButtonProps) {
           "btn-secondary text-xs px-3 py-1.5",
           "inline-flex items-center gap-1.5",
         )}
+        title="Trigger an immediate sync of FB, IG, and TT, then run the cross-platform grouper"
       >
         {isPending ? (
           <>
             <Spinner />
-            Syncing…
+            Syncing FB · IG · TT…
           </>
         ) : (
           <>
             <SyncIcon />
-            Sync now
+            Sync all platforms
           </>
         )}
       </button>
@@ -90,6 +100,12 @@ export default function SyncNowButton({ className }: SyncNowButtonProps) {
               {r.ok ? `+${r.inserted} new, ${r.updated} updated` : "failed"}
             </div>
           ))}
+          {grouper ? (
+            <div className="text-neutral-400 pt-0.5 border-t border-neutral-100">
+              merged: +{grouper.groups_created} groups,{" "}
+              {grouper.posts_assigned} posts
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -10,6 +10,7 @@ import NeedsPostsRow from "@/components/NeedsPostsRow";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
+import SyncNowButton from "@/components/SyncNowButton";
 import TimeRangeToggle from "@/components/TimeRangeToggle";
 
 export const metadata = {
@@ -39,7 +40,7 @@ interface HomePageProps {
  * (intercepted (.)posts/[id] route).
  */
 export default async function HomePage({ searchParams }: HomePageProps) {
-  await requireUser();
+  const profile = await requireUser();
   const { range, office, view } = await searchParams;
   const days = parseRange(range);
   const currentView: View = view === "list" ? "list" : "grouped";
@@ -95,7 +96,10 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         />
       ) : null}
 
-      <AccountSyncBar health={accountHealth} />
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <AccountSyncBar health={accountHealth} className="flex-1 min-w-0" />
+        {profile.role === "admin" ? <SyncNowButton /> : null}
+      </div>
 
       <NeedsPostsRow
         listings={listingsNeedingPosts}

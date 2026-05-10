@@ -71,7 +71,12 @@ export async function syncOne(
   return result;
 }
 
-export async function syncAll(): Promise<EdgeFunctionResult[]> {
+export interface SyncAllResult {
+  results: EdgeFunctionResult[];
+  grouper: { groups_created: number; posts_assigned: number } | null;
+}
+
+export async function syncAll(): Promise<SyncAllResult> {
   await requireAdmin();
   // Sequential to spread API quota burn — also helps with debugging
   const results: EdgeFunctionResult[] = [];
@@ -89,8 +94,28 @@ export async function syncAll(): Promise<EdgeFunctionResult[]> {
       });
     }
   }
+
+  // After all three syncs, fire the cross-platform grouper so late
+  // arrivals from this run get folded into existing groups (the patched
+  // run_post_grouper has a "merge into existing groups" pass plus the
+  // original new-group creation pass).
+  let grouper: SyncAllResult["grouper"] = null;
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase.rpc("run_post_grouper");
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const row = data[0] as { groups_created?: number; posts_assigned?: number };
+      grouper = {
+        groups_created: Number(row.groups_created ?? 0),
+        posts_assigned: Number(row.posts_assigned ?? 0),
+      };
+    }
+  } catch (e) {
+    console.error("syncAll: grouper RPC failed —", e);
+  }
+
   revalidatePath("/", "layout");
-  return results;
+  return { results, grouper };
 }
 
 /**
