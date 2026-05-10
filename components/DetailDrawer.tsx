@@ -96,7 +96,7 @@ export default function DetailDrawer({
       <div
         ref={drawerRef}
         tabIndex={-1}
-        className="relative w-full max-w-3xl bg-white shadow-2xl border-l border-neutral-200 flex flex-col h-full focus:outline-none animate-slide-in"
+        className="relative w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl bg-white shadow-2xl border-l border-neutral-200 flex flex-col h-full focus:outline-none animate-slide-in"
       >
         {/* Sticky header */}
         <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-neutral-200 bg-white sticky top-0 z-10">
