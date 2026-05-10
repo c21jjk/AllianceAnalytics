@@ -382,3 +382,203 @@ function nextCronRunAt(platform: Platform, now: Date = new Date()): Date {
   const next = candidates.find((d) => d.getTime() > now.getTime());
   return next ?? candidates[candidates.length - 1];
 }
+
+// ---------------------------------------------------------------------------
+// Company analytics — top-of-dashboard KPI strip.
+// ---------------------------------------------------------------------------
+
+export interface CompanyAnalyticsTopCampaign {
+  group_id: string | null;
+  /** Post id used as the click target (drawer opens /posts/[primary_post_id]). */
+  primary_post_id: string;
+  caption: string | null;
+  reach: number;
+  engagement: number;
+  platforms: Platform[];
+}
+
+export interface CompanyAnalytics {
+  /** Sums for the current window. */
+  reach: number;
+  engagement: number;
+  engagement_rate: number; // 0..1 decimal
+  posts_published: number;
+  /** Same metrics for the previous window of equal length (for delta). */
+  prev_reach: number;
+  prev_engagement: number;
+  prev_engagement_rate: number;
+  prev_posts_published: number;
+  /** Day-by-day series across the current window for sparklines. */
+  daily: Array<{ date: string; reach: number; engagement: number }>;
+  /** Highest-reach group/solo in the current window — null if no posts. */
+  top_campaign: CompanyAnalyticsTopCampaign | null;
+}
+
+const EMPTY_ANALYTICS: CompanyAnalytics = {
+  reach: 0,
+  engagement: 0,
+  engagement_rate: 0,
+  posts_published: 0,
+  prev_reach: 0,
+  prev_engagement: 0,
+  prev_engagement_rate: 0,
+  prev_posts_published: 0,
+  daily: [],
+  top_campaign: null,
+};
+
+/**
+ * Aggregate posts metrics over a window for the top-of-dashboard KPI strip.
+ * Pulls posts in the prior 2*days range, splits into current + prior periods,
+ * and computes totals + deltas. Also computes the top campaign by reach.
+ */
+export async function fetchCompanyAnalytics(opts: {
+  days: number;
+  office_short_code?: string | null;
+}): Promise<CompanyAnalytics> {
+  try {
+    const supabase = createAdminClient();
+    const now = new Date();
+    const cutoffNow = new Date(now.getTime() - opts.days * 86400_000);
+    const cutoffPrev = new Date(now.getTime() - 2 * opts.days * 86400_000);
+
+    let officeFilterId: string | null = null;
+    if (opts.office_short_code) {
+      const { data: officeRow } = await supabase
+        .from("offices")
+        .select("id")
+        .eq("short_code", opts.office_short_code)
+        .maybeSingle();
+      if (!officeRow) return EMPTY_ANALYTICS;
+      officeFilterId = officeRow.id;
+    }
+
+    let query = supabase
+      .from("posts")
+      .select("id, posted_at, group_id, caption, platform, metrics, office_id")
+      .gte("posted_at", cutoffPrev.toISOString());
+    if (officeFilterId) {
+      query = query.eq("office_id", officeFilterId);
+    }
+    const { data, error } = await query;
+    if (error || !data) return EMPTY_ANALYTICS;
+
+    const cutoffNowMs = cutoffNow.getTime();
+    type Row = (typeof data)[number];
+    const currentPosts: Row[] = [];
+    const priorPosts: Row[] = [];
+    for (const p of data) {
+      if (!p.posted_at) continue;
+      const t = new Date(p.posted_at).getTime();
+      if (t >= cutoffNowMs) currentPosts.push(p);
+      else priorPosts.push(p);
+    }
+
+    function readMetrics(m: unknown): { reach: number; eng: number } {
+      const obj = (m && typeof m === "object" ? m : {}) as Record<string, unknown>;
+      const reach = Number(obj.reach ?? 0) || 0;
+      const eng =
+        (Number(obj.likes ?? 0) || 0) +
+        (Number(obj.comments ?? 0) || 0) +
+        (Number(obj.shares ?? 0) || 0) +
+        (Number(obj.saves ?? 0) || 0);
+      return { reach, eng };
+    }
+
+    function aggregate(rows: Row[]): { reach: number; eng: number; count: number } {
+      let reach = 0;
+      let eng = 0;
+      for (const p of rows) {
+        const m = readMetrics(p.metrics);
+        reach += m.reach;
+        eng += m.eng;
+      }
+      return { reach, eng, count: rows.length };
+    }
+
+    const cur = aggregate(currentPosts);
+    const prv = aggregate(priorPosts);
+
+    // Daily series for sparklines.
+    const daily: Array<{ date: string; reach: number; engagement: number }> = [];
+    const dayKeys: string[] = [];
+    const dayMap = new Map<string, { reach: number; engagement: number }>();
+    for (let i = 0; i < opts.days; i++) {
+      const d = new Date(cutoffNow.getTime() + i * 86400_000);
+      const key = d.toISOString().slice(0, 10);
+      dayKeys.push(key);
+      dayMap.set(key, { reach: 0, engagement: 0 });
+    }
+    for (const p of currentPosts) {
+      const day = new Date(p.posted_at!).toISOString().slice(0, 10);
+      const entry = dayMap.get(day);
+      if (entry) {
+        const m = readMetrics(p.metrics);
+        entry.reach += m.reach;
+        entry.engagement += m.eng;
+      }
+    }
+    for (const k of dayKeys) {
+      const v = dayMap.get(k)!;
+      daily.push({ date: k, reach: v.reach, engagement: v.engagement });
+    }
+
+    // Top campaign (highest-reach group or solo post in current window).
+    interface CampAcc {
+      group_id: string | null;
+      primary_post_id: string;
+      caption: string | null;
+      reach: number;
+      engagement: number;
+      platforms: Set<Platform>;
+    }
+    const campMap = new Map<string, CampAcc>();
+    for (const p of currentPosts) {
+      const key = p.group_id ?? `solo-${p.id}`;
+      const m = readMetrics(p.metrics);
+      const existing = campMap.get(key);
+      if (existing) {
+        existing.reach += m.reach;
+        existing.engagement += m.eng;
+        existing.platforms.add(p.platform as Platform);
+      } else {
+        campMap.set(key, {
+          group_id: p.group_id ?? null,
+          primary_post_id: p.id,
+          caption: p.caption ?? null,
+          reach: m.reach,
+          engagement: m.eng,
+          platforms: new Set<Platform>([p.platform as Platform]),
+        });
+      }
+    }
+    const sorted = Array.from(campMap.values()).sort((a, b) => b.reach - a.reach);
+    const top = sorted[0] ?? null;
+    const top_campaign: CompanyAnalyticsTopCampaign | null = top
+      ? {
+          group_id: top.group_id,
+          primary_post_id: top.primary_post_id,
+          caption: top.caption,
+          reach: top.reach,
+          engagement: top.engagement,
+          platforms: Array.from(top.platforms),
+        }
+      : null;
+
+    return {
+      reach: cur.reach,
+      engagement: cur.eng,
+      engagement_rate: cur.reach > 0 ? cur.eng / cur.reach : 0,
+      posts_published: cur.count,
+      prev_reach: prv.reach,
+      prev_engagement: prv.eng,
+      prev_engagement_rate: prv.reach > 0 ? prv.eng / prv.reach : 0,
+      prev_posts_published: prv.count,
+      daily,
+      top_campaign,
+    };
+  } catch (e) {
+    console.error("fetchCompanyAnalytics error:", e);
+    return EMPTY_ANALYTICS;
+  }
+}

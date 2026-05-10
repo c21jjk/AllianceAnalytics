@@ -154,6 +154,18 @@ function fixturePropertySummaries(): PropertySummary[] {
   });
 }
 
+/**
+ * Top-of-dashboard KPI strip aggregates. Live DB always — no fixture
+ * fallback because an empty DB legitimately means "0 reach this week".
+ */
+export async function getCompanyAnalytics(opts: {
+  days: number;
+  office_short_code?: string | null;
+}) {
+  const { fetchCompanyAnalytics } = await import("./posts-db");
+  return fetchCompanyAnalytics(opts);
+}
+
 export async function getAccountHealth(): Promise<AccountHealth[]> {
   if (isForcedFixtures()) return FIXTURE_HEALTH;
   try {

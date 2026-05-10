@@ -9,15 +9,35 @@ interface TimeRangeToggleProps {
   className?: string;
 }
 
-const OPTIONS: Array<{ days: number; label: string }> = [
+interface RangeOption {
+  /** Token written to ?range= — number string, or "ytd". */
+  token: string;
+  /** Length of the window in days, used by parent component for queries. */
+  days: number;
+  /** Visible label. */
+  label: string;
+}
+
+/** Days from Jan 1 of the current calendar year through today, inclusive. */
+function ytdDays(now: Date = new Date()): number {
+  const startOfYear = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const diffMs = now.getTime() - startOfYear.getTime();
+  return Math.max(1, Math.ceil(diffMs / 86_400_000));
+}
+
+const FIXED_OPTIONS: Array<{ days: number; label: string }> = [
   { days: 7, label: "7d" },
   { days: 14, label: "14d" },
   { days: 30, label: "30d" },
+  { days: 90, label: "90d" },
 ];
 
 /**
- * Three-button segmented toggle that updates the ?range= query param on
- * the homepage. Server component above re-renders on the new URL.
+ * Segmented toggle that updates the ?range= query param. Tokens written to
+ * the URL are either the day count ("7", "30", "90") or "ytd". The parent
+ * server component is responsible for parsing the token back into a day
+ * count. The active button is highlighted by matching numeric `value` —
+ * YTD is matched when value equals the computed YTD day count.
  */
 export default function TimeRangeToggle({
   value,
@@ -26,9 +46,15 @@ export default function TimeRangeToggle({
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  function setRange(days: number) {
+  const ytd = ytdDays();
+  const options: RangeOption[] = [
+    ...FIXED_OPTIONS.map((o) => ({ token: String(o.days), ...o })),
+    { token: "ytd", days: ytd, label: "YTD" },
+  ];
+
+  function setRange(token: string) {
     const params = new URLSearchParams(searchParams?.toString() ?? "");
-    params.set("range", String(days));
+    params.set("range", token);
     router.push(`/?${params.toString()}`);
   }
 
@@ -41,13 +67,13 @@ export default function TimeRangeToggle({
       role="group"
       aria-label="Time range"
     >
-      {OPTIONS.map((opt) => {
+      {options.map((opt) => {
         const active = opt.days === value;
         return (
           <button
-            key={opt.days}
+            key={opt.token}
             type="button"
-            onClick={() => setRange(opt.days)}
+            onClick={() => setRange(opt.token)}
             className={clsx(
               "px-3 py-1 text-xs font-medium rounded-md transition",
               active

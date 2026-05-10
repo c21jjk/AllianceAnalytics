@@ -54,15 +54,13 @@ export default function NeedsPostsRow({
         </Link>
       </header>
 
-      <div className="overflow-x-auto -mx-1 px-1 pb-1">
-        <ul className="flex gap-3 min-w-min">
-          {listings.map((listing) => (
-            <li key={listing.id} className="shrink-0 w-[320px]">
-              <NeedsPostsCard listing={listing} />
-            </li>
-          ))}
-        </ul>
-      </div>
+      <ul className="space-y-1.5">
+        {listings.map((listing) => (
+          <li key={listing.id}>
+            <NeedsPostsCard listing={listing} />
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

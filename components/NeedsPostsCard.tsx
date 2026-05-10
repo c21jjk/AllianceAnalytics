@@ -80,12 +80,13 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
   return (
     <article
       className={clsx(
-        "h-full rounded-xl border border-neutral-200 bg-white shadow-card overflow-hidden flex flex-col",
+        "rounded-lg border border-neutral-200 bg-white shadow-sm flex items-center gap-2.5 px-2.5 py-2",
         isPending && "opacity-70",
         className,
       )}
     >
-      <div className="relative aspect-[16/9] bg-neutral-100">
+      {/* Tiny thumbnail (48x48) */}
+      <div className="relative w-12 h-12 shrink-0 rounded-md overflow-hidden bg-neutral-100">
         {listing.hero_image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -99,155 +100,157 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
           </div>
         )}
         {listing.office_short_code ? (
-          <span className="absolute top-2 left-2 inline-flex items-center rounded-md bg-neutral-900/85 backdrop-blur px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+          <span className="absolute bottom-0 left-0 right-0 bg-neutral-900/80 text-[8px] font-semibold uppercase tracking-wide text-white text-center leading-tight py-0.5">
             {listing.office_short_code}
           </span>
         ) : null}
-        <span className="absolute top-2 right-2 inline-flex items-center rounded-md bg-white/90 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-700">
-          {referenceLabel} {daysAgo}d ago
-        </span>
       </div>
 
-      <div className="flex-1 flex flex-col gap-2 p-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-neutral-900 truncate">
-            {listing.address ?? "Unknown address"}
-          </h3>
+      {/* Main info — single line on desktop, wraps gracefully on mobile */}
+      <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+        <Link
+          href={`/properties/${encodeURIComponent(listing.mls_number)}`}
+          className="text-sm font-semibold text-neutral-900 hover:text-neutral-700 truncate min-w-0"
+        >
+          {listing.address ?? "Unknown address"}
           {cityState ? (
-            <p className="text-[11px] text-neutral-500 truncate">{cityState}</p>
+            <span className="text-neutral-500 font-normal">, {cityState}</span>
           ) : null}
-        </div>
+        </Link>
 
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-neutral-900 tabular-nums">
-            {listing.list_price ? formatCurrency(listing.list_price) : "—"}
-          </span>
-          {listing.agent_name ? (
-            <span className="text-[11px] text-neutral-500 truncate max-w-[140px]">
-              {listing.agent_name}
-            </span>
-          ) : null}
-        </div>
+        <span className="text-sm font-semibold text-neutral-900 tabular-nums shrink-0">
+          {listing.list_price ? formatCurrency(listing.list_price) : "—"}
+        </span>
 
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-            Need:
-          </span>
-          {listing.missing_platforms.map((p) => (
-            <span
-              key={p}
-              className="inline-flex items-center gap-1 rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700"
-            >
-              <PlatformBadge platform={p} size="sm" />
-              {platformLabel(p)}
+        <span
+          className="text-[11px] text-neutral-500 shrink-0"
+          title={`${referenceLabel} ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`}
+        >
+          {daysAgo}d
+        </span>
+
+        {listing.missing_platforms.length > 0 ? (
+          <div className="flex items-center gap-0.5 shrink-0">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-500 mr-0.5">
+              Need:
             </span>
-          ))}
-        </div>
+            {listing.missing_platforms.map((p) => (
+              <span
+                key={p}
+                title={`Missing on ${platformLabel(p)}`}
+                className="inline-flex"
+              >
+                <PlatformBadge platform={p} size="sm" />
+              </span>
+            ))}
+          </div>
+        ) : null}
 
         <button
           type="button"
           onClick={handleCopyMls}
           className={clsx(
-            "inline-flex items-center justify-between gap-1.5 rounded-md px-2 py-1 text-[11px] font-mono",
+            "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-mono shrink-0",
             "border border-dashed border-neutral-300 bg-neutral-50 hover:bg-neutral-100",
             "text-neutral-700 transition-colors",
           )}
           title="Copy this hashtag and paste into your IG/TT/FB caption — the auto-linker will pick it up."
         >
-          <span className="truncate">{listing.mls_hashtag}</span>
-          <span className="text-[10px] uppercase tracking-wide font-semibold text-neutral-500">
-            {copyState === "copied" ? "Copied" : "Copy"}
+          <span className="truncate max-w-[140px]">{listing.mls_hashtag}</span>
+          <span className="text-[9px] uppercase tracking-wide font-semibold text-neutral-500">
+            {copyState === "copied" ? "✓" : "copy"}
           </span>
         </button>
-
-        <div className="mt-auto pt-2 border-t border-neutral-100 flex items-center justify-between gap-2">
-          <Link
-            href={`/properties/${encodeURIComponent(listing.mls_number)}`}
-            className="text-[11px] font-medium text-neutral-700 hover:text-neutral-900 underline-offset-2 hover:underline"
-          >
-            Open property
-          </Link>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((o) => !o)}
-              disabled={isPending}
-              className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-            >
-              Dismiss
-              <ChevronDown />
-            </button>
-            {menuOpen ? (
-              <div
-                role="menu"
-                className="absolute bottom-full right-0 mb-1 w-56 rounded-lg border border-neutral-200 bg-white shadow-lg z-10 p-1"
-              >
-                <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Why skip?
-                </p>
-                {REASON_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      if (opt.value === "other") {
-                        setShowOtherInput(true);
-                      } else {
-                        handleDismiss(opt.value);
-                      }
-                    }}
-                    className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-50"
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-                {showOtherInput ? (
-                  <div className="border-t border-neutral-100 p-2">
-                    <input
-                      type="text"
-                      autoFocus
-                      value={otherReason}
-                      onChange={(e) => setOtherReason(e.target.value)}
-                      placeholder="Reason..."
-                      className="w-full rounded-md border border-neutral-200 px-2 py-1 text-[11px] text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
-                      maxLength={200}
-                    />
-                    <div className="mt-1 flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          setShowOtherInput(false);
-                          setOtherReason("");
-                        }}
-                        className="text-[10px] text-neutral-500 hover:text-neutral-700 px-1.5 py-0.5"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleDismiss(otherReason.trim() || "other")
-                        }
-                        className="text-[10px] font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded px-1.5 py-0.5"
-                      >
-                        Confirm
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        {error ? (
-          <p className="text-[10px] text-red-700">{error}</p>
-        ) : null}
       </div>
+
+      {/* Right-side actions */}
+      <div className="flex items-center gap-1 shrink-0">
+        <Link
+          href={`/properties/${encodeURIComponent(listing.mls_number)}`}
+          className="text-[11px] font-medium text-neutral-700 hover:text-neutral-900 px-1.5 py-1 rounded hover:bg-neutral-100"
+        >
+          Open
+        </Link>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            disabled={isPending}
+            className="inline-flex items-center gap-0.5 rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            Dismiss
+            <ChevronDown />
+          </button>
+          {menuOpen ? (
+            <div
+              role="menu"
+              className="absolute top-full right-0 mt-1 w-56 rounded-lg border border-neutral-200 bg-white shadow-lg z-10 p-1"
+            >
+              <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+                Why skip?
+              </p>
+              {REASON_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (opt.value === "other") {
+                      setShowOtherInput(true);
+                    } else {
+                      handleDismiss(opt.value);
+                    }
+                  }}
+                  className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-50"
+                >
+                  {opt.label}
+                </button>
+              ))}
+              {showOtherInput ? (
+                <div className="border-t border-neutral-100 p-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={otherReason}
+                    onChange={(e) => setOtherReason(e.target.value)}
+                    placeholder="Reason..."
+                    className="w-full rounded-md border border-neutral-200 px-2 py-1 text-[11px] text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                    maxLength={200}
+                  />
+                  <div className="mt-1 flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setShowOtherInput(false);
+                        setOtherReason("");
+                      }}
+                      className="text-[10px] text-neutral-500 hover:text-neutral-700 px-1.5 py-0.5"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleDismiss(otherReason.trim() || "other")
+                      }
+                      className="text-[10px] font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded px-1.5 py-0.5"
+                    >
+                      Confirm
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? (
+        <p className="text-[10px] text-red-700 w-full mt-1 basis-full">{error}</p>
+      ) : null}
     </article>
   );
 }

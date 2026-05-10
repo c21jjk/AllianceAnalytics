@@ -1,9 +1,10 @@
 import { requireUser } from "@/lib/auth";
-import { getAccountHealth, getPosts } from "@/lib/data";
+import { getAccountHealth, getCompanyAnalytics, getPosts } from "@/lib/data";
 import { getGroupsLastNDays } from "@/lib/data/groups";
 import { getListingsNeedingPosts } from "@/lib/data/listings-needing-posts";
 import { listOffices } from "@/lib/data/offices";
 import AccountSyncBar from "@/components/AccountSyncBar";
+import CompanyAnalyticsStrip from "@/components/CompanyAnalyticsStrip";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
 import GroupCard from "@/components/GroupCard";
 import NeedsPostsRow from "@/components/NeedsPostsRow";
@@ -18,7 +19,7 @@ export const metadata = {
 };
 export const dynamic = "force-dynamic";
 
-const ALLOWED_RANGES = [7, 14, 30] as const;
+const ALLOWED_RANGES = [7, 14, 30, 90] as const;
 type View = "grouped" | "list";
 
 interface HomePageProps {
@@ -56,7 +57,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   // on every render — it's cheap (≤25 properties + a single posts.platform
   // count query) and catches new listings the moment the RETS sync replicates
   // them, which is the whole point.
-  const [groups, posts, accountHealth, listingsNeedingPosts] =
+  const [groups, posts, accountHealth, listingsNeedingPosts, companyAnalytics] =
     await Promise.all([
       currentView === "grouped"
         ? getGroupsLastNDays(days, { office_short_code: officeFilter })
@@ -66,6 +67,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         : Promise.resolve([]),
       getAccountHealth(),
       getListingsNeedingPosts({ office_short_code: officeFilter }),
+      getCompanyAnalytics({ days, office_short_code: officeFilter }),
     ]);
 
   const description =
@@ -96,6 +98,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         />
       ) : null}
 
+      <CompanyAnalyticsStrip data={companyAnalytics} days={days} />
+
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <AccountSyncBar health={accountHealth} className="flex-1 min-w-0" />
         {profile.role === "admin" ? <SyncNowButton /> : null}
@@ -124,6 +128,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
 }
 
 function parseRange(raw: string | undefined): number {
+  if (raw === "ytd") return ytdDays();
   const parsed = Number(raw);
   if (
     Number.isFinite(parsed) &&
@@ -132,6 +137,13 @@ function parseRange(raw: string | undefined): number {
     return parsed;
   }
   return 7;
+}
+
+/** Days from Jan 1 of the current year through today (UTC), inclusive. */
+function ytdDays(now: Date = new Date()): number {
+  const startOfYear = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const diffMs = now.getTime() - startOfYear.getTime();
+  return Math.max(1, Math.ceil(diffMs / 86_400_000));
 }
 
 function describeGroupedWindow(

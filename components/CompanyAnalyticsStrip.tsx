@@ -1,0 +1,236 @@
+import Link from "next/link";
+import clsx from "clsx";
+import type { CompanyAnalytics } from "@/lib/data/posts-db";
+import type { Platform } from "@/lib/types/post";
+import { formatCompactNumber } from "@/lib/format";
+import PlatformBadge from "./PlatformBadge";
+
+interface CompanyAnalyticsStripProps {
+  data: CompanyAnalytics;
+  /** Window length in days — surfaced in the strip subtitle. */
+  days: number;
+  className?: string;
+}
+
+/**
+ * Top-of-dashboard "at a glance" KPI strip.
+ *
+ * Five tiles, each a glance-able number with WoW delta + sparkline:
+ *   1. Reach            — sum of post.reach in window
+ *   2. Engagement       — sum of likes + comments + shares + saves
+ *   3. Engagement rate  — engagement / reach (filters viral spikes)
+ *   4. Posts published  — count of distinct posts (activity gauge)
+ *   5. Top campaign     — highest-reach merged group, click → drawer
+ *
+ * Designed for ADHD-friendly scan: big number, tiny label, no paragraphs.
+ * Each tile honours the dashboard office filter + time range automatically
+ * because the data is fetched server-side with those filters applied.
+ */
+export default function CompanyAnalyticsStrip({
+  data,
+  days,
+  className,
+}: CompanyAnalyticsStripProps) {
+  const reachDelta = pctDelta(data.reach, data.prev_reach);
+  const engagementDelta = pctDelta(data.engagement, data.prev_engagement);
+  const ratePctNow = data.engagement_rate * 100;
+  const ratePctPrev = data.prev_engagement_rate * 100;
+  const ratePointDelta = ratePctNow - ratePctPrev;
+  const postsDelta = pctDelta(data.posts_published, data.prev_posts_published);
+
+  const reachSeries = data.daily.map((d) => d.reach);
+  const engagementSeries = data.daily.map((d) => d.engagement);
+
+  return (
+    <section
+      className={clsx(
+        "grid grid-cols-2 lg:grid-cols-5 gap-2",
+        className,
+      )}
+      aria-label={`Company analytics for the last ${days} days`}
+    >
+      <Tile
+        label="Reach"
+        value={formatCompactNumber(data.reach)}
+        delta={reachDelta}
+        deltaLabel="vs prior period"
+        series={reachSeries}
+      />
+      <Tile
+        label="Engagement"
+        value={formatCompactNumber(data.engagement)}
+        delta={engagementDelta}
+        deltaLabel="vs prior period"
+        series={engagementSeries}
+      />
+      <Tile
+        label="Engagement rate"
+        value={`${ratePctNow.toFixed(2)}%`}
+        delta={ratePointDelta}
+        deltaLabel="pp vs prior"
+        deltaSuffix="pp"
+        series={null}
+      />
+      <Tile
+        label="Posts published"
+        value={String(data.posts_published)}
+        delta={postsDelta}
+        deltaLabel="vs prior period"
+        series={null}
+      />
+      <TopCampaignTile top={data.top_campaign} />
+    </section>
+  );
+}
+
+interface TileProps {
+  label: string;
+  value: string;
+  /** Delta as a number — interpreted as percent unless deltaSuffix is "pp". */
+  delta: number | null;
+  deltaLabel: string;
+  /** Suffix that follows the delta number. Default "%". */
+  deltaSuffix?: string;
+  /** When non-null, renders an inline sparkline. Pass null to omit. */
+  series: number[] | null;
+}
+
+function Tile({
+  label,
+  value,
+  delta,
+  deltaLabel,
+  deltaSuffix = "%",
+  series,
+}: TileProps) {
+  const arrow = delta == null ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
+  const tone =
+    delta == null
+      ? "text-neutral-400"
+      : delta > 0
+        ? "text-emerald-600"
+        : delta < 0
+          ? "text-rose-600"
+          : "text-neutral-500";
+  const deltaText =
+    delta == null
+      ? "—"
+      : `${arrow} ${Math.abs(delta).toFixed(deltaSuffix === "pp" ? 2 : 0)}${deltaSuffix}`;
+
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+            {label}
+          </div>
+          <div className="text-xl font-semibold text-neutral-900 leading-tight tabular-nums">
+            {value}
+          </div>
+        </div>
+        {series && series.some((v) => v > 0) ? (
+          <Sparkline values={series} className="text-gold-500" />
+        ) : null}
+      </div>
+      <div className={clsx("text-[11px] mt-1 truncate", tone)} title={deltaLabel}>
+        <span className="font-medium">{deltaText}</span>{" "}
+        <span className="text-neutral-400">{deltaLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+function TopCampaignTile({
+  top,
+}: {
+  top: CompanyAnalytics["top_campaign"];
+}) {
+  if (!top) {
+    return (
+      <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+          Top campaign
+        </div>
+        <div className="text-sm text-neutral-400 mt-1">No posts in window</div>
+      </div>
+    );
+  }
+
+  const captionPreview = (top.caption ?? "Untitled post")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+
+  return (
+    <Link
+      href={`/posts/${top.primary_post_id}`}
+      className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5 hover:border-gold-300 hover:shadow-card-hover transition flex flex-col"
+      aria-label={`Open top campaign: ${captionPreview}`}
+    >
+      <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+        Top campaign
+      </div>
+      <div className="text-sm font-medium text-neutral-900 leading-snug line-clamp-2 mt-0.5">
+        {captionPreview}
+        {(top.caption?.length ?? 0) > 60 ? "…" : ""}
+      </div>
+      <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-neutral-500">
+        <span className="font-semibold text-neutral-800 tabular-nums">
+          {formatCompactNumber(top.reach)}
+        </span>
+        <span>reach</span>
+        <span className="text-neutral-300">·</span>
+        <div className="flex items-center gap-0.5">
+          {top.platforms.map((p) => (
+            <PlatformBadge key={p} platform={p} size="sm" />
+          ))}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+/**
+ * Compact 32x14 sparkline. Renders dots when there's only one non-zero
+ * value to avoid drawing a single point as an empty path.
+ */
+function Sparkline({
+  values,
+  className,
+}: {
+  values: number[];
+  className?: string;
+}) {
+  if (values.length === 0) return null;
+  const max = Math.max(...values, 1);
+  const w = 56;
+  const h = 18;
+  const stepX = values.length > 1 ? w / (values.length - 1) : 0;
+  const points = values
+    .map((v, i) => `${(i * stepX).toFixed(2)},${(h - (v / max) * h).toFixed(2)}`)
+    .join(" ");
+
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      className={clsx("w-14 h-[18px] shrink-0", className)}
+      aria-hidden="true"
+    >
+      <polyline
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={points}
+      />
+    </svg>
+  );
+}
+
+function pctDelta(current: number, prev: number): number | null {
+  if (prev === 0) {
+    return current === 0 ? 0 : null;
+  }
+  return ((current - prev) / prev) * 100;
+}
