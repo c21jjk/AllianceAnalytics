@@ -547,6 +547,71 @@ export async function dismissListingPromotionAction(
 }
 
 /**
+ * Manual "yes, posts have been made for this listing" override. Sets
+ * posts_confirmed_at/by — the dashboard listing strip then surfaces a
+ * "POSTED ✓" ribbon and stops asking about it. Idempotent.
+ *
+ * Auto-detection of posted state still works via posts.property_id; this
+ * action is for cases where Larissa posted without the MLS hashtag and the
+ * auto-linker missed it, so manually flag the listing as handled.
+ */
+export async function confirmListingPostsAction(
+  mlsNumber: string,
+): Promise<DismissPromotionResult> {
+  const profile = await requireAdmin();
+  if (!mlsNumber || typeof mlsNumber !== "string") {
+    return { ok: false, error: "Missing MLS number." };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("properties")
+    .update({
+      posts_confirmed_at: new Date().toISOString(),
+      posts_confirmed_by: profile.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("mls_number", mlsNumber);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/");
+  revalidatePath("/properties");
+  revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
+  return { ok: true };
+}
+
+/**
+ * Clear the manual "posted" confirmation. The listing returns to whatever
+ * state it would be in based on auto-detected posts + dismissal flags.
+ */
+export async function unconfirmListingPostsAction(
+  mlsNumber: string,
+): Promise<DismissPromotionResult> {
+  await requireAdmin();
+  if (!mlsNumber || typeof mlsNumber !== "string") {
+    return { ok: false, error: "Missing MLS number." };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("properties")
+    .update({
+      posts_confirmed_at: null,
+      posts_confirmed_by: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("mls_number", mlsNumber);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/");
+  revalidatePath("/properties");
+  revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
+  return { ok: true };
+}
+
+/**
  * Re-instate a previously-dismissed property — clears all three dismissal
  * fields. The listing reappears on the dashboard if it still has missing
  * platform coverage and is within the recency window.

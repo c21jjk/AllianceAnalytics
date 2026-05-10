@@ -3,9 +3,15 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { dismissListingPromotionAction } from "@/app/(app)/listings/actions";
+import {
+  confirmListingPostsAction,
+  dismissListingPromotionAction,
+  unconfirmListingPostsAction,
+  undismissListingPromotionAction,
+} from "@/app/(app)/listings/actions";
 import { formatCurrency } from "@/lib/format";
 import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
+import ListingStatusRibbon from "@/components/ListingStatusRibbon";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import type { Database } from "@/lib/supabase/types";
 
@@ -72,20 +78,57 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
       if (!result.ok) {
         setError(result.error ?? "Unable to dismiss.");
       }
-      // On success the parent server component will revalidate and the card
-      // will be removed from the DOM.
     });
   }
+
+  function handleConfirmPosted() {
+    setError(null);
+    setMenuOpen(false);
+    startTransition(async () => {
+      const result = await confirmListingPostsAction(listing.mls_number);
+      if (!result.ok) {
+        setError(result.error ?? "Unable to mark posted.");
+      }
+    });
+  }
+
+  function handleReset() {
+    setError(null);
+    setMenuOpen(false);
+    startTransition(async () => {
+      // Clear whichever flag applies; idempotent server-side.
+      if (listing.promotion_status === "dismissed") {
+        const r = await undismissListingPromotionAction(listing.mls_number);
+        if (!r.ok) setError(r.error ?? "Unable to reset.");
+      } else if (listing.promotion_status === "posted" && listing.posts_confirmed_at) {
+        const r = await unconfirmListingPostsAction(listing.mls_number);
+        if (!r.ok) setError(r.error ?? "Unable to reset.");
+      }
+      // If state is "posted" via auto-detected linked posts, no action — those
+      // can't be reset from the dashboard (would need to delete the posts).
+    });
+  }
+
+  const isPosted = listing.promotion_status === "posted";
+  const isDismissed = listing.promotion_status === "dismissed";
+  const showResetOption =
+    isDismissed || (isPosted && !!listing.posts_confirmed_at);
 
   return (
     <article
       className={clsx(
-        "rounded-lg border border-neutral-200 bg-white shadow-sm flex items-center gap-2.5 px-2.5 py-2",
+        "rounded-lg border bg-white shadow-sm flex items-center gap-2.5 px-2.5 py-2",
         isPending && "opacity-70",
+        // Subtle row tinting echoes the ribbon — posted/dismissed feel parked
+        isPosted
+          ? "border-gold-200 bg-gold-50/30"
+          : isDismissed
+            ? "border-neutral-300 bg-neutral-50/60 opacity-75"
+            : "border-neutral-200",
         className,
       )}
     >
-      {/* Tiny thumbnail (48x48) */}
+      {/* Tiny thumbnail (48x48) — ribbon overlay shows status */}
       <div className="relative w-12 h-12 shrink-0 rounded-md overflow-hidden bg-neutral-100">
         {listing.hero_image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -99,11 +142,12 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
             <HouseIcon />
           </div>
         )}
-        {listing.office_short_code ? (
+        {listing.office_short_code && !isPosted && !isDismissed ? (
           <span className="absolute bottom-0 left-0 right-0 bg-neutral-900/80 text-[8px] font-semibold uppercase tracking-wide text-white text-center leading-tight py-0.5">
             {listing.office_short_code}
           </span>
         ) : null}
+        <ListingStatusRibbon status={listing.promotion_status} size="sm" />
       </div>
 
       {/* Main info — single line on desktop, wraps gracefully on mobile */}
@@ -179,35 +223,54 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
             className="inline-flex items-center gap-0.5 rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
+            title="Change status: mark as posted, dismiss, or reset"
           >
-            Dismiss
+            Status
             <ChevronDown />
           </button>
           {menuOpen ? (
             <div
               role="menu"
-              className="absolute top-full right-0 mt-1 w-56 rounded-lg border border-neutral-200 bg-white shadow-lg z-10 p-1"
+              className="absolute top-full right-0 mt-1 w-60 rounded-lg border border-neutral-200 bg-white shadow-lg z-10 p-1"
             >
-              <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-                Why skip?
-              </p>
-              {REASON_OPTIONS.map((opt) => (
+              {/* Mark as posted — shown unless already in that state */}
+              {!isPosted ? (
                 <button
-                  key={opt.value}
                   type="button"
                   role="menuitem"
-                  onClick={() => {
-                    if (opt.value === "other") {
-                      setShowOtherInput(true);
-                    } else {
-                      handleDismiss(opt.value);
-                    }
-                  }}
-                  className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-50"
+                  onClick={handleConfirmPosted}
+                  className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-emerald-700 hover:bg-emerald-50 font-medium"
                 >
-                  {opt.label}
+                  ✓ Mark as posted
                 </button>
-              ))}
+              ) : null}
+
+              {/* Dismiss reasons — shown unless already dismissed */}
+              {!isDismissed ? (
+                <>
+                  <p className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+                    Dismiss — why skip?
+                  </p>
+                  {REASON_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        if (opt.value === "other") {
+                          setShowOtherInput(true);
+                        } else {
+                          handleDismiss(opt.value);
+                        }
+                      }}
+                      className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-50"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </>
+              ) : null}
+
               {showOtherInput ? (
                 <div className="border-t border-neutral-100 p-2">
                   <input
@@ -242,6 +305,20 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
                     </button>
                   </div>
                 </div>
+              ) : null}
+
+              {showResetOption ? (
+                <>
+                  <div className="border-t border-neutral-100 my-1" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleReset}
+                    className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-neutral-600 hover:bg-neutral-50"
+                  >
+                    ↺ Reset (back to needs post)
+                  </button>
+                </>
               ) : null}
             </div>
           ) : null}

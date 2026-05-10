@@ -24,6 +24,9 @@ type PostPlatform = Database["public"]["Enums"]["post_platform"];
 type PropertyStatus = Database["public"]["Enums"]["property_status"];
 type SourceMls = "cmc" | "sjsr" | "bright" | string | null;
 
+/** Three-state listing promotion status. */
+export type ListingPromotionStatus = "needs_post" | "posted" | "dismissed";
+
 export interface ListingNeedingPosts {
   /** Property uuid in AllianceAnalytics. */
   id: string;
@@ -48,6 +51,14 @@ export interface ListingNeedingPosts {
   post_counts: Record<PostPlatform, number>;
   /** Convenience: derived gaps (platforms with zero posts). */
   missing_platforms: PostPlatform[];
+  /** Three-state rollup — drives the ribbon overlay on the listing card. */
+  promotion_status: ListingPromotionStatus;
+  /** When set, the admin marked this listing as "posted, stop reminding me". */
+  posts_confirmed_at: string | null;
+  /** When set, Alliance has dismissed this one ("won't promote"). */
+  promotion_dismissed_at: string | null;
+  /** Reason chip slug or free text from the dismissal flow. Null when not dismissed. */
+  promotion_dismissed_reason: string | null;
 }
 
 export interface GetListingsNeedingPostsOptions {
@@ -57,6 +68,12 @@ export interface GetListingsNeedingPostsOptions {
   office_short_code?: string | null;
   /** Max rows. Defaults to 25. */
   limit?: number;
+  /**
+   * Which states to return. Defaults to "needs_only" for backward compat.
+   * Pass "all" to include posted + dismissed listings (with their banners),
+   * which the dashboard "Recent listings" view uses for the All-states tab.
+   */
+  status_filter?: "needs_only" | "all";
 }
 
 /**
@@ -93,6 +110,9 @@ interface DbPropertyRow {
   agent_name: string | null;
   office_id: string | null;
   created_at: string;
+  posts_confirmed_at: string | null;
+  promotion_dismissed_at: string | null;
+  promotion_dismissed_reason: string | null;
 }
 
 interface DbPostCountRow {
@@ -111,6 +131,7 @@ export async function getListingsNeedingPosts(
   const supabase = createAdminClient();
   const windowDays = opts.windowDays ?? 14;
   const limit = opts.limit ?? 25;
+  const statusFilter = opts.status_filter ?? "needs_only";
 
   // Resolve office filter → office_id once.
   let officeFilterId: string | null = null;
@@ -133,19 +154,25 @@ export async function getListingsNeedingPosts(
   //     successful RETS sync), fall back to created_at so newly-synced rows
   //     still surface.
   // Using OR with a nested AND keeps both branches in a single query.
+  //
+  // In "all" mode we keep dismissed listings; in "needs_only" we drop them
+  // upstream so they never make it into the result set.
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, created_at",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, created_at, posts_confirmed_at, promotion_dismissed_at, promotion_dismissed_reason",
     )
     .eq("status", "active")
-    .is("promotion_dismissed_at", null)
     .or(
       `listing_date.gte.${cutoffDate},and(listing_date.is.null,created_at.gte.${cutoffIso})`,
     )
     .order("listing_date", { ascending: false, nullsFirst: false })
-    .limit(limit * 2); // overfetch — we'll filter to "missing platforms" in code
+    .limit(statusFilter === "needs_only" ? limit * 2 : limit * 3);
+  // overfetch — we'll filter post-query
 
+  if (statusFilter === "needs_only") {
+    query = query.is("promotion_dismissed_at", null);
+  }
   if (officeFilterId) query = query.eq("office_id", officeFilterId);
 
   const { data: propertyRows, error: propErr } = await query;
@@ -191,7 +218,7 @@ export async function getListingsNeedingPosts(
     }
   }
 
-  // Filter to listings missing at least one platform, shape the result.
+  // Compute three-state status + shape the result.
   const out: ListingNeedingPosts[] = [];
   for (const p of properties) {
     const c = counts.get(p.id) ?? {
@@ -202,7 +229,22 @@ export async function getListingsNeedingPosts(
     const missing: PostPlatform[] = (
       ["facebook", "instagram", "tiktok"] as PostPlatform[]
     ).filter((plat) => (c[plat] ?? 0) === 0);
-    if (missing.length === 0) continue; // fully covered → no prompt
+
+    const totalLinkedPosts =
+      (c.facebook ?? 0) + (c.instagram ?? 0) + (c.tiktok ?? 0);
+
+    let promotionStatus: ListingPromotionStatus;
+    if (p.promotion_dismissed_at) {
+      promotionStatus = "dismissed";
+    } else if (totalLinkedPosts > 0 || p.posts_confirmed_at) {
+      promotionStatus = "posted";
+    } else {
+      promotionStatus = "needs_post";
+    }
+
+    if (statusFilter === "needs_only" && promotionStatus !== "needs_post") {
+      continue;
+    }
 
     const referenceDate = p.listing_date ?? p.created_at;
     out.push({
@@ -224,6 +266,10 @@ export async function getListingsNeedingPosts(
         : null,
       post_counts: c,
       missing_platforms: missing,
+      promotion_status: promotionStatus,
+      posts_confirmed_at: p.posts_confirmed_at,
+      promotion_dismissed_at: p.promotion_dismissed_at,
+      promotion_dismissed_reason: p.promotion_dismissed_reason,
     });
 
     if (out.length >= limit) break;

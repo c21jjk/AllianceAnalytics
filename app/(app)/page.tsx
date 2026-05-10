@@ -27,6 +27,11 @@ interface HomePageProps {
     range?: string;
     office?: string;
     view?: string;
+    /**
+     * Listings strip filter: "all" | undefined (default = "needs_only").
+     * Drives the Status filter chip on the Recent Listings strip.
+     */
+    listings?: string;
   }>;
 }
 
@@ -42,9 +47,11 @@ interface HomePageProps {
  */
 export default async function HomePage({ searchParams }: HomePageProps) {
   const profile = await requireUser();
-  const { range, office, view } = await searchParams;
+  const { range, office, view, listings: listingsParam } = await searchParams;
   const days = parseRange(range);
   const currentView: View = view === "list" ? "list" : "grouped";
+  const listingsFilter: "needs_only" | "all" =
+    listingsParam === "all" ? "all" : "needs_only";
 
   const offices = await listOffices({ active_only: true });
   const validShortCodes = new Set(offices.map((o) => o.short_code));
@@ -66,7 +73,10 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         ? getPosts({ office_short_code: officeFilter, since: sinceIso })
         : Promise.resolve([]),
       getAccountHealth(),
-      getListingsNeedingPosts({ office_short_code: officeFilter }),
+      getListingsNeedingPosts({
+        office_short_code: officeFilter,
+        status_filter: listingsFilter,
+      }),
       getCompanyAnalytics({ days, office_short_code: officeFilter }),
     ]);
 
@@ -107,6 +117,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
 
       <NeedsPostsRow
         listings={listingsNeedingPosts}
+        statusFilter={listingsFilter}
         officeShortCode={officeFilter}
       />
 
