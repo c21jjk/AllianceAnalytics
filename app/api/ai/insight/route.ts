@@ -88,6 +88,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "post not found" }, { status: 404 });
     }
 
+    // 24h gate — coaching insights need at least one full day of distribution
+    // before they're useful. Initial spikes mislead one way (premature
+    // boost), early stalls mislead the other way (post hasn't peaked yet).
+    // Skip the Opus call entirely for too-recent posts; the strip renders
+    // a muted "settling" placeholder when too_recent is true.
+    const MIN_AGE_MS = 24 * 3600 * 1000;
+    if (post.posted_at) {
+      const ageMs = Date.now() - new Date(post.posted_at).getTime();
+      if (ageMs < MIN_AGE_MS) {
+        return NextResponse.json({
+          insight: null,
+          configured: true,
+          too_recent: true,
+        });
+      }
+    }
+
     // Look up the office row directly so we have the market profile fields.
     // posts.office_id isn't on the Post type yet — read it from the table.
     const supabase = createAdminClient();

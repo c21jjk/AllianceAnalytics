@@ -45,8 +45,13 @@ interface AiInsightStripProps {
   className?: string;
 }
 
+/** Sentinel returned by the API when the post is < 24h old. We render a
+ *  muted "performance settling" placeholder rather than fake coaching. */
+const TOO_RECENT = "__too_recent__" as const;
+type LiveCacheValue = ApiInsight | null | typeof TOO_RECENT;
+
 // Module-level cache so re-renders + sibling components don't re-fetch.
-const liveCache = new Map<string, ApiInsight | null>();
+const liveCache = new Map<string, LiveCacheValue>();
 
 export default function AiInsightStrip({
   insight,
@@ -54,7 +59,7 @@ export default function AiInsightStrip({
   className,
 }: AiInsightStripProps) {
   const cachedAtMount = postId ? liveCache.get(postId) : undefined;
-  const [liveInsight, setLiveInsight] = useState<ApiInsight | null | undefined>(
+  const [liveInsight, setLiveInsight] = useState<LiveCacheValue | undefined>(
     cachedAtMount,
   );
   const [loading, setLoading] = useState<boolean>(
@@ -84,8 +89,13 @@ export default function AiInsightStrip({
           setLiveInsight(null);
           return;
         }
-        const json = (await res.json()) as { insight?: ApiInsight | null };
-        const got = json.insight ?? null;
+        const json = (await res.json()) as {
+          insight?: ApiInsight | null;
+          too_recent?: boolean;
+        };
+        const got: LiveCacheValue = json.too_recent
+          ? TOO_RECENT
+          : json.insight ?? null;
         liveCache.set(postId, got);
         setLiveInsight(got);
       } catch {
@@ -100,7 +110,12 @@ export default function AiInsightStrip({
 
   // useMemo on the resolved insight so display values stay stable.
   const display = useMemo<ApiInsight | AiInsight | null>(() => {
-    if (postId) return liveInsight ?? null;
+    if (postId) {
+      // Treat the too-recent sentinel as "no insight" for the display path —
+      // we render a dedicated placeholder below before reaching this branch.
+      if (liveInsight === TOO_RECENT) return null;
+      return liveInsight ?? null;
+    }
     return insight ?? null;
   }, [postId, liveInsight, insight]);
 
@@ -118,6 +133,23 @@ export default function AiInsightStrip({
         <SparkleIcon className="text-neutral-300" />
         <span className="inline-block h-2 w-24 rounded bg-neutral-200 animate-pulse" />
         <span className="inline-block h-2 w-40 rounded bg-neutral-200 animate-pulse" />
+      </div>
+    );
+  }
+
+  // Post is < 24h old — render a muted "settling" placeholder so the user
+  // knows tracking is on but coaching needs more performance data.
+  if (postId && liveInsight === TOO_RECENT) {
+    return (
+      <div
+        className={clsx(
+          "flex items-center gap-2 text-xs text-neutral-500",
+          className,
+        )}
+        title="AI coaching insight unlocks 24 hours after posting — early-day metrics are too noisy to draw conclusions from."
+      >
+        <SparkleIcon className="text-neutral-400" />
+        <span>Performance settling — coaching unlocks 24h after posting.</span>
       </div>
     );
   }
