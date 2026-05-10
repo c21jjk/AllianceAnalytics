@@ -23,7 +23,6 @@ export function getNavItems(role: "admin" | "user"): NavItem[] {
     const base: NavItem[] = [
         { href: "/", label: "Dashboard", icon: ICON.dashboard },
         { href: "/properties", label: "Properties", icon: ICON.properties },
-        { href: "/listings", label: "Listings", icon: ICON.listings, adminOnly: true },
         { href: "/coach", label: "Coach", icon: ICON.coach },
         { href: "/reports", label: "Reports", icon: ICON.reports },
         { href: "/settings", label: "Settings", icon: ICON.settings, adminOnly: true },

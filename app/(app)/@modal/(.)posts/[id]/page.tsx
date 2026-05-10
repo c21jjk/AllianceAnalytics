@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { fetchPostDetailBundle } from "@/lib/data/post-detail";
-import PostDetailDrawer from "@/components/PostDetailDrawer";
+import DetailDrawer from "@/components/DetailDrawer";
 import PostDetailDrawerBody from "@/components/PostDetailDrawerBody";
 
 /**
@@ -9,7 +9,7 @@ import PostDetailDrawerBody from "@/components/PostDetailDrawerBody";
  *
  * The "(.)" segment matches sibling routes — when the user clicks a Link to
  * `/posts/[id]` from anywhere in (app), this renders into the @modal slot
- * (drawer overlay) while the underlying page (Dashboard) stays mounted.
+ * (drawer overlay) while the underlying page stays mounted.
  *
  * On hard navigation (refresh, paste-link, direct hit), this file is NOT
  * used — the standalone `app/(app)/posts/[id]/page.tsx` renders the full
@@ -26,12 +26,12 @@ export default async function InterceptedPostDetailPage({ params }: PageProps) {
   if (!bundle) notFound();
 
   return (
-    <PostDetailDrawer postId={bundle.post.id}>
+    <DetailDrawer title="Post detail" fullPagePath={`/posts/${id}`}>
       <PostDetailDrawerBody
         post={bundle.post}
         offices={bundle.offices}
         initialOfficeId={bundle.initialOfficeId}
       />
-    </PostDetailDrawer>
+    </DetailDrawer>
   );
 }
