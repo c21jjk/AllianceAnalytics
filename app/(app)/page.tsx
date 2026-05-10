@@ -127,7 +127,15 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         ) : (
           <section className="space-y-3">
             {groups.map((g) => (
-              <GroupCard key={g.id} group={g} />
+              <GroupCard
+                key={g.id}
+                group={g}
+                offices={offices.map((o) => ({
+                  short_code: o.short_code,
+                  name: o.name,
+                }))}
+                isAdmin={profile.role === "admin"}
+              />
             ))}
           </section>
         )
@@ -147,7 +155,7 @@ function parseRange(raw: string | undefined): number {
   ) {
     return parsed;
   }
-  return 7;
+  return 30;
 }
 
 /** Days from Jan 1 of the current year through today (UTC), inclusive. */

@@ -193,3 +193,147 @@ export async function unmergeFromGroupAction(
   revalidatePath("/");
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Right-rail housekeeping: multi-MLS linkage + audience scope.
+// ---------------------------------------------------------------------------
+
+export interface SetGroupPropertiesResult {
+  ok: boolean;
+  unmatched_mls?: string[];
+  error?: string;
+}
+
+/**
+ * Replace post_groups.property_ids with the resolved property uuids for the
+ * given list of MLS numbers. Multi-MLS support for Open House campaigns.
+ *
+ * Each input string is normalized + parsed via parseCanonicalMls (handles
+ * `#NJBL...` / `#CMC...` / `#SJSR...` / raw forms). Unknown MLS numbers
+ * (no row in `properties`) are returned in `unmatched_mls` for the UI to
+ * surface — they don't block the save.
+ *
+ * Pass an empty array to clear the multi-property linkage (the card falls
+ * back to the single auto-linked property).
+ */
+export async function setGroupPropertiesAction(
+  groupId: string,
+  rawMlsNumbers: string[],
+): Promise<SetGroupPropertiesResult> {
+  await requireAdmin();
+
+  if (!groupId || groupId.startsWith("solo-")) {
+    return {
+      ok: false,
+      error:
+        "Cannot edit a singleton group. Merge it into a real group first.",
+    };
+  }
+
+  // Normalize: strip "#", uppercase, dedupe, drop empties.
+  const cleaned = Array.from(
+    new Set(
+      rawMlsNumbers
+        .map((s) => (s ?? "").trim().replace(/^#/, "").toUpperCase())
+        .filter((s) => s.length > 0),
+    ),
+  );
+
+  const supabase = createAdminClient();
+
+  // Resolve to uuids via mls_number lookup.
+  const propertyIds: string[] = [];
+  const unmatched: string[] = [];
+
+  if (cleaned.length > 0) {
+    const { data, error } = await supabase
+      .from("properties")
+      .select("id, mls_number")
+      .in("mls_number", cleaned);
+    if (error) return { ok: false, error: error.message };
+
+    const byMls = new Map<string, string>();
+    for (const r of (data ?? []) as { id: string; mls_number: string }[]) {
+      byMls.set(r.mls_number.toUpperCase(), r.id);
+    }
+    for (const m of cleaned) {
+      const id = byMls.get(m);
+      if (id) propertyIds.push(id);
+      else unmatched.push(m);
+    }
+  }
+
+  const { error: updateErr } = await supabase
+    .from("post_groups")
+    .update({
+      property_ids: propertyIds,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", groupId);
+
+  if (updateErr) return { ok: false, error: updateErr.message };
+
+  revalidatePath("/");
+  revalidatePath("/posts");
+  return {
+    ok: true,
+    unmatched_mls: unmatched.length > 0 ? unmatched : undefined,
+  };
+}
+
+export interface SetGroupAudienceScopeResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Set the audience scope for a campaign. Accepts:
+ *   null               → unscoped (clears the column)
+ *   "company"          → whole Alliance NJ
+ *   "division:<slug>"  → e.g. "division:shore", "division:south_jersey"
+ *   "office:<short>"   → uses offices.short_code (e.g. "office:WWC")
+ *
+ * The DB has a CHECK constraint matching these patterns; the action
+ * validates client-side too so we surface a clean error.
+ */
+export async function setGroupAudienceScopeAction(
+  groupId: string,
+  scope: string | null,
+): Promise<SetGroupAudienceScopeResult> {
+  await requireAdmin();
+
+  if (!groupId || groupId.startsWith("solo-")) {
+    return {
+      ok: false,
+      error: "Cannot scope a singleton group. Merge it first.",
+    };
+  }
+
+  if (scope !== null) {
+    const valid =
+      scope === "company" ||
+      /^division:[a-z][a-z0-9_]*$/.test(scope) ||
+      /^office:[A-Z]{2,8}$/.test(scope);
+    if (!valid) {
+      return {
+        ok: false,
+        error: `Invalid audience scope: "${scope}".`,
+      };
+    }
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("post_groups")
+    .update({
+      audience_scope: scope,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", groupId);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/");
+  revalidatePath("/posts");
+  return { ok: true };
+}

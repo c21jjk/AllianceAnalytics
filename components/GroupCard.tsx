@@ -5,9 +5,11 @@ import type { Platform } from "@/lib/types/post";
 import AiInsightStrip from "./AiInsightStrip";
 import GroupCardActions from "./GroupCardActions";
 import GroupCardMergeButton from "./GroupCardMergeButton";
+import GroupCardSidebar, {
+  type AudienceOfficeOption,
+} from "./GroupCardSidebar";
 import MlsNumberInline from "./MlsNumberInline";
 import PlatformMetricCell from "./PlatformMetricCell";
-import PropertyChip from "./PropertyChip";
 
 /**
  * Pick the "primary" posting for the card-level click target. Preference order:
@@ -29,20 +31,28 @@ function pickPrimaryPosting(
 
 interface GroupCardProps {
   group: PostGroup;
-  /** When true, this group's id is a synthetic 'solo-{post_id}' singleton. */
-  /* derived inside the component */
+  /** Office options for the audience scope dropdown in the right rail. */
+  offices: AudienceOfficeOption[];
+  /** When true, the right-rail housekeeping controls are interactive. */
+  isAdmin: boolean;
 }
 
 /**
  * Wide horizontal card for the operational homepage.
  *
- * Layout:
+ * Layout (md+):
  *   - 160px hero on the left (clickable, opens InlineVideoModal)
- *   - Right side, top: date · caption · agent/property chips · actions
- *   - Right side, middle: 4-column metrics row (FB / IG / TT / Total)
- *   - Right side, bottom: AI insight strip
+ *   - Center column: date · caption · agent/category chips · 4 metric tiles · AI insight
+ *   - 288px right rail: Linkage (multi-MLS + property chips + owner reports),
+ *     Attribution (audience scope), Status (tracking pill + promote)
+ *
+ * Mobile: hero, body, rail stack vertically.
  */
-export default function GroupCard({ group }: GroupCardProps) {
+export default function GroupCard({
+  group,
+  offices,
+  isAdmin,
+}: GroupCardProps) {
   const fbPostings = group.postings.filter((p) => p.platform === "facebook");
   const igPostings = group.postings.filter((p) => p.platform === "instagram");
   const ttPostings = group.postings.filter((p) => p.platform === "tiktok");
@@ -94,7 +104,7 @@ export default function GroupCard({ group }: GroupCardProps) {
           className="pointer-events-auto"
         />
 
-        {/* Body */}
+        {/* Center column: caption + chips + metrics + AI insight */}
         <div className="flex-1 min-w-0 flex flex-col gap-3">
           {/* Header row */}
           <div className="flex items-start justify-between gap-3">
@@ -114,19 +124,16 @@ export default function GroupCard({ group }: GroupCardProps) {
                     {group.agent_name}
                   </span>
                 ) : null}
-                {primaryPosting ? (
+                {/* MLS inline-edit only when no property linked yet — once
+                    linked, the right rail Linkage block owns property edits. */}
+                {primaryPosting && group.properties.length === 0 ? (
                   <MlsNumberInline
                     postId={primaryPosting.post_id}
                     currentMls={group.mls_number_parsed ?? null}
-                    isLinked={Boolean(group.property)}
+                    isLinked={false}
                     compact
                     size="sm"
                   />
-                ) : null}
-                {group.property ? (
-                  <span className="pointer-events-auto">
-                    <PropertyChip property={group.property} />
-                  </span>
                 ) : null}
                 {group.category ? (
                   <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700 capitalize">
@@ -141,33 +148,14 @@ export default function GroupCard({ group }: GroupCardProps) {
             </div>
 
             <div className="flex flex-col items-end gap-1 shrink-0 pointer-events-auto">
-              <div className="flex items-center gap-2">
-                {group.is_locked ? (
-                  <span
-                    className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
-                    title="This group was manually merged and is locked from the auto-grouper."
-                  >
-                    Manual
-                  </span>
-                ) : null}
-                {!hasProperty ? (
-                  <Link
-                    href={firstPostHref(group)}
-                    className="inline-flex items-center gap-1 rounded-md bg-white ring-1 ring-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                  >
-                    Link property
-                  </Link>
-                ) : null}
-                {reportEligible && group.property ? (
-                  <Link
-                    href={`/properties/${encodeURIComponent(group.property.mls)}`}
-                    className="inline-flex items-center gap-1 rounded-md bg-gold-500 hover:bg-gold-600 text-white px-2.5 py-1 text-xs font-medium"
-                  >
-                    Generate report
-                    <ArrowUpRight />
-                  </Link>
-                ) : null}
-              </div>
+              {group.is_locked ? (
+                <span
+                  className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
+                  title="This group was manually merged and is locked from the auto-grouper."
+                >
+                  Manual
+                </span>
+              ) : null}
               {showMergeButton ? (
                 <GroupCardMergeButton groupId={group.id} />
               ) : null}
@@ -193,6 +181,14 @@ export default function GroupCard({ group }: GroupCardProps) {
           {/* AI insight strip */}
           <AiInsightStrip insight={group.ai_insight} />
         </div>
+
+        {/* Right rail — housekeeping (multi-MLS, audience scope, status) */}
+        <GroupCardSidebar
+          group={group}
+          offices={offices}
+          isAdmin={isAdmin}
+          variant="card"
+        />
       </div>
     </article>
   );
