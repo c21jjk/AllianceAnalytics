@@ -166,6 +166,12 @@ export async function getCompanyAnalytics(opts: {
   return fetchCompanyAnalytics(opts);
 }
 
+/** Per-platform + total follower counts with WoW delta for the Followers tile. */
+export async function getFollowerSummary(days: number) {
+  const { fetchFollowerSummary } = await import("./posts-db");
+  return fetchFollowerSummary(days);
+}
+
 export async function getAccountHealth(): Promise<AccountHealth[]> {
   if (isForcedFixtures()) return FIXTURE_HEALTH;
   try {

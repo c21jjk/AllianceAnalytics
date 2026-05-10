@@ -1,12 +1,17 @@
 import Link from "next/link";
 import clsx from "clsx";
-import type { CompanyAnalytics } from "@/lib/data/posts-db";
+import type {
+  CompanyAnalytics,
+  FollowerSummary,
+} from "@/lib/data/posts-db";
 import type { Platform } from "@/lib/types/post";
 import { formatCompactNumber } from "@/lib/format";
 import PlatformBadge from "./PlatformBadge";
 
 interface CompanyAnalyticsStripProps {
   data: CompanyAnalytics;
+  /** Per-platform follower counts + total + delta for the Followers tile. */
+  followers: FollowerSummary;
   /** Window length in days — surfaced in the strip subtitle. */
   days: number;
   className?: string;
@@ -28,6 +33,7 @@ interface CompanyAnalyticsStripProps {
  */
 export default function CompanyAnalyticsStrip({
   data,
+  followers,
   days,
   className,
 }: CompanyAnalyticsStripProps) {
@@ -44,7 +50,7 @@ export default function CompanyAnalyticsStrip({
   return (
     <section
       className={clsx(
-        "grid grid-cols-2 lg:grid-cols-5 gap-2",
+        "grid grid-cols-2 lg:grid-cols-6 gap-2",
         className,
       )}
       aria-label={`Company analytics for the last ${days} days`}
@@ -78,8 +84,77 @@ export default function CompanyAnalyticsStrip({
         deltaLabel="vs prior period"
         series={null}
       />
+      <FollowersTile followers={followers} />
       <TopCampaignTile top={data.top_campaign} />
     </section>
+  );
+}
+
+function FollowersTile({ followers }: { followers: FollowerSummary }) {
+  if (!followers.has_data) {
+    return (
+      <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+          Followers
+        </div>
+        <div className="text-sm text-neutral-400 mt-1">
+          Syncs once per platform — populates within the next 4h cron tick.
+        </div>
+      </div>
+    );
+  }
+
+  const total = followers.total.current ?? 0;
+  const delta = followers.total.delta;
+  const arrow = delta == null ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
+  const tone =
+    delta == null
+      ? "text-neutral-400"
+      : delta > 0
+        ? "text-emerald-600"
+        : delta < 0
+          ? "text-rose-600"
+          : "text-neutral-500";
+  const deltaText =
+    delta == null ? "—" : `${arrow} ${formatCompactNumber(Math.abs(delta))}`;
+
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+        Followers
+      </div>
+      <div className="text-xl font-semibold text-neutral-900 leading-tight tabular-nums">
+        {formatCompactNumber(total)}
+      </div>
+      <div className={clsx("text-[11px] mt-1 truncate", tone)}>
+        <span className="font-medium">{deltaText}</span>{" "}
+        <span className="text-neutral-400">vs prior period</span>
+      </div>
+      <div className="text-[10px] text-neutral-500 mt-1.5 flex items-center gap-1.5 tabular-nums">
+        <FollowerCell label="FB" cell={followers.facebook} />
+        <span className="text-neutral-300">·</span>
+        <FollowerCell label="IG" cell={followers.instagram} />
+        <span className="text-neutral-300">·</span>
+        <FollowerCell label="TT" cell={followers.tiktok} />
+      </div>
+    </div>
+  );
+}
+
+function FollowerCell({
+  label,
+  cell,
+}: {
+  label: string;
+  cell: FollowerSummary["facebook"];
+}) {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <span className="font-semibold text-neutral-700">{label}</span>{" "}
+      <span className="text-neutral-600">
+        {cell.current === null ? "—" : formatCompactNumber(cell.current)}
+      </span>
+    </span>
   );
 }
 

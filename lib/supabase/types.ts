@@ -245,6 +245,30 @@ export type Database = {
         }
         Relationships: []
       }
+      platform_followers: {
+        Row: {
+          captured_at: string
+          captured_date: string
+          follower_count: number
+          platform: Database["public"]["Enums"]["post_platform"]
+          raw_payload: Json
+        }
+        Insert: {
+          captured_at?: string
+          captured_date?: string
+          follower_count: number
+          platform: Database["public"]["Enums"]["post_platform"]
+          raw_payload?: Json
+        }
+        Update: {
+          captured_at?: string
+          captured_date?: string
+          follower_count?: number
+          platform?: Database["public"]["Enums"]["post_platform"]
+          raw_payload?: Json
+        }
+        Relationships: []
+      }
       post_groups: {
         Row: {
           audience_scope: string | null

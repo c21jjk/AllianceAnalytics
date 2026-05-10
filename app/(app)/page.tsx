@@ -1,5 +1,10 @@
 import { requireUser } from "@/lib/auth";
-import { getAccountHealth, getCompanyAnalytics, getPosts } from "@/lib/data";
+import {
+  getAccountHealth,
+  getCompanyAnalytics,
+  getFollowerSummary,
+  getPosts,
+} from "@/lib/data";
 import { getGroupsLastNDays } from "@/lib/data/groups";
 import { getListingsNeedingPosts } from "@/lib/data/listings-needing-posts";
 import { listOffices } from "@/lib/data/offices";
@@ -64,21 +69,28 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   // on every render — it's cheap (≤25 properties + a single posts.platform
   // count query) and catches new listings the moment the RETS sync replicates
   // them, which is the whole point.
-  const [groups, posts, accountHealth, listingsNeedingPosts, companyAnalytics] =
-    await Promise.all([
-      currentView === "grouped"
-        ? getGroupsLastNDays(days, { office_short_code: officeFilter })
-        : Promise.resolve([]),
-      currentView === "list"
-        ? getPosts({ office_short_code: officeFilter, since: sinceIso })
-        : Promise.resolve([]),
-      getAccountHealth(),
-      getListingsNeedingPosts({
-        office_short_code: officeFilter,
-        status_filter: listingsFilter,
-      }),
-      getCompanyAnalytics({ days, office_short_code: officeFilter }),
-    ]);
+  const [
+    groups,
+    posts,
+    accountHealth,
+    listingsNeedingPosts,
+    companyAnalytics,
+    followerSummary,
+  ] = await Promise.all([
+    currentView === "grouped"
+      ? getGroupsLastNDays(days, { office_short_code: officeFilter })
+      : Promise.resolve([]),
+    currentView === "list"
+      ? getPosts({ office_short_code: officeFilter, since: sinceIso })
+      : Promise.resolve([]),
+    getAccountHealth(),
+    getListingsNeedingPosts({
+      office_short_code: officeFilter,
+      status_filter: listingsFilter,
+    }),
+    getCompanyAnalytics({ days, office_short_code: officeFilter }),
+    getFollowerSummary(days),
+  ]);
 
   const description =
     currentView === "grouped"
@@ -108,7 +120,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         />
       ) : null}
 
-      <CompanyAnalyticsStrip data={companyAnalytics} days={days} />
+      <CompanyAnalyticsStrip
+        data={companyAnalytics}
+        followers={followerSummary}
+        days={days}
+      />
 
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <AccountSyncBar health={accountHealth} className="flex-1 min-w-0" />
