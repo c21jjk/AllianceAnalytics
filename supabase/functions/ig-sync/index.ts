@@ -45,21 +45,30 @@ const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const BACKFILL_DAYS = Number(Deno.env.get("IG_BACKFILL_DAYS") ?? "365");
 const PAGE_SIZE = 50;
 
-/** Media-level insights metrics we request from /insights */
-const INSIGHTS_METRICS = [
-  "impressions",
+// Meta deprecated `impressions` for IG media in v22 (still works in v21 but
+// will break shortly). The new replacement is `views` which works on every
+// media type. We keep the rest of the universal metrics in the BASE set;
+// video-only metrics go in their own request gated on media_type.
+const INSIGHTS_METRICS_BASE = [
   "reach",
   "likes",
   "comments",
   "shares",
   "saved",
-  "plays",
   "profile_visits",
   "follows",
-  "video_view_total_time",
-  "ig_reels_avg_watch_time",
-  "ig_reels_video_view_total_time",
+  "total_interactions",
+  "views",
 ].join(",");
+
+// Video / Reel-only metrics. Calling these on a static image returns a
+// "metric does not support this media product type" error, so we gate on
+// media_type before requesting.
+const INSIGHTS_METRICS_VIDEO = ["plays"].join(",");
+
+// Minimal fallback set when the base call fails for any reason — these
+// have been verified working in v21+ for every media type.
+const INSIGHTS_METRICS_MINIMAL = ["reach", "likes", "comments", "shares", "saved"].join(",");
 
 interface IgMediaListResponse {
   data: { id: string }[];
@@ -110,14 +119,18 @@ function flattenInsights(
   for (const m of insights.data) {
     map[m.name] = m.values?.[0]?.value ?? 0;
   }
+  // `views` replaced `impressions` in v22; either may be present on a
+  // post-by-post basis depending on when the metric was queried. Use either,
+  // preferring the new name.
+  const impressions = map.views ?? map.impressions ?? 0;
   const metrics: NormalizedMetrics = {
-    impressions: map.impressions,
-    reach: map.reach,
+    impressions: impressions || undefined,
+    reach: map.reach || undefined,
     likes: map.likes,
     comments: map.comments,
     shares: map.shares,
     saves: map.saved,
-    plays: map.plays,
+    plays: map.plays || undefined,
     profile_visits: map.profile_visits,
     follows: map.follows,
   };
@@ -199,18 +212,17 @@ export async function syncInstagram(): Promise<SyncResult> {
         let metrics: NormalizedMetrics = {};
         try {
           const insights = await igFetch<IgInsightsResponse>(
-            `/${mediaId}/insights?metric=${INSIGHTS_METRICS}`,
+            `/${mediaId}/insights?metric=${INSIGHTS_METRICS_BASE}`,
             token,
           );
           metrics = flattenInsights(insights);
-        } catch (e) {
-          // Insights API rejects metrics that don't apply to the media type
-          // (e.g. video_view_total_time on an image). We retry with a
-          // minimum metrics set when this happens.
-          const minimal = ["impressions", "reach", "likes", "comments", "shares", "saved"].join(",");
+        } catch (_e) {
+          // Insights API rejects the whole batch when any one metric isn't
+          // valid for the media type. Fall back to the minimal set, which
+          // works for every post type in v21+.
           try {
             const insights2 = await igFetch<IgInsightsResponse>(
-              `/${mediaId}/insights?metric=${minimal}`,
+              `/${mediaId}/insights?metric=${INSIGHTS_METRICS_MINIMAL}`,
               token,
             );
             metrics = flattenInsights(insights2);
@@ -220,6 +232,20 @@ export async function syncInstagram(): Promise<SyncResult> {
               message: `insights: ${(e2 as Error).message}`,
             });
             // Continue; metrics will be empty for this post
+          }
+        }
+        // Video-only second call. Failure non-fatal.
+        const mediaTypeNorm = parseMediaType(detail.media_type, detail.media_product_type);
+        if (mediaTypeNorm === "video" || mediaTypeNorm === "reel") {
+          try {
+            const videoInsights = await igFetch<IgInsightsResponse>(
+              `/${mediaId}/insights?metric=${INSIGHTS_METRICS_VIDEO}`,
+              token,
+            );
+            const videoMetrics = flattenInsights(videoInsights);
+            if (videoMetrics.plays !== undefined) metrics.plays = videoMetrics.plays;
+          } catch (_e) {
+            // silent — plays is bonus; base metrics still present
           }
         }
 

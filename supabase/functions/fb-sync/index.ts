@@ -48,11 +48,24 @@ const POST_FIELDS = [
   "is_published",
 ].join(",");
 
-const INSIGHTS_METRICS = [
-  "post_impressions",
-  "post_impressions_unique", // Facebook's term for "reach"
+// Meta deprecated `post_impressions`, `post_impressions_unique`, `post_clicks`
+// in Graph API v21 (Sep 2024). The replacements split organic vs paid and
+// click-by-type. We sum them on the client side to recover the same totals.
+//
+// Reach    = post_impressions_organic_unique + post_impressions_paid_unique
+// Clicks   = sum(values of post_clicks_by_type)
+// Reactions stays on post_reactions_by_type_total.
+const INSIGHTS_METRICS_BASE = [
+  "post_impressions_organic_unique",
+  "post_impressions_paid_unique",
   "post_reactions_by_type_total",
-  "post_clicks",
+  "post_clicks_by_type",
+].join(",");
+
+// Video-only metrics. Calling these on a non-video post returns
+// "metric does not apply", so we fetch them in a separate request that
+// only fires when the post's media_type === "video".
+const INSIGHTS_METRICS_VIDEO = [
   "post_video_views",
   "post_video_avg_time_watched",
   "post_video_complete_views_organic",
@@ -107,14 +120,25 @@ function flattenInsights(insights: FbInsightsResponse): NormalizedMetrics {
   for (const m of insights.data) {
     map.set(m.name, m.values?.[0]?.value ?? 0);
   }
+
+  // Reactions: object keyed by reaction type → count. Sum to single likes-ish.
   const reactionsByType = (map.get("post_reactions_by_type_total") ?? {}) as Record<string, number>;
   const totalReactions = Object.values(reactionsByType).reduce((s, n) => s + (Number(n) || 0), 0);
 
+  // Reach: sum organic + paid unique. Either may be missing for paid=0 posts.
+  const organicUnique = Number(map.get("post_impressions_organic_unique") ?? 0) || 0;
+  const paidUnique = Number(map.get("post_impressions_paid_unique") ?? 0) || 0;
+  const reach = organicUnique + paidUnique;
+
+  // Clicks: object keyed by click type → count. Sum across types.
+  const clicksByType = (map.get("post_clicks_by_type") ?? {}) as Record<string, number>;
+  const totalClicks = Object.values(clicksByType).reduce((s, n) => s + (Number(n) || 0), 0);
+
   const metrics: NormalizedMetrics = {
-    impressions: Number(map.get("post_impressions") ?? 0) || undefined,
-    reach: Number(map.get("post_impressions_unique") ?? 0) || undefined,
+    reach: reach || undefined,
+    impressions: reach || undefined, // FB no longer exposes raw impressions; use reach as proxy
     likes: totalReactions || undefined,
-    link_clicks: Number(map.get("post_clicks") ?? 0) || undefined,
+    link_clicks: totalClicks || undefined,
     plays: Number(map.get("post_video_views") ?? 0) || undefined,
   };
   const completionViews = Number(map.get("post_video_complete_views_organic") ?? 0);
@@ -185,8 +209,11 @@ export async function syncFacebook(): Promise<SyncResult> {
 
         let metrics: NormalizedMetrics = {};
         try {
+          // Always pull base metrics (impressions/clicks/reactions) — they're
+          // valid for every post type. Video-only metrics get a second call
+          // gated on media_type to avoid "metric does not apply" errors.
           const insights = await fbFetch<FbInsightsResponse>(
-            `/${fb.id}/insights?metric=${INSIGHTS_METRICS}`,
+            `/${fb.id}/insights?metric=${INSIGHTS_METRICS_BASE}`,
             token,
           );
           metrics = flattenInsights(insights);
@@ -195,6 +222,27 @@ export async function syncFacebook(): Promise<SyncResult> {
             post_id: fb.id,
             message: `insights: ${(e as Error).message}`,
           });
+        }
+        // Video-only second call. Failure here is non-fatal (some "video" posts
+        // are actually shared video links without insights eligibility).
+        if (parseMediaType(fb) === "video") {
+          try {
+            const videoInsights = await fbFetch<FbInsightsResponse>(
+              `/${fb.id}/insights?metric=${INSIGHTS_METRICS_VIDEO}`,
+              token,
+            );
+            const videoMetrics = flattenInsights(videoInsights);
+            // Merge video-specific fields into the base metrics object.
+            if (videoMetrics.plays !== undefined) metrics.plays = videoMetrics.plays;
+            if (videoMetrics.completion_rate !== undefined) {
+              metrics.completion_rate = videoMetrics.completion_rate;
+            }
+            if (videoMetrics.avg_watch_time_sec !== undefined) {
+              metrics.avg_watch_time_sec = videoMetrics.avg_watch_time_sec;
+            }
+          } catch (_e) {
+            // silent — video metrics are bonus; base metrics still present
+          }
         }
 
         // Pull comments + shares from /{post-id}?fields=comments.summary(true),shares
