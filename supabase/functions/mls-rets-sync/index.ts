@@ -454,28 +454,89 @@ interface MappedListing {
   list_agent_name: string | null;
   list_agent_email: string | null;
   list_office_id: string | null;
+  list_office_name: string | null;
+  property_type: string | null;
+  dom_days: number | null;
+  bedrooms: number | null;
+  bathrooms_full: number | null;
+  bathrooms_half: number | null;
   hero_image_url: string | null;
   raw_payload: Record<string, unknown>;
+}
+
+function readInt(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const n = parseInt(raw.replace(/[,\s]/g, ""), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Only return an int if the source string is purely numeric (e.g. "3", "12").
+ * Paragon's L_KeywordN slots reuse the same column for very different fields
+ * across CMC and SJSR — and on non-residential rows (Vacant Lot, Duplex) hold
+ * lot-size text like "1 to 6000 SqFt". This guard keeps junk out of bedroom
+ * / bathroom counts.
+ */
+function readPositiveInt(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < 0 || n > 99) return null;
+  return n;
+}
+
+/**
+ * Paragon's L_Keyword slot mapping is shifted by one between feeds:
+ *   - CMC:  K1=bedrooms,    K2=full baths, K3=half baths
+ *   - SJSR: K1=total rooms, K2=bedrooms,   K3=full baths, K4=half baths
+ * Verified by cross-referencing 236 Roseann Ave (in both feeds, both 4BR/2BA).
+ */
+function mapBedsBaths(
+  row: RowMap,
+  sourceMls: "cmc" | "sjsr",
+): { bedrooms: number | null; bathrooms_full: number | null; bathrooms_half: number | null } {
+  if (sourceMls === "cmc") {
+    return {
+      bedrooms: readPositiveInt(row["L_Keyword1"]),
+      bathrooms_full: readPositiveInt(row["L_Keyword2"]),
+      bathrooms_half: readPositiveInt(row["L_Keyword3"]),
+    };
+  }
+  // sjsr
+  return {
+    bedrooms: readPositiveInt(row["L_Keyword2"]),
+    bathrooms_full: readPositiveInt(row["L_Keyword3"]),
+    bathrooms_half: readPositiveInt(row["L_Keyword4"]),
+  };
 }
 
 function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
   const mlsRaw = row["L_ListingID"];
   const addr = row["L_Address"];
   if (!mlsRaw || !addr) return null;
+  const beds = mapBedsBaths(row, sourceMls);
   return {
     mls_number: mlsRaw.trim().toUpperCase(),
     source_mls: sourceMls,
     address: addr.trim(),
     city: (row["L_City"] ?? "").trim() || null,
     state: "NJ", // Both Paragon feeds we run are NJ-only.
-    zip: null, // Not in the standard mapping; can be added later.
+    zip: (row["L_Zip"] ?? "").trim() || null,
     list_price: readPrice(row["L_AskingPrice"]) ?? readPrice(row["L_OriginalPrice"]),
     status: mapStatusCategory(row["L_Status"]),
     listing_date: readDate(row["L_ListingDate"]),
     list_agent_name: buildAgentName(row),
     list_agent_email: null, // Not denormalized on Paragon Property resource.
     list_office_id: (row["LO1_HiddenOrgID"] ?? row["L_ListOffice1"] ?? "").trim() || null,
-    hero_image_url: null, // Phase B will fetch via GetObject.
+    list_office_name: (row["LO1_OrganizationName"] ?? "").trim() || null,
+    // L_Type_ has a trailing underscore in Paragon — known quirk.
+    property_type: (row["L_Type_"] ?? "").trim() || null,
+    dom_days: readInt(row["L_DOM"]),
+    bedrooms: beds.bedrooms,
+    bathrooms_full: beds.bathrooms_full,
+    bathrooms_half: beds.bathrooms_half,
+    hero_image_url: null, // Phase D will fetch via GetObject.
     raw_payload: row,
   };
 }
@@ -572,16 +633,37 @@ async function upsertListings(
   rows: MappedListing[],
 ): Promise<number> {
   if (rows.length === 0) return 0;
+  // active_listings on the Listings DB has its own column shape — keep
+  // raw_payload + the canonical denormalized fields. dom_days /
+  // list_office_name / property_type are also persisted there for parity
+  // with AllianceAnalytics.properties.
+  const upsertRows = rows.map((r) => ({
+    mls_number: r.mls_number,
+    source_mls: r.source_mls,
+    address: r.address,
+    city: r.city,
+    state: r.state,
+    zip: r.zip,
+    list_price: r.list_price,
+    status: r.status,
+    listing_date: r.listing_date,
+    list_agent_name: r.list_agent_name,
+    list_agent_email: r.list_agent_email,
+    list_office_id: r.list_office_id,
+    list_office_name: r.list_office_name,
+    property_type: r.property_type,
+    dom_days: r.dom_days,
+    bedrooms: r.bedrooms,
+    bathrooms_full: r.bathrooms_full,
+    bathrooms_half: r.bathrooms_half,
+    hero_image_url: r.hero_image_url,
+    raw_payload: r.raw_payload,
+    synced_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }));
   const { error, count } = await client
     .from("active_listings")
-    .upsert(
-      rows.map((r) => ({
-        ...r,
-        synced_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })),
-      { onConflict: "mls_number", count: "exact" },
-    );
+    .upsert(upsertRows, { onConflict: "mls_number", count: "exact" });
   if (error) throw new Error(`active_listings upsert failed: ${error.message}`);
   return count ?? rows.length;
 }
@@ -601,6 +683,12 @@ async function replicateToProperties(
     listing_date: r.listing_date,
     agent_name: r.list_agent_name,
     agent_email: r.list_agent_email,
+    listing_office_name: r.list_office_name,
+    property_type: r.property_type,
+    dom_days: r.dom_days,
+    bedrooms: r.bedrooms,
+    bathrooms_full: r.bathrooms_full,
+    bathrooms_half: r.bathrooms_half,
     hero_image_url: r.hero_image_url,
     status: r.status === "withdrawn" ? "expired" : r.status,
     source_mls: r.source_mls,
@@ -737,9 +825,14 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
       classResult.records_seen = rawCount;
       totalSeen += rawCount;
 
+      // Active-only — Paragon returns sold/pending/withdrawn rows too;
+      // mapStatusCategory normalizes the verbose labels and we drop
+      // anything that isn't currently active.
       const mapped = rows
         .map((r) => mapRow(r, sourceMls))
-        .filter((r): r is MappedListing => r !== null);
+        .filter(
+          (r): r is MappedListing => r !== null && r.status === "active",
+        );
 
       const upserted = await upsertListings(listings, mapped);
       classResult.records_upserted = upserted;

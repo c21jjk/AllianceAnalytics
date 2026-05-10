@@ -8,10 +8,22 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * from the Listings DB on save) plus rolls up post counts + reach + engagement
  * per property in a single bulk query.
  *
+ * Sorting and office filtering happen at the database for correctness;
+ * post rollups are computed in-memory afterwards (one bulk query, ~21 rows
+ * today, fine to scale to a few thousand).
+ *
  * The /properties detail page (`/properties/[mls]`) is still on fixtures —
  * out of scope for this fetcher. When that page moves to live data, this
  * module can grow a per-mls fetcher.
  */
+
+export type PropertySortKey =
+  | "newest"
+  | "oldest"
+  | "price_desc"
+  | "price_asc"
+  | "office_asc"
+  | "dom_desc";
 
 export interface PropertySummary {
   id: string;
@@ -26,6 +38,13 @@ export interface PropertySummary {
   hero_image_url: string | null;
   status: "active" | "pending" | "sold" | "expired";
   source_mls: string | null;
+  /** Raw Paragon LO1_OrganizationName (e.g. "CENTURY 21 ALLIANCE wc"). UI normalizes. */
+  listing_office_name: string | null;
+  dom_days: number | null;
+  property_type: string | null;
+  bedrooms: number | null;
+  bathrooms_full: number | null;
+  bathrooms_half: number | null;
   /** Total posts linked to this property. */
   post_count: number;
   /** Sum of reach across all linked posts. */
@@ -48,6 +67,12 @@ interface DbPropertyRow {
   hero_image_url: string | null;
   status: "active" | "pending" | "sold" | "expired";
   source_mls: string | null;
+  listing_office_name: string | null;
+  dom_days: number | null;
+  property_type: string | null;
+  bedrooms: number | null;
+  bathrooms_full: number | null;
+  bathrooms_half: number | null;
   updated_at: string;
 }
 
@@ -65,35 +90,86 @@ function readNum(value: unknown): number {
   return 0;
 }
 
+export interface FetchPropertiesOptions {
+  sort?: PropertySortKey;
+  /**
+   * Filter by NORMALIZED office display label (e.g. "Wildwood Crest"). The
+   * fetcher normalizes the raw `listing_office_name` and matches in code,
+   * since the same office shows up in CMC and SJSR with slightly different
+   * raw strings.
+   */
+  office?: string | null;
+}
+
 /**
- * Fetch all properties + per-property post rollups in two queries.
+ * Fetch all properties + per-property post rollups.
  *
- * Order: most-recently-updated first, then by listing_date desc.
+ * Default order: newest listed first (with a fallback to updated_at when
+ * listing_date is missing).
  */
-export async function fetchProperties(): Promise<PropertySummary[]> {
+export async function fetchProperties(
+  opts: FetchPropertiesOptions = {},
+): Promise<PropertySummary[]> {
   const supabase = createAdminClient();
 
-  const { data: rows, error } = await supabase
+  // Order at the DB layer — listing_date is the canonical sort field, with
+  // a fallback through updated_at for rows missing it. We re-sort in JS for
+  // sort keys that depend on derived data (office display label).
+  let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, hero_image_url, status, source_mls, updated_at",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, updated_at",
     )
-    .order("updated_at", { ascending: false })
     .limit(500);
+
+  switch (opts.sort) {
+    case "oldest":
+      query = query.order("listing_date", { ascending: true, nullsFirst: false });
+      break;
+    case "price_desc":
+      query = query.order("list_price", { ascending: false, nullsFirst: false });
+      break;
+    case "price_asc":
+      query = query.order("list_price", { ascending: true, nullsFirst: false });
+      break;
+    case "dom_desc":
+      query = query.order("dom_days", { ascending: false, nullsFirst: false });
+      break;
+    case "office_asc":
+      query = query.order("listing_office_name", { ascending: true, nullsFirst: false });
+      break;
+    case "newest":
+    default:
+      query = query
+        .order("listing_date", { ascending: false, nullsFirst: false })
+        .order("updated_at", { ascending: false });
+  }
+
+  const { data: rows, error } = await query;
   if (error || !rows) {
     console.error("fetchProperties:", error);
     return [];
   }
 
-  const properties = rows as DbPropertyRow[];
+  let properties = rows as DbPropertyRow[];
   if (properties.length === 0) return [];
+
+  // Office filter (post-normalization).
+  if (opts.office) {
+    const target = opts.office;
+    properties = properties.filter(
+      (p) => normalizeOfficeName(p.listing_office_name) === target,
+    );
+  }
 
   // Bulk fetch post metrics for all linked posts at once and aggregate.
   const propertyIds = properties.map((p) => p.id);
-  const { data: postRows } = await supabase
-    .from("posts")
-    .select("property_id, metrics")
-    .in("property_id", propertyIds);
+  const { data: postRows } = propertyIds.length
+    ? await supabase
+        .from("posts")
+        .select("property_id, metrics")
+        .in("property_id", propertyIds)
+    : { data: [] };
 
   const rollup = new Map<
     string,
@@ -138,10 +214,81 @@ export async function fetchProperties(): Promise<PropertySummary[]> {
       hero_image_url: p.hero_image_url,
       status: p.status,
       source_mls: p.source_mls,
+      listing_office_name: p.listing_office_name,
+      dom_days: p.dom_days,
+      property_type: p.property_type,
+      bedrooms: p.bedrooms,
+      bathrooms_full: p.bathrooms_full,
+      bathrooms_half: p.bathrooms_half,
       post_count: r.post_count,
       total_reach: r.total_reach,
       total_engagements: r.total_engagements,
       updated_at: p.updated_at,
     };
   });
+}
+
+/**
+ * Normalize the raw Paragon `LO1_OrganizationName` into a clean display
+ * label. The same Alliance office appears with different raw strings across
+ * CMC and SJSR (e.g. "CENTURY 21 ALLIANCE wc" and "CENTURY 21 ALLIANCE-104A"
+ * both refer to the Wildwood Crest office). This function strips the
+ * "Century 21 Alliance" prefix, drops trailing Paragon-internal codes, and
+ * expands known short codes into their full office names.
+ */
+const OFFICE_CODE_MAP: Record<string, string> = {
+  wc: "Wildwood Crest",
+  oc: "Ocean City",
+  ncm: "North Cape May",
+  ow: "Ocean View",
+  ov: "Ocean View",
+  cm: "Cape May",
+  // SJSR Paragon codes — best-guess mapping; refine when we have a solid
+  // office_id ↔ Alliance-office crosswalk.
+  "104a": "Wildwood Crest",
+  "o1o4j": "Ocean City",
+  "s104b": "North Cape May",
+  "s104i": "Ocean City",
+  "s104l": "Egg Harbor Township",
+};
+
+export function normalizeOfficeName(raw: string | null | undefined): string {
+  if (!raw) return "Unknown office";
+  // Strip "Century 21 Alliance" prefix in any casing/spacing.
+  let cleaned = raw
+    .replace(/century\s*21\s*alliance/i, "")
+    .trim();
+  // Strip leading separators (- — / : · spaces)
+  cleaned = cleaned.replace(/^[-—\/:·\s]+/, "").trim();
+  if (!cleaned) return "Alliance (HQ)";
+
+  const lower = cleaned.toLowerCase().replace(/[\s_-]/g, "");
+  if (OFFICE_CODE_MAP[lower]) return OFFICE_CODE_MAP[lower];
+
+  // Drop a Paragon-style trailing code like "S104B" / "O1O4J" / "104A"
+  // (kept here for fallback when not in the map).
+  const stripped = cleaned.replace(/[-\s]?[A-Z]?\d+[A-Z]*$/i, "").trim();
+  const candidate = stripped.length > 0 ? stripped : cleaned;
+
+  // Title-case the leftover.
+  return candidate.replace(/\w\S*/g, (txt) =>
+    txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase()
+  );
+}
+
+/**
+ * Distinct normalized office labels for the filter chip strip. Sorted alpha.
+ */
+export async function listDistinctOfficeLabels(): Promise<string[]> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("properties")
+    .select("listing_office_name")
+    .eq("status", "active")
+    .not("listing_office_name", "is", null);
+  const set = new Set<string>();
+  for (const r of (data ?? []) as { listing_office_name: string | null }[]) {
+    if (r.listing_office_name) set.add(normalizeOfficeName(r.listing_office_name));
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }

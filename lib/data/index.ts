@@ -7,7 +7,10 @@ import {
   PROPERTIES_BY_MLS,
   postsForMls,
 } from "@/lib/fixtures/posts";
-import type { PropertySummary } from "./properties-db";
+import type {
+  FetchPropertiesOptions,
+  PropertySummary,
+} from "./properties-db";
 
 /**
  * Single entry point for page components to fetch posts + account health.
@@ -87,12 +90,18 @@ export async function getPostById(id: string): Promise<Post | undefined> {
  * Detail page (`/properties/[mls]`) is still on fixtures — when it migrates
  * we'll add a `getPropertyByMls` here too.
  */
-export async function getProperties(): Promise<PropertySummary[]> {
+export async function getProperties(
+  opts: FetchPropertiesOptions = {},
+): Promise<PropertySummary[]> {
   if (isForcedFixtures()) return fixturePropertySummaries();
   try {
     const { fetchProperties } = await import("./properties-db");
-    const rows = await fetchProperties();
-    if (rows.length === 0) return fixturePropertySummaries();
+    const rows = await fetchProperties(opts);
+    // When a filter is active and returns zero, return zero — don't fall
+    // back to fixtures (the empty state is the correct answer).
+    if (rows.length === 0 && !opts.office && !opts.sort) {
+      return fixturePropertySummaries();
+    }
     return rows;
   } catch (e) {
     console.error("getProperties: falling back to fixtures —", e);
@@ -130,6 +139,12 @@ function fixturePropertySummaries(): PropertySummary[] {
       hero_image_url: p.hero_image_url ?? null,
       status: "active" as const,
       source_mls: null,
+      listing_office_name: null,
+      dom_days: null,
+      property_type: null,
+      bedrooms: null,
+      bathrooms_full: null,
+      bathrooms_half: null,
       post_count: posts.length,
       total_reach: totalReach,
       total_engagements: totalEngagements,
