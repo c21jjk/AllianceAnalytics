@@ -3,6 +3,10 @@
  *   - The strip at the bottom of each GroupCard on the homepage
  *   - The strip on /posts/[id]
  *
+ * Mode (as of 2026-05-10): coaching-first. The prompt is required to find a
+ * specific tactical lever for every post — "Tracking normal" is forbidden
+ * unless the post is brand-new with zero metrics. Powered by claude-opus-4-6.
+ *
  * Hard rules baked into the prompt (per project AI Consultant rules):
  *   1. Every recommendation ties to one of FOUR outcomes:
  *      reach | engagement | listing_leads | recruiting
@@ -11,6 +15,8 @@
  *      the prompt rather than say "(no data)".
  *   3. Boost recommendations are conservative — small dollar suggestions,
  *      never auto-spend, and the human-approval gate is enforced upstream.
+ *   4. Cross-platform sibling metrics + agent + office baselines are
+ *      injected into every call so "vs your average" advice is concrete.
  */
 import "server-only";
 import type { Post } from "@/lib/types/post";
