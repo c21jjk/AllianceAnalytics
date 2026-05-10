@@ -52,6 +52,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
   return (
     <div>
       <PageHeader
+        eyebrow={`Active inventory · ${properties.length} ${properties.length === 1 ? "listing" : "listings"}${officeFilter ? ` · ${officeFilter}` : ""}`}
         title="Properties"
         description="Every active Century 21 Alliance listing tracked here. CMC and SJSR feeds auto-populate via RETS sync."
         actions={
@@ -67,7 +68,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
         }
       />
 
-      <div className="mt-4 mb-3 flex flex-wrap items-center justify-between gap-3">
+      <div className="mt-2 mb-4 flex flex-wrap items-center justify-between gap-3">
         <PropertyOfficeFilter options={officeLabels} value={officeFilter} />
         <PropertySortDropdown value={sort} />
       </div>
@@ -86,7 +87,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {properties.map((p) => (
             <PropertyCard key={p.mls_number} property={p} isAdmin={isAdmin} />
           ))}
@@ -94,13 +95,8 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
       )}
 
       <div className="mt-6 text-xs text-neutral-500">
-        Tracking{" "}
-        <span className="font-medium text-neutral-700">
-          {properties.length}{" "}
-          {properties.length === 1 ? "property" : "properties"}
-        </span>
-        {officeFilter ? ` (${officeFilter})` : ""}. See the{" "}
-        <Link href="/reports" className="text-gold-700 hover:text-gold-800">
+        See the{" "}
+        <Link href="/reports" className="text-gold-700 hover:text-gold-800 font-medium">
           company-wide rollup
         </Link>
         .
@@ -115,10 +111,12 @@ interface PropertyCardProps {
 }
 
 /**
- * Single-listing-per-row card with a wide hero on the left, all the new
- * Phase 6 fields on the right, and a native <details> "Show MLS remarks"
- * toggle. Wider layout so beds/baths/DOM/type pills don't crowd the agent
- * + office lines.
+ * Compact single-listing-per-row card. Hero is 200px wide on the left.
+ * Right side is a dense 3-row layout: title block, fact chips + agent/office
+ * line, and a footer that combines stats + remarks toggle + actions.
+ *
+ * The vertical height is roughly 2/3 of the previous design — exploits the
+ * wider canvas (max-w-7xl) by going horizontal instead of stacking.
  */
 function PropertyCard({ property, isAdmin }: PropertyCardProps) {
   const synced = property.updated_at ? new Date(property.updated_at) : null;
@@ -134,7 +132,7 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
     .join(", ");
 
   return (
-    <article className="relative group rounded-xl border border-neutral-200 bg-white shadow-card hover:shadow-card-hover hover:border-gold-200 transition-all overflow-hidden">
+    <article className="relative group rounded-xl border border-neutral-200 bg-white shadow-card hover:shadow-card-hover hover:border-gold-300 transition-all overflow-hidden">
       <Link
         href={`/properties/${encodeURIComponent(property.mls_number)}`}
         className="absolute inset-0 z-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/40"
@@ -142,8 +140,8 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
       />
 
       <div className="relative pointer-events-none flex flex-col sm:flex-row">
-        {/* Hero — large, left side */}
-        <div className="relative shrink-0 w-full sm:w-72 md:w-80 aspect-[4/3] sm:aspect-auto sm:min-h-[220px] bg-neutral-100">
+        {/* Hero — compact left rail */}
+        <div className="relative shrink-0 w-full sm:w-48 md:w-52 aspect-[4/3] sm:aspect-auto sm:min-h-[160px] bg-neutral-100">
           {property.hero_image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -157,108 +155,121 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
               <HouseIcon />
             </div>
           )}
-          <span className="absolute top-2 left-2">
+          {/* Subtle gradient overlay so the status pill always reads */}
+          <div className="absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-black/25 to-transparent pointer-events-none" />
+          <span className="absolute top-1.5 left-1.5">
             <StatusPill status={property.status} />
           </span>
           {property.source_mls ? (
-            <span className="absolute top-2 right-2 inline-flex items-center rounded-md bg-neutral-900/85 backdrop-blur px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+            <span className="absolute top-1.5 right-1.5 inline-flex items-center rounded-md bg-neutral-900/85 backdrop-blur px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
               {property.source_mls.toUpperCase()}
             </span>
           ) : null}
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-w-0 p-5">
+        <div className="flex-1 min-w-0 px-4 py-3">
+          {/* Top row — MLS#, address/city, price */}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500 font-mono">
-                MLS {property.mls_number}
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-neutral-500">
+                <span className="font-mono">MLS {property.mls_number}</span>
+                {property.property_type ? (
+                  <>
+                    <span className="text-neutral-300">·</span>
+                    <span className="text-neutral-500">
+                      {property.property_type}
+                    </span>
+                  </>
+                ) : null}
               </div>
-              <h3 className="mt-0.5 text-lg font-semibold text-neutral-900 truncate">
+              <h3 className="mt-0.5 text-base font-semibold text-neutral-900 truncate leading-tight">
                 {property.address ?? "—"}
               </h3>
               {cityState ? (
-                <div className="text-xs text-neutral-500 truncate">
+                <div className="text-[11px] text-neutral-500 truncate">
                   {cityState}
                 </div>
               ) : null}
-              {property.list_price ? (
-                <div className="mt-1.5 text-lg text-gold-700 font-semibold tabular-nums">
+            </div>
+            {property.list_price ? (
+              <div className="shrink-0 text-right">
+                <div className="text-lg md:text-xl font-semibold tabular-nums bg-gradient-to-r from-gold-700 to-gold-600 bg-clip-text text-transparent leading-tight">
                   {formatCurrency(Number(property.list_price))}
                 </div>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Beds | Baths | DOM | Type chips */}
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            {property.bedrooms !== null ? (
-              <FactPill label={`${property.bedrooms} BR`} />
-            ) : null}
-            {bathsDisplay ? <FactPill label={`${bathsDisplay} BA`} /> : null}
-            {property.dom_days !== null ? (
-              <FactPill label={`${property.dom_days}d on market`} />
-            ) : null}
-            {property.property_type ? (
-              <FactPill label={property.property_type} muted />
-            ) : null}
-          </div>
-
-          {/* Agent + Office, two-column on wider screens */}
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-neutral-700">
-            {property.agent_name ? (
-              <div className="truncate">
-                <span className="text-neutral-400 uppercase tracking-wide font-semibold text-[9px] mr-1.5">
-                  Agent
-                </span>
-                {property.agent_name}
+                {property.dom_days !== null ? (
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wide">
+                    {property.dom_days}d on market
+                  </div>
+                ) : null}
               </div>
             ) : null}
-            <div className="truncate">
-              <span className="text-neutral-400 uppercase tracking-wide font-semibold text-[9px] mr-1.5">
-                Office
+          </div>
+
+          {/* Middle row — fact chips + agent/office on the same line */}
+          <div className="mt-2 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex flex-wrap items-center gap-1">
+              {property.bedrooms !== null ? (
+                <FactPill label={`${property.bedrooms} BR`} />
+              ) : null}
+              {bathsDisplay ? <FactPill label={`${bathsDisplay} BA`} /> : null}
+              {property.dom_days !== null && !property.list_price ? (
+                <FactPill label={`${property.dom_days}d`} muted />
+              ) : null}
+            </div>
+            <div className="text-[11px] text-neutral-600 truncate flex items-center gap-3 min-w-0">
+              {property.agent_name ? (
+                <span className="truncate">
+                  <span className="text-neutral-400 mr-1">Agent</span>
+                  {property.agent_name}
+                </span>
+              ) : null}
+              <span className="truncate">
+                <span className="text-neutral-400 mr-1">Office</span>
+                {officeLabel}
               </span>
-              {officeLabel}
             </div>
           </div>
 
-          {/* MLS remarks toggle (native <details> — pointer-events-auto so the
-              card-level link doesn't swallow the click). */}
+          {/* MLS remarks toggle — pointer-events-auto so the card link doesn't
+              eat the click. Compact button-style summary. */}
           {property.public_remarks ? (
-            <details className="mt-3 pointer-events-auto group/remarks">
-              <summary className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-900 cursor-pointer select-none list-none">
+            <details className="mt-2 pointer-events-auto group/remarks">
+              <summary className="inline-flex items-center gap-1 text-[10.5px] font-medium text-neutral-600 hover:text-neutral-900 cursor-pointer select-none list-none">
                 <ChevronToggle />
-                <span className="group-open/remarks:hidden">Show MLS remarks</span>
+                <span className="group-open/remarks:hidden">MLS remarks</span>
                 <span className="hidden group-open/remarks:inline">
-                  Hide MLS remarks
+                  Hide remarks
                 </span>
               </summary>
-              <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-neutral-200 bg-neutral-50/60 p-3 text-[12px] leading-relaxed text-neutral-800 whitespace-pre-line">
+              <div className="mt-1.5 max-h-56 overflow-y-auto rounded-md border border-neutral-200 bg-gradient-to-br from-gold-50/50 to-neutral-50/30 p-2.5 text-[12px] leading-relaxed text-neutral-800 whitespace-pre-line">
                 {property.public_remarks}
               </div>
             </details>
           ) : null}
 
-          {/* Posts/Reach/Engagements */}
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            <MiniStat label="Posts" value={property.post_count.toString()} />
-            <MiniStat
-              label="Reach"
-              value={formatCompactNumber(property.total_reach)}
-            />
-            <MiniStat
-              label="Engagements"
-              value={formatCompactNumber(property.total_engagements)}
-            />
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-neutral-100 flex items-center justify-between text-[11px]">
-            <span className="text-neutral-500">
-              {syncedOk
-                ? `Updated ${formatRelativeTime(property.updated_at)}`
-                : "Not yet synced"}
-            </span>
-            <div className="flex items-center gap-3">
+          {/* Footer — stats inline + meta + open */}
+          <div className="mt-2.5 pt-2 border-t border-neutral-100 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-4 text-[11px]">
+              <InlineStat
+                label="Posts"
+                value={property.post_count.toString()}
+              />
+              <InlineStat
+                label="Reach"
+                value={formatCompactNumber(property.total_reach)}
+              />
+              <InlineStat
+                label="Eng"
+                value={formatCompactNumber(property.total_engagements)}
+              />
+            </div>
+            <div className="flex items-center gap-3 text-[11px]">
+              <span className="text-neutral-400">
+                {syncedOk
+                  ? `Updated ${formatRelativeTime(property.updated_at)}`
+                  : "Not yet synced"}
+              </span>
               {isAdmin ? (
                 <Link
                   href={`/properties/${encodeURIComponent(property.mls_number)}/edit`}
@@ -267,7 +278,7 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
                   Edit
                 </Link>
               ) : null}
-              <span className="text-gold-700 group-hover:text-gold-800 font-medium inline-flex items-center gap-1">
+              <span className="text-gold-700 group-hover:text-gold-800 font-semibold inline-flex items-center gap-0.5">
                 Open
                 <ChevronRight />
               </span>
@@ -284,7 +295,6 @@ function formatBaths(full: number | null, half: number | null): string | null {
   const f = full ?? 0;
   const h = half ?? 0;
   if (h === 0) return String(f);
-  // Half-bath as 0.5: 2 full + 1 half = 2.5
   return (f + h * 0.5).toString();
 }
 
@@ -292,10 +302,10 @@ function FactPill({ label, muted }: { label: string; muted?: boolean }) {
   return (
     <span
       className={
-        "inline-flex items-center rounded-md ring-1 px-2 py-0.5 text-[11px] font-medium " +
+        "inline-flex items-center rounded-md ring-1 px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums " +
         (muted
           ? "bg-neutral-50 text-neutral-600 ring-neutral-200"
-          : "bg-neutral-100 text-neutral-800 ring-neutral-200")
+          : "bg-gold-50 text-gold-800 ring-gold-200")
       }
     >
       {label}
@@ -303,34 +313,32 @@ function FactPill({ label, muted }: { label: string; muted?: boolean }) {
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function InlineStat({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+    <span className="inline-flex items-baseline gap-1 tabular-nums">
+      <span className="text-[9px] font-semibold uppercase tracking-wider text-neutral-400">
         {label}
-      </div>
-      <div className="text-base font-semibold tabular-nums text-neutral-900">
-        {value}
-      </div>
-    </div>
+      </span>
+      <span className="text-sm font-semibold text-neutral-900">{value}</span>
+    </span>
   );
 }
 
 const STATUS_CLASS: Record<string, string> = {
-  active: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  pending: "bg-amber-50 text-amber-700 ring-amber-200",
-  sold: "bg-neutral-100 text-neutral-700 ring-neutral-200",
-  expired: "bg-rose-50 text-rose-700 ring-rose-200",
+  active: "bg-emerald-50/95 text-emerald-700 ring-emerald-200",
+  pending: "bg-amber-50/95 text-amber-700 ring-amber-200",
+  sold: "bg-neutral-100/95 text-neutral-700 ring-neutral-200",
+  expired: "bg-rose-50/95 text-rose-700 ring-rose-200",
 };
 
 function StatusPill({ status }: { status: string }) {
   const cls =
-    STATUS_CLASS[status] ?? "bg-neutral-100 text-neutral-700 ring-neutral-200";
+    STATUS_CLASS[status] ?? "bg-neutral-100/95 text-neutral-700 ring-neutral-200";
   const label = status.charAt(0).toUpperCase() + status.slice(1);
   return (
     <span
       className={
-        "shrink-0 inline-flex items-center rounded-full ring-1 px-2 py-0.5 text-[10px] font-medium " +
+        "shrink-0 inline-flex items-center rounded-full ring-1 px-1.5 py-0.5 text-[9.5px] font-semibold backdrop-blur " +
         cls
       }
     >
@@ -341,7 +349,7 @@ function StatusPill({ status }: { status: string }) {
 
 function HouseIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="w-12 h-12" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 24 24" className="w-10 h-10" fill="none" aria-hidden="true">
       <path
         d="M3 11l9-7 9 7M5 9.6V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.6"
         stroke="currentColor"
@@ -375,7 +383,7 @@ function ChevronRight() {
   return (
     <svg
       viewBox="0 0 24 24"
-      className="w-3.5 h-3.5"
+      className="w-3 h-3"
       fill="none"
       aria-hidden="true"
     >
@@ -394,7 +402,7 @@ function ChevronToggle() {
   return (
     <svg
       viewBox="0 0 24 24"
-      className="w-3 h-3 transition-transform group-open/remarks:rotate-90"
+      className="w-2.5 h-2.5 transition-transform group-open/remarks:rotate-90"
       fill="none"
       aria-hidden="true"
     >

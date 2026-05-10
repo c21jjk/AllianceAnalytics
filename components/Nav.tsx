@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
+import type { AuthProfile } from "@/lib/auth";
+import AccountMenu from "./AccountMenu";
 
 export interface NavItem {
   href: string;
@@ -12,57 +14,108 @@ export interface NavItem {
 }
 
 // NOTE: the canonical nav item list lives in `./nav-config.tsx`. This file
-// only owns the Sidebar / BottomNav presentational components — they take a
-// pre-built NavItem[] from the layout. (An older duplicate of getNavItems +
-// icon set used to live here; both were stale and have been removed.)
+// only owns the TopNav / BottomNav presentational components.
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-/** Desktop sidebar (md+) */
-export function Sidebar({ items }: { items: NavItem[] }) {
+/**
+ * Desktop top nav (md+). Sticky to the top of the viewport. Holds the brand
+ * mark on the left, the primary tabs in the middle, and the account menu on
+ * the right. The active tab gets a 2px gold underline anchored to the bottom
+ * border of the bar.
+ *
+ * Replaces the old left sidebar — frees up ~240px of horizontal real estate
+ * for the main content area, which now uses max-w-7xl.
+ */
+export function TopNav({
+  items,
+  profile,
+}: {
+  items: NavItem[];
+  profile: AuthProfile;
+}) {
   const pathname = usePathname();
   return (
-    <aside className="hidden md:flex md:flex-col md:w-60 md:fixed md:inset-y-0 md:left-0 border-r border-neutral-200 bg-white">
-      <div className="px-5 pt-6 pb-5 border-b border-neutral-100">
-        <Link href="/" className="flex items-center gap-2.5 group">
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-gold-500 text-white font-semibold text-sm">
-            A
-          </span>
-          <span className="font-semibold tracking-tight text-neutral-900 group-hover:text-neutral-700">
-            Alliance Social
-          </span>
-        </Link>
+    <header
+      className={clsx(
+        "sticky top-0 z-30 backdrop-blur",
+        // Subtle warm gradient gives the bar a "executive" feel without being heavy
+        "bg-gradient-to-b from-white via-white to-neutral-50/80",
+        "border-b border-neutral-200",
+      )}
+    >
+      {/* Thin gold accent line at the very top — subtle brand cue */}
+      <div className="h-0.5 bg-gradient-to-r from-gold-500/0 via-gold-500/60 to-gold-500/0" />
+
+      <div className="px-4 md:px-8 max-w-7xl mx-auto">
+        <div className="h-14 flex items-center gap-6 md:gap-10">
+          {/* Brand */}
+          <Link
+            href="/"
+            className="flex items-center gap-2.5 shrink-0 group"
+            aria-label="Alliance Social home"
+          >
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-gold-400 to-gold-600 text-white font-semibold text-sm shadow-sm">
+              A
+            </span>
+            <span className="hidden sm:inline font-semibold tracking-tight text-neutral-900 group-hover:text-neutral-700">
+              Alliance Social
+            </span>
+          </Link>
+
+          {/* Tabs (desktop only — mobile uses BottomNav) */}
+          <nav
+            className="hidden md:flex items-stretch gap-1 flex-1"
+            aria-label="Primary navigation"
+          >
+            {items.map((item) => {
+              const active = isActive(pathname, item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={clsx(
+                    "relative inline-flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors",
+                    active
+                      ? "text-neutral-900"
+                      : "text-neutral-600 hover:text-neutral-900",
+                  )}
+                >
+                  <span
+                    className={clsx(
+                      "transition-colors",
+                      active ? "text-gold-600" : "text-neutral-400",
+                    )}
+                  >
+                    {item.icon}
+                  </span>
+                  <span>{item.label}</span>
+                  {/* Gold underline anchor */}
+                  <span
+                    aria-hidden="true"
+                    className={clsx(
+                      "absolute -bottom-px left-2 right-2 h-0.5 rounded-full transition-all",
+                      active ? "bg-gold-500" : "bg-transparent",
+                    )}
+                  />
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div className="ml-auto flex items-center">
+            <AccountMenu profile={profile} />
+          </div>
+        </div>
       </div>
-      <nav className="flex-1 px-3 py-4 space-y-0.5">
-        {items.map((item) => {
-          const active = isActive(pathname, item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={clsx(
-                "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition",
-                active
-                  ? "bg-gold-50 text-gold-700"
-                  : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900",
-              )}
-            >
-              <span className={active ? "text-gold-600" : "text-neutral-400"}>
-                {item.icon}
-              </span>
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
-    </aside>
+    </header>
   );
 }
 
-/** Mobile bottom nav */
+/** Mobile bottom nav — unchanged from the sidebar era. */
 export function BottomNav({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
   return (
@@ -99,3 +152,8 @@ export function BottomNav({ items }: { items: NavItem[] }) {
     </nav>
   );
 }
+
+/**
+ * Deprecated alias — keep until existing imports are updated.
+ */
+export const Sidebar = TopNav;

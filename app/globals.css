@@ -30,9 +30,13 @@ html, body {
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-lg bg-gold-500 px-4 py-2.5
+    /* Soft gradient gives the primary CTA a more "executive" feel without
+       leaving the brand palette. Hover deepens the gold for affordance. */
+    @apply inline-flex items-center justify-center rounded-lg
+           bg-gradient-to-br from-gold-500 to-gold-600 px-4 py-2.5
            text-sm font-medium text-white shadow-sm transition
-           hover:bg-gold-600 focus:outline-none focus:ring-2 focus:ring-gold-500/40
+           hover:from-gold-600 hover:to-gold-700
+           focus:outline-none focus:ring-2 focus:ring-gold-500/40
            disabled:opacity-60 disabled:cursor-not-allowed;
   }
 
@@ -72,5 +76,19 @@ html, body {
 
   .badge-error {
     @apply badge bg-rose-50 text-rose-700 ring-1 ring-rose-100;
+  }
+
+  .badge-accent {
+    @apply badge bg-gold-50 text-gold-800 ring-1 ring-gold-200;
+  }
+
+  /* Small uppercase tracking-wide eyebrow used above section headers. */
+  .eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-[0.14em] text-gold-700;
+  }
+
+  /* Thin gold accent rule, used as a section divider or under titles. */
+  .gold-rule {
+    @apply h-0.5 bg-gradient-to-r from-gold-500/0 via-gold-500/60 to-gold-500/0;
   }
 }
