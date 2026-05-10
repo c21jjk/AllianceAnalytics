@@ -61,6 +61,10 @@ export default function InlineVideoModal({
   // aspect for static image posts so they don't get letterboxed inside a
   // tall frame.
   const isVerticalVideo = !!activePosting?.is_video;
+  // FB plugins/post.php renders carousel pagination arrows + dots only when
+  // the iframe is wide enough. Vertical video stays narrow (max-w-md);
+  // everything else gets the wider modal so FB carousels paginate properly.
+  const wideMode = activePosting?.platform === "facebook" && !isVerticalVideo;
 
   return (
     <div
@@ -81,7 +85,10 @@ export default function InlineVideoModal({
         aria-label="Close"
       />
       <div
-        className="relative z-10 w-full max-w-md bg-white rounded-xl shadow-elevated overflow-hidden"
+        className={clsx(
+          "relative z-10 w-full bg-white rounded-xl shadow-elevated overflow-hidden",
+          wideMode ? "max-w-2xl" : "max-w-md",
+        )}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-neutral-200">
@@ -172,11 +179,13 @@ function buildEmbedUrl(p: PlatformPosting): string | undefined {
     if (p.is_video) {
       return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(
         p.permalink,
-      )}&show_text=false&width=560`;
+      )}&show_text=false&width=750`;
     }
+    // width=750 is FB plugins/post.php max — required for carousel posts to
+    // render their native left/right pagination arrows and dot indicators.
     return `https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(
       p.permalink,
-    )}&show_text=true&width=560`;
+    )}&show_text=true&width=750`;
   }
   return undefined;
 }
