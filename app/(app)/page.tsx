@@ -1,10 +1,12 @@
 import { requireUser } from "@/lib/auth";
 import { getAccountHealth, getPosts } from "@/lib/data";
 import { getGroupsLastNDays } from "@/lib/data/groups";
+import { getListingsNeedingPosts } from "@/lib/data/listings-needing-posts";
 import { listOffices } from "@/lib/data/offices";
 import AccountSyncBar from "@/components/AccountSyncBar";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
 import GroupCard from "@/components/GroupCard";
+import NeedsPostsRow from "@/components/NeedsPostsRow";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
@@ -49,16 +51,21 @@ export default async function HomePage({ searchParams }: HomePageProps) {
 
   const sinceIso = new Date(Date.now() - days * 86400_000).toISOString();
 
-  // Fetch only what the active view needs.
-  const [groups, posts, accountHealth] = await Promise.all([
-    currentView === "grouped"
-      ? getGroupsLastNDays(days, { office_short_code: officeFilter })
-      : Promise.resolve([]),
-    currentView === "list"
-      ? getPosts({ office_short_code: officeFilter, since: sinceIso })
-      : Promise.resolve([]),
-    getAccountHealth(),
-  ]);
+  // Fetch only what the active view needs. The "needs Larissa" strip runs
+  // on every render — it's cheap (≤25 properties + a single posts.platform
+  // count query) and catches new listings the moment the RETS sync replicates
+  // them, which is the whole point.
+  const [groups, posts, accountHealth, listingsNeedingPosts] =
+    await Promise.all([
+      currentView === "grouped"
+        ? getGroupsLastNDays(days, { office_short_code: officeFilter })
+        : Promise.resolve([]),
+      currentView === "list"
+        ? getPosts({ office_short_code: officeFilter, since: sinceIso })
+        : Promise.resolve([]),
+      getAccountHealth(),
+      getListingsNeedingPosts({ office_short_code: officeFilter }),
+    ]);
 
   const description =
     currentView === "grouped"
@@ -89,6 +96,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       ) : null}
 
       <AccountSyncBar health={accountHealth} />
+
+      <NeedsPostsRow
+        listings={listingsNeedingPosts}
+        officeShortCode={officeFilter}
+      />
 
       {currentView === "grouped" ? (
         groups.length === 0 ? (

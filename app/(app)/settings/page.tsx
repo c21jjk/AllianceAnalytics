@@ -39,6 +39,12 @@ export default async function SettingsPage() {
     (u) => u.role === "admin" && u.is_active,
   ).length;
 
+  // Dismissed-listings count for the audit card.
+  const { count: dismissedCount } = await admin
+    .from("properties")
+    .select("id", { count: "exact", head: true })
+    .not("promotion_dismissed_at", "is", null);
+
   // Group platforms into MLS-style and API-style. The new "MLS / RETS Feeds"
   // section is sourced from mls_feeds; the older paragon_mls / bright_mls
   // entries in api_credentials are legacy and not surfaced here unless they
@@ -179,6 +185,30 @@ export default async function SettingsPage() {
             <p className="text-xs text-neutral-500">
               Change your password and view your account details.
             </p>
+          </Link>
+
+          <Link
+            href="/settings/promotions"
+            className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-neutral-900 group-hover:text-gold-700">
+                Dismissed listings
+              </h3>
+              <span className="text-xs text-neutral-400 group-hover:text-gold-600">
+                Open →
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500">
+              Listings staff have removed from the dashboard prompt strip.
+              Restore brings a listing back if it still has missing platforms.
+            </p>
+            <div className="mt-2 text-xs text-neutral-600">
+              <span className="font-semibold text-neutral-900">
+                {dismissedCount ?? 0}
+              </span>{" "}
+              dismissed
+            </div>
           </Link>
         </div>
       </section>

@@ -4,7 +4,7 @@ import clsx from "clsx";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { dismissListingPromotionAction } from "@/app/(app)/listings/actions";
-import { formatCurrency, formatShortDate } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import type { Database } from "@/lib/supabase/types";
@@ -286,6 +286,3 @@ function ChevronDown() {
   );
 }
 
-// formatShortDate is imported above to satisfy types — keep it referenced so
-// future callers can use it without re-importing.
-void formatShortDate;
