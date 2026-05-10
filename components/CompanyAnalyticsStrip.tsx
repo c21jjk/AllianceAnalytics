@@ -20,7 +20,7 @@ interface CompanyAnalyticsStripProps {
 /**
  * Top-of-dashboard "at a glance" KPI strip.
  *
- * Five tiles, each a glance-able number with WoW delta + sparkline:
+ * Six tiles, each a glance-able number with WoW delta + sparkline:
  *   1. Reach            — sum of post.reach in window
  *   2. Engagement       — sum of likes + comments + shares + saves
  *   3. Engagement rate  — engagement / reach (filters viral spikes)

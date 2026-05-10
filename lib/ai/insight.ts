@@ -178,7 +178,7 @@ function asActionKind(value: unknown): InsightActionKind {
   return null;
 }
 
-/** Strict JSON extraction — Sonnet sometimes wraps in ```json fences. */
+/** Strict JSON extraction — Opus/Sonnet sometimes wrap in ```json fences. */
 function extractJson(raw: string): unknown | null {
   const trimmed = raw.trim();
   // Strip code fences if present

@@ -204,12 +204,6 @@ export default function GroupCard({
   );
 }
 
-function firstPostHref(group: PostGroup): string {
-  const first = group.postings[0];
-  if (!first) return "/";
-  return `/posts/${first.post_id}`;
-}
-
 /**
  * PlatformMetricCell wrapped in a Link when there are postings on that
  * platform. Empty platforms render the cell directly so the wrapping card

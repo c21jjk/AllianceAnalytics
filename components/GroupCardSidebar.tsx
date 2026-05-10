@@ -374,7 +374,7 @@ function StatusBlock({ group }: { group: PostGroup }) {
           trackingTone,
         )}
       >
-        ✦ {insight?.headline ?? "Tracking normal"}
+        ✦ {insight?.headline ?? "Awaiting insight"}
       </div>
       <div className="mt-2 pt-2 border-t border-neutral-100">
         <button
