@@ -36,10 +36,17 @@ import { createHash, randomBytes } from "node:crypto";
 /** Paragon property classes to sync. RE_1 = residential, MF_4 = multi-family, LD_2 = land. */
 const PROPERTY_CLASSES = ["RE_1", "MF_4", "LD_2"] as const;
 
-const DMQL2_QUERY = "(L_StatusCategory=A),(LO1_OrganizationName=*Alliance*)";
+// Paragon (CMC + SJSR):
+//   - L_Status is a calculated field that 20206's regardless of `=A` or `=|A`
+//     query syntax. Filtering it out and doing the active-status check in
+//     application code (mapStatusCategory) avoids the parser entirely.
+//   - LO1_OrganizationName needs the FULL "Century 21 Alliance" prefix —
+//     a bare `*Alliance*` also matches "Vanguard Realty Alliance" and
+//     "Home Alliance Realty" which are NOT C21.
+const DMQL2_QUERY = "(LO1_OrganizationName=*Century 21 Alliance*)";
 
 const RETS_USER_AGENT = "AllianceAnalytics/1.0";
-const RETS_VERSION = "RETS/1.7.2";
+const RETS_VERSION = "RETS/1.8";
 const SEARCH_LIMIT = 5000;
 
 // ---------------------------------------------------------------------------
@@ -117,6 +124,18 @@ function parseDigestChallenge(header: string): DigestChallenge {
   };
 }
 
+/**
+ * RFC 7617 Basic auth header. Used by modern Paragon deployments (CAPEMAY,
+ * SJSR) which return `WWW-Authenticate: Basic realm="…"` instead of Digest.
+ *
+ * `btoa()` is available on Deno's edge runtime (also on Node ≥ 16) so no
+ * `Buffer` import is required.
+ */
+function buildBasicAuthHeader(user: string, pass: string): string {
+  const token = btoa(`${user}:${pass}`);
+  return `Basic ${token}`;
+}
+
 function buildDigestAuthHeader(
   method: string,
   uri: string,
@@ -152,11 +171,15 @@ function buildDigestAuthHeader(
 // RETS client (minimal)
 // ---------------------------------------------------------------------------
 
+type AuthScheme = "digest" | "basic";
+
 class RETSClient {
   private cookie: string | null = null;
   private capabilities: Record<string, string> = {};
   private nc = 0;
   private challenge: DigestChallenge | null = null;
+  private authScheme: AuthScheme | null = null;
+  private basicHeader: string | null = null;
   private loginOrigin: string | null = null;
 
   constructor(
@@ -171,8 +194,17 @@ class RETSClient {
     return `${this.loginOrigin}/${rel}`;
   }
 
-  /** Make a request, handling Digest challenge/response and RETS-Session cookie. */
-  private async requestWithDigest(url: string): Promise<Response> {
+  /**
+   * Make a request, handling auth challenge/response and RETS-Session cookie.
+   *
+   * Both Paragon variants are supported:
+   *   - Digest (older deployments) — RFC 2617 challenge-response flow.
+   *   - Basic  (modern Paragon)    — single base64(user:pass) header.
+   *
+   * The first response's WWW-Authenticate header decides which scheme this
+   * client locks onto for the rest of its lifetime.
+   */
+  private async requestAuthenticated(url: string): Promise<Response> {
     const u = new URL(url);
     const uri = u.pathname + u.search;
     const headers: Record<string, string> = {
@@ -182,8 +214,8 @@ class RETSClient {
     };
     if (this.cookie) headers["Cookie"] = this.cookie;
 
-    // If we already have a challenge, pre-authenticate.
-    if (this.challenge) {
+    // If we already know the scheme + creds, pre-authenticate.
+    if (this.authScheme === "digest" && this.challenge) {
       this.nc += 1;
       headers["Authorization"] = buildDigestAuthHeader(
         "GET",
@@ -193,29 +225,43 @@ class RETSClient {
         this.challenge,
         this.nc,
       );
+    } else if (this.authScheme === "basic" && this.basicHeader) {
+      headers["Authorization"] = this.basicHeader;
     }
 
     let res = await fetch(url, { method: "GET", headers });
     if (res.status === 401) {
-      const wa = res.headers.get("www-authenticate");
-      if (!wa || !/digest/i.test(wa)) {
-        throw new Error(`Expected Digest challenge, got: ${wa ?? "none"}`);
-      }
-      // Drain body
+      const wa = res.headers.get("www-authenticate") ?? "";
+      // Drain body before retry
       await res.body?.cancel().catch(() => undefined);
-      this.challenge = parseDigestChallenge(wa);
-      this.nc = 1;
-      const setCookie = res.headers.get("set-cookie");
-      if (setCookie) this.cookie = setCookie.split(";")[0];
 
-      headers["Authorization"] = buildDigestAuthHeader(
-        "GET",
-        uri,
-        this.user,
-        this.pass,
-        this.challenge,
-        this.nc,
-      );
+      if (/^\s*digest/i.test(wa)) {
+        this.authScheme = "digest";
+        this.challenge = parseDigestChallenge(wa);
+        this.nc = 1;
+        const setCookie = res.headers.get("set-cookie");
+        if (setCookie) this.cookie = setCookie.split(";")[0];
+
+        headers["Authorization"] = buildDigestAuthHeader(
+          "GET",
+          uri,
+          this.user,
+          this.pass,
+          this.challenge,
+          this.nc,
+        );
+      } else if (/^\s*basic/i.test(wa)) {
+        this.authScheme = "basic";
+        this.basicHeader = buildBasicAuthHeader(this.user, this.pass);
+        const setCookie = res.headers.get("set-cookie");
+        if (setCookie) this.cookie = setCookie.split(";")[0];
+
+        headers["Authorization"] = this.basicHeader;
+      } else {
+        throw new Error(
+          `Expected Digest or Basic challenge, got: ${wa || "none"}`,
+        );
+      }
       if (this.cookie) headers["Cookie"] = this.cookie;
       res = await fetch(url, { method: "GET", headers });
     }
@@ -228,7 +274,7 @@ class RETSClient {
   async login(loginUrl: string): Promise<void> {
     const u = new URL(loginUrl);
     this.loginOrigin = `${u.protocol}//${u.host}`;
-    const res = await this.requestWithDigest(loginUrl);
+    const res = await this.requestAuthenticated(loginUrl);
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`RETS login failed (${res.status}): ${body.slice(0, 300)}`);
@@ -273,7 +319,7 @@ class RETSClient {
     });
     const sep = baseUrl.includes("?") ? "&" : "?";
     const url = `${baseUrl}${sep}${params.toString()}`;
-    const res = await this.requestWithDigest(url);
+    const res = await this.requestAuthenticated(url);
     if (!res.ok) {
       const body = await res.text();
       throw new Error(
@@ -321,7 +367,7 @@ class RETSClient {
     const logoutUrl = this.capabilities["Logout"];
     if (!logoutUrl) return;
     try {
-      await this.requestWithDigest(this.absoluteUrl(logoutUrl));
+      await this.requestAuthenticated(this.absoluteUrl(logoutUrl));
     } catch {
       // best-effort
     }
@@ -346,21 +392,27 @@ type ListingStatus =
   | "expired"
   | "withdrawn";
 
+/**
+ * Paragon returns L_Status as a full English label, NOT a one-letter code:
+ *   CMC: "ACTIVE", "UNDER CONTRACT", "SOLD COOP BY MEMBER", "SOLD IN-HOUSE", ...
+ *   SJSR: "Sold CO OP by Member", "Sold-In House", "Active", ...
+ * Mapping is keyword-based so both case styles + future variants land correctly.
+ * Unknown values map to "expired" (filtered out downstream) so we never silently
+ * import garbage as active.
+ */
 function mapStatusCategory(cat: string | undefined): ListingStatus {
-  switch ((cat ?? "").toUpperCase()) {
-    case "A":
-      return "active";
-    case "P":
-      return "pending";
-    case "S":
-      return "sold";
-    case "X":
-      return "expired";
-    case "W":
-      return "withdrawn";
-    default:
-      return "active";
-  }
+  const s = (cat ?? "").toUpperCase().trim();
+  if (!s) return "expired";
+  // Single-letter compatibility (older Paragon servers)
+  if (s === "A" || s === "ACTIVE") return "active";
+  if (s === "P" || s.startsWith("UNDER CONTRACT") || s.startsWith("PENDING"))
+    return "pending";
+  if (s === "S" || s.startsWith("SOLD") || s.startsWith("CLOSED"))
+    return "sold";
+  if (s === "X" || s.startsWith("EXPIRED")) return "expired";
+  if (s === "W" || s.startsWith("WITHDRAWN") || s.startsWith("CANCELED"))
+    return "withdrawn";
+  return "expired";
 }
 
 function readPrice(raw: string | undefined): number | null {
@@ -418,7 +470,7 @@ function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
     state: "NJ", // Both Paragon feeds we run are NJ-only.
     zip: null, // Not in the standard mapping; can be added later.
     list_price: readPrice(row["L_AskingPrice"]) ?? readPrice(row["L_OriginalPrice"]),
-    status: mapStatusCategory(row["L_StatusCategory"]),
+    status: mapStatusCategory(row["L_Status"]),
     listing_date: readDate(row["L_ListingDate"]),
     list_agent_name: buildAgentName(row),
     list_agent_email: null, // Not denormalized on Paragon Property resource.
@@ -625,9 +677,14 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     return result;
   }
 
-  const rets = new RETSClient(feed.username!, feed.password!);
+  // Paragon's session/cookie state goes stale after the first large search,
+  // so we use a fresh RETSClient (i.e. fresh login) per property class.
+  // Single-shot smoke test: validate creds before the loop so a bad password
+  // surfaces clearly, not as N identical 401 errors.
   try {
-    await rets.login(feed.rets_url!);
+    const probe = new RETSClient(feed.username!, feed.password!);
+    await probe.login(feed.rets_url!);
+    await probe.logout();
   } catch (e) {
     result.errors.push(`Login failed: ${(e as Error).message}`);
     await updateFeedTimestamps(analytics, feed.id, false);
@@ -650,6 +707,26 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
       records_seen: 0,
       records_upserted: 0,
     };
+
+    // Fresh login per class to dodge Paragon's session-after-search quirk.
+    const rets = new RETSClient(feed.username!, feed.password!);
+    try {
+      await rets.login(feed.rets_url!);
+    } catch (e) {
+      anyClassFailed = true;
+      classResult.error = `class-login: ${(e as Error).message}`;
+      result.errors.push(`[${cls}] class-login: ${(e as Error).message}`);
+      if (runId !== null) {
+        await finishSyncRun(analytics, runId, {
+          status: "error",
+          records_seen: 0,
+          records_upserted: 0,
+          error_message: classResult.error,
+        });
+      }
+      result.classes.push(classResult);
+      continue;
+    }
 
     try {
       const { rows, rawCount } = await rets.search(
@@ -694,9 +771,8 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     }
 
     result.classes.push(classResult);
+    await rets.logout();
   }
-
-  await rets.logout();
 
   // Run the auto-linker once after all classes complete so any unlinked posts
   // mentioning these MLS numbers / addresses get attached.

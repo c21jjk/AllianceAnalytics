@@ -127,10 +127,12 @@ export async function getListingsNeedingPosts(
   const cutoffIso = new Date(Date.now() - windowDays * 86400_000).toISOString();
   const cutoffDate = cutoffIso.slice(0, 10);
 
-  // Pull eligible properties. We OR the date conditions because some
-  // CMC/SJSR rows haven't had `listing_date` populated by the RETS sync yet
-  // — falling back to created_at means new listings still surface the day
-  // they're synced.
+  // Recency rule:
+  //   - When listing_date IS set, that's the source of truth (matches MLS).
+  //   - When listing_date IS NULL (rare — only happens before the first
+  //     successful RETS sync), fall back to created_at so newly-synced rows
+  //     still surface.
+  // Using OR with a nested AND keeps both branches in a single query.
   let query = supabase
     .from("properties")
     .select(
@@ -138,7 +140,9 @@ export async function getListingsNeedingPosts(
     )
     .eq("status", "active")
     .is("promotion_dismissed_at", null)
-    .or(`listing_date.gte.${cutoffDate},created_at.gte.${cutoffIso}`)
+    .or(
+      `listing_date.gte.${cutoffDate},and(listing_date.is.null,created_at.gte.${cutoffIso})`,
+    )
     .order("listing_date", { ascending: false, nullsFirst: false })
     .limit(limit * 2); // overfetch — we'll filter to "missing platforms" in code
 
