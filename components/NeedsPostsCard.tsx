@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import {
   confirmListingPostsAction,
   dismissListingPromotionAction,
+  setListingPlatformConfirmedAction,
   unconfirmListingPostsAction,
   undismissListingPromotionAction,
 } from "@/app/(app)/listings/actions";
@@ -92,6 +93,25 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
     });
   }
 
+  function handlePlatformToggle(platform: PostPlatform) {
+    setError(null);
+    // Auto-covered platforms aren't toggleable here — the click target is
+    // disabled in the JSX. Only "missing" or "manual ✓" badges call this.
+    const isCurrentlyManual =
+      listing.manual_confirmed_platforms.includes(platform);
+    const nextConfirmed = !isCurrentlyManual;
+    startTransition(async () => {
+      const result = await setListingPlatformConfirmedAction(
+        listing.mls_number,
+        platform,
+        nextConfirmed,
+      );
+      if (!result.ok) {
+        setError(result.error ?? "Unable to update.");
+      }
+    });
+  }
+
   function handleReset() {
     setError(null);
     setMenuOpen(false);
@@ -173,22 +193,12 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
           {daysAgo}d
         </span>
 
-        {listing.missing_platforms.length > 0 ? (
-          <div className="flex items-center gap-0.5 shrink-0">
-            <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-500 mr-0.5">
-              Need:
-            </span>
-            {listing.missing_platforms.map((p) => (
-              <span
-                key={p}
-                title={`Missing on ${platformLabel(p)}`}
-                className="inline-flex"
-              >
-                <PlatformBadge platform={p} size="sm" />
-              </span>
-            ))}
-          </div>
-        ) : null}
+        <PlatformCoverageBadges
+          listing={listing}
+          isPending={isPending}
+          onToggle={handlePlatformToggle}
+        />
+
 
         <button
           type="button"
@@ -363,6 +373,94 @@ function ChevronDown() {
         strokeLinejoin="round"
       />
     </svg>
+  );
+}
+
+const ALL_PLATFORMS: PostPlatform[] = ["facebook", "instagram", "tiktok"];
+
+interface PlatformCoverageBadgesProps {
+  listing: ListingNeedingPosts;
+  isPending: boolean;
+  onToggle: (platform: PostPlatform) => void;
+}
+
+/**
+ * Three-button row showing per-platform coverage state. Always renders all
+ * three platforms so the user can see the full picture at a glance:
+ *
+ *   Auto-covered (linked post exists)        → solid green ✓ FB, NOT clickable
+ *   Manual ✓ (in posts_confirmed_platforms)  → green ✓ FB with dotted gold ring, click to un-mark
+ *   Missing                                  → dimmed grey FB, click to mark posted manually
+ *
+ * One click = one server roundtrip = visual state flips. ADHD-friendly: no
+ * menu, no confirmation, easy to undo.
+ */
+function PlatformCoverageBadges({
+  listing,
+  isPending,
+  onToggle,
+}: PlatformCoverageBadgesProps) {
+  const allMarkedDone = !!listing.posts_confirmed_at;
+
+  return (
+    <div className="inline-flex items-center gap-1 shrink-0">
+      {ALL_PLATFORMS.map((platform) => {
+        const autoCovered = (listing.post_counts[platform] ?? 0) > 0;
+        const manualCovered = listing.manual_confirmed_platforms.includes(platform);
+        // The "Mark all as posted" shortcut covers everything but isn't
+        // toggleable per-platform from here. Surface it as a full ring so
+        // user knows it came from the global toggle.
+        const fromGlobalShortcut = !autoCovered && !manualCovered && allMarkedDone;
+        const covered = autoCovered || manualCovered || fromGlobalShortcut;
+
+        const clickable = !autoCovered && !fromGlobalShortcut;
+        const title = autoCovered
+          ? `${platformLabel(platform)}: covered by an auto-linked post`
+          : fromGlobalShortcut
+            ? `${platformLabel(platform)}: covered by "Mark all as posted" — use Status ▾ → Reset to undo`
+            : manualCovered
+              ? `${platformLabel(platform)}: marked as posted (click to undo)`
+              : `${platformLabel(platform)}: missing — click to mark as posted`;
+
+        const visualClass = covered
+          ? manualCovered
+            ? "ring-2 ring-gold-400 ring-offset-1 ring-offset-white opacity-100"
+            : "opacity-100"
+          : "opacity-30 grayscale";
+
+        return (
+          <button
+            key={platform}
+            type="button"
+            onClick={clickable ? () => onToggle(platform) : undefined}
+            disabled={!clickable || isPending}
+            title={title}
+            aria-pressed={covered}
+            className={clsx(
+              "relative inline-flex items-center justify-center rounded-md transition",
+              clickable
+                ? "cursor-pointer hover:scale-110"
+                : "cursor-default",
+              isPending && clickable && "opacity-60",
+              visualClass,
+            )}
+          >
+            <PlatformBadge platform={platform} size="sm" />
+            {covered ? (
+              <span
+                aria-hidden="true"
+                className={clsx(
+                  "absolute -top-1 -right-1 w-3 h-3 rounded-full text-white text-[8px] font-bold leading-none flex items-center justify-center shadow-sm",
+                  manualCovered ? "bg-gold-500" : "bg-emerald-500",
+                )}
+              >
+                ✓
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

@@ -17,6 +17,8 @@ export interface UsersTableRow {
   role: UserRole;
   is_active: boolean;
   created_at: string;
+  /** ISO timestamp of last successful sign-in, sourced from auth.users. */
+  last_sign_in_at: string | null;
   /** True when this row represents the current admin viewing the page. */
   is_self: boolean;
 }
@@ -46,6 +48,7 @@ export default function UsersTable({ rows }: UsersTableProps) {
             <th className="px-4 py-3 font-medium">Role</th>
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">Created</th>
+            <th className="px-4 py-3 font-medium">Last sign-in</th>
             <th className="px-4 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
@@ -129,6 +132,7 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
   const createdLabel = Number.isNaN(created.getTime())
     ? "—"
     : created.toLocaleDateString();
+  const lastSignInLabel = formatLastSignIn(row.last_sign_in_at);
 
   return (
     <>
@@ -194,6 +198,19 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
           </button>
         </td>
         <td className="px-4 py-3 text-neutral-500 text-xs">{createdLabel}</td>
+        <td
+          className={clsx(
+            "px-4 py-3 text-xs",
+            row.last_sign_in_at ? "text-neutral-600" : "text-neutral-400",
+          )}
+          title={
+            row.last_sign_in_at
+              ? new Date(row.last_sign_in_at).toLocaleString()
+              : "Never signed in"
+          }
+        >
+          {lastSignInLabel}
+        </td>
         <td className="px-4 py-3">
           <div className="flex items-center justify-end gap-2">
             <button
@@ -232,7 +249,7 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
       </tr>
       {resetOpen ? (
         <tr className="bg-neutral-50/80 border-b border-neutral-100">
-          <td colSpan={6} className="px-4 py-3">
+          <td colSpan={7} className="px-4 py-3">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-neutral-700">
                 New password for {row.email}:
@@ -279,11 +296,59 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
       ) : null}
       {error ? (
         <tr className="bg-rose-50 border-b border-rose-100">
-          <td colSpan={6} className="px-4 py-2 text-xs text-rose-700">
+          <td colSpan={7} className="px-4 py-2 text-xs text-rose-700">
             {error}
           </td>
         </tr>
       ) : null}
     </>
   );
+}
+
+/**
+ * Friendly relative-ish formatting for the Last sign-in cell:
+ *   - Same calendar day → "today, 9:45 AM"
+ *   - Yesterday        → "yesterday, 4:12 PM"
+ *   - Within 7 days    → "3d ago"
+ *   - Older            → "May 3, 2026"
+ *   - Null/undefined   → "Never"
+ */
+function formatLastSignIn(iso: string | null | undefined): string {
+  if (!iso) return "Never";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / 86_400_000);
+
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) {
+    return `today, ${d.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    })}`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday =
+    d.getFullYear() === yesterday.getFullYear() &&
+    d.getMonth() === yesterday.getMonth() &&
+    d.getDate() === yesterday.getDate();
+  if (isYesterday) {
+    return `yesterday, ${d.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    })}`;
+  }
+  if (diffDays >= 2 && diffDays <= 6) {
+    return `${diffDays}d ago`;
+  }
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }

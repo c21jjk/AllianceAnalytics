@@ -6,6 +6,7 @@ import {
   findReport,
   deliveriesForReport,
 } from "@/lib/fixtures/reports";
+import { fetchPropertyByMls } from "@/lib/data/properties-db";
 import PropertyReportHero from "@/components/PropertyReportHero";
 import PropertyKpiRollup from "@/components/PropertyKpiRollup";
 import PostThumbnailGrid from "@/components/PostThumbnailGrid";
@@ -15,6 +16,7 @@ import ReportActionBar from "@/components/ReportActionBar";
 import DeliveryStatusPill from "@/components/DeliveryStatusPill";
 import GenerateReportButton from "@/components/GenerateReportButton";
 import SendToAgentButton from "@/components/SendToAgentButton";
+import LivePropertyDetail from "./LivePropertyDetail";
 import { formatRelativeTime } from "@/lib/format";
 
 interface PageProps {
@@ -24,13 +26,23 @@ interface PageProps {
 export async function generateMetadata({ params }: PageProps) {
   const { mls } = await params;
   const property = findProperty(mls);
-  if (!property) return { title: "Property — Alliance Social" };
-  return { title: `${property.address} — Alliance Social` };
+  if (property) return { title: `${property.address} — Alliance Social` };
+  const live = await fetchPropertyByMls(mls);
+  if (live?.address) return { title: `${live.address} — Alliance Social` };
+  return { title: "Property — Alliance Social" };
 }
 
 export default async function PropertyDetailPage({ params }: PageProps) {
   await requireUser();
   const { mls } = await params;
+
+  // Live RETS-synced property takes priority. Fixtures only render when the
+  // MLS doesn't exist in the live properties table — preserves the legacy
+  // demo-mode rich report view without breaking real listings.
+  const live = await fetchPropertyByMls(mls);
+  if (live) {
+    return <LivePropertyDetail property={live} />;
+  }
 
   const property = findProperty(mls);
   const report = findReport(mls);

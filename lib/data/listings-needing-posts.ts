@@ -47,9 +47,17 @@ export interface ListingNeedingPosts {
   agent_name: string | null;
   /** Office short code (e.g. "WWC", "OCN") or null when unmapped. */
   office_short_code: string | null;
-  /** Per-platform post counts. Zero ⇒ that platform is missing for this listing. */
+  /** Per-platform post counts (auto-linked posts only). Zero ⇒ no auto-linked post on that platform. */
   post_counts: Record<PostPlatform, number>;
-  /** Convenience: derived gaps (platforms with zero posts). */
+  /**
+   * Per-platform manual confirmations from properties.posts_confirmed_platforms[].
+   * Layered on top of post_counts to derive missing_platforms below.
+   */
+  manual_confirmed_platforms: PostPlatform[];
+  /**
+   * Convenience: platforms with neither an auto-linked post NOR a manual
+   * confirmation. Drives the "click to mark" badge UI.
+   */
   missing_platforms: PostPlatform[];
   /** Three-state rollup — drives the ribbon overlay on the listing card. */
   promotion_status: ListingPromotionStatus;
@@ -113,6 +121,7 @@ interface DbPropertyRow {
   posts_confirmed_at: string | null;
   promotion_dismissed_at: string | null;
   promotion_dismissed_reason: string | null;
+  posts_confirmed_platforms: string[] | null;
 }
 
 interface DbPostCountRow {
@@ -160,7 +169,7 @@ export async function getListingsNeedingPosts(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, created_at, posts_confirmed_at, promotion_dismissed_at, promotion_dismissed_reason",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, created_at, posts_confirmed_at, promotion_dismissed_at, promotion_dismissed_reason, posts_confirmed_platforms",
     )
     .eq("status", "active")
     .or(
@@ -226,17 +235,33 @@ export async function getListingsNeedingPosts(
       instagram: 0,
       tiktok: 0,
     };
+
+    // Manual per-platform confirmations from posts_confirmed_platforms[].
+    // Filter to known platforms in case the column ever has stale data.
+    const manualConfirmed: PostPlatform[] = (
+      (p.posts_confirmed_platforms ?? []) as string[]
+    ).filter((plat): plat is PostPlatform =>
+      plat === "facebook" || plat === "instagram" || plat === "tiktok",
+    );
+
+    // A platform is covered when it has an auto-linked post OR is in the
+    // manual confirmation array OR posts_confirmed_at is set (the global
+    // "all done" shortcut).
+    const allMarkedDone = !!p.posts_confirmed_at;
+    const isCovered = (plat: PostPlatform): boolean =>
+      allMarkedDone ||
+      (c[plat] ?? 0) > 0 ||
+      manualConfirmed.includes(plat);
+
     const missing: PostPlatform[] = (
       ["facebook", "instagram", "tiktok"] as PostPlatform[]
-    ).filter((plat) => (c[plat] ?? 0) === 0);
-
-    const totalLinkedPosts =
-      (c.facebook ?? 0) + (c.instagram ?? 0) + (c.tiktok ?? 0);
+    ).filter((plat) => !isCovered(plat));
 
     let promotionStatus: ListingPromotionStatus;
     if (p.promotion_dismissed_at) {
       promotionStatus = "dismissed";
-    } else if (totalLinkedPosts > 0 || p.posts_confirmed_at) {
+    } else if (missing.length === 0) {
+      // All three platforms covered — by auto-link, manual mark, or "all done"
       promotionStatus = "posted";
     } else {
       promotionStatus = "needs_post";
@@ -265,6 +290,7 @@ export async function getListingsNeedingPosts(
         ? officeShortByID.get(p.office_id) ?? null
         : null,
       post_counts: c,
+      manual_confirmed_platforms: manualConfirmed,
       missing_platforms: missing,
       promotion_status: promotionStatus,
       posts_confirmed_at: p.posts_confirmed_at,

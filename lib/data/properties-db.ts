@@ -304,3 +304,115 @@ export async function listDistinctOfficeLabels(): Promise<string[]> {
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
+
+// ---------------------------------------------------------------------------
+// Single-property fetch for the /properties/[mls] detail page.
+// ---------------------------------------------------------------------------
+
+export interface LinkedPost {
+  id: string;
+  platform: "facebook" | "instagram" | "tiktok";
+  posted_at: string | null;
+  caption: string | null;
+  thumbnail_url: string | null;
+  permalink: string | null;
+  reach: number;
+  total_engagements: number;
+}
+
+export interface PropertyDetail extends PropertySummary {
+  /** Ordered newest-first. */
+  posts: LinkedPost[];
+}
+
+/**
+ * Fetch a single property by mls_number, including its linked posts. Returns
+ * null when the property isn't in the live `properties` table. Used by the
+ * detail page to fall back gracefully from the fixture-based legacy view.
+ *
+ * Case-insensitive match — the URL may carry the MLS in mixed case but the
+ * DB stores the canonical form.
+ */
+export async function fetchPropertyByMls(
+  mls: string,
+): Promise<PropertyDetail | null> {
+  const supabase = createAdminClient();
+  const trimmed = mls.trim();
+  if (!trimmed) return null;
+
+  const { data: propRow, error } = await supabase
+    .from("properties")
+    .select(
+      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
+    )
+    .ilike("mls_number", trimmed)
+    .maybeSingle();
+  if (error || !propRow) return null;
+
+  const row = propRow as DbPropertyRow;
+
+  const { data: postRows } = await supabase
+    .from("posts")
+    .select("id, platform, posted_at, caption, thumbnail_url, permalink, metrics")
+    .eq("property_id", row.id)
+    .order("posted_at", { ascending: false });
+
+  const posts: LinkedPost[] = ((postRows ?? []) as Array<{
+    id: string;
+    platform: "facebook" | "instagram" | "tiktok";
+    posted_at: string | null;
+    caption: string | null;
+    thumbnail_url: string | null;
+    permalink: string | null;
+    metrics: Record<string, unknown> | null;
+  }>).map((p) => {
+    const m = (p.metrics ?? {}) as Record<string, unknown>;
+    const reach = Number(m.reach ?? 0) || 0;
+    const eng =
+      (Number(m.likes ?? 0) || 0) +
+      (Number(m.comments ?? 0) || 0) +
+      (Number(m.shares ?? 0) || 0) +
+      (Number(m.saves ?? 0) || 0);
+    return {
+      id: p.id,
+      platform: p.platform,
+      posted_at: p.posted_at,
+      caption: p.caption,
+      thumbnail_url: p.thumbnail_url,
+      permalink: p.permalink,
+      reach,
+      total_engagements: eng,
+    };
+  });
+
+  const totalReach = posts.reduce((s, p) => s + p.reach, 0);
+  const totalEngagements = posts.reduce((s, p) => s + p.total_engagements, 0);
+
+  return {
+    id: row.id,
+    mls_number: row.mls_number,
+    address: row.address,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    list_price:
+      row.list_price === null ? null : Number(row.list_price),
+    listing_date: row.listing_date,
+    agent_name: row.agent_name,
+    hero_image_url: row.hero_image_url,
+    status: row.status,
+    source_mls: row.source_mls,
+    listing_office_name: row.listing_office_name,
+    dom_days: row.dom_days,
+    property_type: row.property_type,
+    bedrooms: row.bedrooms,
+    bathrooms_full: row.bathrooms_full,
+    bathrooms_half: row.bathrooms_half,
+    public_remarks: row.public_remarks,
+    post_count: posts.length,
+    total_reach: totalReach,
+    total_engagements: totalEngagements,
+    updated_at: row.updated_at,
+    posts,
+  };
+}

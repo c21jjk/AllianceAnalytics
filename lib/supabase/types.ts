@@ -514,6 +514,7 @@ export type Database = {
           office_id: string | null
           posts_confirmed_at: string | null
           posts_confirmed_by: string | null
+          posts_confirmed_platforms: string[]
           promotion_dismissed_at: string | null
           promotion_dismissed_by: string | null
           promotion_dismissed_reason: string | null
@@ -545,6 +546,7 @@ export type Database = {
           office_id?: string | null
           posts_confirmed_at?: string | null
           posts_confirmed_by?: string | null
+          posts_confirmed_platforms?: string[]
           promotion_dismissed_at?: string | null
           promotion_dismissed_by?: string | null
           promotion_dismissed_reason?: string | null
@@ -576,6 +578,7 @@ export type Database = {
           office_id?: string | null
           posts_confirmed_at?: string | null
           posts_confirmed_by?: string | null
+          posts_confirmed_platforms?: string[]
           promotion_dismissed_at?: string | null
           promotion_dismissed_by?: string | null
           promotion_dismissed_reason?: string | null

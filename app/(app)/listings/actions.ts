@@ -582,6 +582,70 @@ export async function confirmListingPostsAction(
 }
 
 /**
+ * Per-platform manual confirmation toggle. Adds/removes a single platform
+ * from properties.posts_confirmed_platforms[]. Idempotent: setting confirmed
+ * to true when already in the array is a no-op, same for false when not in
+ * the array. Used by the click-to-mark platform badges on the dashboard
+ * "Recent listings" rows.
+ */
+export async function setListingPlatformConfirmedAction(
+  mlsNumber: string,
+  platform: "facebook" | "instagram" | "tiktok",
+  confirmed: boolean,
+): Promise<DismissPromotionResult> {
+  await requireAdmin();
+  if (!mlsNumber || typeof mlsNumber !== "string") {
+    return { ok: false, error: "Missing MLS number." };
+  }
+  if (!["facebook", "instagram", "tiktok"].includes(platform)) {
+    return { ok: false, error: "Invalid platform." };
+  }
+
+  const supabase = createAdminClient();
+
+  // Read current array, then write the desired state. Using a read-modify-
+  // write loop instead of array_append/array_remove keeps the path simple
+  // and avoids concurrent-toggle weirdness — this surface is admin-only and
+  // single-user in practice.
+  const { data: current, error: readErr } = await supabase
+    .from("properties")
+    .select("posts_confirmed_platforms")
+    .eq("mls_number", mlsNumber)
+    .maybeSingle();
+  if (readErr || !current) {
+    return {
+      ok: false,
+      error: readErr?.message ?? "Property not found.",
+    };
+  }
+
+  const existing = (current.posts_confirmed_platforms ?? []) as string[];
+  let next = existing;
+  if (confirmed && !existing.includes(platform)) {
+    next = [...existing, platform];
+  } else if (!confirmed && existing.includes(platform)) {
+    next = existing.filter((p) => p !== platform);
+  } else {
+    // No-op — already in desired state.
+    return { ok: true };
+  }
+
+  const { error: updateErr } = await supabase
+    .from("properties")
+    .update({
+      posts_confirmed_platforms: next,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("mls_number", mlsNumber);
+  if (updateErr) return { ok: false, error: updateErr.message };
+
+  revalidatePath("/");
+  revalidatePath("/properties");
+  revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
+  return { ok: true };
+}
+
+/**
  * Clear the manual "posted" confirmation. The listing returns to whatever
  * state it would be in based on auto-detected posts + dismissal flags.
  */
