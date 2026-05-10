@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { fetchPostDetailBundle } from "@/lib/data/post-detail";
+import { fetchGroupDetailBundleForPost } from "@/lib/data/post-detail";
 import DetailDrawer from "@/components/DetailDrawer";
-import PostDetailDrawerBody from "@/components/PostDetailDrawerBody";
+import GroupDetailBody from "@/components/GroupDetailBody";
 
 /**
  * Intercepting route for the @modal parallel slot.
@@ -13,7 +13,11 @@ import PostDetailDrawerBody from "@/components/PostDetailDrawerBody";
  *
  * On hard navigation (refresh, paste-link, direct hit), this file is NOT
  * used — the standalone `app/(app)/posts/[id]/page.tsx` renders the full
- * page instead.
+ * page instead. Both routes share <GroupDetailBody /> so the UI is identical
+ * either way.
+ *
+ * Note: the drawer intentionally does NOT expose a "View full page" link
+ * anymore. Everything the user needs lives inline in this body.
  */
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -22,15 +26,26 @@ interface PageProps {
 export default async function InterceptedPostDetailPage({ params }: PageProps) {
   await requireUser();
   const { id } = await params;
-  const bundle = await fetchPostDetailBundle(id);
+  const bundle = await fetchGroupDetailBundleForPost(id);
   if (!bundle) notFound();
 
+  const platformCount = bundle.group.postings.length;
+  const subtitle =
+    platformCount > 1
+      ? `Merged across ${platformCount} platforms`
+      : "Single-platform post";
+
   return (
-    <DetailDrawer title="Post detail" fullPagePath={`/posts/${id}`}>
-      <PostDetailDrawerBody
-        post={bundle.post}
+    <DetailDrawer title="Post detail" subtitle={subtitle}>
+      <GroupDetailBody
+        group={bundle.group}
+        posts={bundle.posts}
         offices={bundle.offices}
         initialOfficeId={bundle.initialOfficeId}
+        listingAgent={bundle.listingAgent}
+        combinedDaily={bundle.combinedDaily}
+        combinedAudience={bundle.combinedAudience}
+        primaryPostId={id}
       />
     </DetailDrawer>
   );
