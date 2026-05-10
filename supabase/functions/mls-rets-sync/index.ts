@@ -1,26 +1,24 @@
 /**
- * MLS RETS sync Edge Function (Phase 5).
+ * MLS RETS sync Edge Function (Phase 5 + 6).
  *
- * Pulls active listings from a Paragon RETS feed (CMC or SJSR), filters to
- * Century 21 Alliance offices, and upserts them into the SEPARATE "Alliance
- * Listings" Supabase project (umziekblnbobkezbbupg).
+ * Pulls active C21 Alliance listings from a Paragon RETS feed (CMC or SJSR),
+ * upserts them into the SEPARATE "Alliance Listings" Supabase project
+ * (umziekblnbobkezbbupg), and replicates into AllianceAnalytics.properties.
  *
- * Key points (distilled from AllianceDash's working RETS code, 2026-05-09):
- *   - CMC and SJSR Paragon installations expose IDENTICAL field codes.
- *   - DMQL2 query: (L_StatusCategory=A),(LO1_OrganizationName=*Alliance*)
- *   - Property classes worth syncing for v1: RE_1, MF_4, LD_2.
- *   - Bright MLS uses RESO Web API and is NOT handled here.
+ * Phase 6 add-ons:
+ *   - Office name + DOM + property type + zip extraction
+ *   - Bedrooms / full + half bathrooms (CMC vs SJSR slot mapping shifted by 1)
+ *   - Public remarks (CMC: LR_remarks33 / SJSR: LR_remarks22)
+ *   - Hero photo via GetObject (Location=1 returns Paragon CDN URL in
+ *     `Location:` HTTP header on a 200 response — NOT a 3xx redirect)
  *
- * Auth: HTTP Digest (RFC 2617). Single-file inlined client below.
+ * Required Edge Function secrets:
+ *   - SUPABASE_URL                       (auto-injected)
+ *   - SUPABASE_SERVICE_ROLE_KEY          (auto-injected)
+ *   - LISTINGS_SUPABASE_URL              (Alliance Listings project)
+ *   - LISTINGS_SUPABASE_SERVICE_ROLE_KEY (Alliance Listings service role)
  *
- * Required Supabase Edge Function secrets:
- *   - SUPABASE_URL                          (this project, auto-injected)
- *   - SUPABASE_SERVICE_ROLE_KEY             (this project, auto-injected)
- *   - LISTINGS_SUPABASE_URL                 (Alliance Listings project URL)
- *   - LISTINGS_SUPABASE_SERVICE_ROLE_KEY    (Alliance Listings service role)
- *
- * Invocation: POST { feed_short_code: "cmc" | "sjsr" }. With verify_jwt=true,
- * the Next.js server action authenticates via the user session.
+ * Invocation: POST { feed_short_code: "cmc" | "sjsr" }.
  */
 // @ts-expect-error - Deno runtime
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -29,29 +27,14 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 // @ts-expect-error - Deno-resolved import
 import { createHash, randomBytes } from "node:crypto";
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/** Paragon property classes to sync. RE_1 = residential, MF_4 = multi-family, LD_2 = land. */
 const PROPERTY_CLASSES = ["RE_1", "MF_4", "LD_2"] as const;
-
-// Paragon (CMC + SJSR):
-//   - L_Status is a calculated field that 20206's regardless of `=A` or `=|A`
-//     query syntax. Filtering it out and doing the active-status check in
-//     application code (mapStatusCategory) avoids the parser entirely.
-//   - LO1_OrganizationName needs the FULL "Century 21 Alliance" prefix —
-//     a bare `*Alliance*` also matches "Vanguard Realty Alliance" and
-//     "Home Alliance Realty" which are NOT C21.
+// L_Status is calculated and 20206's; LO1_OrganizationName=*Century 21 Alliance*
+// is the C21-only constraint we need.
 const DMQL2_QUERY = "(LO1_OrganizationName=*Century 21 Alliance*)";
-
 const RETS_USER_AGENT = "AllianceAnalytics/1.0";
 const RETS_VERSION = "RETS/1.8";
 const SEARCH_LIMIT = 5000;
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+const PHOTO_BUCKET = "property-photos";
 
 interface FeedRow {
   id: string;
@@ -80,11 +63,8 @@ interface SyncResult {
   duration_ms: number;
   classes: ClassResult[];
   errors: string[];
+  photos_uploaded?: number;
 }
-
-// ---------------------------------------------------------------------------
-// Digest auth helpers
-// ---------------------------------------------------------------------------
 
 interface DigestChallenge {
   realm: string;
@@ -97,16 +77,13 @@ interface DigestChallenge {
 function md5(input: string): string {
   return createHash("md5").update(input).digest("hex");
 }
-
 function newCnonce(): string {
   return randomBytes(8).toString("hex");
 }
 
 function parseDigestChallenge(header: string): DigestChallenge {
-  // Strip leading "Digest " (case-insensitive)
   const body = header.replace(/^\s*Digest\s+/i, "");
   const out: Record<string, string> = {};
-  // Tokenizer that respects quoted strings.
   const re = /(\w+)\s*=\s*("([^"]*)"|([^,]+))/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(body)) !== null) {
@@ -124,16 +101,8 @@ function parseDigestChallenge(header: string): DigestChallenge {
   };
 }
 
-/**
- * RFC 7617 Basic auth header. Used by modern Paragon deployments (CAPEMAY,
- * SJSR) which return `WWW-Authenticate: Basic realm="…"` instead of Digest.
- *
- * `btoa()` is available on Deno's edge runtime (also on Node ≥ 16) so no
- * `Buffer` import is required.
- */
 function buildBasicAuthHeader(user: string, pass: string): string {
-  const token = btoa(`${user}:${pass}`);
-  return `Basic ${token}`;
+  return `Basic ${btoa(`${user}:${pass}`)}`;
 }
 
 function buildDigestAuthHeader(
@@ -167,44 +136,54 @@ function buildDigestAuthHeader(
   return header;
 }
 
-// ---------------------------------------------------------------------------
-// RETS client (minimal)
-// ---------------------------------------------------------------------------
-
 type AuthScheme = "digest" | "basic";
 
 class RETSClient {
-  private cookie: string | null = null;
-  private capabilities: Record<string, string> = {};
+  /**
+   * Cookie jar — keyed by name. Paragon emits TWO Set-Cookie headers per
+   * response (`RETS-Session-ID` and Cloudflare's `__cf_bm`). Reading just the
+   * concatenated `headers.get("set-cookie")` and splitting on ";" loses the
+   * second cookie, which trips Cloudflare's bot mitigation on subsequent
+   * GetObject calls. Using `getSetCookie()` (Deno) returns the array; we
+   * merge into this map so each request sends both.
+   */
+  private cookies = new Map<string, string>();
+  capabilities: Record<string, string> = {};
   private nc = 0;
   private challenge: DigestChallenge | null = null;
   private authScheme: AuthScheme | null = null;
   private basicHeader: string | null = null;
   private loginOrigin: string | null = null;
-
   constructor(
     private readonly user: string,
     private readonly pass: string,
   ) {}
-
-  private absoluteUrl(rel: string): string {
+  absoluteUrl(rel: string): string {
     if (/^https?:\/\//i.test(rel)) return rel;
     if (!this.loginOrigin) return rel;
     if (rel.startsWith("/")) return `${this.loginOrigin}${rel}`;
     return `${this.loginOrigin}/${rel}`;
   }
+  private cookieHeader(): string {
+    return Array.from(this.cookies, ([k, v]) => `${k}=${v}`).join("; ");
+  }
 
-  /**
-   * Make a request, handling auth challenge/response and RETS-Session cookie.
-   *
-   * Both Paragon variants are supported:
-   *   - Digest (older deployments) — RFC 2617 challenge-response flow.
-   *   - Basic  (modern Paragon)    — single base64(user:pass) header.
-   *
-   * The first response's WWW-Authenticate header decides which scheme this
-   * client locks onto for the rest of its lifetime.
-   */
-  private async requestAuthenticated(url: string): Promise<Response> {
+  private absorbSetCookies(res: Response): void {
+    // Deno-specific: getSetCookie() returns an array of all Set-Cookie headers.
+    // Falls back to .get() if running outside Deno.
+    const all =
+      // deno-lint-ignore no-explicit-any
+      (res.headers as any).getSetCookie?.() as string[] | undefined ??
+      (res.headers.get("set-cookie") ? [res.headers.get("set-cookie")!] : []);
+    for (const sc of all) {
+      if (!sc) continue;
+      const nv = sc.split(";")[0];
+      const i = nv.indexOf("=");
+      if (i > 0) this.cookies.set(nv.slice(0, i).trim(), nv.slice(i + 1).trim());
+    }
+  }
+
+  async requestAuthenticated(url: string, expectBinary = false): Promise<Response> {
     const u = new URL(url);
     const uri = u.pathname + u.search;
     const headers: Record<string, string> = {
@@ -212,62 +191,44 @@ class RETSClient {
       "RETS-Version": RETS_VERSION,
       "Accept": "*/*",
     };
-    if (this.cookie) headers["Cookie"] = this.cookie;
-
-    // If we already know the scheme + creds, pre-authenticate.
+    if (this.cookies.size > 0) headers["Cookie"] = this.cookieHeader();
     if (this.authScheme === "digest" && this.challenge) {
       this.nc += 1;
-      headers["Authorization"] = buildDigestAuthHeader(
-        "GET",
-        uri,
-        this.user,
-        this.pass,
-        this.challenge,
-        this.nc,
-      );
+      headers["Authorization"] = buildDigestAuthHeader("GET", uri, this.user, this.pass, this.challenge, this.nc);
     } else if (this.authScheme === "basic" && this.basicHeader) {
       headers["Authorization"] = this.basicHeader;
     }
-
-    let res = await fetch(url, { method: "GET", headers });
+    let res = await fetch(url, { method: "GET", headers, redirect: expectBinary ? "manual" : "follow" });
     if (res.status === 401) {
       const wa = res.headers.get("www-authenticate") ?? "";
-      // Drain body before retry
+      this.absorbSetCookies(res);
       await res.body?.cancel().catch(() => undefined);
-
       if (/^\s*digest/i.test(wa)) {
         this.authScheme = "digest";
         this.challenge = parseDigestChallenge(wa);
         this.nc = 1;
-        const setCookie = res.headers.get("set-cookie");
-        if (setCookie) this.cookie = setCookie.split(";")[0];
-
-        headers["Authorization"] = buildDigestAuthHeader(
-          "GET",
-          uri,
-          this.user,
-          this.pass,
-          this.challenge,
-          this.nc,
-        );
+        headers["Authorization"] = buildDigestAuthHeader("GET", uri, this.user, this.pass, this.challenge, this.nc);
       } else if (/^\s*basic/i.test(wa)) {
         this.authScheme = "basic";
         this.basicHeader = buildBasicAuthHeader(this.user, this.pass);
-        const setCookie = res.headers.get("set-cookie");
-        if (setCookie) this.cookie = setCookie.split(";")[0];
-
         headers["Authorization"] = this.basicHeader;
+      } else if (this.authScheme === "basic" && this.basicHeader) {
+        // Stale-cookie retry: drop cookies + re-send Basic.
+        this.cookies.clear();
+        delete headers["Cookie"];
+        headers["Authorization"] = this.basicHeader;
+      } else if (this.authScheme === "digest" && this.challenge) {
+        this.cookies.clear();
+        delete headers["Cookie"];
+        this.nc += 1;
+        headers["Authorization"] = buildDigestAuthHeader("GET", uri, this.user, this.pass, this.challenge, this.nc);
       } else {
-        throw new Error(
-          `Expected Digest or Basic challenge, got: ${wa || "none"}`,
-        );
+        throw new Error(`Expected Digest or Basic challenge, got: ${wa || "none"}`);
       }
-      if (this.cookie) headers["Cookie"] = this.cookie;
-      res = await fetch(url, { method: "GET", headers });
+      if (this.cookies.size > 0) headers["Cookie"] = this.cookieHeader();
+      res = await fetch(url, { method: "GET", headers, redirect: expectBinary ? "manual" : "follow" });
     }
-    // After a successful response, pick up any session cookie issued.
-    const sc = res.headers.get("set-cookie");
-    if (sc) this.cookie = sc.split(";")[0];
+    this.absorbSetCookies(res);
     return res;
   }
 
@@ -283,84 +244,117 @@ class RETSClient {
     const replyErr = readReplyError(text);
     if (replyErr) throw new Error(`RETS login reply: ${replyErr}`);
     const block = text.match(/<RETS-RESPONSE[^>]*>([\s\S]*?)<\/RETS-RESPONSE>/i);
-    if (!block) {
-      throw new Error("RETS login: no <RETS-RESPONSE> block");
-    }
+    if (!block) throw new Error("RETS login: no <RETS-RESPONSE> block");
     for (const raw of block[1].split(/\r?\n/)) {
       const line = raw.trim();
       if (!line || !line.includes("=")) continue;
       const idx = line.indexOf("=");
-      const key = line.slice(0, idx).trim();
-      const val = line.slice(idx + 1).trim();
-      this.capabilities[key] = val;
+      this.capabilities[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
     }
     if (!this.capabilities["Search"]) {
-      throw new Error(
-        `RETS login: no Search capability URL. Got: ${Object.keys(this.capabilities).join(",")}`,
-      );
+      throw new Error(`RETS login: no Search capability URL. Got: ${Object.keys(this.capabilities).join(",")}`);
     }
   }
 
-  async search(
-    resource: string,
-    cls: string,
-    query: string,
-  ): Promise<{ rows: RowMap[]; rawCount: number }> {
+  async search(resource: string, cls: string, query: string): Promise<{ rows: RowMap[]; rawCount: number }> {
     const baseUrl = this.absoluteUrl(this.capabilities["Search"]);
     const params = new URLSearchParams({
-      SearchType: resource,
-      Class: cls,
-      Query: query,
-      QueryType: "DMQL2",
-      Format: "COMPACT-DECODED",
-      Count: "1",
-      StandardNames: "0",
-      Limit: String(SEARCH_LIMIT),
+      SearchType: resource, Class: cls, Query: query, QueryType: "DMQL2",
+      Format: "COMPACT-DECODED", Count: "1", StandardNames: "0", Limit: String(SEARCH_LIMIT),
     });
     const sep = baseUrl.includes("?") ? "&" : "?";
     const url = `${baseUrl}${sep}${params.toString()}`;
     const res = await this.requestAuthenticated(url);
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(
-        `RETS search failed (${res.status}) for ${resource}/${cls}: ${body.slice(0, 300)}`,
-      );
+      throw new Error(`RETS search failed (${res.status}) for ${resource}/${cls}: ${body.slice(0, 300)}`);
     }
     const text = await res.text();
     const replyErr = readReplyError(text);
     if (replyErr) {
-      // 20201 = "No records found" — treat as zero rows, not an error.
       if (replyErr.startsWith("20201")) return { rows: [], rawCount: 0 };
       throw new Error(`RETS search reply: ${replyErr}`);
     }
     const delimMatch = text.match(/<DELIMITER\s+value="(\d+)"\s*\/?>/i);
-    const delim = delimMatch
-      ? String.fromCharCode(parseInt(delimMatch[1], 10))
-      : "\t";
+    const delim = delimMatch ? String.fromCharCode(parseInt(delimMatch[1], 10)) : "\t";
     const colMatch = text.match(/<COLUMNS>([\s\S]*?)<\/COLUMNS>/i);
     if (!colMatch) return { rows: [], rawCount: 0 };
-    // Strip a leading delimiter if present (some Paragon impls prefix it).
-    const cols = colMatch[1]
-      .split(delim)
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0);
-
+    const cols = colMatch[1].split(delim).map((c) => c.trim()).filter((c) => c.length > 0);
     const rows: RowMap[] = [];
     const dataRe = /<DATA>([\s\S]*?)<\/DATA>/gi;
     let m: RegExpExecArray | null;
     while ((m = dataRe.exec(text)) !== null) {
       const cells = m[1].split(delim);
-      // Skip the leading-delimiter empty first cell if present.
       const startIdx = cells[0] === "" ? 1 : 0;
       const obj: RowMap = {};
-      for (let i = 0; i < cols.length; i++) {
-        obj[cols[i]] = (cells[startIdx + i] ?? "").trim();
-      }
+      for (let i = 0; i < cols.length; i++) obj[cols[i]] = (cells[startIdx + i] ?? "").trim();
       rows.push(obj);
     }
     const cntMatch = text.match(/<COUNT\s+Records="(\d+)"\s*\/?>/i);
     const rawCount = cntMatch ? parseInt(cntMatch[1], 10) : rows.length;
     return { rows, rawCount };
+  }
+
+  /**
+   * GetObject — fetch the first photo for a property.
+   *
+   * Tries Location=1 first: Paragon returns HTTP 200 with a `Location:` HEADER
+   * pointing at the public CDN URL (NOT a 3xx redirect — the body is a tiny
+   * RETS XML reply we ignore). Cheapest path because we just persist the URL.
+   *
+   * Falls back to Location=0 (image/jpeg or multipart/related body) when the
+   * header path doesn't yield a usable URL.
+   */
+  async getFirstPhoto(mlsNumber: string): Promise<
+    | { kind: "url"; url: string }
+    | { kind: "binary"; bytes: Uint8Array; contentType: string }
+    | { kind: "none" }
+  > {
+    const getObjectUrl = this.capabilities["GetObject"];
+    if (!getObjectUrl) return { kind: "none" };
+    const baseUrl = this.absoluteUrl(getObjectUrl);
+    const sep = baseUrl.includes("?") ? "&" : "?";
+
+    // Location=1: header-based redirect to public CDN.
+    const params1 = new URLSearchParams({
+      Resource: "Property", Type: "Photo", ID: `${mlsNumber}:1`, Location: "1",
+    });
+    const url1 = `${baseUrl}${sep}${params1.toString()}`;
+    try {
+      const res = await this.requestAuthenticated(url1, true);
+      const locHeader = res.headers.get("location");
+      await res.body?.cancel().catch(() => undefined);
+      if (locHeader && /^https?:\/\//i.test(locHeader)) {
+        return { kind: "url", url: locHeader };
+      }
+    } catch (e) {
+      console.error(`getFirstPhoto Location=1 ${mlsNumber}:`, (e as Error).message);
+    }
+
+    // Fallback: Location=0 — body is jpeg or multipart/related.
+    const params0 = new URLSearchParams({
+      Resource: "Property", Type: "Photo", ID: `${mlsNumber}:1`, Location: "0",
+    });
+    const url0 = `${baseUrl}${sep}${params0.toString()}`;
+    try {
+      const res = await this.requestAuthenticated(url0);
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => undefined);
+        return { kind: "none" };
+      }
+      const ct = res.headers.get("content-type") ?? "";
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (ct.toLowerCase().includes("multipart")) {
+        const inner = extractFirstMultipartPart(bytes, ct);
+        if (inner) return { kind: "binary", bytes: inner.bytes, contentType: inner.contentType };
+        return { kind: "none" };
+      }
+      if (bytes.length < 2048) return { kind: "none" };
+      return { kind: "binary", bytes, contentType: ct || "image/jpeg" };
+    } catch (e) {
+      console.error(`getFirstPhoto Location=0 ${mlsNumber}:`, (e as Error).message);
+      return { kind: "none" };
+    }
   }
 
   async logout(): Promise<void> {
@@ -374,6 +368,38 @@ class RETSClient {
   }
 }
 
+function extractFirstMultipartPart(
+  bytes: Uint8Array,
+  contentType: string,
+): { bytes: Uint8Array; contentType: string } | null {
+  const m = contentType.match(/boundary="?([^";]+)"?/i);
+  if (!m) return null;
+  const boundary = `--${m[1]}`;
+  const td = new TextDecoder("latin1");
+  const text = td.decode(bytes);
+  const startIdx = text.indexOf(boundary);
+  if (startIdx === -1) return null;
+  const afterBoundary = startIdx + boundary.length;
+  const headerEnd1 = text.indexOf("\r\n\r\n", afterBoundary);
+  const headerEnd2 = text.indexOf("\n\n", afterBoundary);
+  const headerEnd =
+    headerEnd1 !== -1 && (headerEnd2 === -1 || headerEnd1 < headerEnd2)
+      ? headerEnd1 + 4
+      : headerEnd2 !== -1 ? headerEnd2 + 2 : -1;
+  if (headerEnd === -1) return null;
+  const headersBlock = text.slice(afterBoundary, headerEnd);
+  const ctMatch = headersBlock.match(/Content-Type:\s*([^\r\n]+)/i);
+  const innerCt = ctMatch ? ctMatch[1].trim() : "image/jpeg";
+  const endIdx = text.indexOf(boundary, headerEnd);
+  if (endIdx === -1) return null;
+  let bodyEnd = endIdx;
+  if (text[bodyEnd - 1] === "\n") bodyEnd -= 1;
+  if (text[bodyEnd - 1] === "\r") bodyEnd -= 1;
+  const body = bytes.slice(headerEnd, bodyEnd);
+  if (body.length < 2048) return null;
+  return { bytes: body, contentType: innerCt };
+}
+
 function readReplyError(xml: string): string | null {
   const m = xml.match(/<RETS\s+ReplyCode="(\d+)"\s+ReplyText="([^"]*)"/i);
   if (!m) return null;
@@ -381,37 +407,16 @@ function readReplyError(xml: string): string | null {
   return `${m[1]} ${m[2]}`;
 }
 
-// ---------------------------------------------------------------------------
-// Paragon row → active_listings mapping
-// ---------------------------------------------------------------------------
+type ListingStatus = "active" | "pending" | "sold" | "expired" | "withdrawn";
 
-type ListingStatus =
-  | "active"
-  | "pending"
-  | "sold"
-  | "expired"
-  | "withdrawn";
-
-/**
- * Paragon returns L_Status as a full English label, NOT a one-letter code:
- *   CMC: "ACTIVE", "UNDER CONTRACT", "SOLD COOP BY MEMBER", "SOLD IN-HOUSE", ...
- *   SJSR: "Sold CO OP by Member", "Sold-In House", "Active", ...
- * Mapping is keyword-based so both case styles + future variants land correctly.
- * Unknown values map to "expired" (filtered out downstream) so we never silently
- * import garbage as active.
- */
 function mapStatusCategory(cat: string | undefined): ListingStatus {
   const s = (cat ?? "").toUpperCase().trim();
   if (!s) return "expired";
-  // Single-letter compatibility (older Paragon servers)
   if (s === "A" || s === "ACTIVE") return "active";
-  if (s === "P" || s.startsWith("UNDER CONTRACT") || s.startsWith("PENDING"))
-    return "pending";
-  if (s === "S" || s.startsWith("SOLD") || s.startsWith("CLOSED"))
-    return "sold";
+  if (s === "P" || s.startsWith("UNDER CONTRACT") || s.startsWith("PENDING")) return "pending";
+  if (s === "S" || s.startsWith("SOLD") || s.startsWith("CLOSED")) return "sold";
   if (s === "X" || s.startsWith("EXPIRED")) return "expired";
-  if (s === "W" || s.startsWith("WITHDRAWN") || s.startsWith("CANCELED"))
-    return "withdrawn";
+  if (s === "W" || s.startsWith("WITHDRAWN") || s.startsWith("CANCELED")) return "withdrawn";
   return "expired";
 }
 
@@ -422,12 +427,26 @@ function readPrice(raw: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function readInt(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const n = parseInt(raw.replace(/[,\s]/g, ""), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Strict positive int — used for L_KeywordN slots that share columns with text. */
+function readPositiveInt(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < 0 || n > 99) return null;
+  return n;
+}
+
 function readDate(raw: string | undefined): string | null {
   if (!raw) return null;
-  // Paragon returns ISO-ish dates; trim time if any.
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  // Accept "2026-05-08", "2026-05-08T00:00:00", "5/8/2026", etc.
   if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
   const d = new Date(trimmed);
   if (Number.isNaN(d.getTime())) return null;
@@ -439,6 +458,41 @@ function buildAgentName(row: RowMap): string | null {
   const ln = (row["LA1_UserLastName"] ?? "").trim();
   const full = [fn, ln].filter((s) => s.length > 0).join(" ");
   return full.length > 0 ? full : null;
+}
+
+/**
+ * Paragon's L_Keyword slots are SHIFTED by one between feeds:
+ *   - CMC:  K1=bedrooms,   K2=full baths, K3=half baths
+ *   - SJSR: K2=bedrooms,   K3=full baths, K4=half baths (K1=total rooms)
+ * Verified by cross-checking 236 Roseann Ave (in both feeds, both 4BR/2BA).
+ */
+function mapBedsBaths(row: RowMap, sourceMls: "cmc" | "sjsr"): {
+  bedrooms: number | null;
+  bathrooms_full: number | null;
+  bathrooms_half: number | null;
+} {
+  if (sourceMls === "cmc") {
+    return {
+      bedrooms: readPositiveInt(row["L_Keyword1"]),
+      bathrooms_full: readPositiveInt(row["L_Keyword2"]),
+      bathrooms_half: readPositiveInt(row["L_Keyword3"]),
+    };
+  }
+  return {
+    bedrooms: readPositiveInt(row["L_Keyword2"]),
+    bathrooms_full: readPositiveInt(row["L_Keyword3"]),
+    bathrooms_half: readPositiveInt(row["L_Keyword4"]),
+  };
+}
+
+/**
+ * Public remarks — CMC: LR_remarks33, SJSR: LR_remarks22.
+ * NEVER pull LR_remarks44 (broker-only / private comments containing seller info).
+ */
+function readPublicRemarks(row: RowMap, sourceMls: "cmc" | "sjsr"): string | null {
+  const key = sourceMls === "cmc" ? "LR_remarks33" : "LR_remarks22";
+  const raw = (row[key] ?? "").trim();
+  return raw.length > 0 ? raw : null;
 }
 
 interface MappedListing {
@@ -460,55 +514,9 @@ interface MappedListing {
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
+  public_remarks: string | null;
   hero_image_url: string | null;
   raw_payload: Record<string, unknown>;
-}
-
-function readInt(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const n = parseInt(raw.replace(/[,\s]/g, ""), 10);
-  return Number.isFinite(n) ? n : null;
-}
-
-/**
- * Only return an int if the source string is purely numeric (e.g. "3", "12").
- * Paragon's L_KeywordN slots reuse the same column for very different fields
- * across CMC and SJSR — and on non-residential rows (Vacant Lot, Duplex) hold
- * lot-size text like "1 to 6000 SqFt". This guard keeps junk out of bedroom
- * / bathroom counts.
- */
-function readPositiveInt(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) return null;
-  const n = parseInt(trimmed, 10);
-  if (!Number.isFinite(n) || n < 0 || n > 99) return null;
-  return n;
-}
-
-/**
- * Paragon's L_Keyword slot mapping is shifted by one between feeds:
- *   - CMC:  K1=bedrooms,    K2=full baths, K3=half baths
- *   - SJSR: K1=total rooms, K2=bedrooms,   K3=full baths, K4=half baths
- * Verified by cross-referencing 236 Roseann Ave (in both feeds, both 4BR/2BA).
- */
-function mapBedsBaths(
-  row: RowMap,
-  sourceMls: "cmc" | "sjsr",
-): { bedrooms: number | null; bathrooms_full: number | null; bathrooms_half: number | null } {
-  if (sourceMls === "cmc") {
-    return {
-      bedrooms: readPositiveInt(row["L_Keyword1"]),
-      bathrooms_full: readPositiveInt(row["L_Keyword2"]),
-      bathrooms_half: readPositiveInt(row["L_Keyword3"]),
-    };
-  }
-  // sjsr
-  return {
-    bedrooms: readPositiveInt(row["L_Keyword2"]),
-    bathrooms_full: readPositiveInt(row["L_Keyword3"]),
-    bathrooms_half: readPositiveInt(row["L_Keyword4"]),
-  };
 }
 
 function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
@@ -521,61 +529,44 @@ function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
     source_mls: sourceMls,
     address: addr.trim(),
     city: (row["L_City"] ?? "").trim() || null,
-    state: "NJ", // Both Paragon feeds we run are NJ-only.
+    state: "NJ",
     zip: (row["L_Zip"] ?? "").trim() || null,
     list_price: readPrice(row["L_AskingPrice"]) ?? readPrice(row["L_OriginalPrice"]),
     status: mapStatusCategory(row["L_Status"]),
     listing_date: readDate(row["L_ListingDate"]),
     list_agent_name: buildAgentName(row),
-    list_agent_email: null, // Not denormalized on Paragon Property resource.
+    list_agent_email: null,
     list_office_id: (row["LO1_HiddenOrgID"] ?? row["L_ListOffice1"] ?? "").trim() || null,
     list_office_name: (row["LO1_OrganizationName"] ?? "").trim() || null,
-    // L_Type_ has a trailing underscore in Paragon — known quirk.
     property_type: (row["L_Type_"] ?? "").trim() || null,
     dom_days: readInt(row["L_DOM"]),
     bedrooms: beds.bedrooms,
     bathrooms_full: beds.bathrooms_full,
     bathrooms_half: beds.bathrooms_half,
-    hero_image_url: null, // Phase D will fetch via GetObject.
+    public_remarks: readPublicRemarks(row, sourceMls),
+    hero_image_url: null, // populated by syncPhotosForRows after upsert
     raw_payload: row,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Supabase helpers
-// ---------------------------------------------------------------------------
-
 function createAnalyticsClient(): SupabaseClient {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !key) {
-    throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
-  }
+  if (!url || !key) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
 function createListingsClient(): SupabaseClient {
   const url = Deno.env.get("LISTINGS_SUPABASE_URL");
   const key = Deno.env.get("LISTINGS_SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !key) {
-    throw new Error(
-      "Missing LISTINGS_SUPABASE_URL / LISTINGS_SUPABASE_SERVICE_ROLE_KEY " +
-        "secrets on the Edge Function. Set via `supabase secrets set` or the " +
-        "Supabase dashboard → Edge Functions → Secrets.",
-    );
-  }
+  if (!url || !key) throw new Error("Missing LISTINGS_SUPABASE_URL / LISTINGS_SUPABASE_SERVICE_ROLE_KEY secrets on the Edge Function.");
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-async function loadFeed(
-  client: SupabaseClient,
-  shortCode: string,
-): Promise<FeedRow> {
+async function loadFeed(client: SupabaseClient, shortCode: string): Promise<FeedRow> {
   const { data, error } = await client
     .from("mls_feeds")
-    .select(
-      "id, short_code, name, rets_url, username, password, rets_version, is_active",
-    )
+    .select("id, short_code, name, rets_url, username, password, rets_version, is_active")
     .eq("short_code", shortCode)
     .maybeSingle();
   if (error) throw new Error(`mls_feeds lookup failed: ${error.message}`);
@@ -587,11 +578,7 @@ async function loadFeed(
   return data as FeedRow;
 }
 
-async function startSyncRun(
-  client: SupabaseClient,
-  feed: FeedRow,
-  cls: string,
-): Promise<number> {
+async function startSyncRun(client: SupabaseClient, feed: FeedRow, cls: string): Promise<number> {
   const { data, error } = await client
     .from("sync_runs")
     .insert({
@@ -620,23 +607,13 @@ async function finishSyncRun(
 ): Promise<void> {
   const { error } = await client
     .from("sync_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      ...patch,
-    })
+    .update({ finished_at: new Date().toISOString(), ...patch })
     .eq("id", runId);
   if (error) console.error("sync_runs update failed:", error.message);
 }
 
-async function upsertListings(
-  client: SupabaseClient,
-  rows: MappedListing[],
-): Promise<number> {
+async function upsertListings(client: SupabaseClient, rows: MappedListing[]): Promise<number> {
   if (rows.length === 0) return 0;
-  // active_listings on the Listings DB has its own column shape — keep
-  // raw_payload + the canonical denormalized fields. dom_days /
-  // list_office_name / property_type are also persisted there for parity
-  // with AllianceAnalytics.properties.
   const upsertRows = rows.map((r) => ({
     mls_number: r.mls_number,
     source_mls: r.source_mls,
@@ -656,6 +633,7 @@ async function upsertListings(
     bedrooms: r.bedrooms,
     bathrooms_full: r.bathrooms_full,
     bathrooms_half: r.bathrooms_half,
+    public_remarks: r.public_remarks,
     hero_image_url: r.hero_image_url,
     raw_payload: r.raw_payload,
     synced_at: new Date().toISOString(),
@@ -668,10 +646,7 @@ async function upsertListings(
   return count ?? rows.length;
 }
 
-async function replicateToProperties(
-  client: SupabaseClient,
-  rows: MappedListing[],
-): Promise<void> {
+async function replicateToProperties(client: SupabaseClient, rows: MappedListing[]): Promise<void> {
   if (rows.length === 0) return;
   const propertyRows = rows.map((r) => ({
     mls_number: r.mls_number,
@@ -689,6 +664,7 @@ async function replicateToProperties(
     bedrooms: r.bedrooms,
     bathrooms_full: r.bathrooms_full,
     bathrooms_half: r.bathrooms_half,
+    public_remarks: r.public_remarks,
     hero_image_url: r.hero_image_url,
     status: r.status === "withdrawn" ? "expired" : r.status,
     source_mls: r.source_mls,
@@ -697,33 +673,68 @@ async function replicateToProperties(
   const { error } = await client
     .from("properties")
     .upsert(propertyRows, { onConflict: "mls_number" });
-  if (error) {
-    console.error("properties replication failed:", error.message);
-  }
+  if (error) console.error("properties replication failed:", error.message);
 }
 
-async function updateFeedTimestamps(
-  client: SupabaseClient,
-  feedId: string,
-  ok: boolean,
-): Promise<void> {
+async function updateFeedTimestamps(client: SupabaseClient, feedId: string, ok: boolean): Promise<void> {
   const now = new Date().toISOString();
-  const patch: Record<string, unknown> = {
-    last_sync_at: now,
-    last_validated_at: now,
-    last_validated_ok: ok,
-    updated_at: now,
-  };
   const { error } = await client
     .from("mls_feeds")
-    .update(patch)
+    .update({ last_sync_at: now, last_validated_at: now, last_validated_ok: ok, updated_at: now })
     .eq("id", feedId);
   if (error) console.error("mls_feeds update failed:", error.message);
 }
 
-// ---------------------------------------------------------------------------
-// Main sync entry
-// ---------------------------------------------------------------------------
+/**
+ * Fetch the first photo per listing, persist as either:
+ *   - a Paragon CDN URL (Location=1 path — preferred, no upload), OR
+ *   - bytes uploaded to the property-photos Supabase Storage bucket (fallback).
+ * Errors per-listing are logged and swallowed so a single bad photo doesn't
+ * break the whole sync. Returns the count of properties that got hero_image_url set.
+ */
+async function syncPhotosForRows(
+  rets: RETSClient,
+  analytics: SupabaseClient,
+  rows: MappedListing[],
+  feedShortCode: "cmc" | "sjsr",
+): Promise<number> {
+  let uploaded = 0;
+  for (const r of rows) {
+    try {
+      const result = await rets.getFirstPhoto(r.mls_number);
+      let heroUrl: string | null = null;
+      if (result.kind === "url") {
+        heroUrl = result.url;
+      } else if (result.kind === "binary") {
+        const ext = result.contentType.includes("png") ? "png" : "jpg";
+        const path = `${feedShortCode}/${r.mls_number}.${ext}`;
+        const { error: upErr } = await analytics.storage
+          .from(PHOTO_BUCKET)
+          .upload(path, result.bytes, {
+            cacheControl: "3600",
+            contentType: result.contentType,
+            upsert: true,
+          });
+        if (upErr) {
+          console.error(`photo upload ${r.mls_number}:`, upErr.message);
+          continue;
+        }
+        const { data: pub } = analytics.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+        heroUrl = pub?.publicUrl ?? null;
+      }
+      if (heroUrl) {
+        const { error } = await analytics
+          .from("properties")
+          .update({ hero_image_url: heroUrl, updated_at: new Date().toISOString() })
+          .eq("mls_number", r.mls_number);
+        if (!error) uploaded += 1;
+      }
+    } catch (e) {
+      console.error(`syncPhotos ${r.mls_number}:`, (e as Error).message);
+    }
+  }
+  return uploaded;
+}
 
 async function syncFeed(shortCode: string): Promise<SyncResult> {
   const start = Date.now();
@@ -734,12 +745,10 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     duration_ms: 0,
     classes: [],
     errors: [],
+    photos_uploaded: 0,
   };
-
   if (shortCode !== "cmc" && shortCode !== "sjsr") {
-    result.errors.push(
-      `mls-rets-sync only supports CMC + SJSR. Got: ${shortCode}`,
-    );
+    result.errors.push(`mls-rets-sync only supports CMC + SJSR. Got: ${shortCode}`);
     result.duration_ms = Date.now() - start;
     return result;
   }
@@ -765,10 +774,7 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     return result;
   }
 
-  // Paragon's session/cookie state goes stale after the first large search,
-  // so we use a fresh RETSClient (i.e. fresh login) per property class.
-  // Single-shot smoke test: validate creds before the loop so a bad password
-  // surfaces clearly, not as N identical 401 errors.
+  // Smoke-test login so a bad password produces ONE error.
   try {
     const probe = new RETSClient(feed.username!, feed.password!);
     await probe.login(feed.rets_url!);
@@ -789,14 +795,9 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
       result.errors.push(`sync_runs start ${cls}: ${(e as Error).message}`);
       return null;
     });
+    const classResult: ClassResult = { class: cls, records_seen: 0, records_upserted: 0 };
 
-    const classResult: ClassResult = {
-      class: cls,
-      records_seen: 0,
-      records_upserted: 0,
-    };
-
-    // Fresh login per class to dodge Paragon's session-after-search quirk.
+    // Fresh login per class — Paragon invalidates the session after a large search.
     const rets = new RETSClient(feed.username!, feed.password!);
     try {
       await rets.login(feed.rets_url!);
@@ -817,37 +818,29 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     }
 
     try {
-      const { rows, rawCount } = await rets.search(
-        "Property",
-        cls,
-        DMQL2_QUERY,
-      );
+      const { rows, rawCount } = await rets.search("Property", cls, DMQL2_QUERY);
       classResult.records_seen = rawCount;
       totalSeen += rawCount;
-
-      // Active-only — Paragon returns sold/pending/withdrawn rows too;
-      // mapStatusCategory normalizes the verbose labels and we drop
-      // anything that isn't currently active.
       const mapped = rows
         .map((r) => mapRow(r, sourceMls))
-        .filter(
-          (r): r is MappedListing => r !== null && r.status === "active",
-        );
-
+        .filter((r): r is MappedListing => r !== null && r.status === "active");
       const upserted = await upsertListings(listings, mapped);
       classResult.records_upserted = upserted;
       totalUpserted += upserted;
-
-      // Best-effort cross-project replication into AllianceAnalytics.properties
-      // so the auto-linker has rows to attach posts to. Errors are logged.
       await replicateToProperties(analytics, mapped);
-
       if (runId !== null) {
         await finishSyncRun(analytics, runId, {
           status: "success",
           records_seen: rawCount,
           records_upserted: upserted,
         });
+      }
+      // Photos for this class — the session is fresh and authenticated.
+      try {
+        const ups = await syncPhotosForRows(rets, analytics, mapped, sourceMls);
+        result.photos_uploaded = (result.photos_uploaded ?? 0) + ups;
+      } catch (e) {
+        console.error(`syncPhotosForRows [${cls}]:`, (e as Error).message);
       }
     } catch (e) {
       anyClassFailed = true;
@@ -867,8 +860,7 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     await rets.logout();
   }
 
-  // Run the auto-linker once after all classes complete so any unlinked posts
-  // mentioning these MLS numbers / addresses get attached.
+  // Auto-linker once after all classes complete.
   try {
     await analytics.rpc("run_auto_linker");
   } catch (e) {
@@ -881,10 +873,6 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
   result.duration_ms = Date.now() - start;
   return result;
 }
-
-// ---------------------------------------------------------------------------
-// HTTP entry point
-// ---------------------------------------------------------------------------
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
@@ -901,10 +889,10 @@ Deno.serve(async (req: Request) => {
   }
   const shortCode = (body.feed_short_code ?? "").trim();
   if (!shortCode) {
-    return new Response(
-      JSON.stringify({ error: "Missing feed_short_code in body" }),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ error: "Missing feed_short_code in body" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
   }
   const result = await syncFeed(shortCode);
   return new Response(JSON.stringify(result), {

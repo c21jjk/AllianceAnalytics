@@ -510,6 +510,7 @@ export type Database = {
           promotion_dismissed_by: string | null
           promotion_dismissed_reason: string | null
           property_type: string | null
+          public_remarks: string | null
           source_mls: string | null
           state: string | null
           status: Database["public"]["Enums"]["property_status"]
@@ -538,6 +539,7 @@ export type Database = {
           promotion_dismissed_by?: string | null
           promotion_dismissed_reason?: string | null
           property_type?: string | null
+          public_remarks?: string | null
           source_mls?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
@@ -566,6 +568,7 @@ export type Database = {
           promotion_dismissed_by?: string | null
           promotion_dismissed_reason?: string | null
           property_type?: string | null
+          public_remarks?: string | null
           source_mls?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]

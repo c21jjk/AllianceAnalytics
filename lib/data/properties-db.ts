@@ -236,20 +236,29 @@ export async function fetchProperties(
  * "Century 21 Alliance" prefix, drops trailing Paragon-internal codes, and
  * expands known short codes into their full office names.
  */
+/**
+ * Maps Paragon office suffix codes to Alliance office display names.
+ *
+ * - CMC suffixes (wc, oc, ncm) come from the human-readable raw string.
+ * - SJSR suffixes (S104B, S104L, O1O4J, …) are Paragon's internal IDs.
+ *   We pin them by cross-checking listings that appear in BOTH feeds — when
+ *   one CMC row says "NCM" and the SJSR row for the same property says
+ *   "S104L", the SJSR code resolves to North Cape May.
+ *
+ * Any code not in the map falls through to a title-cased version of the
+ * raw suffix (`AllianceUnknownLabel`). Better to surface "Alliance 104A"
+ * than guess wrong — Egg Harbor Township is a listing LOCATION, not an
+ * Alliance office.
+ */
 const OFFICE_CODE_MAP: Record<string, string> = {
+  // CMC raw suffixes
   wc: "Wildwood Crest",
   oc: "Ocean City",
   ncm: "North Cape May",
-  ow: "Ocean View",
-  ov: "Ocean View",
-  cm: "Cape May",
-  // SJSR Paragon codes — best-guess mapping; refine when we have a solid
-  // office_id ↔ Alliance-office crosswalk.
-  "104a": "Wildwood Crest",
-  "o1o4j": "Ocean City",
-  "s104b": "North Cape May",
-  "s104i": "Ocean City",
-  "s104l": "Egg Harbor Township",
+  // SJSR Paragon codes — only entries verified by cross-feed match
+  s104l: "North Cape May", // verified via 10 Empire Dr (CMC: NCM, SJSR: S104L)
+  s104b: "Wildwood Crest",  // verified via 236 Roseann Ave (CMC: wc, SJSR: S104B)
+  o1o4j: "Ocean City",      // verified via 430 S Shore Rd (CMC: oc, SJSR: O1O4J)
 };
 
 export function normalizeOfficeName(raw: string | null | undefined): string {
