@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { getMlsFeed } from "@/lib/data/mls-feeds";
 import PageHeader from "@/components/PageHeader";
-import MlsFeedForm from "@/components/MlsFeedForm";
+import MlsFeedForm, { toMlsFeedFormData } from "@/components/MlsFeedForm";
 import MlsFeedSyncNow from "@/components/MlsFeedSyncNow";
 import { upsertMlsFeed } from "../../../actions";
 
@@ -74,7 +74,9 @@ export default async function EditMlsFeedPage({ params }: PageProps) {
             disabledReason={syncDisabledReason}
           />
         </div>
-        <MlsFeedForm feed={feed} action={boundAction} />
+        {/* Sanitize before passing to client form — strips raw secret
+            values so they don't ship in the RSC payload. */}
+        <MlsFeedForm feed={toMlsFeedFormData(feed)} action={boundAction} />
       </div>
     </div>
   );

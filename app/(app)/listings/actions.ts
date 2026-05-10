@@ -528,7 +528,7 @@ export async function dismissListingPromotionAction(
   const supabase = createAdminClient();
   const normalizedReason = normalizeDismissReason(reason ?? null);
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .update({
       promotion_dismissed_at: new Date().toISOString(),
@@ -536,12 +536,17 @@ export async function dismissListingPromotionAction(
       promotion_dismissed_reason: normalizedReason,
       updated_at: new Date().toISOString(),
     })
-    .eq("mls_number", mlsNumber);
+    .eq("mls_number", mlsNumber)
+    .select("mls_number");
 
   if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) {
+    return { ok: false, error: "Listing not found." };
+  }
 
   revalidatePath("/");
   revalidatePath("/properties");
+  revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
   revalidatePath("/settings/promotions");
   return { ok: true };
 }
@@ -564,16 +569,20 @@ export async function confirmListingPostsAction(
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .update({
       posts_confirmed_at: new Date().toISOString(),
       posts_confirmed_by: profile.id,
       updated_at: new Date().toISOString(),
     })
-    .eq("mls_number", mlsNumber);
+    .eq("mls_number", mlsNumber)
+    .select("mls_number");
 
   if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) {
+    return { ok: false, error: "Listing not found." };
+  }
 
   revalidatePath("/");
   revalidatePath("/properties");
@@ -630,14 +639,18 @@ export async function setListingPlatformConfirmedAction(
     return { ok: true };
   }
 
-  const { error: updateErr } = await supabase
+  const { data: updated, error: updateErr } = await supabase
     .from("properties")
     .update({
       posts_confirmed_platforms: next,
       updated_at: new Date().toISOString(),
     })
-    .eq("mls_number", mlsNumber);
+    .eq("mls_number", mlsNumber)
+    .select("mls_number");
   if (updateErr) return { ok: false, error: updateErr.message };
+  if (!updated || updated.length === 0) {
+    return { ok: false, error: "Listing not found." };
+  }
 
   revalidatePath("/");
   revalidatePath("/properties");
@@ -658,16 +671,20 @@ export async function unconfirmListingPostsAction(
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .update({
       posts_confirmed_at: null,
       posts_confirmed_by: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("mls_number", mlsNumber);
+    .eq("mls_number", mlsNumber)
+    .select("mls_number");
 
   if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) {
+    return { ok: false, error: "Listing not found." };
+  }
 
   revalidatePath("/");
   revalidatePath("/properties");
@@ -689,7 +706,7 @@ export async function undismissListingPromotionAction(
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .update({
       promotion_dismissed_at: null,
@@ -697,12 +714,17 @@ export async function undismissListingPromotionAction(
       promotion_dismissed_reason: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("mls_number", mlsNumber);
+    .eq("mls_number", mlsNumber)
+    .select("mls_number");
 
   if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) {
+    return { ok: false, error: "Listing not found." };
+  }
 
   revalidatePath("/");
   revalidatePath("/properties");
+  revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
   revalidatePath("/settings/promotions");
   return { ok: true };
 }

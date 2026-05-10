@@ -263,15 +263,19 @@ export async function setGroupPropertiesAction(
     }
   }
 
-  const { error: updateErr } = await supabase
+  const { data: updated, error: updateErr } = await supabase
     .from("post_groups")
     .update({
       property_ids: propertyIds,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", groupId);
+    .eq("id", groupId)
+    .select("id");
 
   if (updateErr) return { ok: false, error: updateErr.message };
+  if (!updated || updated.length === 0) {
+    return { ok: false, error: "Group not found." };
+  }
 
   revalidatePath("/");
   revalidatePath("/posts");
@@ -323,15 +327,19 @@ export async function setGroupAudienceScopeAction(
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("post_groups")
     .update({
       audience_scope: scope,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", groupId);
+    .eq("id", groupId)
+    .select("id");
 
   if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) {
+    return { ok: false, error: "Group not found." };
+  }
 
   revalidatePath("/");
   revalidatePath("/posts");

@@ -9,8 +9,34 @@ interface ActionState {
   error?: string;
 }
 
+/**
+ * Sanitized view of an MlsFeedRow for the client form. Strips the raw
+ * password / api_key / api_secret strings — the form only needs a boolean
+ * "has existing value" signal. Build via `toMlsFeedFormData()` server-side
+ * before passing as a prop, so secrets never serialize into the RSC payload
+ * that ships to the browser.
+ */
+export interface MlsFeedFormData
+  extends Omit<MlsFeedRow, "password" | "api_key" | "api_secret"> {
+  hasPassword: boolean;
+  hasApiKey: boolean;
+  hasApiSecret: boolean;
+}
+
+/** Build the sanitized client view from a full DB row. Server-only. */
+export function toMlsFeedFormData(row: MlsFeedRow): MlsFeedFormData {
+  // Pull out the secrets so they don't leak into the spread.
+  const { password, api_key, api_secret, ...rest } = row;
+  return {
+    ...rest,
+    hasPassword: typeof password === "string" && password.length > 0,
+    hasApiKey: typeof api_key === "string" && api_key.length > 0,
+    hasApiSecret: typeof api_secret === "string" && api_secret.length > 0,
+  };
+}
+
 interface Props {
-  feed: MlsFeedRow;
+  feed: MlsFeedFormData;
   action: (
     prev: ActionState | null,
     form: FormData,
@@ -83,7 +109,7 @@ export default function MlsFeedForm({ feed, action }: Props) {
           <SecretField
             label="Password"
             name="password"
-            hasExisting={!!feed.password}
+            hasExisting={feed.hasPassword}
           />
           <Field
             label="RETS Version"
@@ -114,12 +140,12 @@ export default function MlsFeedForm({ feed, action }: Props) {
           <SecretField
             label="API Key"
             name="api_key"
-            hasExisting={!!feed.api_key}
+            hasExisting={feed.hasApiKey}
           />
           <SecretField
             label="API Secret"
             name="api_secret"
-            hasExisting={!!feed.api_secret}
+            hasExisting={feed.hasApiSecret}
           />
           <Field
             label="Max Records"
