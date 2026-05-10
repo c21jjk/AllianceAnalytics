@@ -479,3 +479,101 @@ export async function setPostMlsNumber(
     category_flipped: categoryFlipped,
   };
 }
+
+/* ------------------------------------------------------------------------- */
+/* Promotion-dismissal actions — drive the dashboard "needs Larissa" strip   */
+/* ------------------------------------------------------------------------- */
+
+export interface DismissPromotionResult {
+  ok: boolean;
+  error?: string;
+}
+
+const DISMISS_REASON_VALUES = [
+  "low_price",
+  "condition",
+  "owner_request",
+  "other",
+] as const;
+type DismissReasonChip = (typeof DISMISS_REASON_VALUES)[number];
+
+function normalizeDismissReason(input: string | null): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return null;
+  if ((DISMISS_REASON_VALUES as readonly string[]).includes(trimmed)) {
+    return trimmed;
+  }
+  // Free text — cap at 200 chars to avoid runaway notes.
+  return trimmed.slice(0, 200);
+}
+
+/**
+ * Mark a property as "Alliance won't promote this one" — pulls it out of the
+ * dashboard "needs posts" strip and the morning digest. Idempotent: re-running
+ * with a new reason refreshes the timestamp + reason fields.
+ *
+ * Reason can be a chip slug (`low_price` / `condition` / `owner_request` /
+ * `other`) or free text (truncated to 200 chars).
+ */
+export async function dismissListingPromotionAction(
+  mlsNumber: string,
+  reason?: DismissReasonChip | string | null,
+): Promise<DismissPromotionResult> {
+  const profile = await requireAdmin();
+  if (!mlsNumber || typeof mlsNumber !== "string") {
+    return { ok: false, error: "Missing MLS number." };
+  }
+
+  const supabase = createAdminClient();
+  const normalizedReason = normalizeDismissReason(reason ?? null);
+
+  const { error } = await supabase
+    .from("properties")
+    .update({
+      promotion_dismissed_at: new Date().toISOString(),
+      promotion_dismissed_by: profile.id,
+      promotion_dismissed_reason: normalizedReason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("mls_number", mlsNumber);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/");
+  revalidatePath("/properties");
+  revalidatePath("/settings/promotions");
+  return { ok: true };
+}
+
+/**
+ * Re-instate a previously-dismissed property — clears all three dismissal
+ * fields. The listing reappears on the dashboard if it still has missing
+ * platform coverage and is within the recency window.
+ */
+export async function undismissListingPromotionAction(
+  mlsNumber: string,
+): Promise<DismissPromotionResult> {
+  await requireAdmin();
+  if (!mlsNumber || typeof mlsNumber !== "string") {
+    return { ok: false, error: "Missing MLS number." };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("properties")
+    .update({
+      promotion_dismissed_at: null,
+      promotion_dismissed_by: null,
+      promotion_dismissed_reason: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("mls_number", mlsNumber);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/");
+  revalidatePath("/properties");
+  revalidatePath("/settings/promotions");
+  return { ok: true };
+}
