@@ -57,13 +57,22 @@ export default function InlineVideoModal({
 
   const activePosting = postings.find((p) => p.platform === active);
   const embedUrl = activePosting ? buildEmbedUrl(activePosting) : undefined;
+  // Portrait aspect for vertical video (Reels/TT/FB Reels). Square-ish
+  // aspect for static image posts so they don't get letterboxed inside a
+  // tall frame.
+  const isVerticalVideo = !!activePosting?.is_video;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in-up"
+      // pointer-events-auto is required because this modal is rendered as a
+      // descendant of GroupCard's <div pointer-events-none> stretched-link
+      // wrapper. Without it, all clicks (close, tabs, backdrop) silently pass
+      // through to the card's <Link> and trigger post-detail navigation
+      // instead of modal interaction.
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-auto animate-fade-in-up"
       role="dialog"
       aria-modal="true"
-      aria-label="Inline video player"
+      aria-label="Inline post preview"
     >
       <button
         type="button"
@@ -102,7 +111,12 @@ export default function InlineVideoModal({
             <CloseIcon />
           </button>
         </div>
-        <div className="bg-black aspect-[9/16]">
+        <div
+          className={clsx(
+            "bg-black",
+            isVerticalVideo ? "aspect-[9/16]" : "aspect-square",
+          )}
+        >
           {embedUrl ? (
             <iframe
               src={embedUrl}
@@ -137,6 +151,7 @@ export default function InlineVideoModal({
 
 function buildEmbedUrl(p: PlatformPosting): string | undefined {
   if (p.platform === "instagram") {
+    // IG /p/{shortcode}/embed/ works for IMAGE, VIDEO, REEL, and CAROUSEL.
     const code = p.shortcode ?? extractIgShortcode(p.permalink);
     if (!code) return undefined;
     return `https://www.instagram.com/p/${code}/embed/`;
@@ -148,9 +163,20 @@ function buildEmbedUrl(p: PlatformPosting): string | undefined {
   }
   if (p.platform === "facebook") {
     if (!p.permalink) return undefined;
-    return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(
+    // FB has two distinct embed plugins. video.php only renders for actual
+    // video posts; for image / link / text posts it returns "Video
+    // Unavailable" even when the post is fully public. plugins/post.php
+    // handles every post type including videos, so we use it as the
+    // universal default and only fall back to video.php for posts the API
+    // told us are videos (which are slightly nicer in video.php's player).
+    if (p.is_video) {
+      return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(
+        p.permalink,
+      )}&show_text=false&width=560`;
+    }
+    return `https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(
       p.permalink,
-    )}&show_text=false&width=560`;
+    )}&show_text=true&width=560`;
   }
   return undefined;
 }
