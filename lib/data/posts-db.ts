@@ -346,10 +346,39 @@ export async function fetchAccountHealth(): Promise<AccountHealth[]> {
       row.platform === "instagram" ||
       row.platform === "tiktok",
     )
-    .map((row) => ({
-      platform: asPlatform(row.platform as string),
-      status: row.is_active ? ("connected" as const) : ("disconnected" as const),
-      last_synced_at: row.last_validated_at ?? new Date(0).toISOString(),
-      posts_last_30d: countMap[asPlatform(row.platform as string)] ?? 0,
-    }));
+    .map((row) => {
+      const platform = asPlatform(row.platform as string);
+      return {
+        platform,
+        status: row.is_active ? ("connected" as const) : ("disconnected" as const),
+        last_synced_at: row.last_validated_at ?? new Date(0).toISOString(),
+        posts_last_30d: countMap[platform] ?? 0,
+        next_scheduled_at: nextCronRunAt(platform).toISOString(),
+      };
+    });
+}
+
+/**
+ * Returns the next UTC instant a given platform's pg_cron job will fire.
+ * Schedule (set 2026-05-09 in migration `schedule_social_sync_every_4h`):
+ *   ig-sync :05 every 4h, fb-sync :15 every 4h, tt-sync :25 every 4h.
+ */
+function nextCronRunAt(platform: Platform, now: Date = new Date()): Date {
+  const minute = platform === "instagram" ? 5 : platform === "facebook" ? 15 : 25;
+  // Try each 4-hour boundary today (00,04,08,12,16,20) plus tomorrow's 00.
+  const candidates: Date[] = [];
+  for (let h = 0; h <= 24; h += 4) {
+    const d = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      h,
+      minute,
+      0,
+      0,
+    ));
+    candidates.push(d);
+  }
+  const next = candidates.find((d) => d.getTime() > now.getTime());
+  return next ?? candidates[candidates.length - 1];
 }

@@ -124,4 +124,10 @@ export interface AccountHealth {
   status: "connected" | "needs_attention" | "disconnected";
   last_synced_at: string; // ISO timestamp
   posts_last_30d: number;
+  /**
+   * Next scheduled auto-sync (ISO timestamp). Computed from the pg_cron
+   * schedules: ig at :05, fb at :15, tt at :25, every 4h UTC. Optional so
+   * fixtures don't have to populate it.
+   */
+  next_scheduled_at?: string;
 }

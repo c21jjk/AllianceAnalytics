@@ -25,9 +25,16 @@ export default function PlatformHealthPill({
   className,
 }: PlatformHealthPillProps) {
   const synced = formatRelativeTime(health.last_synced_at);
-  const tooltip = `${platformLabel(health.platform)} · ${
-    STATUS_LABEL[health.status]
-  } · last synced ${synced}`;
+  const nextRun = health.next_scheduled_at
+    ? formatRelativeTime(health.next_scheduled_at)
+    : null;
+  const tooltip = [
+    `${platformLabel(health.platform)} · ${STATUS_LABEL[health.status]}`,
+    `last synced ${synced}`,
+    nextRun ? `next auto-sync ${nextRun}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <span
