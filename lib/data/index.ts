@@ -145,6 +145,7 @@ function fixturePropertySummaries(): PropertySummary[] {
       bedrooms: null,
       bathrooms_full: null,
       bathrooms_half: null,
+      public_remarks: null,
       post_count: posts.length,
       total_reach: totalReach,
       total_engagements: totalEngagements,

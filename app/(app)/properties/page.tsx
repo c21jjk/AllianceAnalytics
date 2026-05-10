@@ -53,7 +53,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
     <div>
       <PageHeader
         title="Properties"
-        description="Every active Century 21 Alliance listing tracked here. CMC and SJSR feeds auto-populate via RETS sync; admins can add one manually for edge cases."
+        description="Every active Century 21 Alliance listing tracked here. CMC and SJSR feeds auto-populate via RETS sync."
         actions={
           isAdmin ? (
             <Link
@@ -82,11 +82,11 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
           <p className="mt-1 text-sm text-neutral-500 max-w-md mx-auto">
             {officeFilter
               ? "Try clearing the office filter or running a fresh RETS sync."
-              : "Once RETS sync runs (or you add a listing manually), properties will land here. Each card rolls up the social posts linked to that listing."}
+              : "Once RETS sync runs, properties will land here. Each card rolls up the social posts linked to that listing."}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="space-y-3">
           {properties.map((p) => (
             <PropertyCard key={p.mls_number} property={p} isAdmin={isAdmin} />
           ))}
@@ -114,6 +114,12 @@ interface PropertyCardProps {
   isAdmin: boolean;
 }
 
+/**
+ * Single-listing-per-row card with a wide hero on the left, all the new
+ * Phase 6 fields on the right, and a native <details> "Show MLS remarks"
+ * toggle. Wider layout so beds/baths/DOM/type pills don't crowd the agent
+ * + office lines.
+ */
 function PropertyCard({ property, isAdmin }: PropertyCardProps) {
   const synced = property.updated_at ? new Date(property.updated_at) : null;
   const syncedOk =
@@ -135,43 +141,49 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
         aria-label={`Open ${property.address ?? property.mls_number}`}
       />
 
-      <div className="relative pointer-events-none flex">
-        {/* Hero image / placeholder */}
-        <div className="relative shrink-0 w-32 sm:w-40 bg-neutral-100">
+      <div className="relative pointer-events-none flex flex-col sm:flex-row">
+        {/* Hero — large, left side */}
+        <div className="relative shrink-0 w-full sm:w-72 md:w-80 aspect-[4/3] sm:aspect-auto sm:min-h-[220px] bg-neutral-100">
           {property.hero_image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={property.hero_image_url}
               alt=""
               className="absolute inset-0 w-full h-full object-cover"
+              loading="lazy"
             />
           ) : (
             <div className="absolute inset-0 grid place-items-center text-neutral-300">
               <HouseIcon />
             </div>
           )}
-          <span className="absolute top-1.5 left-1.5">
+          <span className="absolute top-2 left-2">
             <StatusPill status={property.status} />
           </span>
+          {property.source_mls ? (
+            <span className="absolute top-2 right-2 inline-flex items-center rounded-md bg-neutral-900/85 backdrop-blur px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+              {property.source_mls.toUpperCase()}
+            </span>
+          ) : null}
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-w-0 p-4">
+        <div className="flex-1 min-w-0 p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500 font-mono">
                 MLS {property.mls_number}
               </div>
-              <h3 className="mt-0.5 text-base font-semibold text-neutral-900 truncate">
+              <h3 className="mt-0.5 text-lg font-semibold text-neutral-900 truncate">
                 {property.address ?? "—"}
               </h3>
               {cityState ? (
-                <div className="text-[11px] text-neutral-500 truncate">
+                <div className="text-xs text-neutral-500 truncate">
                   {cityState}
                 </div>
               ) : null}
               {property.list_price ? (
-                <div className="mt-1 text-sm text-gold-700 font-semibold tabular-nums">
+                <div className="mt-1.5 text-lg text-gold-700 font-semibold tabular-nums">
                   {formatCurrency(Number(property.list_price))}
                 </div>
               ) : null}
@@ -179,7 +191,7 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
           </div>
 
           {/* Beds | Baths | DOM | Type chips */}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
             {property.bedrooms !== null ? (
               <FactPill label={`${property.bedrooms} BR`} />
             ) : null}
@@ -192,26 +204,43 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
             ) : null}
           </div>
 
-          {/* Agent + Office */}
-          <div className="mt-2 text-[11px] text-neutral-600 leading-snug">
+          {/* Agent + Office, two-column on wider screens */}
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-neutral-700">
             {property.agent_name ? (
               <div className="truncate">
-                <span className="text-neutral-400 uppercase tracking-wide font-medium text-[9px] mr-1">
+                <span className="text-neutral-400 uppercase tracking-wide font-semibold text-[9px] mr-1.5">
                   Agent
                 </span>
                 {property.agent_name}
               </div>
             ) : null}
             <div className="truncate">
-              <span className="text-neutral-400 uppercase tracking-wide font-medium text-[9px] mr-1">
+              <span className="text-neutral-400 uppercase tracking-wide font-semibold text-[9px] mr-1.5">
                 Office
               </span>
               {officeLabel}
             </div>
           </div>
 
+          {/* MLS remarks toggle (native <details> — pointer-events-auto so the
+              card-level link doesn't swallow the click). */}
+          {property.public_remarks ? (
+            <details className="mt-3 pointer-events-auto group/remarks">
+              <summary className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-900 cursor-pointer select-none list-none">
+                <ChevronToggle />
+                <span className="group-open/remarks:hidden">Show MLS remarks</span>
+                <span className="hidden group-open/remarks:inline">
+                  Hide MLS remarks
+                </span>
+              </summary>
+              <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-neutral-200 bg-neutral-50/60 p-3 text-[12px] leading-relaxed text-neutral-800 whitespace-pre-line">
+                {property.public_remarks}
+              </div>
+            </details>
+          ) : null}
+
           {/* Posts/Reach/Engagements */}
-          <div className="mt-3 grid grid-cols-3 gap-3">
+          <div className="mt-4 grid grid-cols-3 gap-3">
             <MiniStat label="Posts" value={property.post_count.toString()} />
             <MiniStat
               label="Reach"
@@ -223,7 +252,7 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
             />
           </div>
 
-          <div className="mt-3 pt-2 border-t border-neutral-100 flex items-center justify-between text-[11px]">
+          <div className="mt-4 pt-3 border-t border-neutral-100 flex items-center justify-between text-[11px]">
             <span className="text-neutral-500">
               {syncedOk
                 ? `Updated ${formatRelativeTime(property.updated_at)}`
@@ -255,7 +284,7 @@ function formatBaths(full: number | null, half: number | null): string | null {
   const f = full ?? 0;
   const h = half ?? 0;
   if (h === 0) return String(f);
-  // Half-bath as 0.5 decimal: 2 full + 1 half = 2.5
+  // Half-bath as 0.5: 2 full + 1 half = 2.5
   return (f + h * 0.5).toString();
 }
 
@@ -263,7 +292,7 @@ function FactPill({ label, muted }: { label: string; muted?: boolean }) {
   return (
     <span
       className={
-        "inline-flex items-center rounded-md ring-1 px-1.5 py-0.5 text-[10px] font-medium " +
+        "inline-flex items-center rounded-md ring-1 px-2 py-0.5 text-[11px] font-medium " +
         (muted
           ? "bg-neutral-50 text-neutral-600 ring-neutral-200"
           : "bg-neutral-100 text-neutral-800 ring-neutral-200")
@@ -277,10 +306,10 @@ function FactPill({ label, muted }: { label: string; muted?: boolean }) {
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[9px] font-medium uppercase tracking-wider text-neutral-500">
+      <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
         {label}
       </div>
-      <div className="text-sm font-semibold tabular-nums text-neutral-900">
+      <div className="text-base font-semibold tabular-nums text-neutral-900">
         {value}
       </div>
     </div>
@@ -312,7 +341,7 @@ function StatusPill({ status }: { status: string }) {
 
 function HouseIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="w-10 h-10" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 24 24" className="w-12 h-12" fill="none" aria-hidden="true">
       <path
         d="M3 11l9-7 9 7M5 9.6V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.6"
         stroke="currentColor"
@@ -347,6 +376,25 @@ function ChevronRight() {
     <svg
       viewBox="0 0 24 24"
       className="w-3.5 h-3.5"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M9 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronToggle() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-3 h-3 transition-transform group-open/remarks:rotate-90"
       fill="none"
       aria-hidden="true"
     >

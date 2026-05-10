@@ -45,6 +45,7 @@ export interface PropertySummary {
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
+  public_remarks: string | null;
   /** Total posts linked to this property. */
   post_count: number;
   /** Sum of reach across all linked posts. */
@@ -73,6 +74,7 @@ interface DbPropertyRow {
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
+  public_remarks: string | null;
   updated_at: string;
 }
 
@@ -118,7 +120,7 @@ export async function fetchProperties(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, updated_at",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
     )
     .limit(500);
 
@@ -220,6 +222,7 @@ export async function fetchProperties(
       bedrooms: p.bedrooms,
       bathrooms_full: p.bathrooms_full,
       bathrooms_half: p.bathrooms_half,
+      public_remarks: p.public_remarks,
       post_count: r.post_count,
       total_reach: r.total_reach,
       total_engagements: r.total_engagements,
