@@ -19,6 +19,7 @@ import {
   loadCredentials,
   upsertPost,
   recordSyncRun,
+  recordPlatformFollowers,
 } from "../_shared/db.ts";
 import {
   buildAudience,
@@ -149,6 +150,19 @@ export async function syncFacebook(): Promise<SyncResult> {
     ]);
     const pageId = String(cred.credentials.page_id);
     const token = String(cred.credentials.page_access_token);
+
+    // Capture the page's follower count (FB calls it fan_count) once per
+    // sync run. Best-effort — failure here doesn't block the post sync.
+    try {
+      const profile = await fbFetch<{ fan_count?: number; followers_count?: number }>(
+        `/${pageId}?fields=fan_count,followers_count`,
+        token,
+      );
+      const count = profile.followers_count ?? profile.fan_count ?? 0;
+      await recordPlatformFollowers(client, "facebook", count, profile);
+    } catch (e) {
+      console.error("fb-sync: follower count fetch failed:", e);
+    }
 
     const since = Math.floor(Date.now() / 1000) - BACKFILL_DAYS * 86400;
 

@@ -26,6 +26,7 @@ import {
   loadCredentials,
   upsertPost,
   recordSyncRun,
+  recordPlatformFollowers,
 } from "../_shared/db.ts";
 import {
   buildAudience,
@@ -147,6 +148,23 @@ export async function syncInstagram(): Promise<SyncResult> {
     ]);
     const igId = String(cred.credentials.ig_business_account_id);
     const token = String(cred.credentials.page_access_token);
+
+    // Capture the IG Business account's follower count once per sync run.
+    // Best-effort — failure here doesn't block the media sync.
+    try {
+      const profile = await igFetch<{
+        followers_count?: number;
+        media_count?: number;
+        username?: string;
+      }>(
+        `/${igId}?fields=followers_count,media_count,username`,
+        token,
+      );
+      const count = profile.followers_count ?? 0;
+      await recordPlatformFollowers(client, "instagram", count, profile);
+    } catch (e) {
+      console.error("ig-sync: follower count fetch failed:", e);
+    }
 
     // Cutoff for backfill window
     const since = Math.floor(Date.now() / 1000) - BACKFILL_DAYS * 86400;

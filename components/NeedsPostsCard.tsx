@@ -180,6 +180,16 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
           {cityState ? (
             <span className="text-neutral-500 font-normal">, {cityState}</span>
           ) : null}
+          {listing.office_short_code ? (
+            <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide text-gold-700">
+              · {listing.office_short_code}
+            </span>
+          ) : null}
+          {listing.agent_name ? (
+            <span className="ml-1.5 text-[11px] font-normal text-neutral-500 truncate">
+              · {listing.agent_name}
+            </span>
+          ) : null}
         </Link>
 
         <span className="text-sm font-semibold text-neutral-900 tabular-nums shrink-0">

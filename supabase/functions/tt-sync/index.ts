@@ -30,6 +30,7 @@ import {
   loadCredentials,
   upsertPost,
   recordSyncRun,
+  recordPlatformFollowers,
 } from "../_shared/db.ts";
 import {
   buildAudience,
@@ -211,6 +212,30 @@ export async function syncTikTok(): Promise<SyncResult> {
         .update({ credentials: newCreds })
         .eq("platform", "tiktok");
       accessToken = refreshed.access_token;
+    }
+
+    // Capture the TT account's follower count once per sync run.
+    // Best-effort — failure here doesn't block the video sync.
+    try {
+      const profileRes = await fetch(
+        `${TT_API_BASE}/user/info/?fields=follower_count,following_count,likes_count,video_count,display_name`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      if (profileRes.ok) {
+        const profileJson = await profileRes.json() as {
+          data?: { user?: { follower_count?: number } };
+        };
+        const count = profileJson.data?.user?.follower_count ?? 0;
+        await recordPlatformFollowers(client, "tiktok", count, profileJson);
+      }
+    } catch (e) {
+      console.error("tt-sync: follower count fetch failed:", e);
     }
 
     const since = Math.floor(Date.now() / 1000) - BACKFILL_DAYS * 86400;

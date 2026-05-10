@@ -164,6 +164,37 @@ export async function upsertPost(
   return { inserted, updated, post_id: postId };
 }
 
+/**
+ * Upsert the follower count snapshot for a given platform/day. Each sync
+ * function calls this once at the start of its run with the value pulled
+ * from the platform's profile API. PK is (platform, captured_date) so
+ * multiple syncs the same day just refresh the count.
+ */
+export async function recordPlatformFollowers(
+  client: SupabaseClient,
+  platform: Platform,
+  followerCount: number,
+  rawPayload?: Record<string, unknown>,
+): Promise<void> {
+  if (!Number.isFinite(followerCount) || followerCount < 0) return;
+  const captured_date = new Date().toISOString().slice(0, 10);
+  await client
+    .from("platform_followers")
+    .upsert(
+      {
+        platform,
+        captured_date,
+        follower_count: Math.round(followerCount),
+        captured_at: new Date().toISOString(),
+        raw_payload: rawPayload ?? {},
+      },
+      { onConflict: "platform,captured_date" },
+    )
+    .then(() => undefined, (e) => {
+      console.error(`recordPlatformFollowers(${platform}):`, e);
+    });
+}
+
 export async function recordSyncRun(
   client: SupabaseClient,
   platform: Platform,

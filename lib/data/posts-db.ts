@@ -427,6 +427,145 @@ const EMPTY_ANALYTICS: CompanyAnalytics = {
   top_campaign: null,
 };
 
+// ---------------------------------------------------------------------------
+// Followers — daily snapshots from platform_followers, drives the Followers tile.
+// ---------------------------------------------------------------------------
+
+export interface FollowerCellSnapshot {
+  current: number | null;
+  prior: number | null;
+  delta: number | null;
+}
+
+export interface FollowerSummary {
+  facebook: FollowerCellSnapshot;
+  instagram: FollowerCellSnapshot;
+  tiktok: FollowerCellSnapshot;
+  total: FollowerCellSnapshot;
+  /** True when at least one platform has a non-null current count. */
+  has_data: boolean;
+}
+
+const EMPTY_FOLLOWER_CELL: FollowerCellSnapshot = {
+  current: null,
+  prior: null,
+  delta: null,
+};
+
+const EMPTY_FOLLOWER_SUMMARY: FollowerSummary = {
+  facebook: EMPTY_FOLLOWER_CELL,
+  instagram: EMPTY_FOLLOWER_CELL,
+  tiktok: EMPTY_FOLLOWER_CELL,
+  total: EMPTY_FOLLOWER_CELL,
+  has_data: false,
+};
+
+/**
+ * Pull the latest follower count per platform from platform_followers, plus
+ * the snapshot from `days` days ago for the WoW delta. Each platform is
+ * resolved independently so a missing snapshot for one platform doesn't
+ * blank out the others.
+ */
+export async function fetchFollowerSummary(
+  days: number,
+): Promise<FollowerSummary> {
+  try {
+    const supabase = createAdminClient();
+    const platforms: Platform[] = ["facebook", "instagram", "tiktok"];
+
+    const cutoffDate = new Date(Date.now() - days * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+
+    // Latest snapshot per platform (most recent captured_date, ≤ today).
+    const latestQ = await supabase
+      .from("platform_followers")
+      .select("platform, captured_date, follower_count")
+      .order("captured_date", { ascending: false })
+      .limit(50);
+
+    const latestByPlatform = new Map<Platform, number>();
+    for (const r of (latestQ.data ?? []) as Array<{
+      platform: Platform;
+      captured_date: string;
+      follower_count: number;
+    }>) {
+      if (!latestByPlatform.has(r.platform)) {
+        latestByPlatform.set(r.platform, Number(r.follower_count) || 0);
+      }
+    }
+
+    // Prior-period snapshot per platform: latest snapshot whose
+    // captured_date <= cutoffDate.
+    const priorQ = await supabase
+      .from("platform_followers")
+      .select("platform, captured_date, follower_count")
+      .lte("captured_date", cutoffDate)
+      .order("captured_date", { ascending: false })
+      .limit(50);
+    const priorByPlatform = new Map<Platform, number>();
+    for (const r of (priorQ.data ?? []) as Array<{
+      platform: Platform;
+      captured_date: string;
+      follower_count: number;
+    }>) {
+      if (!priorByPlatform.has(r.platform)) {
+        priorByPlatform.set(r.platform, Number(r.follower_count) || 0);
+      }
+    }
+
+    function cellFor(p: Platform): FollowerCellSnapshot {
+      const current = latestByPlatform.has(p)
+        ? latestByPlatform.get(p)!
+        : null;
+      const prior = priorByPlatform.has(p) ? priorByPlatform.get(p)! : null;
+      const delta =
+        current !== null && prior !== null ? current - prior : null;
+      return { current, prior, delta };
+    }
+
+    const fb = cellFor("facebook");
+    const ig = cellFor("instagram");
+    const tt = cellFor("tiktok");
+
+    // Total only sums platforms that have a current value. Missing data on
+    // one platform doesn't zero the total — it just contributes nothing.
+    const currentParts = [fb.current, ig.current, tt.current].filter(
+      (v): v is number => v !== null,
+    );
+    const priorParts = [fb.prior, ig.prior, tt.prior].filter(
+      (v): v is number => v !== null,
+    );
+    const totalCurrent =
+      currentParts.length > 0
+        ? currentParts.reduce((s, n) => s + n, 0)
+        : null;
+    const totalPrior =
+      priorParts.length > 0
+        ? priorParts.reduce((s, n) => s + n, 0)
+        : null;
+    const totalDelta =
+      totalCurrent !== null && totalPrior !== null
+        ? totalCurrent - totalPrior
+        : null;
+
+    return {
+      facebook: fb,
+      instagram: ig,
+      tiktok: tt,
+      total: {
+        current: totalCurrent,
+        prior: totalPrior,
+        delta: totalDelta,
+      },
+      has_data: currentParts.length > 0,
+    };
+  } catch (e) {
+    console.error("fetchFollowerSummary error:", e);
+    return EMPTY_FOLLOWER_SUMMARY;
+  }
+}
+
 /**
  * Aggregate posts metrics over a window for the top-of-dashboard KPI strip.
  * Pulls posts in the prior 2*days range, splits into current + prior periods,
