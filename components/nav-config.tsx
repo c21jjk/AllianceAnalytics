@@ -25,7 +25,6 @@ export function getNavItems(role: "admin" | "user"): NavItem[] {
         { href: "/properties", label: "Properties", icon: ICON.properties },
         { href: "/coach", label: "Coach", icon: ICON.coach },
         { href: "/reports", label: "Reports", icon: ICON.reports },
-        { href: "/settings", label: "Settings", icon: ICON.settings, adminOnly: true },
         ];
     return base.filter(function (i) { return !i.adminOnly || role === "admin"; });
 }

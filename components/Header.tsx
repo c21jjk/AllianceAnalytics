@@ -1,17 +1,14 @@
 import Link from "next/link";
-import { signOut } from "@/app/login/actions";
 import type { AuthProfile } from "@/lib/auth";
+import AccountMenu from "./AccountMenu";
 
+/**
+ * Global app header. Mobile shows a small logo + name; desktop relies on the
+ * sidebar to brand the page. The right side hosts the account dropdown
+ * (`<AccountMenu />`), which now owns My-account / Settings / Sign-out — none
+ * of those live in the sidebar anymore.
+ */
 export default function Header({ profile }: { profile: AuthProfile }) {
-  const initials =
-    (profile.full_name ?? profile.email)
-      .split(/\s+/)
-      .map((s) => s[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join("")
-      .toUpperCase() || "?";
-
   return (
     <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-neutral-200">
       <div className="px-4 md:px-8 h-14 flex items-center justify-between">
@@ -29,33 +26,7 @@ export default function Header({ profile }: { profile: AuthProfile }) {
         {/* Spacer on desktop (sidebar shows the logo) */}
         <div className="hidden md:block" />
 
-        <div className="flex items-center gap-3">
-          <Link
-            href="/settings/security"
-            className="hidden sm:flex flex-col items-end leading-tight hover:opacity-80 transition"
-            title="My account · change password"
-          >
-            <span className="text-sm font-medium text-neutral-800">
-              {profile.full_name ?? profile.email.split("@")[0]}
-            </span>
-            <span className="text-xs text-neutral-500 capitalize">
-              {profile.role}
-            </span>
-          </Link>
-          <Link
-            href="/settings/security"
-            className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-gold-100 text-gold-700 text-xs font-semibold hover:bg-gold-200 transition"
-            aria-label="My account"
-            title="My account"
-          >
-            {initials}
-          </Link>
-          <form action={signOut}>
-            <button type="submit" className="btn-secondary text-xs px-3 py-1.5">
-              Sign out
-            </button>
-          </form>
-        </div>
+        <AccountMenu profile={profile} />
       </div>
     </header>
   );
