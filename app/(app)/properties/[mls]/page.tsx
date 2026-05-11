@@ -29,7 +29,7 @@ export async function generateMetadata({ params }: PageProps) {
   if (property) return { title: `${property.address} — Alliance Social` };
   const live = await fetchPropertyByMls(mls);
   if (live?.address) return { title: `${live.address} — Alliance Social` };
-  return { title: "Property — Alliance Social" };
+  return { title: "Listing — Alliance Social" };
 }
 
 export default async function PropertyDetailPage({ params }: PageProps) {
@@ -89,7 +89,7 @@ export default async function PropertyDetailPage({ params }: PageProps) {
         </Link>
         <span aria-hidden="true">/</span>
         <Link href="/properties" className="hover:text-neutral-800">
-          Properties
+          Listings
         </Link>
         <span aria-hidden="true">/</span>
         <span className="text-neutral-700 truncate max-w-xs">

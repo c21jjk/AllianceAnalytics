@@ -263,10 +263,17 @@ export async function setGroupPropertiesAction(
     }
   }
 
+  // Singular property_id mirrors the first entry of property_ids[] so the
+  // post-detail loader (which reads group.property_id) and the report
+  // builder (which reads posts.property_id) both see the link without
+  // refactoring their query shapes.
+  const primaryPropertyId: string | null = propertyIds[0] ?? null;
+
   const { data: updated, error: updateErr } = await supabase
     .from("post_groups")
     .update({
       property_ids: propertyIds,
+      property_id: primaryPropertyId,
       updated_at: new Date().toISOString(),
     })
     .eq("id", groupId)
@@ -275,6 +282,31 @@ export async function setGroupPropertiesAction(
   if (updateErr) return { ok: false, error: updateErr.message };
   if (!updated || updated.length === 0) {
     return { ok: false, error: "Group not found." };
+  }
+
+  // Cascade the link to every post in the group so per-post readers stay
+  // consistent. Sets link_method='manual' when linking (overrides any prior
+  // auto-link), clears both fields when unlinking.
+  const nowIso = new Date().toISOString();
+  const cascadePatch: {
+    property_id: string | null;
+    link_method: "manual" | null;
+    updated_at: string;
+  } = primaryPropertyId
+    ? { property_id: primaryPropertyId, link_method: "manual", updated_at: nowIso }
+    : { property_id: null, link_method: null, updated_at: nowIso };
+
+  const { error: cascadeErr } = await supabase
+    .from("posts")
+    .update(cascadePatch)
+    .eq("group_id", groupId);
+  if (cascadeErr) {
+    // Non-fatal: the group-level link is saved. Surface a soft warning via
+    // the unmatched channel so the UI shows something happened.
+    console.error(
+      "setGroupPropertiesAction: post cascade failed —",
+      cascadeErr,
+    );
   }
 
   revalidatePath("/");

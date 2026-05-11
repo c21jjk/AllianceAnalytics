@@ -16,7 +16,7 @@ import PageHeader from "@/components/PageHeader";
 import PropertySortDropdown from "@/components/PropertySortDropdown";
 import PropertyOfficeFilter from "@/components/PropertyOfficeFilter";
 
-export const metadata = { title: "Properties — Alliance Social" };
+export const metadata = { title: "Listings — Alliance Social" };
 export const dynamic = "force-dynamic";
 
 const ALLOWED_SORTS: PropertySortKey[] = [
@@ -53,7 +53,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
     <div>
       <PageHeader
         eyebrow={`Active inventory · ${properties.length} ${properties.length === 1 ? "listing" : "listings"}${officeFilter ? ` · ${officeFilter}` : ""}`}
-        title="Properties"
+        title="Listings"
         description="Every active Century 21 Alliance listing tracked here. CMC and SJSR feeds auto-populate via RETS sync."
         actions={
           isAdmin ? (
@@ -62,7 +62,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
               className="btn-primary text-sm inline-flex items-center gap-1.5"
             >
               <PlusIcon />
-              Add property
+              Add listing
             </Link>
           ) : undefined
         }
@@ -77,8 +77,8 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
         <div className="rounded-xl border border-dashed border-neutral-300 bg-white px-6 py-10 text-center">
           <div className="text-sm font-medium text-neutral-900">
             {officeFilter
-              ? `No properties for ${officeFilter}`
-              : "No properties yet"}
+              ? `No listings for ${officeFilter}`
+              : "No listings yet"}
           </div>
           <p className="mt-1 text-sm text-neutral-500 max-w-md mx-auto">
             {officeFilter

@@ -34,7 +34,7 @@ export default async function EditPropertyPage({ params }: PageProps) {
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-neutral-500">
         <Link href="/properties" className="hover:text-neutral-800">
-          Properties
+          Listings
         </Link>
         <span aria-hidden="true">/</span>
         <Link

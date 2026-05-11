@@ -2,12 +2,30 @@
 
 import clsx from "clsx";
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   setGroupAudienceScopeAction,
   setGroupPropertiesAction,
 } from "@/app/(app)/groups/actions";
 import type { AudienceScope, PostGroup } from "@/lib/types/group";
+import { formatCurrency } from "@/lib/format";
+
+/**
+ * Shape returned by `/api/listings/search`. Subset of properties columns
+ * that the typeahead dropdown needs to render a row.
+ */
+interface ListingSearchResult {
+  mls_number: string;
+  address: string;
+  city: string | null;
+  state: string | null;
+  list_price: number | null;
+  status: string;
+  hero_image_url: string | null;
+}
+
+/** Loose regex for "looks like a raw MLS hashtag" — used for the Enter-to-submit fast path. */
+const MLS_LIKE_RE = /^(?:njbl|cmc|sjsr|njcd|nj[a-z]{2})\d{4,}$/i;
 
 /**
  * One office option for the audience scope dropdown.
@@ -86,19 +104,71 @@ function LinkageBlock({
   const [error, setError] = useState<string | null>(null);
   const [unmatched, setUnmatched] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
-  const [draftMls, setDraftMls] = useState("");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<ListingSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const debounceRef = useRef<number | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const isSingleton = group.id.startsWith("solo-");
   const linkedMlsNumbers = group.properties
     .map((p) => p.mls)
     .filter((m): m is string => typeof m === "string" && m.length > 0);
 
-  function handleAdd() {
-    const next = draftMls.trim();
-    if (!next) return;
+  // Debounced search-as-you-type against the existing listings endpoint.
+  // Triggers on query length ≥ 2 so a single keystroke doesn't fire a request.
+  useEffect(() => {
+    if (!adding) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+    if (query.trim().length < 2) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(
+          `/api/listings/search?q=${encodeURIComponent(query.trim())}`,
+          { cache: "no-store" },
+        );
+        const json = (await res.json()) as {
+          results?: ListingSearchResult[];
+        };
+        setResults(json.results ?? []);
+        setOpen(true);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 220);
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+  }, [query, adding]);
+
+  // Click-away closes the dropdown but keeps the input mounted.
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  function persistAddition(mlsToAdd: string) {
     setError(null);
     setUnmatched([]);
-    const newList = Array.from(new Set([...linkedMlsNumbers, next]));
+    const newList = Array.from(new Set([...linkedMlsNumbers, mlsToAdd]));
     startTransition(async () => {
       const result = await setGroupPropertiesAction(group.id, newList);
       if (!result.ok) {
@@ -106,9 +176,29 @@ function LinkageBlock({
         return;
       }
       if (result.unmatched_mls?.length) setUnmatched(result.unmatched_mls);
-      setDraftMls("");
+      setQuery("");
+      setResults([]);
+      setOpen(false);
       setAdding(false);
     });
+  }
+
+  /** Click on a typeahead row — attach the picked listing's MLS. */
+  function handlePick(r: ListingSearchResult) {
+    persistAddition(r.mls_number);
+  }
+
+  /**
+   * Fallback "raw MLS" submit — fires when the user presses Enter and the
+   * query looks like a hashtag (e.g. `NJBL2078123`, `CMC230456`). Lets power
+   * users paste an MLS without waiting for a search result.
+   */
+  function handleRawSubmit() {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    if (MLS_LIKE_RE.test(trimmed)) {
+      persistAddition(trimmed.toUpperCase());
+    }
   }
 
   function handleRemove(mlsNumber: string) {
@@ -124,11 +214,11 @@ function LinkageBlock({
   return (
     <section
       className="rounded-lg border border-neutral-200 bg-white shadow-sm p-2.5"
-      aria-label="Linked properties"
+      aria-label="Linked listings"
     >
       <div className="flex items-center justify-between gap-2">
         <h4 className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-          {group.properties.length > 1 ? "Properties" : "Property"}
+          {group.properties.length > 1 ? "Listings" : "Listing"}
         </h4>
         {group.properties.length > 0 ? (
           <span className="text-[10px] text-neutral-400 tabular-nums">
@@ -139,7 +229,7 @@ function LinkageBlock({
 
       {group.properties.length === 0 && !adding ? (
         <p className="mt-1.5 text-[11px] text-neutral-400 italic">
-          No property linked yet.
+          No listing linked yet.
         </p>
       ) : null}
 
@@ -190,41 +280,106 @@ function LinkageBlock({
       {isAdmin && !isSingleton ? (
         <div className="mt-1.5">
           {adding ? (
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                autoFocus
-                value={draftMls}
-                onChange={(e) => setDraftMls(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAdd();
-                  if (e.key === "Escape") {
+            <div ref={wrapperRef} className="relative">
+              <div className="flex items-center gap-1">
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onFocus={() => {
+                    if (results.length > 0) setOpen(true);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleRawSubmit();
+                    }
+                    if (e.key === "Escape") {
+                      setAdding(false);
+                      setQuery("");
+                      setResults([]);
+                      setOpen(false);
+                    }
+                  }}
+                  placeholder="MLS # or address (e.g. 727 spruce, NJBL2078)…"
+                  className="flex-1 min-w-0 rounded-md border border-neutral-200 px-1.5 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
                     setAdding(false);
-                    setDraftMls("");
-                  }
-                }}
-                placeholder="MLS # (e.g. NJBL2078123)"
-                className="flex-1 min-w-0 rounded-md border border-neutral-200 px-1.5 py-1 text-[11px] font-mono focus:outline-none focus:ring-2 focus:ring-gold-500/40"
-                maxLength={32}
-              />
-              <button
-                type="button"
-                onClick={handleAdd}
-                disabled={isPending || !draftMls.trim()}
-                className="text-[11px] font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded px-2 py-1 disabled:opacity-50"
-              >
-                Add
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAdding(false);
-                  setDraftMls("");
-                }}
-                className="text-[11px] text-neutral-500 hover:text-neutral-700 px-1"
-              >
-                ✕
-              </button>
+                    setQuery("");
+                    setResults([]);
+                    setOpen(false);
+                  }}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-700 px-1"
+                  aria-label="Cancel"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {open && results.length > 0 ? (
+                <div className="absolute z-20 mt-1 left-0 right-0 rounded-lg border border-neutral-200 bg-white shadow-lg max-h-72 overflow-auto">
+                  {results.map((r) => (
+                    <button
+                      key={r.mls_number}
+                      type="button"
+                      onClick={() => handlePick(r)}
+                      disabled={isPending}
+                      className="w-full text-left px-2 py-1.5 hover:bg-neutral-50 flex items-center gap-2 border-b border-neutral-100 last:border-b-0 disabled:opacity-60"
+                    >
+                      <div className="relative w-8 h-8 flex-shrink-0 rounded bg-neutral-100 overflow-hidden ring-1 ring-neutral-200">
+                        {r.hero_image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={r.hero_image_url}
+                            alt=""
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-[10px] font-mono text-neutral-700 truncate">
+                            {r.mls_number}
+                          </span>
+                          {r.list_price ? (
+                            <span className="text-[10px] text-gold-700 tabular-nums">
+                              {formatCurrency(Number(r.list_price))}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-[11px] text-neutral-900 truncate">
+                          {r.address}
+                        </div>
+                        <div className="text-[10px] text-neutral-500 truncate">
+                          {[r.city, r.state].filter(Boolean).join(", ")}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {open &&
+              !searching &&
+              query.trim().length >= 2 &&
+              results.length === 0 ? (
+                <div className="absolute z-20 mt-1 left-0 right-0 rounded-lg border border-neutral-200 bg-white shadow-lg px-2 py-2 text-[11px] text-neutral-500">
+                  No listings found. Try the MLS# directly, or add the listing
+                  on the{" "}
+                  <Link
+                    href="/listings/new"
+                    className="underline text-gold-700"
+                  >
+                    Listings tab
+                  </Link>
+                  .
+                </div>
+              ) : null}
             </div>
           ) : (
             <button

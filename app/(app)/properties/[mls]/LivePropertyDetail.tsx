@@ -60,7 +60,7 @@ export default async function LivePropertyDetail({
         </Link>
         <span aria-hidden="true">/</span>
         <Link href="/properties" className="hover:text-neutral-800">
-          Properties
+          Listings
         </Link>
         <span aria-hidden="true">/</span>
         <span className="text-neutral-700 truncate max-w-md">
