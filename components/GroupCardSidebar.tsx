@@ -406,24 +406,65 @@ function LinkageBlock({
         <p className="mt-1.5 text-[10px] text-rose-700">{error}</p>
       ) : null}
 
-      {/* Owner reports — one button per property, only when ≥7 days old */}
+      {/* Owner reports — high-emphasis CTA per linked listing. Only renders
+          once posts are at least 7 days old (matches the GenerateReportButton
+          gate). Owner reports are the headline output of the system, so this
+          uses the gold-on-gold filled-button treatment rather than a quiet
+          inline link. */}
       {group.properties.length > 0 && group.days_old >= 7 ? (
-        <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1">
+        <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1.5">
           {group.properties.map((prop) =>
             prop.mls ? (
               <Link
                 key={prop.mls}
                 href={`/properties/${encodeURIComponent(prop.mls)}`}
-                className="block text-[11px] font-medium text-gold-700 hover:text-gold-900 hover:bg-gold-50 rounded px-1.5 py-1 transition truncate"
+                className="group flex items-center gap-2 rounded-md bg-gradient-to-r from-gold-500 to-gold-600 hover:from-gold-600 hover:to-gold-700 px-2.5 py-2 text-white shadow-sm hover:shadow transition-all"
                 title={`View owner report for ${prop.address ?? prop.mls}`}
               >
-                📄 Report → {prop.address ?? prop.mls}
+                <span
+                  aria-hidden="true"
+                  className="inline-flex items-center justify-center w-6 h-6 rounded bg-white/15 shrink-0"
+                >
+                  <DocumentIcon />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-white/85 leading-none">
+                    Owner Report
+                  </div>
+                  <div className="mt-0.5 text-[11px] font-medium text-white truncate leading-tight">
+                    {prop.address ?? prop.mls}
+                  </div>
+                </div>
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 text-white/85 group-hover:translate-x-0.5 transition-transform"
+                >
+                  →
+                </span>
               </Link>
             ) : null,
           )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function DocumentIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-3.5 h-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 3.5h9l4 4V20a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z" />
+      <path d="M14.5 3.5V8h4M9 13h6M9 17h4" />
+    </svg>
   );
 }
 
