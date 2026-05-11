@@ -150,7 +150,6 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Alliance Social"
         description={description}
         actions={
           <div className="flex items-center gap-2">

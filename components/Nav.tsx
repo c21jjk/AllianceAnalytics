@@ -51,20 +51,20 @@ export function TopNav({
       <div className="h-0.5 bg-gradient-to-r from-gold-500/0 via-gold-500/60 to-gold-500/0" />
 
       <div className="px-4 md:px-8 max-w-7xl mx-auto">
-        <div className="h-14 flex items-center gap-6 md:gap-10">
+        <div className="h-20 flex items-center gap-6 md:gap-10">
           {/* Brand */}
           <Link
             href="/"
-            className="flex items-center gap-2.5 shrink-0 group"
+            className="flex items-center gap-3 shrink-0 group"
             aria-label="Alliance Social home"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/brand/c21-seal.png"
               alt=""
-              className="w-8 h-9 object-contain shrink-0"
+              className="w-12 h-14 object-contain shrink-0"
             />
-            <span className="hidden sm:inline font-semibold tracking-tight text-neutral-900 group-hover:text-neutral-700">
+            <span className="hidden sm:inline text-base font-semibold tracking-tight text-neutral-900 group-hover:text-neutral-700">
               Alliance Social
             </span>
           </Link>
@@ -81,7 +81,7 @@ export function TopNav({
                   key={item.href}
                   href={item.href}
                   className={clsx(
-                    "relative inline-flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors",
+                    "relative inline-flex items-center gap-2 px-4 py-2.5 text-base font-medium transition-colors",
                     active
                       ? "text-neutral-900"
                       : "text-neutral-600 hover:text-neutral-900",
@@ -100,7 +100,7 @@ export function TopNav({
                   <span
                     aria-hidden="true"
                     className={clsx(
-                      "absolute -bottom-px left-2 right-2 h-0.5 rounded-full transition-all",
+                      "absolute -bottom-px left-2 right-2 h-[2.5px] rounded-full transition-all",
                       active ? "bg-gold-500" : "bg-transparent",
                     )}
                   />

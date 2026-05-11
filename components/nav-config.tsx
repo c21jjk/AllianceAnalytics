@@ -26,12 +26,13 @@ const ICON: Record<string, ReactNode> = {
     ]),
 };
 export function getNavItems(role: "admin" | "user"): NavItem[] {
+    // Users management lives under Settings → Users (via the AccountMenu).
+    // Removed from the top nav to keep the bar focused on operational tabs.
     const base: NavItem[] = [
         { href: "/", label: "Dashboard", icon: ICON.dashboard },
         { href: "/properties", label: "Listings", icon: ICON.listings },
         { href: "/coach", label: "Coach", icon: ICON.coach },
         { href: "/reports", label: "Reports", icon: ICON.reports },
-        { href: "/settings/users", label: "Users", icon: ICON.users, adminOnly: true },
         ];
     return base.filter(function (i) { return !i.adminOnly || role === "admin"; });
 }

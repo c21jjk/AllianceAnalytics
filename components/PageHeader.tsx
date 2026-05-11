@@ -1,5 +1,8 @@
 interface PageHeaderProps {
-  title: string;
+  /** Page H1. Omit on pages where the nav brand is sufficient (e.g. the
+   *  dashboard). When omitted, the gold accent bar also hides — just the
+   *  description renders. */
+  title?: string;
   description?: string;
   /** Small uppercase eyebrow above the title (e.g. "Properties · 21 active") */
   eyebrow?: string;
@@ -13,6 +16,9 @@ interface PageHeaderProps {
  * Executive-feel page header. Small uppercase eyebrow + larger title with
  * a thin gold accent bar to its left. Description sits below in a comfortable
  * reading width. Actions slot floats right.
+ *
+ * The title is optional — the dashboard omits it because the nav brand
+ * already says "Alliance Social" and a duplicate H1 was redundant.
  */
 export default function PageHeader({
   title,
@@ -29,18 +35,26 @@ export default function PageHeader({
             {eyebrow}
           </div>
         ) : null}
-        <div className="flex items-center gap-3 flex-wrap">
-          <span
-            aria-hidden="true"
-            className="hidden sm:block w-1 h-7 md:h-8 rounded-full bg-gradient-to-b from-gold-400 to-gold-600 shrink-0"
-          />
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
-            {title}
-          </h1>
-          {phaseTag ? <span className="badge-neutral">{phaseTag}</span> : null}
-        </div>
+        {title ? (
+          <div className="flex items-center gap-3 flex-wrap">
+            <span
+              aria-hidden="true"
+              className="hidden sm:block w-1 h-7 md:h-8 rounded-full bg-gradient-to-b from-gold-400 to-gold-600 shrink-0"
+            />
+            <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
+              {title}
+            </h1>
+            {phaseTag ? <span className="badge-neutral">{phaseTag}</span> : null}
+          </div>
+        ) : null}
         {description ? (
-          <p className="mt-2 text-neutral-600 max-w-2xl pl-0 sm:pl-4">
+          <p
+            className={
+              title
+                ? "mt-2 text-neutral-600 max-w-2xl pl-0 sm:pl-4"
+                : "text-neutral-600 max-w-2xl"
+            }
+          >
             {description}
           </p>
         ) : null}
