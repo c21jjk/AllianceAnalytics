@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
   setGroupAudienceScopeAction,
+  setGroupCategoryAction,
   setGroupPropertiesAction,
+  type GroupCategory,
 } from "@/app/(app)/groups/actions";
 import type { AudienceScope, PostGroup } from "@/lib/types/group";
 import { formatCurrency } from "@/lib/format";
@@ -83,6 +85,7 @@ export default function GroupCardSidebar({
       onClick={(e) => e.stopPropagation()}
     >
       <LinkageBlock group={group} isAdmin={isAdmin} />
+      <CategoryBlock group={group} isAdmin={isAdmin} />
       <AttributionBlock group={group} offices={offices} isAdmin={isAdmin} />
       <StatusBlock group={group} />
     </div>
@@ -465,6 +468,80 @@ function DocumentIcon() {
       <path d="M6 3.5h9l4 4V20a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z" />
       <path d="M14.5 3.5V8h4M9 13h6M9 17h4" />
     </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Block 1b — Category (editorial type of campaign)
+// ---------------------------------------------------------------------------
+
+const CATEGORY_OPTIONS: Array<{ value: GroupCategory; label: string }> = [
+  { value: "property", label: "Property Promotion" },
+  { value: "agent", label: "Agent Promotion" },
+  { value: "marketing", label: "Company Promotion" },
+  { value: "educational", label: "Real Estate Educational Tips" },
+  { value: "sold", label: "Sold / Just Sold" },
+  { value: "community", label: "Community / Local" },
+  { value: "other", label: "Other" },
+];
+
+function CategoryBlock({
+  group,
+  isAdmin,
+}: {
+  group: PostGroup;
+  isAdmin: boolean;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const isSingleton = group.id.startsWith("solo-");
+
+  const currentValue = group.category ?? "";
+
+  function handleChange(next: string) {
+    setError(null);
+    const category: GroupCategory | null =
+      next === ""
+        ? null
+        : (CATEGORY_OPTIONS.find((c) => c.value === next)?.value ?? null);
+    startTransition(async () => {
+      const result = await setGroupCategoryAction(group.id, category);
+      if (!result.ok) setError(result.error ?? "Unable to update.");
+    });
+  }
+
+  return (
+    <section
+      className="rounded-lg border border-neutral-200 bg-white shadow-sm p-2.5"
+      aria-label="Category"
+    >
+      <h4 className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+        Category
+      </h4>
+      {isAdmin && !isSingleton ? (
+        <select
+          value={currentValue}
+          onChange={(e) => handleChange(e.target.value)}
+          disabled={isPending}
+          className="mt-1.5 w-full rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-[11px] text-neutral-800 focus:outline-none focus:ring-2 focus:ring-gold-500/40 disabled:opacity-60"
+        >
+          <option value="">Uncategorized</option>
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="mt-1.5 text-[11px] text-neutral-700">
+          {CATEGORY_OPTIONS.find((c) => c.value === group.category)?.label ??
+            "Uncategorized"}
+        </p>
+      )}
+      {error ? (
+        <p className="mt-1.5 text-[10px] text-rose-700">{error}</p>
+      ) : null}
+    </section>
   );
 }
 

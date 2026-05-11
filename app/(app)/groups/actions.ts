@@ -379,3 +379,84 @@ export async function setGroupAudienceScopeAction(
   revalidatePath("/posts");
   return { ok: true };
 }
+
+/* ------------------------------------------------------------------------- */
+/* Category — group-level with cascade                                        */
+/* ------------------------------------------------------------------------- */
+
+export type GroupCategory =
+  | "property"
+  | "agent"
+  | "educational"
+  | "marketing"
+  | "community"
+  | "sold"
+  | "other";
+
+export interface SetGroupCategoryResult {
+  ok: boolean;
+  error?: string;
+}
+
+const VALID_CATEGORIES: GroupCategory[] = [
+  "property",
+  "agent",
+  "educational",
+  "marketing",
+  "community",
+  "sold",
+  "other",
+];
+
+/**
+ * Set the editorial category on a group. Writes `post_groups.category` AND
+ * cascades to every member post's `posts.category` so the dashboard card
+ * and the per-post Classify panel always show the same value — same
+ * pattern as the property_id cascade in setGroupPropertiesAction.
+ */
+export async function setGroupCategoryAction(
+  groupId: string,
+  category: GroupCategory | null,
+): Promise<SetGroupCategoryResult> {
+  await requireAdmin();
+
+  if (!groupId || groupId.startsWith("solo-")) {
+    return {
+      ok: false,
+      error: "Cannot edit a singleton group. Merge it first.",
+    };
+  }
+
+  if (category !== null && !VALID_CATEGORIES.includes(category)) {
+    return { ok: false, error: `Invalid category: ${category}` };
+  }
+
+  const supabase = createAdminClient();
+  const nowIso = new Date().toISOString();
+
+  const { data: updated, error: groupErr } = await supabase
+    .from("post_groups")
+    .update({ category, updated_at: nowIso })
+    .eq("id", groupId)
+    .select("id");
+  if (groupErr) return { ok: false, error: groupErr.message };
+  if (!updated || updated.length === 0) {
+    return { ok: false, error: "Group not found." };
+  }
+
+  const { error: cascadeErr } = await supabase
+    .from("posts")
+    .update({ category, updated_at: nowIso })
+    .eq("group_id", groupId);
+  if (cascadeErr) {
+    console.error(
+      "setGroupCategoryAction: post cascade failed —",
+      cascadeErr,
+    );
+    // Non-fatal — group-level is saved.
+  }
+
+  revalidatePath("/");
+  revalidatePath("/posts");
+  return { ok: true };
+}

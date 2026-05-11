@@ -354,12 +354,13 @@ export default function GroupDetailBody({
         <div id="classify-panel" className="scroll-mt-20">
           <PropertyClassifyPanel
             postId={liveInsightPostId}
+            groupId={group.id.startsWith("solo-") ? null : group.id}
             initialProperty={group.property}
             initialCategory={group.category}
             initialLinkMethod={group.link_method}
             initialAgentName={group.agent_name}
             offices={offices}
-            initialOfficeId={initialOfficeId}
+            initialAudienceScope={group.audience_scope ?? null}
           />
         </div>
       ) : null}

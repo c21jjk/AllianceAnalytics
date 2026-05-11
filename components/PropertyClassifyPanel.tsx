@@ -8,6 +8,13 @@ import {
   useTransition,
 } from "react";
 import type { PostCategory, PostLinkMethod, PropertyRef } from "@/lib/types/post";
+import type { AudienceScope } from "@/lib/types/group";
+import {
+  setGroupAudienceScopeAction,
+  setGroupCategoryAction,
+  setGroupPropertiesAction,
+  type GroupCategory,
+} from "@/app/(app)/groups/actions";
 import { classifyPostAction } from "@/app/(app)/listings/actions";
 import { formatCurrency } from "@/lib/format";
 
@@ -29,14 +36,18 @@ export interface OfficeOption {
 
 interface Props {
   postId: string;
+  /** Group id — required for group-level cascading writes (category /
+   *  audience / linked listing). When null (singleton post), the audience
+   *  and category controls are read-only. */
+  groupId?: string | null;
   initialProperty?: PropertyRef;
   initialCategory?: PostCategory;
   initialLinkMethod?: PostLinkMethod;
   initialAgentName?: string;
-  /** Active offices for the dropdown. Server should pass these prefetched. */
+  /** Active offices — drives the Audience dropdown's per-office options. */
   offices?: OfficeOption[];
-  /** Currently saved office_id on the post (or null). */
-  initialOfficeId?: string | null;
+  /** Currently saved audience_scope on the group (or null). */
+  initialAudienceScope?: AudienceScope | null;
 }
 
 const CATEGORY_OPTIONS: Array<{
@@ -52,6 +63,11 @@ const CATEGORY_OPTIONS: Array<{
   { value: "other", label: "Other" },
 ];
 
+const DIVISION_OPTIONS: Array<{ slug: string; label: string }> = [
+  { slug: "shore", label: "Shore Division" },
+  { slug: "south_jersey", label: "South Jersey Division" },
+];
+
 const LINK_METHOD_LABEL: Record<PostLinkMethod, string> = {
   manual: "Manually linked",
   auto_mls: "Auto-linked by MLS#",
@@ -59,14 +75,25 @@ const LINK_METHOD_LABEL: Record<PostLinkMethod, string> = {
   auto_address_partial: "Auto-linked by address fragment",
 };
 
+/**
+ * Encode an AudienceScope object to the string form the dropdown uses.
+ * Mirrors GroupCardSidebar so both surfaces speak the same vocabulary.
+ */
+function scopeToString(scope: AudienceScope | null): string {
+  if (!scope) return "";
+  if (scope.kind === "company") return "company";
+  return `${scope.kind}:${scope.value ?? ""}`;
+}
+
 export default function PropertyClassifyPanel({
   postId,
+  groupId = null,
   initialProperty,
   initialCategory,
   initialLinkMethod,
   initialAgentName,
   offices = [],
-  initialOfficeId = null,
+  initialAudienceScope = null,
 }: Props) {
   const [category, setCategory] = useState<PostCategory>(
     initialCategory ?? (initialProperty ? "property" : "other"),
@@ -78,7 +105,9 @@ export default function PropertyClassifyPanel({
     initialProperty ?? null,
   );
   const [agentName, setAgentName] = useState<string>(initialAgentName ?? "");
-  const [officeId, setOfficeId] = useState<string>(initialOfficeId ?? "");
+  const [audienceScope, setAudienceScope] = useState<string>(
+    scopeToString(initialAudienceScope ?? null),
+  );
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ListingResult[]>([]);
@@ -92,18 +121,17 @@ export default function PropertyClassifyPanel({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  /**
-   * Discoverability hook: AttachListingCta dispatches `attach-listing:focus`
-   * when the user clicks the top-of-page "Attach a listing" banner. We bump
-   * the category to 'property' (so the search field renders), then focus the
-   * input on the next tick.
-   */
+  const showSearch = category === "property" || category === "sold";
+  const showAgentName = category === "agent";
+  const canEditGroup = Boolean(groupId);
+
+  /** AttachListingCta on the post detail dispatches this event when the user
+   *  clicks the top-of-page banner. Bump category to property + focus search. */
   useEffect(() => {
     function onFocus() {
       setCategory((prev) =>
         prev === "property" || prev === "sold" ? prev : "property",
       );
-      // Wait a frame so the search input mounts after the category flip.
       requestAnimationFrame(() => {
         searchInputRef.current?.focus();
       });
@@ -111,9 +139,6 @@ export default function PropertyClassifyPanel({
     window.addEventListener("attach-listing:focus", onFocus);
     return () => window.removeEventListener("attach-listing:focus", onFocus);
   }, []);
-
-  const showSearch = category === "property" || category === "sold";
-  const showAgentName = category === "agent";
 
   useEffect(() => {
     if (!showSearch) {
@@ -147,7 +172,6 @@ export default function PropertyClassifyPanel({
     };
   }, [query, showSearch]);
 
-  // Click-away closes the dropdown.
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (!wrapperRef.current) return;
@@ -182,26 +206,86 @@ export default function PropertyClassifyPanel({
     setLinkedRef(null);
   }
 
+  /** Orchestrates group-level writes for Category / Audience / Listing plus
+   *  the per-post agent_name. Calls each action in sequence; first failure
+   *  short-circuits with an error. Saving a singleton group's group-level
+   *  fields is gracefully skipped — the per-post agent_name still saves. */
   function save() {
     setError(null);
     setSavedMessage(null);
-    const fd = new FormData();
-    fd.set("post_id", postId);
-    fd.set("category", category);
-    if (linkedMls && (category === "property" || category === "sold")) {
-      fd.set("mls_number", linkedMls);
-    }
-    if (category === "agent" && agentName.trim().length > 0) {
-      fd.set("agent_name", agentName.trim());
-    }
-    fd.set("office_id", officeId);
+
+    const dirtyCategory = category !== initialCategoryResolved;
+    const dirtyListing =
+      (linkedMls ?? null) !== (initialProperty?.mls ?? null);
+    const dirtyAudience =
+      audienceScope !== scopeToString(initialAudienceScope ?? null);
+    const dirtyAgentName =
+      showAgentName && agentName.trim() !== (initialAgentName ?? "").trim();
+
     startTransition(async () => {
-      const result = await classifyPostAction(fd);
-      if (result.ok) {
+      try {
+        // 1) Group category (cascades to all posts)
+        if (canEditGroup && dirtyCategory && groupId) {
+          const result = await setGroupCategoryAction(
+            groupId,
+            category as GroupCategory,
+          );
+          if (!result.ok) {
+            setError(result.error ?? "Couldn't save category.");
+            return;
+          }
+        }
+
+        // 2) Group audience_scope
+        if (canEditGroup && dirtyAudience && groupId) {
+          const scope = audienceScope === "" ? null : audienceScope;
+          const result = await setGroupAudienceScopeAction(groupId, scope);
+          if (!result.ok) {
+            setError(result.error ?? "Couldn't save audience.");
+            return;
+          }
+        }
+
+        // 3) Group linked listing (cascades to all posts)
+        if (canEditGroup && dirtyListing && groupId) {
+          const mlsList =
+            linkedMls && (category === "property" || category === "sold")
+              ? [linkedMls]
+              : [];
+          const result = await setGroupPropertiesAction(groupId, mlsList);
+          if (!result.ok) {
+            setError(result.error ?? "Couldn't save linked listing.");
+            return;
+          }
+        }
+
+        // 4) Per-post agent_name + category fallback for singleton groups
+        if (!canEditGroup || dirtyAgentName) {
+          const fd = new FormData();
+          fd.set("post_id", postId);
+          fd.set("category", category);
+          if (
+            linkedMls &&
+            (category === "property" || category === "sold") &&
+            !canEditGroup
+          ) {
+            fd.set("mls_number", linkedMls);
+          }
+          if (category === "agent" && agentName.trim().length > 0) {
+            fd.set("agent_name", agentName.trim());
+          }
+          fd.set("office_id", ""); // office_id no longer manually editable
+          const result = await classifyPostAction(fd);
+          if (!result.ok) {
+            setError(result.error ?? "Save failed");
+            return;
+          }
+        }
+
         setSavedMessage("Saved");
         setTimeout(() => setSavedMessage(null), 2200);
-      } else {
-        setError(result.error ?? "Save failed");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Save failed");
       }
     });
   }
@@ -211,8 +295,8 @@ export default function PropertyClassifyPanel({
   const dirty =
     category !== initialCategoryResolved ||
     (linkedMls ?? null) !== (initialProperty?.mls ?? null) ||
-    (showAgentName && agentName.trim() !== (initialAgentName ?? "").trim()) ||
-    officeId !== (initialOfficeId ?? "");
+    audienceScope !== scopeToString(initialAudienceScope ?? null) ||
+    (showAgentName && agentName.trim() !== (initialAgentName ?? "").trim());
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5 space-y-4">
@@ -222,81 +306,13 @@ export default function PropertyClassifyPanel({
             Classify this post
           </h3>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Tag the category and, for property-related posts, link the listing
-            it&apos;s about. Linked posts roll up into that property&apos;s seller report.
+            Tag the listing, category, and audience. These three fields are
+            the same ones on the dashboard card — edits sync both ways.
           </p>
         </div>
       </header>
 
-      <div>
-        <label
-          htmlFor="classify-category"
-          className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
-        >
-          Category
-        </label>
-        <select
-          id="classify-category"
-          value={category}
-          onChange={(e) => setCategory(e.target.value as PostCategory)}
-          className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
-        >
-          {CATEGORY_OPTIONS.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {showAgentName ? (
-        <div>
-          <label
-            htmlFor="classify-agent-name"
-            className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
-          >
-            Agent name
-          </label>
-          <input
-            id="classify-agent-name"
-            type="text"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            placeholder="e.g. Jane Doe"
-            className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
-          />
-        </div>
-      ) : null}
-
-      {offices.length > 0 ? (
-        <div>
-          <label
-            htmlFor="classify-office"
-            className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
-          >
-            Origin office
-          </label>
-          <select
-            id="classify-office"
-            value={officeId}
-            onChange={(e) => setOfficeId(e.target.value)}
-            className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
-          >
-            <option value="">Brand-wide / no office</option>
-            {offices.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-[11px] text-neutral-500">
-            {category === "marketing" || category === "educational"
-              ? "Optional — leave blank for brand-wide content."
-              : "Tag the office that owns this post so AI recommendations stay office-specific."}
-          </p>
-        </div>
-      ) : null}
-
+      {/* LINKED LISTING ---------------------------------------------------- */}
       {showSearch ? (
         <div ref={wrapperRef} className="relative">
           <div className="text-xs font-medium uppercase tracking-wide text-neutral-500">
@@ -399,6 +415,86 @@ export default function PropertyClassifyPanel({
           ) : null}
         </div>
       ) : null}
+
+      {/* CATEGORY ---------------------------------------------------------- */}
+      <div>
+        <label
+          htmlFor="classify-category"
+          className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
+        >
+          Category
+        </label>
+        <select
+          id="classify-category"
+          value={category}
+          onChange={(e) => setCategory(e.target.value as PostCategory)}
+          className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
+        >
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* AGENT NAME — only when category is "agent" ------------------------ */}
+      {showAgentName ? (
+        <div>
+          <label
+            htmlFor="classify-agent-name"
+            className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
+          >
+            Agent name
+          </label>
+          <input
+            id="classify-agent-name"
+            type="text"
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
+            placeholder="e.g. Jane Doe"
+            className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500"
+          />
+        </div>
+      ) : null}
+
+      {/* AUDIENCE — replaces the old "Origin Office" picker ---------------- */}
+      <div>
+        <label
+          htmlFor="classify-audience"
+          className="block text-xs font-medium uppercase tracking-wide text-neutral-500"
+        >
+          Audience
+        </label>
+        <select
+          id="classify-audience"
+          value={audienceScope}
+          onChange={(e) => setAudienceScope(e.target.value)}
+          disabled={!canEditGroup}
+          className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-gold-500 disabled:opacity-60"
+        >
+          <option value="">Unscoped</option>
+          <option value="company">Whole company</option>
+          <optgroup label="Divisions">
+            {DIVISION_OPTIONS.map((d) => (
+              <option key={d.slug} value={`division:${d.slug}`}>
+                {d.label}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Offices">
+            {offices.map((o) => (
+              <option key={o.short_code} value={`office:${o.short_code}`}>
+                {o.name}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+        <p className="mt-1 text-[11px] text-neutral-500">
+          Same audience picker shown on the dashboard card. Edits sync both
+          ways.
+        </p>
+      </div>
 
       {error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
