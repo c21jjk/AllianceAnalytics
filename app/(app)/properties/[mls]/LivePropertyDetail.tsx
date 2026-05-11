@@ -5,7 +5,6 @@ import {
   formatCompactNumber,
   formatRelativeTime,
 } from "@/lib/format";
-import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
 import GenerateReportButton from "@/components/GenerateReportButton";
 import SendToAgentButton from "@/components/SendToAgentButton";
 import ReportActionBar from "@/components/ReportActionBar";
@@ -68,73 +67,81 @@ export default async function LivePropertyDetail({
         </span>
       </div>
 
-      {/* Hero — large image + key facts overlay */}
+      {/* Hero — compact side-by-side. Photo capped at ~40% width on desktop
+          so the listing info (address, agent, facts) gets the visual weight
+          it deserves. Stacks on mobile. */}
       <section className="rounded-2xl overflow-hidden border border-neutral-200 bg-white shadow-card">
-        <div className="relative aspect-[16/9] bg-neutral-100">
-          {property.hero_image_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={property.hero_image_url}
-              alt={property.address ?? "Property"}
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-          ) : (
-            <div className="absolute inset-0 grid place-items-center text-neutral-400 text-sm">
-              No hero photo on file
-            </div>
-          )}
-        </div>
-        <div className="p-5 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold text-neutral-900 leading-tight">
+        <div className="grid md:grid-cols-[minmax(0,_5fr)_minmax(0,_7fr)]">
+          <div className="relative aspect-[4/3] md:aspect-auto md:min-h-[280px] bg-neutral-100">
+            {property.hero_image_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={property.hero_image_url}
+                alt={property.address ?? "Listing"}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            ) : (
+              <div className="absolute inset-0 grid place-items-center text-neutral-400 text-sm">
+                No hero photo on file
+              </div>
+            )}
+          </div>
+          <div className="p-5 md:p-7 flex flex-col justify-center min-w-0">
+            <h1 className="text-3xl md:text-4xl font-semibold text-neutral-900 leading-tight tracking-tight">
               {property.address ?? "Unknown address"}
             </h1>
             {cityState ? (
-              <p className="text-sm text-neutral-500 mt-0.5">
+              <p className="text-base text-neutral-600 mt-1">
                 {cityState}
                 {property.zip ? ` ${property.zip}` : ""}
               </p>
             ) : null}
-            <div className="mt-3 flex items-center gap-2 flex-wrap text-[12px] text-neutral-700">
+
+            <div className="mt-4 flex items-center gap-2 flex-wrap text-sm text-neutral-700">
               {property.list_price !== null ? (
-                <span className="inline-flex items-center rounded-md bg-gold-50 ring-1 ring-gold-200 px-2 py-0.5 font-semibold text-gold-800 tabular-nums">
+                <span className="inline-flex items-center rounded-md bg-gold-50 ring-1 ring-gold-200 px-3 py-1 font-semibold text-gold-800 tabular-nums">
                   {formatCurrency(property.list_price)}
                 </span>
               ) : null}
               {property.bedrooms !== null ? (
-                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2 py-0.5">
+                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2.5 py-1">
                   {property.bedrooms} bed
                 </span>
               ) : null}
               {bathTotal > 0 ? (
-                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2 py-0.5">
+                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2.5 py-1">
                   {bathTotal} bath
                 </span>
               ) : null}
               {property.property_type ? (
-                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2 py-0.5">
+                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2.5 py-1">
                   {property.property_type}
                 </span>
               ) : null}
               {property.dom_days !== null ? (
-                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2 py-0.5">
+                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2.5 py-1">
                   DOM {property.dom_days}
                 </span>
               ) : null}
-              <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2 py-0.5 font-mono text-[11px]">
+              <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-2.5 py-1 font-mono text-xs">
                 #{property.mls_number}
               </span>
             </div>
+
             {property.agent_name ? (
-              <p className="mt-2 text-xs text-neutral-500">
-                Listed by{" "}
-                <span className="text-neutral-700 font-medium">
+              <div className="mt-4 pt-4 border-t border-neutral-100">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                  Listed by
+                </div>
+                <div className="mt-1 text-base font-semibold text-neutral-900">
                   {property.agent_name}
-                </span>
-                {property.listing_office_name
-                  ? ` · ${property.listing_office_name}`
-                  : ""}
-              </p>
+                </div>
+                {property.listing_office_name ? (
+                  <div className="text-sm text-neutral-600">
+                    {property.listing_office_name}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>
@@ -243,13 +250,18 @@ export default async function LivePropertyDetail({
               Click any post to open detail.
             </p>
           </div>
-          <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {property.posts.map((post) => (
               <li key={post.id}>
                 <Link
                   href={`/posts/${post.id}`}
-                  className="block rounded-lg border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition overflow-hidden"
+                  className="block rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition overflow-hidden"
                 >
+                  {/* Per-platform colored header strip — high-contrast so
+                      the platform is identifiable at a glance, even when the
+                      thumbnail is busy. */}
+                  <PostPlatformHeader platform={post.platform} />
+
                   <div className="aspect-square bg-neutral-100 relative">
                     {post.thumbnail_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -259,36 +271,40 @@ export default async function LivePropertyDetail({
                         className="absolute inset-0 w-full h-full object-cover"
                       />
                     ) : null}
-                    <span className="absolute top-1.5 left-1.5">
-                      <PlatformBadge platform={post.platform} size="sm" />
-                    </span>
                   </div>
-                  <div className="p-2.5">
-                    <p className="text-[11px] text-neutral-500">
+
+                  <div className="p-3.5 space-y-2">
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
                       {post.posted_at
                         ? new Date(post.posted_at).toLocaleDateString(
                             undefined,
-                            { month: "short", day: "numeric" },
+                            {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            },
                           )
-                        : "—"}{" "}
-                      · {platformLabel(post.platform)}
+                        : "Date unknown"}
                     </p>
-                    <p className="mt-0.5 text-xs text-neutral-700 line-clamp-2 leading-snug">
+                    <p className="text-sm text-neutral-800 line-clamp-2 leading-snug">
                       {post.caption ?? (
                         <span className="text-neutral-400 italic">
                           No caption
                         </span>
                       )}
                     </p>
-                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-neutral-500 tabular-nums">
+                    <div className="pt-1 flex items-center justify-between text-sm text-neutral-600 tabular-nums">
                       <span>
-                        <span className="font-semibold text-neutral-800">
+                        <span className="font-semibold text-neutral-900">
                           {formatCompactNumber(post.reach)}
                         </span>{" "}
                         reach
                       </span>
                       <span>
-                        {formatCompactNumber(post.total_engagements)} eng
+                        <span className="font-semibold text-neutral-900">
+                          {formatCompactNumber(post.total_engagements)}
+                        </span>{" "}
+                        eng
                       </span>
                     </div>
                   </div>
@@ -310,6 +326,78 @@ export default async function LivePropertyDetail({
           </p>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Full-width colored header strip that crowns each post card with its
+ * platform brand color + label. Matches the platform brand colors used by
+ * PlatformBadge so users build muscle memory: blue = Facebook, gradient =
+ * Instagram, black = TikTok. Keeps platform identification glance-able.
+ */
+function PostPlatformHeader({
+  platform,
+}: {
+  platform: "facebook" | "instagram" | "tiktok";
+}) {
+  if (platform === "facebook") {
+    return (
+      <div className="bg-[#1877F2] text-white px-3.5 py-2 flex items-center gap-2">
+        <svg
+          viewBox="0 0 24 24"
+          className="w-4 h-4 shrink-0"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path d="M13.5 21v-7.4h2.5l.4-2.9h-2.9V8.9c0-.84.23-1.4 1.43-1.4H16.5V4.94c-.27-.04-1.18-.11-2.24-.11-2.22 0-3.74 1.36-3.74 3.85v2.12H8v2.9h2.52V21h2.98z" />
+        </svg>
+        <span className="text-sm font-semibold tracking-tight">Facebook</span>
+      </div>
+    );
+  }
+  if (platform === "instagram") {
+    return (
+      <div className="bg-gradient-to-r from-[#FEDA77] via-[#F58529] to-[#DD2A7B] text-white px-3.5 py-2 flex items-center gap-2">
+        <svg
+          viewBox="0 0 24 24"
+          className="w-4 h-4 shrink-0"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect
+            x="3.5"
+            y="3.5"
+            width="17"
+            height="17"
+            rx="5"
+            stroke="currentColor"
+            strokeWidth={1.8}
+          />
+          <circle
+            cx="12"
+            cy="12"
+            r="3.6"
+            stroke="currentColor"
+            strokeWidth={1.8}
+          />
+          <circle cx="17.2" cy="6.8" r="1" fill="currentColor" />
+        </svg>
+        <span className="text-sm font-semibold tracking-tight">Instagram</span>
+      </div>
+    );
+  }
+  return (
+    <div className="bg-neutral-900 text-white px-3.5 py-2 flex items-center gap-2">
+      <svg
+        viewBox="0 0 24 24"
+        className="w-4 h-4 shrink-0"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M16.5 3a5.5 5.5 0 005 4.5v3.05a8.7 8.7 0 01-5-1.6v6.6a6 6 0 11-6-6c.34 0 .67.03 1 .09v3.18a2.85 2.85 0 102 2.73V3h3z" />
+      </svg>
+      <span className="text-sm font-semibold tracking-tight">TikTok</span>
     </div>
   );
 }
