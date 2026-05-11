@@ -27,7 +27,25 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 // @ts-expect-error - Deno-resolved import
 import { createHash, randomBytes } from "node:crypto";
 
-const PROPERTY_CLASSES = ["RE_1", "MF_4", "LD_2"] as const;
+/**
+ * Paragon property classes per feed.
+ *
+ * Verified against METADATA-CLASS calls 2026-05-10. Both feeds share the
+ * common four (Residential / Lots+Land / Commercial / Multi-Family) but use
+ * different class codes for the condo/townhouse bucket:
+ *   - CMC uses CT_5 (CONDO/TOWNHOUSE)
+ *   - SJSR uses CN_5 (CONDOMINIUM)
+ *
+ * RN_6 (rentals) is intentionally excluded — Alliance doesn't track rental
+ * promotion through this system.
+ *
+ * Original version only requested RE_1 / MF_4 / LD_2, which missed the
+ * condo/townhouse class entirely — that was ~64% of CMC's Alliance inventory.
+ */
+const PROPERTY_CLASSES_BY_FEED: Record<"cmc" | "sjsr", readonly string[]> = {
+  cmc: ["RE_1", "LD_2", "CI_3", "MF_4", "CT_5"],
+  sjsr: ["RE_1", "LD_2", "CI_3", "MF_4", "CN_5"],
+};
 // L_Status is calculated and 20206's; LO1_OrganizationName=*Century 21 Alliance*
 // is the C21-only constraint we need.
 const DMQL2_QUERY = "(LO1_OrganizationName=*Century 21 Alliance*)";
@@ -790,7 +808,8 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
   let totalUpserted = 0;
   let anyClassFailed = false;
 
-  for (const cls of PROPERTY_CLASSES) {
+  const propertyClasses = PROPERTY_CLASSES_BY_FEED[sourceMls];
+  for (const cls of propertyClasses) {
     const runId = await startSyncRun(analytics, feed, cls).catch((e) => {
       result.errors.push(`sync_runs start ${cls}: ${(e as Error).message}`);
       return null;
