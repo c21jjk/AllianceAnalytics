@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { TopNav, BottomNav } from "@/components/Nav";
 import { getNavItems } from "@/components/nav-config";
+import BackButton from "@/components/BackButton";
 
 export default async function ProtectedLayout({
   children,
@@ -16,6 +17,11 @@ export default async function ProtectedLayout({
     <div className="min-h-screen bg-gradient-to-br from-neutral-25 via-white to-gold-50/30">
       <TopNav items={items} profile={profile} />
       <main className="px-4 md:px-8 pt-6 pb-24 md:pb-12 max-w-7xl mx-auto">
+        {/* Sitewide Back — auto-hides on the dashboard root. Sits above every
+            page's own header/breadcrumb so it's always in the same spot. */}
+        <div className="mb-4">
+          <BackButton />
+        </div>
         {children}
       </main>
       <BottomNav items={items} />
