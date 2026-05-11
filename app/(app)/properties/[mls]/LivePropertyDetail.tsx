@@ -1,7 +1,15 @@
 import Link from "next/link";
 import type { PropertyDetail } from "@/lib/data/properties-db";
-import { formatCurrency, formatCompactNumber } from "@/lib/format";
+import {
+  formatCurrency,
+  formatCompactNumber,
+  formatRelativeTime,
+} from "@/lib/format";
 import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
+import GenerateReportButton from "@/components/GenerateReportButton";
+import SendToAgentButton from "@/components/SendToAgentButton";
+import ReportActionBar from "@/components/ReportActionBar";
+import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 
 interface LivePropertyDetailProps {
   property: PropertyDetail;
@@ -15,11 +23,10 @@ interface LivePropertyDetailProps {
  * PropertyKpiRollup, AudienceReachRollup) remains available via the
  * legacy fixture path on the parent page for demo/seed listings.
  *
- * "Generate report" is intentionally left for the follow-up sprint — it
- * ties into the existing GenerateReportButton flow which currently only
- * accepts fixture-shaped inputs.
+ * The Owner Report panel surfaces the existing share link when one exists
+ * and otherwise lets the admin generate it via `generateReportAction`.
  */
-export default function LivePropertyDetail({
+export default async function LivePropertyDetail({
   property,
 }: LivePropertyDetailProps) {
   const cityState = [property.city, property.state]
@@ -27,6 +34,21 @@ export default function LivePropertyDetail({
     .join(", ");
   const bathTotal =
     (property.bathrooms_full ?? 0) + 0.5 * (property.bathrooms_half ?? 0);
+
+  // Compute newest post age in days from the linked posts. The action enforces
+  // the same gate server-side; this just keeps the button copy accurate.
+  const NOW = Date.now();
+  const newestPostMs = property.posts.reduce<number>((max, p) => {
+    if (!p.posted_at) return max;
+    const ts = new Date(p.posted_at).getTime();
+    return Number.isFinite(ts) && ts > max ? ts : max;
+  }, 0);
+  const newestPostAgeDays =
+    newestPostMs > 0
+      ? Math.floor((NOW - newestPostMs) / 86_400_000)
+      : null;
+
+  const existingReport = await fetchExistingOwnerReportForProperty(property.id);
 
   return (
     <div className="space-y-6">
@@ -139,6 +161,60 @@ export default function LivePropertyDetail({
           syncs, it&rsquo;ll appear here automatically.
         </section>
       )}
+
+      {/* Owner Report — generate + share link */}
+      <section className="rounded-xl border border-neutral-200 bg-white shadow-card p-4 md:p-5 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-900">
+            Owner Report
+          </h2>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Branded marketing summary your seller can view in their browser
+            or as a PDF.
+          </p>
+        </div>
+
+        {existingReport ? (
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="text-sm text-neutral-500 min-w-0">
+              Shareable link:
+              <code className="ml-2 px-1.5 py-0.5 text-xs bg-neutral-100 rounded break-all">
+                /r/{existingReport.report_token}
+              </code>
+            </div>
+            <ReportActionBar shareToken={existingReport.report_token} />
+          </div>
+        ) : null}
+
+        {existingReport ? (
+          <div className="flex items-center gap-2 text-[11px] text-neutral-500">
+            <span>
+              Generated{" "}
+              {existingReport.generated_at
+                ? formatRelativeTime(existingReport.generated_at)
+                : "just now"}
+            </span>
+            {existingReport.is_locked ? (
+              <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[10px] font-medium text-neutral-700">
+                Locked snapshot — won&rsquo;t refresh on regenerate
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3 pt-1">
+          <GenerateReportButton
+            mls={property.mls_number}
+            newestPostAgeDays={newestPostAgeDays}
+          />
+          <SendToAgentButton
+            propertyAddress={property.address ?? property.mls_number}
+            flyerUrl={existingReport?.flyer_url_path ?? ""}
+            pdfUrl={existingReport?.pdf_url_path ?? ""}
+            disabled={!existingReport}
+          />
+        </div>
+      </section>
 
       {/* Linked posts grid */}
       {property.posts.length > 0 ? (
