@@ -511,18 +511,30 @@ function PostTimeline({ posts }: { posts: LivePost[] }) {
           >
             <div className="relative shrink-0 w-24 h-24 md:w-28 md:h-28 rounded-lg overflow-hidden bg-neutral-100">
               {thumb ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={thumb}
-                  alt=""
-                  className="absolute inset-0 w-full h-full object-cover"
-                />
+                <>
+                  {/* Blurred backdrop preserves portrait reels and flyers
+                      in the seller-facing report — full headline + branding
+                      visible instead of being top/bottom-cropped. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={thumb}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 w-full h-full object-cover blur-lg scale-110 opacity-55"
+                  />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={thumb}
+                    alt=""
+                    className="absolute inset-0 w-full h-full object-contain"
+                  />
+                </>
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-neutral-200 to-neutral-100">
                   <PlatformBadge platform={post.platform} size="md" />
                 </div>
               )}
-              <div className="absolute top-1 left-1">
+              <div className="absolute top-1 left-1 z-10">
                 <PlatformBadge platform={post.platform} size="sm" />
               </div>
             </div>

@@ -38,7 +38,7 @@ export default function GroupCardActions({
         onClick={() => setOpen(true)}
         aria-label="Play preview"
         className={clsx(
-          "relative shrink-0 block aspect-square w-40 rounded-lg overflow-hidden",
+          "relative shrink-0 block aspect-square w-48 rounded-lg overflow-hidden",
           "ring-1 ring-neutral-200 bg-neutral-100",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/40",
           "group/hero",
@@ -46,13 +46,28 @@ export default function GroupCardActions({
         )}
       >
         {thumbnailUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={thumbnailUrl}
-            alt={caption.slice(0, 80)}
-            loading="lazy"
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover/hero:scale-[1.03]"
-          />
+          <>
+            {/* Blurred backdrop fills the gaps that object-contain leaves
+                when the source aspect doesn't match the square frame —
+                portrait reels and flyers preserve their full content
+                instead of getting top/bottom-cropped. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumbnailUrl}
+              alt=""
+              aria-hidden="true"
+              loading="lazy"
+              className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55"
+            />
+            {/* Foreground — full image, never cropped. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumbnailUrl}
+              alt={caption.slice(0, 80)}
+              loading="lazy"
+              className="absolute inset-0 w-full h-full object-contain transition-transform duration-300 group-hover/hero:scale-[1.03]"
+            />
+          </>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-neutral-300">
             <PhotoIcon />
