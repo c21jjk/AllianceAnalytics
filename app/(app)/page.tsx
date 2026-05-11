@@ -8,6 +8,11 @@ import {
 import { getGroupsLastNDays } from "@/lib/data/groups";
 import { getListingsNeedingPosts } from "@/lib/data/listings-needing-posts";
 import { listOffices } from "@/lib/data/offices";
+import {
+  searchPosts,
+  type SearchPostResult,
+} from "@/lib/data/search-posts";
+import type { Platform, Post } from "@/lib/types/post";
 import AccountSyncBar from "@/components/AccountSyncBar";
 import CompanyAnalyticsStrip from "@/components/CompanyAnalyticsStrip";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
@@ -37,8 +42,19 @@ interface HomePageProps {
      * Drives the Status filter chip on the Recent Listings strip.
      */
     listings?: string;
+    /**
+     * Global post search params (active only when view=list AND at least one
+     * is present). Multiple platform values are supported via repeated
+     * query params: `?platform=facebook&platform=instagram`.
+     */
+    q?: string;
+    platform?: string | string[];
+    from?: string;
+    to?: string;
   }>;
 }
+
+const PLATFORM_SET = new Set<Platform>(["facebook", "instagram", "tiktok"]);
 
 /**
  * Operational homepage. Two views over the same data:
@@ -52,7 +68,16 @@ interface HomePageProps {
  */
 export default async function HomePage({ searchParams }: HomePageProps) {
   const profile = await requireUser();
-  const { range, office, view, listings: listingsParam } = await searchParams;
+  const {
+    range,
+    office,
+    view,
+    listings: listingsParam,
+    q: qRaw,
+    platform: platformRaw,
+    from: fromRaw,
+    to: toRaw,
+  } = await searchParams;
   const days = parseRange(range);
   const currentView: View = view === "list" ? "list" : "grouped";
   const listingsFilter: "needs_only" | "all" =
@@ -64,6 +89,20 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     office && validShortCodes.has(office) ? office : null;
 
   const sinceIso = new Date(Date.now() - days * 86400_000).toISOString();
+
+  // Search params are only honored in list view. Any one of q/platform/from/to
+  // flips us into "search mode" — the list is filtered via the GIN-indexed
+  // posts.search_text column instead of the standard recency window.
+  const q = (qRaw ?? "").trim();
+  const platformValues = normalizePlatformParam(platformRaw);
+  const dateFrom = isValidDateLike(fromRaw) ? fromRaw : undefined;
+  const dateTo = isValidDateLike(toRaw) ? toRaw : undefined;
+  const searchMode: boolean =
+    currentView === "list" &&
+    (q.length > 0 ||
+      platformValues.length > 0 ||
+      Boolean(dateFrom) ||
+      Boolean(dateTo));
 
   // Fetch only what the active view needs. The "needs Larissa" strip runs
   // on every render — it's cheap (≤25 properties + a single posts.platform
@@ -81,7 +120,15 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       ? getGroupsLastNDays(days, { office_short_code: officeFilter })
       : Promise.resolve([]),
     currentView === "list"
-      ? getPosts({ office_short_code: officeFilter, since: sinceIso })
+      ? searchMode
+        ? searchPosts({
+            q,
+            platforms: platformValues.length > 0 ? platformValues : undefined,
+            dateFrom,
+            dateTo,
+            limit: 200,
+          }).then((res) => res.results.map(searchResultToPost))
+        : getPosts({ office_short_code: officeFilter, since: sinceIso })
       : Promise.resolve([]),
     getAccountHealth(),
     getListingsNeedingPosts({
@@ -95,7 +142,9 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const description =
     currentView === "grouped"
       ? describeGroupedWindow(groups.length, days, officeFilter, offices)
-      : describeListWindow(posts.length, days, officeFilter, offices);
+      : searchMode
+        ? describeSearchWindow(posts.length, q, platformValues, dateFrom, dateTo)
+        : describeListWindow(posts.length, days, officeFilter, offices);
 
   return (
     <div className="space-y-6">
@@ -196,6 +245,90 @@ function describeGroupedWindow(
   }
   const noun = count === 1 ? "campaign" : "campaigns";
   return `${count} ${noun} in the last ${days} days${scope}. Same-day posts across platforms are merged into a single card.`;
+}
+
+function normalizePlatformParam(raw: string | string[] | undefined): Platform[] {
+  if (!raw) return [];
+  const values = Array.isArray(raw) ? raw : [raw];
+  const out: Platform[] = [];
+  for (const v of values) {
+    const lower = v.trim().toLowerCase();
+    if (PLATFORM_SET.has(lower as Platform)) {
+      out.push(lower as Platform);
+    }
+  }
+  return out;
+}
+
+function isValidDateLike(s: string | undefined): s is string {
+  if (!s) return false;
+  return !Number.isNaN(Date.parse(s));
+}
+
+/**
+ * Adapt the lightweight SearchPostResult shape into the full Post type that
+ * <PostStream> + <PostListRow> expect. Missing fields get safe defaults —
+ * search results don't carry daily series or audience data, so we synthesize
+ * a single-point reach + per-platform engagement-rate calc.
+ */
+function searchResultToPost(r: SearchPostResult): Post {
+  const reach = r.reach;
+  const engagements = r.engagements;
+  const er = reach > 0 ? engagements / reach : 0;
+  return {
+    id: r.id,
+    platform: r.platform,
+    permalink: r.permalink ?? "",
+    posted_at: r.posted_at ?? new Date(0).toISOString(),
+    media_type: r.media_url ? "video" : "image",
+    thumbnail_url: r.thumbnail_url ?? "",
+    media_url: r.media_url ?? undefined,
+    caption: r.caption ?? "",
+    hashtags: [],
+    property: r.listing
+      ? {
+          mls: r.listing.mls_number,
+          address: r.listing.address ?? "",
+        }
+      : undefined,
+    metrics: {
+      impressions: reach,
+      reach,
+      likes: 0,
+      comments: 0,
+      shares: 0,
+      saves: 0,
+      engagement_rate: er,
+    },
+    daily: [],
+  };
+}
+
+function describeSearchWindow(
+  count: number,
+  q: string,
+  platforms: Platform[],
+  dateFrom: string | undefined,
+  dateTo: string | undefined,
+): string {
+  const noun = count === 1 ? "post" : "posts";
+  const parts: string[] = [];
+  if (q.length > 0) parts.push(`matching "${q}"`);
+  if (platforms.length > 0) parts.push(`on ${platforms.join(", ")}`);
+  if (dateFrom || dateTo) {
+    const range =
+      dateFrom && dateTo
+        ? `between ${dateFrom.slice(0, 10)} and ${dateTo.slice(0, 10)}`
+        : dateFrom
+          ? `since ${dateFrom.slice(0, 10)}`
+          : `through ${dateTo!.slice(0, 10)}`;
+    parts.push(range);
+  }
+  const filterText = parts.length > 0 ? ` ${parts.join(", ")}` : "";
+  if (count === 0) {
+    return `No posts${filterText}. Try widening the filters.`;
+  }
+  return `${count} ${noun}${filterText}.`;
 }
 
 function describeListWindow(

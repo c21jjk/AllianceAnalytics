@@ -295,7 +295,9 @@ export interface SetGroupAudienceScopeResult {
  *   null               → unscoped (clears the column)
  *   "company"          → whole Alliance NJ
  *   "division:<slug>"  → e.g. "division:shore", "division:south_jersey"
- *   "office:<short>"   → uses offices.short_code (e.g. "office:WWC")
+ *   "office:<short>"   → uses offices.short_code (e.g. "office:wildwood",
+ *                        "office:north_cape_may") — lowercase snake_case to
+ *                        match the offices table.
  *
  * The DB has a CHECK constraint matching these patterns; the action
  * validates client-side too so we surface a clean error.
@@ -317,7 +319,7 @@ export async function setGroupAudienceScopeAction(
     const valid =
       scope === "company" ||
       /^division:[a-z][a-z0-9_]*$/.test(scope) ||
-      /^office:[A-Z]{2,8}$/.test(scope);
+      /^office:[a-z][a-z0-9_]*$/.test(scope);
     if (!valid) {
       return {
         ok: false,
