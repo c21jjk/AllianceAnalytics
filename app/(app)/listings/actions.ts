@@ -241,6 +241,7 @@ export async function classifyPostAction(form: FormData): Promise<{
     "marketing",
     "community",
     "sold",
+    "open_house",
     "other",
   ];
   if (category && !validCats.includes(category)) {
@@ -294,6 +295,7 @@ export async function classifyPostAction(form: FormData): Promise<{
           | "marketing"
           | "community"
           | "sold"
+          | "open_house"
           | "other") ?? null,
       agent_name: agentName,
       office_id: officeId,

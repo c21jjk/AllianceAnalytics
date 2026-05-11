@@ -881,6 +881,7 @@ export type Database = {
         | "marketing"
         | "community"
         | "sold"
+        | "open_house"
         | "other"
       post_group_method: "auto" | "manual"
       post_link_method:
@@ -1038,6 +1039,7 @@ export const Constants = {
         "marketing",
         "community",
         "sold",
+        "open_house",
         "other",
       ],
       post_group_method: ["auto", "manual"],

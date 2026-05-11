@@ -52,21 +52,21 @@ export function TopNav({
 
       <div className="px-4 md:px-8 max-w-7xl mx-auto">
         <div className="h-20 flex items-center gap-6 md:gap-10">
-          {/* Brand */}
+          {/* Brand — custom "C21 Alliance Social Analytics" lockup used on
+              internal surfaces. Seller-facing surfaces (Owner Report, flyer,
+              PDF) keep the official C21 seal to preserve the parent-brand
+              trust association. */}
           <Link
             href="/"
-            className="flex items-center gap-3 shrink-0 group"
-            aria-label="Alliance Social home"
+            className="flex items-center shrink-0 group"
+            aria-label="Alliance Social Analytics home"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/brand/c21-seal.png"
-              alt=""
-              className="w-12 h-14 object-contain shrink-0"
+              src="/brand/analytics-wordmark.png"
+              alt="Alliance Social Analytics"
+              className="h-12 w-auto object-contain group-hover:opacity-90 transition-opacity"
             />
-            <span className="hidden sm:inline text-base font-semibold tracking-tight text-neutral-900 group-hover:text-neutral-700">
-              Alliance Social
-            </span>
           </Link>
 
           {/* Tabs (desktop only — mobile uses BottomNav) */}

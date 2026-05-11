@@ -477,6 +477,7 @@ function DocumentIcon() {
 
 const CATEGORY_OPTIONS: Array<{ value: GroupCategory; label: string }> = [
   { value: "property", label: "Property Promotion" },
+  { value: "open_house", label: "Open House Promotion" },
   { value: "agent", label: "Agent Promotion" },
   { value: "marketing", label: "Company Promotion" },
   { value: "educational", label: "Real Estate Educational Tips" },

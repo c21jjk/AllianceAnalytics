@@ -57,15 +57,18 @@ export default function GroupCardActions({
               alt=""
               aria-hidden="true"
               loading="lazy"
-              className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55"
+              className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55 text-transparent"
             />
-            {/* Foreground — full image, never cropped. */}
+            {/* Foreground — full image, never cropped. text-transparent hides
+                the long alt-text fallback when the CDN URL expires (common
+                for IG/TT signed URLs) so the broken state looks like a
+                neutral gray box instead of a wall of caption text. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumbnailUrl}
               alt={caption.slice(0, 80)}
               loading="lazy"
-              className="absolute inset-0 w-full h-full object-contain transition-transform duration-300 group-hover/hero:scale-[1.03]"
+              className="absolute inset-0 w-full h-full object-contain transition-transform duration-300 group-hover/hero:scale-[1.03] text-transparent"
             />
           </>
         ) : (

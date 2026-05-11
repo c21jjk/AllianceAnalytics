@@ -391,6 +391,7 @@ export type GroupCategory =
   | "marketing"
   | "community"
   | "sold"
+  | "open_house"
   | "other";
 
 export interface SetGroupCategoryResult {
@@ -405,6 +406,7 @@ const VALID_CATEGORIES: GroupCategory[] = [
   "marketing",
   "community",
   "sold",
+  "open_house",
   "other",
 ];
 

@@ -273,13 +273,13 @@ export default async function LivePropertyDetail({
                           src={post.thumbnail_url}
                           alt=""
                           aria-hidden="true"
-                          className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55"
+                          className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55 text-transparent"
                         />
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={post.thumbnail_url}
                           alt=""
-                          className="absolute inset-0 w-full h-full object-contain"
+                          className="absolute inset-0 w-full h-full object-contain text-transparent"
                         />
                       </>
                     ) : null}

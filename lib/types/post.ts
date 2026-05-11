@@ -22,6 +22,7 @@ export type PostCategory =
   | "marketing"
   | "community"
   | "sold"
+  | "open_house"
   | "other";
 
 /** How a post got tied to a listing — manual override, or one of the auto-linkers. */
