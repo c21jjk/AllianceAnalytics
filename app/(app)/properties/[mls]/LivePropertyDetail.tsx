@@ -9,6 +9,7 @@ import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
 import GenerateReportButton from "@/components/GenerateReportButton";
 import SendToAgentButton from "@/components/SendToAgentButton";
 import ReportActionBar from "@/components/ReportActionBar";
+import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 
 interface LivePropertyDetailProps {
@@ -215,6 +216,17 @@ export default async function LivePropertyDetail({
           />
         </div>
       </section>
+
+      {/* Recipients + cadence — only after a report exists */}
+      {existingReport ? (
+        <OwnerReportRecipientsPanel
+          reportId={existingReport.report_id}
+          mls={property.mls_number}
+          initialCadence={existingReport.cadence}
+          initialNextSendAt={existingReport.next_send_at}
+          initialRecipients={existingReport.recipients}
+        />
+      ) : null}
 
       {/* Linked posts grid */}
       {property.posts.length > 0 ? (

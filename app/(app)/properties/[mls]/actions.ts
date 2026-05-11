@@ -5,6 +5,11 @@ import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { buildReportPayload, newestPostAgeDays } from "@/lib/reports/build";
+import {
+  CADENCE_VALUES,
+  cadenceIntervalDays,
+  type OwnerReportCadence,
+} from "@/lib/data/owner-reports-db";
 
 const POST_AGE_GATE_DAYS = 7;
 
@@ -164,4 +169,124 @@ export async function generateReportAction(
     pdf_url: `/r/${encodeURIComponent(token)}/flyer.pdf`,
     report_url: `/r/${encodeURIComponent(token)}`,
   };
+}
+
+/* ------------------------------------------------------------------------- */
+/* Owner-report recipient + cadence actions (Phase C)                        */
+/*                                                                           */
+/* Recipients are the subscriber list per report. Cadence determines when    */
+/* the Phase D pg_cron job will (eventually) email everyone here. Until      */
+/* Phase D is wired, these actions only persist state — no email goes out.   */
+/* ------------------------------------------------------------------------- */
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export interface OwnerReportActionResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Add (or refresh) a recipient on a report. Email is required; name + phone
+ * are optional. The (report_id, email) pair is unique — re-adding the same
+ * email updates the name/phone instead of creating a duplicate row.
+ *
+ * `mls` is passed in so we can `revalidatePath` the listing detail page
+ * after the write without round-tripping through the property lookup.
+ */
+export async function addOwnerReportRecipientAction(
+  reportId: string,
+  mls: string,
+  raw: { name?: string | null; email: string; phone?: string | null },
+): Promise<OwnerReportActionResult> {
+  await requireAdmin();
+
+  if (!reportId) return { ok: false, error: "Missing report id." };
+  const email = (raw.email ?? "").trim().toLowerCase();
+  if (!email) return { ok: false, error: "Email is required." };
+  if (!EMAIL_REGEX.test(email)) {
+    return { ok: false, error: "That doesn't look like a valid email." };
+  }
+
+  const name = (raw.name ?? "").trim();
+  const phone = (raw.phone ?? "").trim();
+
+  const supabase = createAdminClient();
+  const { error } = await supabase.from("report_recipients").upsert(
+    {
+      report_id: reportId,
+      email,
+      name: name.length > 0 ? name : null,
+      phone: phone.length > 0 ? phone : null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "report_id,email" },
+  );
+  if (error) return { ok: false, error: error.message };
+
+  if (mls) revalidatePath(`/properties/${mls}`);
+  return { ok: true };
+}
+
+/**
+ * Remove a recipient from a report's subscriber list. Idempotent — deleting
+ * a non-existent recipient succeeds quietly. `mls` is used to revalidate the
+ * listing detail page after the write.
+ */
+export async function removeOwnerReportRecipientAction(
+  recipientId: string,
+  mls: string,
+): Promise<OwnerReportActionResult> {
+  await requireAdmin();
+
+  if (!recipientId) return { ok: false, error: "Missing recipient id." };
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("report_recipients")
+    .delete()
+    .eq("id", recipientId);
+  if (error) return { ok: false, error: error.message };
+
+  if (mls) revalidatePath(`/properties/${mls}`);
+  return { ok: true };
+}
+
+/**
+ * Set the auto-send cadence on a report. Setting cadence to "none" clears
+ * `next_send_at`. Any other value recomputes `next_send_at = now() + N days`
+ * based on the cadence interval (7 / 14 / 30). Phase D's pg_cron job will
+ * consume this field; until then it's just persisted state.
+ */
+export async function setOwnerReportCadenceAction(
+  reportId: string,
+  mls: string,
+  cadence: OwnerReportCadence,
+): Promise<OwnerReportActionResult> {
+  await requireAdmin();
+
+  if (!reportId) return { ok: false, error: "Missing report id." };
+  if (!(CADENCE_VALUES as string[]).includes(cadence)) {
+    return { ok: false, error: `Invalid cadence: ${cadence}` };
+  }
+
+  const days = cadenceIntervalDays(cadence);
+  const nextSendAt =
+    days === null
+      ? null
+      : new Date(Date.now() + days * 86_400_000).toISOString();
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("reports")
+    .update({
+      cadence,
+      next_send_at: nextSendAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", reportId);
+  if (error) return { ok: false, error: error.message };
+
+  if (mls) revalidatePath(`/properties/${mls}`);
+  return { ok: true };
 }
