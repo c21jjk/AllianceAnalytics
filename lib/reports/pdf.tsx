@@ -1,4 +1,6 @@
 import "server-only";
+import path from "node:path";
+import fs from "node:fs";
 import {
   Document,
   Page,
@@ -16,6 +18,24 @@ import {
   formatShortDate,
 } from "@/lib/format";
 import type { Platform } from "@/lib/types/post";
+
+/**
+ * Read the C21 seal once at module load and cache the bytes. Used by the
+ * cover page only — other pages keep the plain gold "A" placeholder per
+ * design spec. Returns null if the asset isn't bundled (e.g. local dev with
+ * a missing public/brand directory) so render failures fall through to the
+ * HTML print view.
+ */
+function loadSealBuffer(): Buffer | null {
+  try {
+    const sealPath = path.join(process.cwd(), "public", "brand", "c21-seal.png");
+    return fs.readFileSync(sealPath);
+  } catch {
+    return null;
+  }
+}
+
+const SEAL_BUFFER: Buffer | null = loadSealBuffer();
 
 /**
  * Server-side PDF rendering for property report flyers, using
@@ -80,6 +100,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     paddingTop: 6,
+    marginRight: 10,
+  },
+  brandLogoSeal: {
+    width: 30,
+    height: 36,
+    objectFit: "contain",
     marginRight: 10,
   },
   brandName: {
@@ -420,7 +446,18 @@ function HeroImage({ url }: HeroImageProps) {
   return <Image src={url} style={styles.heroImage} />;
 }
 
-function BrandHeader({ payload }: { payload: ReportPayload }) {
+function BrandHeader({
+  payload,
+  withSeal = false,
+}: {
+  payload: ReportPayload;
+  /**
+   * When true, render the C21 seal image instead of the gold "A" placeholder.
+   * Used on the cover (HeroPage) only; subsequent pages keep the placeholder
+   * to preserve the report's lighter visual rhythm.
+   */
+  withSeal?: boolean;
+}) {
   const periodText =
     payload.period_start && payload.period_end
       ? `${formatShortDate(payload.period_start)} – ${formatShortDate(payload.period_end)}`
@@ -428,7 +465,11 @@ function BrandHeader({ payload }: { payload: ReportPayload }) {
   return (
     <View style={styles.brandHeader}>
       <View style={styles.brandLeft}>
-        <Text style={styles.brandLogo}>A</Text>
+        {withSeal && SEAL_BUFFER ? (
+          <Image src={SEAL_BUFFER} style={styles.brandLogoSeal} />
+        ) : (
+          <Text style={styles.brandLogo}>A</Text>
+        )}
         <View>
           <Text style={styles.brandName}>Century 21 Alliance</Text>
           <Text style={styles.brandSub}>PROPERTY PERFORMANCE REPORT</Text>
@@ -443,7 +484,7 @@ function HeroPage({ payload }: { payload: ReportPayload }) {
   const { property } = payload;
   return (
     <Page size="LETTER" style={styles.page} wrap={false}>
-      <BrandHeader payload={payload} />
+      <BrandHeader payload={payload} withSeal />
 
       <View style={styles.heroBox}>
         <HeroImage url={property.hero_image_url ?? null} />

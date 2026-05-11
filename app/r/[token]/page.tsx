@@ -306,9 +306,12 @@ function LiveReportView({ data }: { data: LiveData }) {
       <header className="bg-white border-b border-neutral-200">
         <div className="max-w-4xl mx-auto px-4 md:px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-gold-500 text-white font-semibold text-sm">
-              A
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/c21-seal.png"
+              alt="Century 21 Alliance"
+              className="w-10 h-12 object-contain shrink-0"
+            />
             <div className="leading-tight">
               <div className="text-sm font-semibold text-neutral-900">
                 Century 21 Alliance
@@ -404,9 +407,15 @@ function LiveReportView({ data }: { data: LiveData }) {
       </main>
 
       <footer className="border-t border-neutral-200 bg-white mt-8">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 py-6 text-center">
-          <div className="text-sm text-neutral-700">
-            Prepared by Alliance Social · Century 21 Alliance
+        <div className="max-w-4xl mx-auto px-4 md:px-6 py-8 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/alliance-wordmark.png"
+            alt="Century 21 Alliance"
+            className="mx-auto h-7 md:h-8 w-auto opacity-90"
+          />
+          <div className="mt-4 text-sm text-neutral-700">
+            Prepared by Alliance Social
           </div>
           <div className="mt-1 text-xs text-neutral-500">
             Thank you for trusting us with your home.
@@ -437,9 +446,12 @@ function PropertyHero({ property }: { property: LiveData["property"] }) {
             aria-hidden="true"
             className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gold-400 to-gold-600"
           >
-            <span className="text-white/90 text-7xl font-bold tracking-tight">
-              A
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/c21-seal.png"
+              alt=""
+              className="w-32 h-40 object-contain opacity-90"
+            />
           </div>
         )}
         {/* Bottom overlay */}
@@ -598,9 +610,12 @@ function MarketingEngineSection({ rollup }: { rollup: CompanyRollup }) {
 
       <div className="relative">
         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-gold-700">
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-gold-500 text-white text-[10px] font-semibold">
-            A
-          </span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/c21-seal.png"
+            alt=""
+            className="w-5 h-6 object-contain shrink-0"
+          />
           The Alliance Marketing Engine
         </div>
 
@@ -693,9 +708,12 @@ function FixtureReportView({
       <header className="bg-white border-b border-neutral-200">
         <div className="max-w-4xl mx-auto px-4 md:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-gold-500 text-white font-semibold text-sm">
-              A
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/c21-seal.png"
+              alt="Century 21 Alliance"
+              className="w-10 h-12 object-contain shrink-0"
+            />
             <div className="leading-tight">
               <div className="text-sm font-semibold text-neutral-900">
                 Century 21 Alliance
@@ -736,9 +754,15 @@ function FixtureReportView({
       </main>
 
       <footer className="border-t border-neutral-200 bg-white mt-8">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 py-6 text-center">
-          <div className="text-sm text-neutral-700">
-            Thank you for trusting Century 21 Alliance with your home.
+        <div className="max-w-4xl mx-auto px-4 md:px-6 py-8 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/alliance-wordmark.png"
+            alt="Century 21 Alliance"
+            className="mx-auto h-7 md:h-8 w-auto opacity-90"
+          />
+          <div className="mt-4 text-sm text-neutral-700">
+            Thank you for trusting us with your home.
           </div>
           <div className="mt-1 text-xs text-neutral-500">
             Questions? Reply directly to the email this report came from, or

@@ -58,9 +58,12 @@ export function TopNav({
             className="flex items-center gap-2.5 shrink-0 group"
             aria-label="Alliance Social home"
           >
-            <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-gold-400 to-gold-600 text-white font-semibold text-sm shadow-sm">
-              A
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/c21-seal.png"
+              alt=""
+              className="w-8 h-9 object-contain shrink-0"
+            />
             <span className="hidden sm:inline font-semibold tracking-tight text-neutral-900 group-hover:text-neutral-700">
               Alliance Social
             </span>

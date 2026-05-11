@@ -307,9 +307,12 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
         <section className="flyer-page">
           <header className="flyer-header">
             <div className="flex items-center gap-3">
-              <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-gold-500 text-white font-semibold text-sm">
-                A
-              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/c21-seal.png"
+                alt="Century 21 Alliance"
+                className="w-10 h-12 object-contain shrink-0"
+              />
               <div className="leading-tight">
                 <div className="text-sm font-semibold text-neutral-900">
                   Century 21 Alliance
@@ -338,7 +341,12 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
               />
             ) : (
               <div className="flyer-hero-fallback" aria-hidden="true">
-                <span className="flyer-hero-fallback-mark">A</span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand/c21-seal.png"
+                  alt=""
+                  className="flyer-hero-fallback-mark"
+                />
               </div>
             )}
             <div className="flyer-hero-overlay">
@@ -511,9 +519,15 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
               </ul>
             </div>
           ) : null}
-          <div className="flyer-signoff">
+          <div className="flyer-signoff text-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/alliance-wordmark.png"
+              alt="Century 21 Alliance"
+              className="mx-auto h-7 md:h-8 w-auto opacity-90 mb-3"
+            />
             <div className="text-sm text-neutral-700">
-              Prepared by Alliance Social · Century 21 Alliance
+              Prepared by Alliance Social
             </div>
             <div className="mt-1 text-xs text-neutral-500">
               Questions? Reply to the email this report came from, or contact
@@ -588,8 +602,9 @@ function flyerCss(printMode: boolean): string {
   display: flex; align-items: center; justify-content: center;
 }
 .flyer-hero-fallback-mark {
-  font-size: 96px; font-weight: 700; color: rgba(255,255,255,0.92);
-  letter-spacing: -0.04em;
+  width: 30%; max-width: 200px; height: auto;
+  object-fit: contain;
+  opacity: 0.92;
 }
 .flyer-hero-overlay {
   position: absolute; left: 0; right: 0; bottom: 0;
