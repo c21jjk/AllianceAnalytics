@@ -250,16 +250,17 @@ export default async function LivePropertyDetail({
               Click any post to open detail.
             </p>
           </div>
-          <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {property.posts.map((post) => (
               <li key={post.id}>
                 <Link
                   href={`/posts/${post.id}`}
-                  className="block rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition overflow-hidden"
+                  className="block rounded-lg border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition overflow-hidden"
                 >
                   {/* Per-platform colored header strip — high-contrast so
                       the platform is identifiable at a glance, even when the
-                      thumbnail is busy. */}
+                      thumbnail is busy. Compact size so all three platforms
+                      fit on one row at lg+. */}
                   <PostPlatformHeader platform={post.platform} />
 
                   <div className="aspect-square bg-neutral-100 relative">
@@ -273,27 +274,23 @@ export default async function LivePropertyDetail({
                     ) : null}
                   </div>
 
-                  <div className="p-3.5 space-y-2">
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                  <div className="p-2.5 space-y-1.5">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
                       {post.posted_at
                         ? new Date(post.posted_at).toLocaleDateString(
                             undefined,
-                            {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            },
+                            { month: "short", day: "numeric" },
                           )
                         : "Date unknown"}
                     </p>
-                    <p className="text-sm text-neutral-800 line-clamp-2 leading-snug">
+                    <p className="text-xs text-neutral-800 line-clamp-2 leading-snug">
                       {post.caption ?? (
                         <span className="text-neutral-400 italic">
                           No caption
                         </span>
                       )}
                     </p>
-                    <div className="pt-1 flex items-center justify-between text-sm text-neutral-600 tabular-nums">
+                    <div className="pt-0.5 flex items-center justify-between text-[11px] text-neutral-600 tabular-nums">
                       <span>
                         <span className="font-semibold text-neutral-900">
                           {formatCompactNumber(post.reach)}
@@ -343,25 +340,25 @@ function PostPlatformHeader({
 }) {
   if (platform === "facebook") {
     return (
-      <div className="bg-[#1877F2] text-white px-3.5 py-2 flex items-center gap-2">
+      <div className="bg-[#1877F2] text-white px-2.5 py-1.5 flex items-center gap-1.5">
         <svg
           viewBox="0 0 24 24"
-          className="w-4 h-4 shrink-0"
+          className="w-3.5 h-3.5 shrink-0"
           fill="currentColor"
           aria-hidden="true"
         >
           <path d="M13.5 21v-7.4h2.5l.4-2.9h-2.9V8.9c0-.84.23-1.4 1.43-1.4H16.5V4.94c-.27-.04-1.18-.11-2.24-.11-2.22 0-3.74 1.36-3.74 3.85v2.12H8v2.9h2.52V21h2.98z" />
         </svg>
-        <span className="text-sm font-semibold tracking-tight">Facebook</span>
+        <span className="text-xs font-semibold tracking-tight">Facebook</span>
       </div>
     );
   }
   if (platform === "instagram") {
     return (
-      <div className="bg-gradient-to-r from-[#FEDA77] via-[#F58529] to-[#DD2A7B] text-white px-3.5 py-2 flex items-center gap-2">
+      <div className="bg-gradient-to-r from-[#FEDA77] via-[#F58529] to-[#DD2A7B] text-white px-2.5 py-1.5 flex items-center gap-1.5">
         <svg
           viewBox="0 0 24 24"
-          className="w-4 h-4 shrink-0"
+          className="w-3.5 h-3.5 shrink-0"
           fill="none"
           aria-hidden="true"
         >
@@ -383,21 +380,21 @@ function PostPlatformHeader({
           />
           <circle cx="17.2" cy="6.8" r="1" fill="currentColor" />
         </svg>
-        <span className="text-sm font-semibold tracking-tight">Instagram</span>
+        <span className="text-xs font-semibold tracking-tight">Instagram</span>
       </div>
     );
   }
   return (
-    <div className="bg-neutral-900 text-white px-3.5 py-2 flex items-center gap-2">
+    <div className="bg-neutral-900 text-white px-2.5 py-1.5 flex items-center gap-1.5">
       <svg
         viewBox="0 0 24 24"
-        className="w-4 h-4 shrink-0"
+        className="w-3.5 h-3.5 shrink-0"
         fill="currentColor"
         aria-hidden="true"
       >
         <path d="M16.5 3a5.5 5.5 0 005 4.5v3.05a8.7 8.7 0 01-5-1.6v6.6a6 6 0 11-6-6c.34 0 .67.03 1 .09v3.18a2.85 2.85 0 102 2.73V3h3z" />
       </svg>
-      <span className="text-sm font-semibold tracking-tight">TikTok</span>
+      <span className="text-xs font-semibold tracking-tight">TikTok</span>
     </div>
   );
 }
