@@ -7,7 +7,6 @@ import {
 } from "@/lib/format";
 import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
 import PropertyChip from "@/components/PropertyChip";
-import MlsNumberInline from "@/components/MlsNumberInline";
 import MetricSparkline from "@/components/MetricSparkline";
 import AiInsightStrip from "@/components/AiInsightStrip";
 import PropertyClassifyPanel from "@/components/PropertyClassifyPanel";
@@ -148,34 +147,27 @@ export default function GroupDetailBody({
               ) : null}
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
-              <MlsNumberInline
-                postId={liveInsightPostId ?? ""}
-                currentMls={group.mls_number_parsed ?? null}
-                isLinked={Boolean(group.property)}
-                compact
-                size="sm"
-              />
-              {group.property ? (
-                <>
-                  <span className="text-neutral-300" aria-hidden="true">
-                    ·
-                  </span>
+            {/* MLS chip removed — the right-rail Property block now owns MLS
+                add/edit. We keep the property + agent + category badges here
+                because they're useful at-a-glance summary info. */}
+            {group.property || group.agent_name || group.category ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                {group.property ? (
                   <PropertyChip property={group.property} />
-                </>
-              ) : null}
-              {group.agent_name ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700">
-                  <PersonIcon />
-                  {group.agent_name}
-                </span>
-              ) : null}
-              {group.category ? (
-                <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700 capitalize">
-                  {group.category.replace("_", " ")}
-                </span>
-              ) : null}
-            </div>
+                ) : null}
+                {group.agent_name ? (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700">
+                    <PersonIcon />
+                    {group.agent_name}
+                  </span>
+                ) : null}
+                {group.category ? (
+                  <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700 capitalize">
+                    {group.category.replace("_", " ")}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
 
             {caption ? (
               <p className="text-sm text-neutral-900 leading-relaxed whitespace-pre-line">
