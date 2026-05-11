@@ -8,7 +8,6 @@ import GroupCardMergeButton from "./GroupCardMergeButton";
 import GroupCardSidebar, {
   type AudienceOfficeOption,
 } from "./GroupCardSidebar";
-import MlsNumberInline from "./MlsNumberInline";
 import PlatformMetricCell from "./PlatformMetricCell";
 
 /**
@@ -124,17 +123,8 @@ export default function GroupCard({
                     {group.agent_name}
                   </span>
                 ) : null}
-                {/* MLS inline-edit only when no property linked yet — once
-                    linked, the right rail Linkage block owns property edits. */}
-                {primaryPosting && group.properties.length === 0 ? (
-                  <MlsNumberInline
-                    postId={primaryPosting.post_id}
-                    currentMls={group.mls_number_parsed ?? null}
-                    isLinked={false}
-                    compact
-                    size="sm"
-                  />
-                ) : null}
+                {/* MLS inline chip removed — the right-rail Property block
+                    owns MLS add/edit for both linked AND unlinked cards. */}
                 {group.category ? (
                   <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-neutral-700 capitalize">
                     {group.category}
