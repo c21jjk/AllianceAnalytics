@@ -11,6 +11,7 @@ import MlsNumberInline from "@/components/MlsNumberInline";
 import MetricSparkline from "@/components/MetricSparkline";
 import AiInsightStrip from "@/components/AiInsightStrip";
 import PropertyClassifyPanel from "@/components/PropertyClassifyPanel";
+import AttachListingCta from "@/components/AttachListingCta";
 import GenerateReportButton from "@/components/GenerateReportButton";
 import SendToAgentButton from "@/components/SendToAgentButton";
 import BoostPlatformPlaceholder from "@/components/BoostPlatformPlaceholder";
@@ -91,6 +92,9 @@ export default function GroupDetailBody({
 
   return (
     <div className="px-5 py-5 space-y-5">
+      {/* ATTACH CTA ---------------------------------------------------------- */}
+      {!hasProperty && liveInsightPostId ? <AttachListingCta /> : null}
+
       {/* CAMPAIGN HEADER ----------------------------------------------------- */}
       <article className="rounded-xl border border-neutral-200 bg-white shadow-card overflow-hidden">
         <div className="grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)]">
@@ -355,15 +359,17 @@ export default function GroupDetailBody({
 
       {/* CLASSIFY PANEL ------------------------------------------------------ */}
       {liveInsightPostId ? (
-        <PropertyClassifyPanel
-          postId={liveInsightPostId}
-          initialProperty={group.property}
-          initialCategory={group.category}
-          initialLinkMethod={group.link_method}
-          initialAgentName={group.agent_name}
-          offices={offices}
-          initialOfficeId={initialOfficeId}
-        />
+        <div id="classify-panel" className="scroll-mt-20">
+          <PropertyClassifyPanel
+            postId={liveInsightPostId}
+            initialProperty={group.property}
+            initialCategory={group.category}
+            initialLinkMethod={group.link_method}
+            initialAgentName={group.agent_name}
+            offices={offices}
+            initialOfficeId={initialOfficeId}
+          />
+        </div>
       ) : null}
 
       {/* AUDIENCE BREAKDOWN -------------------------------------------------- */}

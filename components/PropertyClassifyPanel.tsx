@@ -90,6 +90,27 @@ export default function PropertyClassifyPanel({
 
   const debounceRef = useRef<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Discoverability hook: AttachListingCta dispatches `attach-listing:focus`
+   * when the user clicks the top-of-page "Attach a listing" banner. We bump
+   * the category to 'property' (so the search field renders), then focus the
+   * input on the next tick.
+   */
+  useEffect(() => {
+    function onFocus() {
+      setCategory((prev) =>
+        prev === "property" || prev === "sold" ? prev : "property",
+      );
+      // Wait a frame so the search input mounts after the category flip.
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+    }
+    window.addEventListener("attach-listing:focus", onFocus);
+    return () => window.removeEventListener("attach-listing:focus", onFocus);
+  }, []);
 
   const showSearch = category === "property" || category === "sold";
   const showAgentName = category === "agent";
@@ -312,6 +333,7 @@ export default function PropertyClassifyPanel({
             </div>
           ) : (
             <input
+              ref={searchInputRef}
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
