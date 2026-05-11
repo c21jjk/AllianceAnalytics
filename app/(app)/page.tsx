@@ -16,6 +16,7 @@ import type { Platform, Post } from "@/lib/types/post";
 import AccountSyncBar from "@/components/AccountSyncBar";
 import CompanyAnalyticsStrip from "@/components/CompanyAnalyticsStrip";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
+import GlobalSearch from "@/components/GlobalSearch";
 import GroupCard from "@/components/GroupCard";
 import NeedsPostsRow from "@/components/NeedsPostsRow";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
@@ -159,6 +160,12 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         }
       />
 
+      {/* Global post search — moved from top nav to here so it lives with
+          the dashboard data it surfaces. Cmd+K shortcut still works. */}
+      <div className="w-full max-w-2xl">
+        <GlobalSearch />
+      </div>
+
       {offices.length > 0 ? (
         <OfficeFilterChips
           options={offices.map((o) => ({
@@ -230,16 +237,38 @@ function ytdDays(now: Date = new Date()): number {
   return Math.max(1, Math.ceil(diffMs / 86_400_000));
 }
 
+const DIVISION_LABELS: Record<string, string> = {
+  shore: "Shore Division",
+  south_jersey: "South Jersey Division",
+};
+
+/**
+ * Audience-aware scope label. When an office is selected the filter
+ * matches three audience scopes — the office, its division, and brand-wide
+ * — so the description should reflect that, not just the office name.
+ */
+function audienceScopeLabel(
+  officeShortCode: string | null,
+  offices: { short_code: string; name: string; division: string | null }[],
+): string {
+  if (!officeShortCode) return "";
+  const office = offices.find((o) => o.short_code === officeShortCode);
+  if (!office) return "";
+  const divisionLabel = office.division
+    ? DIVISION_LABELS[office.division] ?? null
+    : null;
+  return divisionLabel
+    ? ` scoped to ${office.name} + ${divisionLabel} + brand-wide`
+    : ` scoped to ${office.name} + brand-wide`;
+}
+
 function describeGroupedWindow(
   count: number,
   days: number,
   officeShortCode: string | null,
-  offices: { short_code: string; name: string }[],
+  offices: { short_code: string; name: string; division: string | null }[],
 ): string {
-  const officeName = officeShortCode
-    ? offices.find((o) => o.short_code === officeShortCode)?.name ?? null
-    : null;
-  const scope = officeName ? ` for ${officeName}` : "";
+  const scope = audienceScopeLabel(officeShortCode, offices);
   if (count === 0) {
     return `Looking back ${days} days${scope}. No campaigns to show yet.`;
   }
@@ -335,12 +364,9 @@ function describeListWindow(
   count: number,
   days: number,
   officeShortCode: string | null,
-  offices: { short_code: string; name: string }[],
+  offices: { short_code: string; name: string; division: string | null }[],
 ): string {
-  const officeName = officeShortCode
-    ? offices.find((o) => o.short_code === officeShortCode)?.name ?? null
-    : null;
-  const scope = officeName ? ` for ${officeName}` : "";
+  const scope = audienceScopeLabel(officeShortCode, offices);
   if (count === 0) {
     return `Looking back ${days} days${scope}. No posts in this window.`;
   }

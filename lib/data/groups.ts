@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { buildAudienceScopeFilter } from "./audience-scope-filter";
 import type {
   Platform,
   PostCategory,
@@ -261,8 +262,12 @@ interface DbPostRowWithOffice extends DbPostRow {
  * has no gaps.
  *
  * @param days Time window in days. Caller is expected to pass 7/14/30.
- * @param opts.office_short_code Optional. When provided, only return groups
- *   whose member posts include at least one post tagged with that office.
+ * @param opts.office_short_code Optional. When provided, the filter becomes
+ *   AUDIENCE-aware (not author-aware): groups match when their
+ *   audience_scope is the office, the office's division, or company-wide.
+ *   Unscoped groups and singletons are excluded under this filter (they
+ *   only appear on the unfiltered dashboard). See
+ *   lib/data/audience-scope-filter for details.
  * @returns Up to 50 PostGroup rows, newest first by posted_date.
  */
 export async function getGroupsLastNDays(
@@ -276,21 +281,16 @@ export async function getGroupsLastNDays(
       .toISOString()
       .slice(0, 10);
 
-    // Resolve office_short_code -> office_id once up front.
-    let officeFilterId: string | null = null;
-    if (opts.office_short_code) {
-      const { data: officeRow } = await supabase
-        .from("offices")
-        .select("id")
-        .eq("short_code", opts.office_short_code)
-        .maybeSingle();
-      if (officeRow) {
-        officeFilterId = officeRow.id;
-      } else {
-        // Unknown office filter — return empty rather than ignoring.
-        return [];
-      }
-    }
+    // Audience-aware office filter — expand the selected office into the
+    // set of audience_scope values that should match.
+    const audienceFilter = await buildAudienceScopeFilter(
+      supabase,
+      opts.office_short_code ?? null,
+    );
+    if (audienceFilter.unknownOffice) return [];
+    const allowedScopeSet = audienceFilter.allowedScopes
+      ? new Set(audienceFilter.allowedScopes)
+      : null;
 
     // 1. Fetch groups in window
     const { data: groupRows, error: groupErr } = await supabase
@@ -331,18 +331,22 @@ export async function getGroupsLastNDays(
     }
     const posts = (postRows ?? []) as DbPostRowWithOffice[];
 
-    // If filtering by office, narrow the post set first; then drop any
-    // groups whose remaining members are empty.
+    // Audience-aware filter: keep only groups whose audience_scope is in
+    // the allowed set. Singletons (no group_id) have no audience scope, so
+    // they're excluded entirely when an office filter is active — matches
+    // the user's "unscoped doesn't show under any office" rule.
     let allowedGroupIds: Set<string> | null = null;
     let allowedSingletonIds: Set<string> | null = null;
-    if (officeFilterId) {
-      const matching = posts.filter((p) => p.office_id === officeFilterId);
-      allowedGroupIds = new Set(
-        matching.map((p) => p.group_id).filter((g): g is string => !!g),
-      );
-      allowedSingletonIds = new Set(
-        matching.filter((p) => !p.group_id).map((p) => p.id),
-      );
+    if (allowedScopeSet) {
+      const matchingGroupIds = groups
+        .filter(
+          (g) =>
+            g.audience_scope !== null &&
+            allowedScopeSet.has(g.audience_scope),
+        )
+        .map((g) => g.id);
+      allowedGroupIds = new Set(matchingGroupIds);
+      allowedSingletonIds = new Set(); // singletons never match audience filter
     }
 
     // 3. Collect all property ids referenced by groups or posts; fetch in one go.

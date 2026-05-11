@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import clsx from "clsx";
 import type { AuthProfile } from "@/lib/auth";
 import AccountMenu from "./AccountMenu";
-import GlobalSearch from "./GlobalSearch";
 
 export interface NavItem {
   href: string;
@@ -69,10 +68,6 @@ export function TopNav({
               Alliance Social
             </span>
           </Link>
-
-          {/* Global post search — desktop only. Hidden on mobile to keep the
-              bar compact; mobile users access list view via BottomNav. */}
-          <GlobalSearch />
 
           {/* Tabs (desktop only — mobile uses BottomNav) */}
           <nav

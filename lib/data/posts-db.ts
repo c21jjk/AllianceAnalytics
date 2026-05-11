@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { buildAudienceScopeFilter } from "./audience-scope-filter";
 import type {
   AccountHealth,
   Platform,
@@ -210,16 +211,28 @@ export interface FetchPostsOptions {
 export async function fetchPosts(opts: FetchPostsOptions = {}): Promise<Post[]> {
   const supabase = createAdminClient();
 
-  // Resolve office_short_code → office_id once, server-side.
-  let officeFilterId: string | null = null;
-  if (opts.office_short_code) {
-    const { data: officeRow } = await supabase
-      .from("offices")
+  // Audience-aware office filter — expand office short_code into a set of
+  // matching post_groups.audience_scope values (see helper).
+  const audienceFilter = await buildAudienceScopeFilter(
+    supabase,
+    opts.office_short_code ?? null,
+  );
+  if (audienceFilter.unknownOffice) return [];
+
+  // When an office filter is active, restrict posts to those whose group
+  // has a matching audience_scope. Two-step query: get the matching group
+  // ids first, then filter posts by group_id IN them. Singletons (group_id
+  // IS NULL) are inherently excluded — they have no audience scope.
+  let allowedGroupIds: string[] | null = null;
+  if (audienceFilter.allowedScopes) {
+    const { data: groupRows } = await supabase
+      .from("post_groups")
       .select("id")
-      .eq("short_code", opts.office_short_code)
-      .maybeSingle();
-    if (!officeRow) return []; // unknown office → empty result, not silent ignore
-    officeFilterId = officeRow.id;
+      .in("audience_scope", audienceFilter.allowedScopes);
+    allowedGroupIds = (groupRows ?? []).map((g) => g.id);
+    // If no groups match the filter, return empty rather than fetching
+    // every post unfiltered.
+    if (allowedGroupIds.length === 0) return [];
   }
 
   let query = supabase
@@ -231,7 +244,7 @@ export async function fetchPosts(opts: FetchPostsOptions = {}): Promise<Post[]> 
     .limit(opts.limit ?? 500);
 
   if (opts.since) query = query.gte("posted_at", opts.since);
-  if (officeFilterId) query = query.eq("office_id", officeFilterId);
+  if (allowedGroupIds) query = query.in("group_id", allowedGroupIds);
 
   const { data: posts, error } = await query;
   if (error || !posts) {
@@ -581,23 +594,29 @@ export async function fetchCompanyAnalytics(opts: {
     const cutoffNow = new Date(now.getTime() - opts.days * 86400_000);
     const cutoffPrev = new Date(now.getTime() - 2 * opts.days * 86400_000);
 
-    let officeFilterId: string | null = null;
-    if (opts.office_short_code) {
-      const { data: officeRow } = await supabase
-        .from("offices")
+    // Audience-aware office filter (same semantic as the post list).
+    const audienceFilter = await buildAudienceScopeFilter(
+      supabase,
+      opts.office_short_code ?? null,
+    );
+    if (audienceFilter.unknownOffice) return EMPTY_ANALYTICS;
+
+    let allowedGroupIds: string[] | null = null;
+    if (audienceFilter.allowedScopes) {
+      const { data: groupRows } = await supabase
+        .from("post_groups")
         .select("id")
-        .eq("short_code", opts.office_short_code)
-        .maybeSingle();
-      if (!officeRow) return EMPTY_ANALYTICS;
-      officeFilterId = officeRow.id;
+        .in("audience_scope", audienceFilter.allowedScopes);
+      allowedGroupIds = (groupRows ?? []).map((g) => g.id);
+      if (allowedGroupIds.length === 0) return EMPTY_ANALYTICS;
     }
 
     let query = supabase
       .from("posts")
       .select("id, posted_at, group_id, caption, platform, metrics, office_id")
       .gte("posted_at", cutoffPrev.toISOString());
-    if (officeFilterId) {
-      query = query.eq("office_id", officeFilterId);
+    if (allowedGroupIds) {
+      query = query.in("group_id", allowedGroupIds);
     }
     const { data, error } = await query;
     if (error || !data) return EMPTY_ANALYTICS;

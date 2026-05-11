@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import ListingsFilterChips from "./ListingsFilterChips";
@@ -15,6 +18,9 @@ interface NeedsPostsRowProps {
   className?: string;
 }
 
+/** localStorage key for the collapsed-state preference. */
+const COLLAPSED_KEY = "recent-listings-collapsed";
+
 /**
  * Dashboard "Recent listings (14d)" strip.
  *
@@ -25,6 +31,10 @@ interface NeedsPostsRowProps {
  * only listings still requiring action) and "All" (every recent listing
  * with its status banner). The chip rewrites the ?listings= URL param so
  * the server-side fetch happens with the right status_filter value.
+ *
+ * The whole section is collapsible — a chevron toggle in the header hides
+ * the list so the user can focus on the post stream below. State persists
+ * across reloads via localStorage so the dashboard remembers your choice.
  */
 export default function NeedsPostsRow({
   listings,
@@ -35,7 +45,36 @@ export default function NeedsPostsRow({
   // Hide entirely when there's nothing to show in "needs_only" view —
   // dashboard doesn't grow a permanent empty section. In "all" view we
   // always render the chrome so the toggle stays accessible.
-  if (statusFilter === "needs_only" && listings.length === 0) return null;
+  const renderEarly = statusFilter === "needs_only" && listings.length === 0;
+
+  // Collapsed state — hydrated from localStorage on mount. Defaults to
+  // expanded so first-time users see the strip; once collapsed it stays
+  // collapsed across reloads until the user reopens it.
+  const [collapsed, setCollapsed] = useState<boolean>(false);
+  const [hydrated, setHydrated] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(COLLAPSED_KEY);
+      if (stored === "1") setCollapsed(true);
+    } catch {
+      // localStorage unavailable (Safari private mode etc.) — fall back to
+      // session-only state, no persistence.
+    }
+    setHydrated(true);
+  }, []);
+
+  function handleToggle() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+    } catch {
+      // ignore — see above
+    }
+  }
+
+  if (renderEarly) return null;
 
   const noun = listings.length === 1 ? "listing" : "listings";
   const scope = officeShortCode ? ` (${officeShortCode})` : "";
@@ -45,43 +84,108 @@ export default function NeedsPostsRow({
       className={`rounded-2xl border border-gold-200 bg-gold-50/40 p-4 shadow-card ${className ?? ""}`}
       aria-label="Recent listings"
     >
-      <header className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-neutral-900">
-            Recent listings
-            <span className="text-neutral-400 font-normal"> · last 14 days{scope}</span>
-          </h2>
-          <p className="mt-0.5 text-xs text-neutral-600">
-            {statusFilter === "needs_only"
-              ? `${listings.length} ${noun} still need at least one platform's coverage. Cards drop off automatically when a hashtagged post auto-links.`
-              : `${listings.length} recent ${noun}. Banners across the thumbnail show whether each one has been posted, dismissed, or still needs attention.`}
-          </p>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <ListingsFilterChips current={statusFilter} />
-          <Link
-            href="/settings/promotions"
-            className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
-          >
-            Dismissed
-          </Link>
-        </div>
+      <header className="flex items-center justify-between gap-3 flex-wrap">
+        <button
+          type="button"
+          onClick={handleToggle}
+          aria-expanded={!collapsed}
+          aria-controls="recent-listings-body"
+          className="group min-w-0 flex items-start gap-2 text-left -ml-1 rounded-md px-1 py-0.5 hover:bg-gold-100/60 transition-colors"
+        >
+          <ChevronIcon collapsed={collapsed} />
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-neutral-900">
+              Recent listings
+              <span className="text-neutral-400 font-normal">
+                {" "}· last 14 days{scope}
+              </span>
+              {collapsed ? (
+                <span className="ml-2 inline-flex items-center rounded-full bg-gold-200/70 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-medium text-gold-800 tabular-nums">
+                  {listings.length}
+                </span>
+              ) : null}
+            </h2>
+            {!collapsed ? (
+              <p className="mt-0.5 text-xs text-neutral-600">
+                {statusFilter === "needs_only"
+                  ? `${listings.length} ${noun} still need at least one platform's coverage. Cards drop off automatically when a hashtagged post auto-links.`
+                  : `${listings.length} recent ${noun}. Banners across the thumbnail show whether each one has been posted, dismissed, or still needs attention.`}
+              </p>
+            ) : null}
+          </div>
+        </button>
+        {!collapsed ? (
+          <div className="flex items-center gap-3 shrink-0">
+            <ListingsFilterChips current={statusFilter} />
+            <Link
+              href="/settings/promotions"
+              className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
+            >
+              Dismissed
+            </Link>
+          </div>
+        ) : null}
       </header>
 
-      {listings.length === 0 ? (
-        <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-          No recent listings to show.
+      {/* Render the body only when expanded. Guard with `hydrated` so SSR's
+          default (expanded) doesn't briefly flash a body that's about to
+          collapse — once hydrated, collapsed users see no flicker. */}
+      {!collapsed && hydrated ? (
+        <div id="recent-listings-body" className="mt-3">
+          {listings.length === 0 ? (
+            <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
+              No recent listings to show.
+            </div>
+          ) : (
+            <ul className="space-y-1.5">
+              {listings.map((listing) => (
+                <li key={listing.id}>
+                  <NeedsPostsCard listing={listing} />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-      ) : (
-        <ul className="space-y-1.5">
-          {listings.map((listing) => (
-            <li key={listing.id}>
-              <NeedsPostsCard listing={listing} />
-            </li>
-          ))}
-        </ul>
-      )}
+      ) : null}
+      {/* SSR fallback: before hydration, render the body anyway so server
+          HTML matches the default (expanded) state. The useEffect collapses
+          it on next tick if localStorage says so. */}
+      {!hydrated ? (
+        <div id="recent-listings-body" className="mt-3">
+          {listings.length === 0 ? (
+            <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
+              No recent listings to show.
+            </div>
+          ) : (
+            <ul className="space-y-1.5">
+              {listings.map((listing) => (
+                <li key={listing.id}>
+                  <NeedsPostsCard listing={listing} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }
 
+function ChevronIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`w-4 h-4 mt-0.5 text-neutral-500 group-hover:text-neutral-700 transition-transform shrink-0 ${
+        collapsed ? "-rotate-90" : "rotate-0"
+      }`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
