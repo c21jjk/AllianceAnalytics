@@ -166,6 +166,7 @@ export type Database = {
           cmc_office_id: string | null
           created_at: string
           display_name: string | null
+          division: string | null
           id: string
           is_active: boolean
           name: string
@@ -194,6 +195,7 @@ export type Database = {
           cmc_office_id?: string | null
           created_at?: string
           display_name?: string | null
+          division?: string | null
           id?: string
           is_active?: boolean
           name: string
@@ -222,6 +224,7 @@ export type Database = {
           cmc_office_id?: string | null
           created_at?: string
           display_name?: string | null
+          division?: string | null
           id?: string
           is_active?: boolean
           name?: string
