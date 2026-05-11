@@ -327,7 +327,7 @@ function AttributionBlock({
           <optgroup label="Offices">
             {offices.map((o) => (
               <option key={o.short_code} value={`office:${o.short_code}`}>
-                {o.short_code} — {o.name}
+                {o.name}
               </option>
             ))}
           </optgroup>
@@ -412,9 +412,7 @@ function scopeToLabel(
   }
   if (scope.kind === "office") {
     const match = offices.find((o) => o.short_code === scope.value);
-    return match
-      ? `${match.short_code} — ${match.name}`
-      : `Office: ${scope.value ?? ""}`;
+    return match ? match.name : `Office: ${scope.value ?? ""}`;
   }
   return "Unscoped";
 }

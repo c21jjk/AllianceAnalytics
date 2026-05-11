@@ -300,6 +300,9 @@ export async function getGroupsLastNDays(
       )
       .gte("posted_date", cutoffDate)
       .order("posted_date", { ascending: false })
+      // Stable tie-breaker so same-day groups don't reshuffle on every
+      // revalidate (e.g. after saving an audience scope on one of them).
+      .order("id", { ascending: true })
       .limit(50);
     if (groupErr) {
       console.error("getGroupsLastNDays: post_groups error", groupErr);
@@ -514,10 +517,14 @@ export async function getGroupsLastNDays(
       };
     });
 
-    // 7. Merge + sort by posted_date desc, slice to 50
-    const merged = [...realGroups, ...soloGroups].sort((a, b) =>
-      b.posted_date.localeCompare(a.posted_date),
-    );
+    // 7. Merge + sort by posted_date desc, slice to 50. Tie-break on id so
+    // same-day groups maintain a deterministic order across revalidations
+    // — otherwise saving an audience scope reshuffles the visible list.
+    const merged = [...realGroups, ...soloGroups].sort((a, b) => {
+      const byDate = b.posted_date.localeCompare(a.posted_date);
+      if (byDate !== 0) return byDate;
+      return a.id.localeCompare(b.id);
+    });
     return merged.slice(0, 50);
   } catch (e) {
     console.error("getGroupsLastNDays: fatal —", e);
