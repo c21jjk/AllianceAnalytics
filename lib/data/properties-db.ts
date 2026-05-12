@@ -351,11 +351,61 @@ export async function fetchPropertyByMls(
 
   const row = propRow as DbPropertyRow;
 
-  const { data: postRows } = await supabase
-    .from("posts")
-    .select("id, platform, posted_at, caption, thumbnail_url, permalink, metrics")
-    .eq("property_id", row.id)
-    .order("posted_at", { ascending: false });
+  // Pull posts via TWO routes so a stray cascade miss can't hide content:
+  //   1. posts.property_id = row.id           (post-level link, authoritative)
+  //   2. post_groups.property_ids @> [row.id]  (group-level fallback)
+  // Then de-dup by post id. Belt-and-suspenders against the legacy ordering bug
+  // that left some posts orphaned even when their group was linked.
+  const [postDirect, groupFallback] = await Promise.all([
+    supabase
+      .from("posts")
+      .select("id, platform, posted_at, caption, thumbnail_url, permalink, metrics")
+      .eq("property_id", row.id)
+      .order("posted_at", { ascending: false }),
+    supabase
+      .from("post_groups")
+      .select("id")
+      .contains("property_ids", [row.id]),
+  ]);
+
+  const groupIds = (groupFallback.data ?? [])
+    .map((g: { id: string }) => g.id)
+    .filter(Boolean);
+
+  let fallbackRows: Array<{
+    id: string;
+    platform: "facebook" | "instagram" | "tiktok";
+    posted_at: string | null;
+    caption: string | null;
+    thumbnail_url: string | null;
+    permalink: string | null;
+    metrics: Record<string, unknown> | null;
+  }> = [];
+
+  if (groupIds.length > 0) {
+    const { data: groupPostRows } = await supabase
+      .from("posts")
+      .select(
+        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics",
+      )
+      .in("group_id", groupIds)
+      .order("posted_at", { ascending: false });
+    fallbackRows = (groupPostRows ?? []) as typeof fallbackRows;
+  }
+
+  // Merge + de-dup by post id, preserving newest-first order.
+  const byId = new Map<string, (typeof fallbackRows)[number]>();
+  for (const r of (postDirect.data ?? []) as typeof fallbackRows) {
+    byId.set(r.id, r);
+  }
+  for (const r of fallbackRows) {
+    if (!byId.has(r.id)) byId.set(r.id, r);
+  }
+  const postRows = Array.from(byId.values()).sort((a, b) => {
+    const ta = a.posted_at ? new Date(a.posted_at).getTime() : 0;
+    const tb = b.posted_at ? new Date(b.posted_at).getTime() : 0;
+    return tb - ta;
+  });
 
   const posts: LinkedPost[] = ((postRows ?? []) as Array<{
     id: string;

@@ -169,11 +169,34 @@ export default function OwnerReportRecipientsPanel({
           Recipients &amp; cadence
         </h3>
         <p className="mt-0.5 text-xs text-neutral-500">
-          Build the seller&apos;s subscriber list and choose how often the
-          report goes out. Emails will start sending once the email service is
-          connected.
+          Pre-load the seller (and any co-owners) along with a send schedule.
+          The moment we connect Resend, this list starts receiving fresh
+          reports automatically on the cadence you set.
         </p>
       </header>
+
+      {/* Resend-pending banner — makes the panel's purpose self-explanatory
+          and removes the "wait, what does this do?" confusion. Lives at the
+          top of the panel and disappears when RESEND_API_KEY is wired up
+          (gate added in Phase D). */}
+      <div
+        role="status"
+        className="rounded-md border border-gold-200 bg-gold-50 px-3 py-2.5 text-xs text-neutral-700"
+      >
+        <div className="flex items-start gap-2">
+          <ClockIcon />
+          <div className="min-w-0">
+            <div className="font-medium text-neutral-900">
+              Email delivery — coming soon
+            </div>
+            <p className="mt-0.5 text-neutral-600 leading-relaxed">
+              Nothing here is sending yet. We&apos;re wiring up Resend (our
+              email service); once it&apos;s live, the recipients and cadence
+              you set below will activate automatically — no extra step.
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Cadence selector ----------------------------------------------------- */}
       <section>
@@ -323,5 +346,23 @@ export default function OwnerReportRecipientsPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-3.5 h-3.5 shrink-0 mt-0.5 text-gold-700"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
   );
 }

@@ -13,6 +13,13 @@ interface GenerateReportButtonProps {
   newestPostAgeDays: number | null;
   /** Min age in days before the button enables. Defaults to 7. */
   minAgeDays?: number;
+  /**
+   * Visual size. "hero" is the unmissable pre-generation CTA inside the Owner
+   * Report panel; "default" is the compact post-generation Regenerate.
+   */
+  size?: "default" | "hero";
+  /** Override the visible label (e.g., "Regenerate report"). */
+  label?: string;
   className?: string;
 }
 
@@ -27,6 +34,8 @@ export default function GenerateReportButton({
   mls,
   newestPostAgeDays,
   minAgeDays = DEFAULT_MIN_AGE,
+  size = "default",
+  label,
   className,
 }: GenerateReportButtonProps) {
   const [isPending, startTransition] = useTransition();
@@ -92,46 +101,67 @@ export default function GenerateReportButton({
     });
   }
 
+  const isHero = size === "hero";
+  const buttonLabel =
+    label ?? (isHero ? "Generate Seller Report" : "Generate seller report");
+  const feedbackTextClass = isHero ? "text-sm" : "text-[11px]";
+
   return (
-    <div className={clsx("flex flex-col items-stretch gap-1", className)}>
+    <div className={clsx("flex flex-col items-stretch gap-2", className)}>
       <button
         type="button"
         onClick={handleClick}
         disabled={disabled}
         title={tooltip}
         className={clsx(
-          "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5",
-          "text-xs font-medium transition-colors",
+          "inline-flex items-center justify-center gap-2 rounded-md transition-colors",
+          isHero
+            ? "px-6 py-4 text-base md:text-lg font-semibold shadow-md hover:shadow-lg"
+            : "px-3 py-1.5 text-xs font-medium",
           disabled
             ? "bg-neutral-100 text-neutral-400 cursor-not-allowed"
             : "bg-gold-500 text-white hover:bg-gold-600",
         )}
         aria-busy={isPending || undefined}
       >
-        {isPending ? <Spinner /> : <SparkIcon />}
-        {isPending ? "Generating..." : "Generate seller report"}
+        {isPending ? <Spinner hero={isHero} /> : <SparkIcon hero={isHero} />}
+        {isPending ? "Generating..." : buttonLabel}
       </button>
       {feedback.kind === "copied" ? (
-        <span className="text-[11px] text-emerald-700">
+        <span className={clsx("text-emerald-700", feedbackTextClass)}>
           Link copied to clipboard.
         </span>
       ) : null}
       {feedback.kind === "error" ? (
-        <span className="text-[11px] text-red-700">{feedback.message}</span>
+        <span className={clsx("text-red-700", feedbackTextClass)}>
+          {feedback.message}
+        </span>
       ) : null}
       {feedback.kind === "idle" && !ageOk && !noPosts ? (
-        <span className="text-[11px] text-neutral-500">
-          Available {minAgeDays - (newestPostAgeDays ?? 0)}{" "}
-          {minAgeDays - (newestPostAgeDays ?? 0) === 1 ? "day" : "days"} from now.
+        <span className={clsx("text-neutral-500", feedbackTextClass)}>
+          Available in {minAgeDays - (newestPostAgeDays ?? 0)}{" "}
+          {minAgeDays - (newestPostAgeDays ?? 0) === 1 ? "day" : "days"} —
+          posts must be at least {minAgeDays} days old before generating.
+        </span>
+      ) : null}
+      {feedback.kind === "idle" && noPosts ? (
+        <span className={clsx("text-neutral-500", feedbackTextClass)}>
+          No social posts linked to this listing yet — once a post syncs,
+          this button will activate.
         </span>
       ) : null}
     </div>
   );
 }
 
-function SparkIcon() {
+function SparkIcon({ hero = false }: { hero?: boolean }) {
   return (
-    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      className={hero ? "w-5 h-5" : "w-3.5 h-3.5"}
+      fill="none"
+      aria-hidden="true"
+    >
       <path
         d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"
         stroke="currentColor"
@@ -142,11 +172,11 @@ function SparkIcon() {
   );
 }
 
-function Spinner() {
+function Spinner({ hero = false }: { hero?: boolean }) {
   return (
     <svg
       viewBox="0 0 24 24"
-      className="w-3.5 h-3.5 animate-spin"
+      className={clsx("animate-spin", hero ? "w-5 h-5" : "w-3.5 h-3.5")}
       fill="none"
       aria-hidden="true"
     >

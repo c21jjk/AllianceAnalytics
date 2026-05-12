@@ -15,6 +15,7 @@ import {
 import PageHeader from "@/components/PageHeader";
 import PropertySortDropdown from "@/components/PropertySortDropdown";
 import PropertyOfficeFilter from "@/components/PropertyOfficeFilter";
+import PropertySearchBox from "@/components/PropertySearchBox";
 
 export const metadata = { title: "Listings — Alliance Social" };
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ const ALLOWED_SORTS: PropertySortKey[] = [
 ];
 
 interface PageProps {
-  searchParams: Promise<{ sort?: string; office?: string }>;
+  searchParams: Promise<{ sort?: string; office?: string; q?: string }>;
 }
 
 export default async function PropertiesPage({ searchParams }: PageProps) {
@@ -37,22 +38,44 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
   if (!profile) redirect("/login");
   const isAdmin = profile.role === "admin";
 
-  const { sort: rawSort, office: rawOffice } = await searchParams;
+  const { sort: rawSort, office: rawOffice, q: rawQ } = await searchParams;
   const sort: PropertySortKey =
     rawSort && (ALLOWED_SORTS as string[]).includes(rawSort)
       ? (rawSort as PropertySortKey)
       : "newest";
   const officeFilter = rawOffice && rawOffice.length > 0 ? rawOffice : null;
+  const queryRaw = (rawQ ?? "").trim();
+  const queryLower = queryRaw.toLowerCase();
 
-  const [properties, officeLabels] = await Promise.all([
+  const [allProperties, officeLabels] = await Promise.all([
     getProperties({ sort, office: officeFilter }),
     listDistinctOfficeLabels(),
   ]);
 
+  // In-memory text filter — runs against MLS, address, city, agent. Inventory
+  // is ~21 today (cap 500 from the fetcher), so this is fine; revisit if we
+  // start dealing with thousands.
+  const properties = queryLower.length === 0
+    ? allProperties
+    : allProperties.filter((p) => {
+        const haystack = [
+          p.mls_number,
+          p.address,
+          p.city,
+          p.state,
+          p.zip,
+          p.agent_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(queryLower);
+      });
+
   return (
     <div>
       <PageHeader
-        eyebrow={`Active inventory · ${properties.length} ${properties.length === 1 ? "listing" : "listings"}${officeFilter ? ` · ${officeFilter}` : ""}`}
+        eyebrow={`Active inventory · ${properties.length} ${properties.length === 1 ? "listing" : "listings"}${officeFilter ? ` · ${officeFilter}` : ""}${queryRaw ? ` · search "${queryRaw}"` : ""}`}
         title="Listings"
         description="Every active Century 21 Alliance listing tracked here. CMC and SJSR feeds auto-populate via RETS sync."
         actions={
@@ -68,7 +91,13 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
         }
       />
 
-      <div className="mt-2 mb-4 flex flex-wrap items-center justify-between gap-3">
+      {/* Search row sits ABOVE the filter row so it's the first thing the
+          eye lands on — easier to find a specific MLS that way. */}
+      <div className="mt-2 mb-3">
+        <PropertySearchBox initialValue={queryRaw} />
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <PropertyOfficeFilter options={officeLabels} value={officeFilter} />
         <PropertySortDropdown value={sort} />
       </div>
@@ -76,14 +105,18 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
       {properties.length === 0 ? (
         <div className="rounded-xl border border-dashed border-neutral-300 bg-white px-6 py-10 text-center">
           <div className="text-sm font-medium text-neutral-900">
-            {officeFilter
-              ? `No listings for ${officeFilter}`
-              : "No listings yet"}
+            {queryRaw
+              ? `No listings match "${queryRaw}"`
+              : officeFilter
+                ? `No listings for ${officeFilter}`
+                : "No listings yet"}
           </div>
           <p className="mt-1 text-sm text-neutral-500 max-w-md mx-auto">
-            {officeFilter
-              ? "Try clearing the office filter or running a fresh RETS sync."
-              : "Once RETS sync runs, properties will land here. Each card rolls up the social posts linked to that listing."}
+            {queryRaw
+              ? "Try a different MLS, address, city, or agent."
+              : officeFilter
+                ? "Try clearing the office filter or running a fresh RETS sync."
+                : "Once RETS sync runs, properties will land here. Each card rolls up the social posts linked to that listing."}
           </p>
         </div>
       ) : (

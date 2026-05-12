@@ -9,8 +9,12 @@ interface ReportActionBarProps {
 }
 
 /**
- * Action toolbar for property reports. Only the "Copy shareable link" action is live.
- * "Download PDF" and "Send to client" are Phase 2.
+ * Action toolbar for property reports. Only renders once a report exists
+ * (the parent gates on `existingReport`), so every button below is meaningful.
+ *
+ * - Download PDF       → live, hits /r/[token]/flyer.pdf (react-pdf renderer)
+ * - Copy shareable link → live, copies https://alliancesocial.app/r/[token]
+ * - Send to client     → disabled until Phase D (Resend) lands; tooltip says so
  */
 export default function ReportActionBar({
   shareToken,
@@ -36,23 +40,25 @@ export default function ReportActionBar({
         className,
       )}
     >
-      {/* Download PDF — disabled for Phase 2 */}
-      <button
-        disabled
-        title="PDF generation lands in Phase 2"
+      {/* Download PDF — live. Opens the react-pdf renderer at /r/[token]/flyer.pdf */}
+      <a
+        href={`/r/${shareToken}/flyer.pdf`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Download the branded PDF for this report"
         className={clsx(
           "px-4 py-2 rounded-lg font-medium text-sm transition-all",
           "bg-gold-500 text-white",
-          "opacity-50 cursor-not-allowed",
+          "hover:bg-gold-600 active:ring-2 active:ring-gold-200",
         )}
       >
         Download PDF
-      </button>
+      </a>
 
-      {/* Send to client — disabled for Phase 2 */}
+      {/* Send to client — disabled until Resend is connected (Phase D). */}
       <button
         disabled
-        title="Email sending lands in Phase 2"
+        title="Email delivery — wiring up Resend"
         className={clsx(
           "px-4 py-2 rounded-lg font-medium text-sm transition-all",
           "border border-neutral-200 text-neutral-700 bg-white",
