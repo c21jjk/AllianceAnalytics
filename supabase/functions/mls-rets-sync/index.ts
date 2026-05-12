@@ -54,7 +54,14 @@ const PROPERTY_CLASSES_BY_FEED: Record<"cmc" | "sjsr", readonly string[]> = {
 };
 // L_Status is calculated and 20206's; LO1_OrganizationName=*Century 21 Alliance*
 // is the C21-only constraint we need.
-const DMQL2_QUERY = "(LO1_OrganizationName=*Century 21 Alliance*)";
+//
+// Phase 8: dual-query search so we capture Alliance's role on BOTH sides
+// of a deal. The list-side query finds properties Alliance listed; the
+// buy-side query finds properties Alliance's buyer agents bought (even
+// when listed by another brokerage). Results are deduped by MLS and the
+// alliance_role column tracks which side(s) matched.
+const DMQL2_LIST_SIDE_QUERY = "(LO1_OrganizationName=*Century 21 Alliance*)";
+const DMQL2_BUY_SIDE_QUERY = "(SO1_OrganizationName=*Century 21 Alliance*)";
 const RETS_USER_AGENT = "AllianceAnalytics/1.0";
 const RETS_VERSION = "RETS/1.8";
 const SEARCH_LIMIT = 5000;
@@ -485,6 +492,28 @@ function buildAgentName(row: RowMap): string | null {
 }
 
 /**
+ * Build the buyer's-agent name from Paragon SA1 (Selling Agent — MLS
+ * terminology for the agent representing the buyer). NULL when not present.
+ */
+function buildBuyerAgentName(row: RowMap): string | null {
+  const fn = (row["SA1_UserFirstName"] ?? "").trim();
+  const ln = (row["SA1_UserLastName"] ?? "").trim();
+  const full = [fn, ln].filter((s) => s.length > 0).join(" ");
+  return full.length > 0 ? full : null;
+}
+
+/**
+ * Returns true when the given office-name string looks like Alliance.
+ * Used to compute alliance_role from raw Paragon strings without relying
+ * on which query a row came from (defensive — covers feeds where the SO1
+ * filter didn't actually narrow on org name).
+ */
+function isAllianceOffice(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return /century\s*21\s*alliance/i.test(raw);
+}
+
+/**
  * Paragon's L_Keyword slots are SHIFTED by one between feeds:
  *   - CMC:  K1=bedrooms,   K2=full baths, K3=half baths
  *   - SJSR: K2=bedrooms,   K3=full baths, K4=half baths (K1=total rooms)
@@ -544,6 +573,12 @@ interface MappedListing {
   close_date: string | null;
   /** Sold price at settlement (Paragon L_SoldPrice / L_ClosePrice). NULL for active. */
   close_price: number | null;
+  /** Phase 8: Alliance buyer-side agent name (Paragon SA1_*). NULL when Alliance is listing-only. */
+  buyer_agent_name: string | null;
+  /** Phase 8: Raw Paragon SO1_OrganizationName (buyer-side brokerage). */
+  buyer_office_name: string | null;
+  /** Phase 8: Which side(s) of the transaction Alliance has. */
+  alliance_role: "listing" | "buyer" | "both";
   raw_payload: Record<string, unknown>;
 }
 
@@ -586,11 +621,41 @@ function readClosePrice(row: RowMap): number | null {
   return null;
 }
 
-function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
+/**
+ * Convert a raw Paragon row into our MappedListing shape.
+ *
+ * `querySide` indicates which DMQL2 query matched this row — used as a hint
+ * for alliance_role, but the final role is determined by checking the raw
+ * LO1 + SO1 office strings on the row itself (defensive — Paragon will
+ * sometimes return matches with org-name variations the filter accepted).
+ */
+function mapRow(
+  row: RowMap,
+  sourceMls: "cmc" | "sjsr",
+  querySide: "list" | "buy",
+): MappedListing | null {
   const mlsRaw = row["L_ListingID"];
   const addr = row["L_Address"];
   if (!mlsRaw || !addr) return null;
   const beds = mapBedsBaths(row, sourceMls);
+
+  const listOfficeName = (row["LO1_OrganizationName"] ?? "").trim() || null;
+  const buyerOfficeName = (row["SO1_OrganizationName"] ?? "").trim() || null;
+  const allianceOnList = isAllianceOffice(listOfficeName);
+  const allianceOnBuy = isAllianceOffice(buyerOfficeName);
+
+  // alliance_role from actual office strings, with querySide as fallback hint.
+  let alliance_role: "listing" | "buyer" | "both" = "listing";
+  if (allianceOnList && allianceOnBuy) alliance_role = "both";
+  else if (allianceOnBuy && !allianceOnList) alliance_role = "buyer";
+  else if (allianceOnList && !allianceOnBuy) alliance_role = "listing";
+  else {
+    // Neither office string flagged Alliance — fall back to which query
+    // returned this row. (Should be rare; means Paragon's wildcard matched
+    // an Alliance-named office whose display string we don't recognize.)
+    alliance_role = querySide === "buy" ? "buyer" : "listing";
+  }
+
   return {
     mls_number: mlsRaw.trim().toUpperCase(),
     source_mls: sourceMls,
@@ -604,7 +669,7 @@ function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
     list_agent_name: buildAgentName(row),
     list_agent_email: null,
     list_office_id: (row["LO1_HiddenOrgID"] ?? row["L_ListOffice1"] ?? "").trim() || null,
-    list_office_name: (row["LO1_OrganizationName"] ?? "").trim() || null,
+    list_office_name: listOfficeName,
     property_type: (row["L_Type_"] ?? "").trim() || null,
     dom_days: readInt(row["L_DOM"]),
     bedrooms: beds.bedrooms,
@@ -614,7 +679,30 @@ function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
     hero_image_url: null, // populated by syncPhotosForRows after upsert
     close_date: readCloseDate(row),
     close_price: readClosePrice(row),
+    buyer_agent_name: buildBuyerAgentName(row),
+    buyer_office_name: buyerOfficeName,
+    alliance_role,
     raw_payload: row,
+  };
+}
+
+/**
+ * Merge a buy-side match into an existing list-side row. Used after dedup
+ * when the same MLS came back from both queries — we promote alliance_role
+ * to 'both' and fill in buyer agent fields if the list-side row was missing
+ * them.
+ */
+function mergeBuySideIntoListSide(
+  listSide: MappedListing,
+  buySide: MappedListing,
+): MappedListing {
+  return {
+    ...listSide,
+    alliance_role: "both",
+    buyer_agent_name: listSide.buyer_agent_name ?? buySide.buyer_agent_name,
+    buyer_office_name: listSide.buyer_office_name ?? buySide.buyer_office_name,
+    close_date: listSide.close_date ?? buySide.close_date,
+    close_price: listSide.close_price ?? buySide.close_price,
   };
 }
 
@@ -706,6 +794,9 @@ async function upsertListings(client: SupabaseClient, rows: MappedListing[]): Pr
     hero_image_url: r.hero_image_url,
     close_date: r.close_date,
     close_price: r.close_price,
+    buyer_agent_name: r.buyer_agent_name,
+    buyer_office_name: r.buyer_office_name,
+    alliance_role: r.alliance_role,
     raw_payload: r.raw_payload,
     synced_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -739,6 +830,9 @@ async function replicateToProperties(client: SupabaseClient, rows: MappedListing
     hero_image_url: r.hero_image_url,
     close_date: r.close_date,
     close_price: r.close_price,
+    buyer_agent_name: r.buyer_agent_name,
+    buyer_office_name: r.buyer_office_name,
+    alliance_role: r.alliance_role,
     status: r.status === "withdrawn" ? "expired" : r.status,
     source_mls: r.source_mls,
     updated_at: new Date().toISOString(),
@@ -892,28 +986,67 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     }
 
     try {
-      const { rows, rawCount } = await rets.search("Property", cls, DMQL2_QUERY);
+      // Phase 8 dual-query: list-side first, then buy-side. Each row goes
+      // through mapRow with the right querySide hint. We dedupe by MLS and
+      // promote alliance_role to 'both' when a row matches both queries.
+      //
+      // SJSR Paragon doesn't expose SO1_OrganizationName as a queryable
+      // field (returns 20200 "Unknown Query Field"). We catch that and
+      // proceed with list-side only — better to ship list-side coverage
+      // than fail the whole class. CMC accepts the buy-side query fine.
+      const listResp = await rets.search("Property", cls, DMQL2_LIST_SIDE_QUERY);
+      let buyResp: { rows: RowMap[]; rawCount: number } = { rows: [], rawCount: 0 };
+      try {
+        buyResp = await rets.search("Property", cls, DMQL2_BUY_SIDE_QUERY);
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (msg.includes("20200")) {
+          // Field not queryable in this feed — degrade gracefully.
+          console.warn(`[${cls}] buy-side query unsupported in ${sourceMls}: ${msg}`);
+        } else {
+          // Re-throw anything else (auth, network, etc.) — those should
+          // still surface as class errors.
+          throw e;
+        }
+      }
+      const rawCount = listResp.rawCount + buyResp.rawCount;
       classResult.records_seen = rawCount;
       totalSeen += rawCount;
-      // Ingest active + pending + recently-sold (last 90 days). Expired
-      // and withdrawn drop out so the DB doesn't bloat with stale rows.
-      // Sold listings older than 90 days also drop — the "Recently Sold"
-      // dashboard surface only shows the last 30, so we keep a buffer
-      // for variations in cron timing.
+
       const RECENT_SOLD_DAYS = 90;
       const recentSoldCutoff = Date.now() - RECENT_SOLD_DAYS * 86400_000;
-      const mapped = rows
-        .map((r) => mapRow(r, sourceMls))
-        .filter((r): r is MappedListing => {
-          if (r === null) return false;
-          if (r.status === "active" || r.status === "pending") return true;
-          if (r.status === "sold") {
-            if (!r.close_date) return true; // unknown close date — keep, dashboard handles it
-            const closeMs = new Date(`${r.close_date}T00:00:00Z`).getTime();
-            return Number.isFinite(closeMs) && closeMs >= recentSoldCutoff;
-          }
-          return false; // expired, withdrawn
-        });
+      function passesFilter(r: MappedListing | null): r is MappedListing {
+        if (r === null) return false;
+        if (r.status === "active" || r.status === "pending") return true;
+        if (r.status === "sold") {
+          if (!r.close_date) return true; // unknown close date — keep, dashboard handles it
+          const closeMs = new Date(`${r.close_date}T00:00:00Z`).getTime();
+          return Number.isFinite(closeMs) && closeMs >= recentSoldCutoff;
+        }
+        return false; // expired, withdrawn
+      }
+
+      const mappedListSide = listResp.rows
+        .map((row) => mapRow(row, sourceMls, "list"))
+        .filter(passesFilter);
+      const mappedBuySide = buyResp.rows
+        .map((row) => mapRow(row, sourceMls, "buy"))
+        .filter(passesFilter);
+
+      // Dedupe by MLS. When a row appears on both sides, merge so role='both'.
+      const byMls = new Map<string, MappedListing>();
+      for (const r of mappedListSide) {
+        byMls.set(r.mls_number, r);
+      }
+      for (const r of mappedBuySide) {
+        const existing = byMls.get(r.mls_number);
+        if (existing) {
+          byMls.set(r.mls_number, mergeBuySideIntoListSide(existing, r));
+        } else {
+          byMls.set(r.mls_number, r);
+        }
+      }
+      const mapped = Array.from(byMls.values());
       const upserted = await upsertListings(listings, mapped);
       classResult.records_upserted = upserted;
       totalUpserted += upserted;

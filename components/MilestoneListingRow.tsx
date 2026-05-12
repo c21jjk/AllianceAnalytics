@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ListingMilestone } from "@/lib/data/recently-sold";
+import type { AllianceRole, ListingMilestone } from "@/lib/data/recently-sold";
 import { formatCurrency } from "@/lib/format";
 
 interface MilestoneListingRowProps {
@@ -70,8 +70,8 @@ export default function MilestoneListingRow({
         ) : null}
       </div>
 
-      {/* Body — address line + meta line. Truncates aggressively so it fits
-          in the narrow card width. */}
+      {/* Body — address line + meta line + agent line. Truncates aggressively
+          so it fits in the narrow card width. */}
       <div style={{ minWidth: 0 }}>
         <div
           style={{
@@ -126,6 +126,15 @@ export default function MilestoneListingRow({
             </>
           ) : null}
         </div>
+
+        {/* Alliance role + agent line — shows which side(s) Alliance had
+            and who the Alliance agent(s) are. Suppressed when no agent
+            info is on file at all. */}
+        <AllianceRoleLine
+          allianceRole={listing.alliance_role}
+          listingAgent={listing.agent_name}
+          buyerAgent={listing.buyer_agent_name}
+        />
       </div>
 
       {/* Right column — arrow chevron */}
@@ -151,6 +160,63 @@ function ArrowIcon() {
     >
       <path d="M9 6l6 6-6 6" />
     </svg>
+  );
+}
+
+/**
+ * Renders the Alliance agent line below the price/date row. Output depends
+ * on which side(s) Alliance had:
+ *
+ *   listing → "Listed by [A]"
+ *   buyer   → "Buyer's agent: [B]"          (Alliance was on the buyer side
+ *                                            even though listed by another
+ *                                            brokerage)
+ *   both    → "Listed by [A] · Buyer's agent: [B]"
+ *
+ * Suppressed entirely when there's nothing to show.
+ */
+function AllianceRoleLine({
+  allianceRole,
+  listingAgent,
+  buyerAgent,
+}: {
+  allianceRole: AllianceRole;
+  listingAgent: string | null;
+  buyerAgent: string | null;
+}) {
+  const showListing = allianceRole !== "buyer" && !!listingAgent;
+  const showBuyer = allianceRole !== "listing" && !!buyerAgent;
+  if (!showListing && !showBuyer) return null;
+  return (
+    <div
+      style={{
+        marginTop: 2,
+        fontSize: 11,
+        color: "#737373",
+        fontWeight: 400,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {showListing ? (
+        <span>
+          <span style={{ color: "#a3a3a3" }}>Listed by </span>
+          <span style={{ color: "#171717", fontWeight: 500 }}>
+            {listingAgent}
+          </span>
+        </span>
+      ) : null}
+      {showListing && showBuyer ? (
+        <span style={{ color: "#d4d4d4" }}> · </span>
+      ) : null}
+      {showBuyer ? (
+        <span>
+          <span style={{ color: "#a3a3a3" }}>Buyer&rsquo;s agent: </span>
+          <span style={{ color: "#171717", fontWeight: 500 }}>{buyerAgent}</span>
+        </span>
+      ) : null}
+    </div>
   );
 }
 

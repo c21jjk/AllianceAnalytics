@@ -564,9 +564,12 @@ export type Database = {
           address: string | null
           agent_email: string | null
           agent_name: string | null
+          alliance_role: string
           bathrooms_full: number | null
           bathrooms_half: number | null
           bedrooms: number | null
+          buyer_agent_name: string | null
+          buyer_office_name: string | null
           city: string | null
           close_date: string | null
           close_price: number | null
@@ -598,9 +601,12 @@ export type Database = {
           address?: string | null
           agent_email?: string | null
           agent_name?: string | null
+          alliance_role?: string
           bathrooms_full?: number | null
           bathrooms_half?: number | null
           bedrooms?: number | null
+          buyer_agent_name?: string | null
+          buyer_office_name?: string | null
           city?: string | null
           close_date?: string | null
           close_price?: number | null
@@ -632,9 +638,12 @@ export type Database = {
           address?: string | null
           agent_email?: string | null
           agent_name?: string | null
+          alliance_role?: string
           bathrooms_full?: number | null
           bathrooms_half?: number | null
           bedrooms?: number | null
+          buyer_agent_name?: string | null
+          buyer_office_name?: string | null
           city?: string | null
           close_date?: string | null
           close_price?: number | null

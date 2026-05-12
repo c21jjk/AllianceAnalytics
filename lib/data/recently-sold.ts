@@ -19,6 +19,9 @@ import type { Database } from "@/lib/supabase/types";
 type PropertyStatus = Database["public"]["Enums"]["property_status"];
 type SourceMls = "cmc" | "sjsr" | "bright" | string | null;
 
+/** Three-state Alliance role on a transaction. */
+export type AllianceRole = "listing" | "buyer" | "both";
+
 /** Shared row shape between Recently Sold and Under Contract surfaces. */
 export interface ListingMilestone {
   id: string;
@@ -41,8 +44,13 @@ export interface ListingMilestone {
   reference_date: string;
   reference_date_kind: "close_date" | "listing_date" | "updated_at";
   hero_image_url: string | null;
+  /** Listing-side agent (Paragon LA1_*). NULL when only buyer-side known. */
   agent_name: string | null;
   office_short_code: string | null;
+  /** Phase 8: Alliance buyer-side agent (Paragon SA1_*). Populated when alliance_role IN ('buyer','both'). */
+  buyer_agent_name: string | null;
+  /** Phase 8: Which side(s) Alliance had on the transaction. */
+  alliance_role: AllianceRole;
 }
 
 export interface GetUnderContractOptions {
@@ -73,6 +81,13 @@ interface DbPropertyRow {
   updated_at: string;
   close_date: string | null;
   close_price: number | null;
+  buyer_agent_name: string | null;
+  alliance_role: string;
+}
+
+function coerceAllianceRole(value: string | null | undefined): AllianceRole {
+  if (value === "buyer" || value === "both") return value;
+  return "listing";
 }
 
 interface DbOfficeRow {
@@ -152,6 +167,8 @@ function rowToSold(
     office_short_code: p.office_id
       ? officeShortByID.get(p.office_id) ?? null
       : null,
+    buyer_agent_name: p.buyer_agent_name,
+    alliance_role: coerceAllianceRole(p.alliance_role),
   };
 }
 
@@ -180,6 +197,8 @@ function rowToPending(
     office_short_code: p.office_id
       ? officeShortByID.get(p.office_id) ?? null
       : null,
+    buyer_agent_name: p.buyer_agent_name,
+    alliance_role: coerceAllianceRole(p.alliance_role),
   };
 }
 
@@ -200,7 +219,7 @@ export async function getUnderContractListings(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, close_date, close_price",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "pending")
     .order("listing_date", { ascending: false, nullsFirst: false })
@@ -245,7 +264,7 @@ export async function getRecentlySoldListings(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, close_date, close_price",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "sold")
     .or(
