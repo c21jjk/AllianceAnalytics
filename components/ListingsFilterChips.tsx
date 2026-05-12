@@ -29,7 +29,8 @@ export default function ListingsFilterChips({
       params.delete("listings");
     }
     const qs = params.toString();
-    router.push(qs ? `/?${qs}` : "/");
+    // Preserve scroll — chip switches shouldn't snap to top.
+    router.push(qs ? `/?${qs}` : "/", { scroll: false });
   }
 
   return (

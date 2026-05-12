@@ -32,7 +32,10 @@ export default function PropertySortDropdown({ value }: Props) {
     else url.set("sort", next);
     startTransition(() => {
       const qs = url.toString();
-      router.push(qs ? `/properties?${qs}` : "/properties");
+      // Preserve scroll so sort changes don't jump back to top of list.
+      router.push(qs ? `/properties?${qs}` : "/properties", {
+        scroll: false,
+      });
     });
   }
 

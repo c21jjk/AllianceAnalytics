@@ -26,7 +26,10 @@ export default function PropertyOfficeFilter({ options, value }: Props) {
     else url.delete("office");
     startTransition(() => {
       const qs = url.toString();
-      router.push(qs ? `/properties?${qs}` : "/properties");
+      // Preserve scroll so office filter doesn't snap back to top of list.
+      router.push(qs ? `/properties?${qs}` : "/properties", {
+        scroll: false,
+      });
     });
   }
 

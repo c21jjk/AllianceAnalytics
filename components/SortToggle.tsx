@@ -37,7 +37,9 @@ export default function SortToggle({ value }: SortToggleProps) {
       params.set("sort", next);
     }
     const qs = params.toString();
-    router.push(qs ? `${pathname}?${qs}` : pathname);
+    // scroll: false — preserve the user's scroll position so toggling
+    // sort doesn't snap back to the top of the dashboard.
+    router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
   return (

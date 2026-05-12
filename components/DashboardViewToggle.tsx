@@ -29,7 +29,8 @@ export default function DashboardViewToggle({ value }: DashboardViewToggleProps)
       params.set("view", next);
     }
     const qs = params.toString();
-    router.push(qs ? `${pathname}?${qs}` : pathname);
+    // Preserve scroll — view toggles shouldn't snap back to top.
+    router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
   return (

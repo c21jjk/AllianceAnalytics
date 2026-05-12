@@ -55,7 +55,8 @@ export default function TimeRangeToggle({
   function setRange(token: string) {
     const params = new URLSearchParams(searchParams?.toString() ?? "");
     params.set("range", token);
-    router.push(`/?${params.toString()}`);
+    // Preserve scroll so time-range changes don't snap back to top.
+    router.push(`/?${params.toString()}`, { scroll: false });
   }
 
   return (

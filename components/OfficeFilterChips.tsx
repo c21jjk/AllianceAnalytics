@@ -33,7 +33,8 @@ export default function OfficeFilterChips({ options, value, className }: Props) 
       params.delete("office");
     }
     const qs = params.toString();
-    router.push(qs ? `/?${qs}` : "/");
+    // Preserve scroll — office filter shouldn't snap back to top.
+    router.push(qs ? `/?${qs}` : "/", { scroll: false });
   }
 
   return (
