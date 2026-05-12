@@ -33,6 +33,8 @@ export interface GetPostsOptions {
   office_short_code?: string | null;
   /** Inclusive lower bound on posted_at (ISO). */
   since?: string | null;
+  /** "recent" (default) = posted_at DESC. "activity" = reach DESC. */
+  sort?: "recent" | "activity";
 }
 
 export async function getPosts(opts: GetPostsOptions = {}): Promise<Post[]> {
@@ -53,6 +55,7 @@ export async function getPosts(opts: GetPostsOptions = {}): Promise<Post[]> {
     const rows = await fetchPosts({
       office_short_code: opts.office_short_code ?? null,
       since: opts.since ?? null,
+      sort: opts.sort ?? "recent",
     });
     // Only fall back to fixtures when called with NO filter and DB is empty.
     if (

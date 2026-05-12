@@ -268,11 +268,17 @@ interface DbPostRowWithOffice extends DbPostRow {
  *   Unscoped groups and singletons are excluded under this filter (they
  *   only appear on the unfiltered dashboard). See
  *   lib/data/audience-scope-filter for details.
- * @returns Up to 50 PostGroup rows, newest first by posted_date.
+ * @param opts.sort Optional. "recent" (default) orders by posted_date DESC
+ *   with an id tie-break. "activity" orders by total reach DESC with
+ *   posted_date as the tie-break.
+ * @returns Up to 50 PostGroup rows in the chosen order.
  */
 export async function getGroupsLastNDays(
   days: number,
-  opts: { office_short_code?: string | null } = {},
+  opts: {
+    office_short_code?: string | null;
+    sort?: "recent" | "activity";
+  } = {},
 ): Promise<PostGroup[]> {
   try {
     const supabase = createAdminClient();
@@ -521,10 +527,18 @@ export async function getGroupsLastNDays(
       };
     });
 
-    // 7. Merge + sort by posted_date desc, slice to 50. Tie-break on id so
-    // same-day groups maintain a deterministic order across revalidations
-    // — otherwise saving an audience scope reshuffles the visible list.
+    // 7. Merge + sort, slice to 50.
+    //
+    // "recent" — posted_date DESC, then id ASC for stable ordering so
+    //   same-day groups don't reshuffle on revalidate.
+    // "activity" — total_reach DESC, posted_date DESC tie-break, then id
+    //   ASC final tie-break. Zero-reach groups fall to the bottom.
+    const sortMode = opts.sort === "activity" ? "activity" : "recent";
     const merged = [...realGroups, ...soloGroups].sort((a, b) => {
+      if (sortMode === "activity") {
+        const byReach = (b.total_reach ?? 0) - (a.total_reach ?? 0);
+        if (byReach !== 0) return byReach;
+      }
       const byDate = b.posted_date.localeCompare(a.posted_date);
       if (byDate !== 0) return byDate;
       return a.id.localeCompare(b.id);

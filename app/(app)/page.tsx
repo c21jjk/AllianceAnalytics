@@ -22,6 +22,7 @@ import NeedsPostsRow from "@/components/NeedsPostsRow";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
+import SortToggle from "@/components/SortToggle";
 import SyncNowButton from "@/components/SyncNowButton";
 import TimeRangeToggle from "@/components/TimeRangeToggle";
 
@@ -43,6 +44,12 @@ interface HomePageProps {
      * Drives the Status filter chip on the Recent Listings strip.
      */
     listings?: string;
+    /**
+     * Sort order for the post stream. "recent" (default) = newest first by
+     * posted_date. "activity" = highest total reach first. Surfaced as
+     * tabs directly above the posts. See SortToggle.
+     */
+    sort?: string;
     /**
      * Global post search params (active only when view=list AND at least one
      * is present). Multiple platform values are supported via repeated
@@ -74,6 +81,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     office,
     view,
     listings: listingsParam,
+    sort: sortParam,
     q: qRaw,
     platform: platformRaw,
     from: fromRaw,
@@ -81,6 +89,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   } = await searchParams;
   const days = parseRange(range);
   const currentView: View = view === "list" ? "list" : "grouped";
+  const currentSort: "recent" | "activity" =
+    sortParam === "activity" ? "activity" : "recent";
   const listingsFilter: "needs_only" | "all" =
     listingsParam === "all" ? "all" : "needs_only";
 
@@ -118,7 +128,10 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     followerSummary,
   ] = await Promise.all([
     currentView === "grouped"
-      ? getGroupsLastNDays(days, { office_short_code: officeFilter })
+      ? getGroupsLastNDays(days, {
+          office_short_code: officeFilter,
+          sort: currentSort,
+        })
       : Promise.resolve([]),
     currentView === "list"
       ? searchMode
@@ -129,7 +142,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
             dateTo,
             limit: 200,
           }).then((res) => res.results.map(searchResultToPost))
-        : getPosts({ office_short_code: officeFilter, since: sinceIso })
+        : getPosts({
+            office_short_code: officeFilter,
+            since: sinceIso,
+            sort: currentSort,
+          })
       : Promise.resolve([]),
     getAccountHealth(),
     getListingsNeedingPosts({
@@ -191,6 +208,14 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         statusFilter={listingsFilter}
         officeShortCode={officeFilter}
       />
+
+      {/* Section break + sort tabs — visually separates the "Recent listings
+          to action" zone above from the "Posts to review" zone below. The
+          tabs sit directly above the post stream so the sort control is
+          right where the user's eye lands when scanning posts. */}
+      <div className="pt-2 border-t-2 border-neutral-200">
+        <SortToggle value={currentSort} />
+      </div>
 
       {currentView === "grouped" ? (
         groups.length === 0 ? (

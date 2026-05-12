@@ -206,6 +206,8 @@ export interface FetchPostsOptions {
   since?: string | null;
   /** Max rows to return. Defaults to 500. */
   limit?: number;
+  /** "recent" (default) = posted_at DESC. "activity" = reach DESC. */
+  sort?: "recent" | "activity";
 }
 
 export async function fetchPosts(opts: FetchPostsOptions = {}): Promise<Post[]> {
@@ -246,6 +248,11 @@ export async function fetchPosts(opts: FetchPostsOptions = {}): Promise<Post[]> 
   if (opts.since) query = query.gte("posted_at", opts.since);
   if (allowedGroupIds) query = query.in("group_id", allowedGroupIds);
 
+  // Note: SQL ORDER stays on posted_at (the DB ORDER BY can't trivially
+  // extract reach from the metrics JSONB across PostgREST). When the caller
+  // wants "activity" sort, we re-sort in memory after the read — fine since
+  // we already pull up to opts.limit rows.
+
   const { data: posts, error } = await query;
   if (error || !posts) {
     console.error("fetchPosts:", error);
@@ -280,13 +287,28 @@ export async function fetchPosts(opts: FetchPostsOptions = {}): Promise<Post[]> 
     dailyByPost.set(d.post_id, arr);
   }
 
-  return (posts as DbPostRow[]).map((row) =>
+  const mapped = (posts as DbPostRow[]).map((row) =>
     rowToPost(
       row,
       row.property_id ? propMap.get(row.property_id) : undefined,
       dailyByPost.get(row.id) ?? [],
     ),
   );
+
+  // "activity" sort — by reach DESC with posted_at DESC as tie-break. The
+  // initial SQL order was posted_at DESC so the tie-break is free.
+  if (opts.sort === "activity") {
+    mapped.sort((a, b) => {
+      const byReach = (b.metrics?.reach ?? 0) - (a.metrics?.reach ?? 0);
+      if (byReach !== 0) return byReach;
+      return (
+        new Date(b.posted_at ?? 0).getTime() -
+        new Date(a.posted_at ?? 0).getTime()
+      );
+    });
+  }
+
+  return mapped;
 }
 
 export async function fetchPostById(id: string): Promise<Post | undefined> {
