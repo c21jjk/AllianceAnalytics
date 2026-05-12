@@ -37,11 +37,15 @@ import {
   computeEngagementRate,
   extractHashtags,
 } from "../_shared/parse.ts";
+import { cacheThumbnailToStorage } from "../_shared/thumbnail-cache.ts";
 import type {
   NormalizedMetrics,
   NormalizedPost,
   SyncResult,
 } from "../_shared/types.ts";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const TT_API_BASE = "https://open.tiktokapis.com/v2";
 const TT_REFRESH_URL = "https://open.tiktokapis.com/v2/oauth/token/";
@@ -270,6 +274,23 @@ export async function syncTikTok(): Promise<SyncResult> {
         const metrics = flattenStats(v);
         const caption = v.video_description ?? v.title ?? null;
 
+        // Cache the cover_image_url to Supabase Storage. TikTok cover URLs
+        // are signed and expire — caching makes them persistent. media_url
+        // here is the embed_link (HTML), not an image, so we never cache it.
+        let cachedThumbUrl: string | null = null;
+        let cachedAt: string | null = null;
+        if (v.cover_image_url) {
+          const cached = await cacheThumbnailToStorage({
+            supabaseUrl: SUPABASE_URL,
+            serviceRoleKey: SERVICE_ROLE_KEY,
+            sourceUrl: v.cover_image_url,
+            platform: "tiktok",
+            postId: v.id,
+          });
+          cachedThumbUrl = cached.cachedUrl;
+          cachedAt = cached.cachedAt;
+        }
+
         const normalized: NormalizedPost = {
           platform: "tiktok",
           platform_post_id: v.id,
@@ -277,7 +298,8 @@ export async function syncTikTok(): Promise<SyncResult> {
           posted_at: new Date((v.create_time ?? 0) * 1000).toISOString(),
           permalink: v.share_url ?? null,
           media_url: v.embed_link ?? null,
-          thumbnail_url: v.cover_image_url ?? null,
+          thumbnail_url: cachedThumbUrl ?? v.cover_image_url ?? null,
+          thumbnail_cached_at: cachedAt,
           media_type: "video", // TikTok is video-only
           hashtags: extractHashtags(caption),
           metrics,

@@ -415,6 +415,7 @@ export type Database = {
           platform_post_id: string | null
           posted_at: string | null
           property_id: string | null
+          thumbnail_cached_at: string | null
           thumbnail_url: string | null
           updated_at: string
         }
@@ -439,6 +440,7 @@ export type Database = {
           platform_post_id?: string | null
           posted_at?: string | null
           property_id?: string | null
+          thumbnail_cached_at?: string | null
           thumbnail_url?: string | null
           updated_at?: string
         }
@@ -463,6 +465,7 @@ export type Database = {
           platform_post_id?: string | null
           posted_at?: string | null
           property_id?: string | null
+          thumbnail_cached_at?: string | null
           thumbnail_url?: string | null
           updated_at?: string
         }

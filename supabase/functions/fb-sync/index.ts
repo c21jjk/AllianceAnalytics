@@ -26,11 +26,15 @@ import {
   computeEngagementRate,
   extractHashtags,
 } from "../_shared/parse.ts";
+import { cacheThumbnailToStorage } from "../_shared/thumbnail-cache.ts";
 import type {
   NormalizedMetrics,
   NormalizedPost,
   SyncResult,
 } from "../_shared/types.ts";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const GRAPH_VERSION = "v21.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -266,6 +270,44 @@ export async function syncFacebook(): Promise<SyncResult> {
 
         const thumb = fb.attachments?.data?.[0]?.media?.image?.src ?? fb.full_picture ?? null;
         const mediaUrl = fb.attachments?.data?.[0]?.media?.source ?? null;
+        const fbMediaType = parseMediaType(fb);
+
+        // Cache the FB thumbnail to Storage if present. FB returns time-
+        // limited fbcdn URLs that expire when Meta rotates them.
+        let cachedThumbUrl: string | null = null;
+        let cachedAt: string | null = null;
+        if (thumb) {
+          const cached = await cacheThumbnailToStorage({
+            supabaseUrl: SUPABASE_URL,
+            serviceRoleKey: SERVICE_ROLE_KEY,
+            sourceUrl: thumb,
+            platform: "facebook",
+            postId: fb.id,
+          });
+          cachedThumbUrl = cached.cachedUrl;
+          cachedAt = cached.cachedAt;
+        }
+
+        // media_url for photo posts is the full-res image. For video posts
+        // it's a video URL (don't cache as image). Only cache when it's an
+        // image AND distinct from the thumb we just cached.
+        let cachedMediaUrl: string | null = null;
+        if (
+          mediaUrl &&
+          fbMediaType === "image" &&
+          mediaUrl !== thumb
+        ) {
+          const m = await cacheThumbnailToStorage({
+            supabaseUrl: SUPABASE_URL,
+            serviceRoleKey: SERVICE_ROLE_KEY,
+            sourceUrl: mediaUrl,
+            platform: "facebook",
+            postId: fb.id,
+            pathSuffix: "-media",
+          });
+          cachedMediaUrl = m.cachedUrl;
+          if (m.cachedAt && !cachedAt) cachedAt = m.cachedAt;
+        }
 
         const normalized: NormalizedPost = {
           platform: "facebook",
@@ -273,9 +315,10 @@ export async function syncFacebook(): Promise<SyncResult> {
           caption: fb.message ?? null,
           posted_at: fb.created_time,
           permalink: fb.permalink_url ?? null,
-          media_url: mediaUrl,
-          thumbnail_url: thumb,
-          media_type: parseMediaType(fb),
+          media_url: cachedMediaUrl ?? mediaUrl,
+          thumbnail_url: cachedThumbUrl ?? thumb,
+          thumbnail_cached_at: cachedAt,
+          media_type: fbMediaType,
           hashtags: extractHashtags(fb.message),
           metrics,
           audience: buildAudience({}),

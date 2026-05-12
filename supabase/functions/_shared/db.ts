@@ -102,7 +102,7 @@ export async function upsertPost(
     .eq("platform_post_id", post.platform_post_id)
     .maybeSingle();
 
-  const row = {
+  const row: Record<string, unknown> = {
     platform: post.platform,
     platform_post_id: post.platform_post_id,
     property_id: propertyId,
@@ -117,6 +117,11 @@ export async function upsertPost(
     metrics: post.metrics,
     last_synced_at: new Date().toISOString(),
   };
+  // Only set thumbnail_cached_at when caching succeeded — otherwise leave
+  // the existing column value alone on update, or null on insert.
+  if (post.thumbnail_cached_at) {
+    row.thumbnail_cached_at = post.thumbnail_cached_at;
+  }
 
   let postId: string | null = null;
   let inserted = false;

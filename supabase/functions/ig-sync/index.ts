@@ -33,11 +33,15 @@ import {
   computeEngagementRate,
   extractHashtags,
 } from "../_shared/parse.ts";
+import { cacheThumbnailToStorage } from "../_shared/thumbnail-cache.ts";
 import type {
   NormalizedMetrics,
   NormalizedPost,
   SyncResult,
 } from "../_shared/types.ts";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const GRAPH_VERSION = "v21.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -249,14 +253,55 @@ export async function syncInstagram(): Promise<SyncResult> {
           }
         }
 
+        // Cache the chosen thumbnail (and media_url for photo posts where it
+        // doubles as the displayed image) to Supabase Storage so the URL
+        // survives Meta's CDN rotation.
+        const rawThumb = detail.thumbnail_url ?? detail.media_url ?? null;
+        let cachedThumbUrl: string | null = null;
+        let cachedAt: string | null = null;
+        if (rawThumb) {
+          const cached = await cacheThumbnailToStorage({
+            supabaseUrl: SUPABASE_URL,
+            serviceRoleKey: SERVICE_ROLE_KEY,
+            sourceUrl: rawThumb,
+            platform: "instagram",
+            postId: detail.id,
+          });
+          cachedThumbUrl = cached.cachedUrl;
+          cachedAt = cached.cachedAt;
+        }
+
+        // For IMAGE posts, media_url IS the image and is the most likely to
+        // be referenced as a fallback elsewhere. Cache it under a -media
+        // suffix so we don't collide with the thumbnail entry. Skip when the
+        // media_url is a video URL (CAROUSEL/VIDEO posts).
+        let cachedMediaUrl: string | null = null;
+        if (
+          detail.media_url &&
+          detail.media_type === "IMAGE" &&
+          detail.media_url !== rawThumb
+        ) {
+          const m = await cacheThumbnailToStorage({
+            supabaseUrl: SUPABASE_URL,
+            serviceRoleKey: SERVICE_ROLE_KEY,
+            sourceUrl: detail.media_url,
+            platform: "instagram",
+            postId: detail.id,
+            pathSuffix: "-media",
+          });
+          cachedMediaUrl = m.cachedUrl;
+          if (m.cachedAt && !cachedAt) cachedAt = m.cachedAt;
+        }
+
         const normalized: NormalizedPost = {
           platform: "instagram",
           platform_post_id: detail.id,
           caption: detail.caption ?? null,
           posted_at: detail.timestamp,
           permalink: detail.permalink ?? null,
-          media_url: detail.media_url ?? null,
-          thumbnail_url: detail.thumbnail_url ?? detail.media_url ?? null,
+          media_url: cachedMediaUrl ?? detail.media_url ?? null,
+          thumbnail_url: cachedThumbUrl ?? rawThumb,
+          thumbnail_cached_at: cachedAt,
           media_type: parseMediaType(detail.media_type, detail.media_product_type),
           hashtags: extractHashtags(detail.caption),
           metrics,

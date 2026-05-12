@@ -30,6 +30,12 @@ export interface NormalizedPost {
   permalink: string | null;
   media_url: string | null;
   thumbnail_url: string | null;
+  /**
+   * ISO timestamp set by the sync function when thumbnail_url points at a
+   * durable Supabase Storage object (i.e. caching succeeded). Null/undefined
+   * means the URL is still the platform's CDN URL and may expire.
+   */
+  thumbnail_cached_at?: string | null;
   media_type: MediaType | null;
   hashtags: string[];
   /**

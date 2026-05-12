@@ -9,6 +9,8 @@ import { listMlsFeeds } from "@/lib/data/mls-feeds";
 import { listCredentials } from "@/lib/data/credentials";
 import { listOffices } from "@/lib/data/offices";
 import { PLATFORMS } from "./credentialSchemas";
+import ThumbnailCacheBackfillCard from "./ThumbnailCacheBackfillCard";
+import { getUncachedThumbnailCount } from "./thumbnail-cache-actions";
 
 export const metadata = { title: "Settings — Alliance Social" };
 export const dynamic = "force-dynamic";
@@ -18,10 +20,11 @@ export default async function SettingsPage() {
 
   const admin = createAdminClient();
 
-  const [feeds, credentials, offices] = await Promise.all([
+  const [feeds, credentials, offices, uncachedThumbnails] = await Promise.all([
     listMlsFeeds(),
     listCredentials(),
     listOffices({ active_only: false }),
+    getUncachedThumbnailCount(),
   ]);
 
   // Build platform → summary map for the credential cards.
@@ -129,6 +132,16 @@ export default async function SettingsPage() {
               summary={credByPlatform.get(def.platform) ?? null}
             />
           ))}
+        </div>
+      </section>
+
+      <section>
+        <SectionHeading
+          title="Maintenance"
+          subtitle="One-off admin tools for data cleanup and migrations."
+        />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <ThumbnailCacheBackfillCard initialRemaining={uncachedThumbnails} />
         </div>
       </section>
 
