@@ -20,6 +20,7 @@ import {
   upsertPost,
   recordSyncRun,
   recordPlatformFollowers,
+  runPostGrouper,
 } from "../_shared/db.ts";
 import {
   buildAudience,
@@ -343,6 +344,10 @@ export async function syncFacebook(): Promise<SyncResult> {
     result.ok = false;
     result.errors.push({ message: (e as Error).message });
   }
+
+  // Group new posts into cross-platform campaigns now (instead of waiting
+  // for the standalone grouper cron). No-op if no ungrouped posts remain.
+  await runPostGrouper(client, "facebook");
 
   result.duration_ms = Date.now() - start;
   await recordSyncRun(client, "facebook", result.ok, {

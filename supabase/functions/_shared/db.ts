@@ -200,6 +200,29 @@ export async function recordPlatformFollowers(
     });
 }
 
+/**
+ * Run the cross-platform post-grouping SQL function. Each sync calls this
+ * after upserting so newly-ingested posts merge into existing campaigns
+ * within seconds, instead of waiting for the standalone grouper cron tick
+ * (every ~4h). Defensive — logs and swallows any error so a grouping
+ * hiccup never blocks a successful sync.
+ */
+export async function runPostGrouper(
+  client: SupabaseClient,
+  platform: Platform,
+): Promise<void> {
+  try {
+    const { error } = await client.rpc("run_post_grouper");
+    if (error) {
+      console.warn(
+        `[${platform}-sync] run_post_grouper RPC error: ${error.message}`,
+      );
+    }
+  } catch (e) {
+    console.warn(`[${platform}-sync] run_post_grouper threw:`, e);
+  }
+}
+
 export async function recordSyncRun(
   client: SupabaseClient,
   platform: Platform,

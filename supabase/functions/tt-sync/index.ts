@@ -31,6 +31,7 @@ import {
   upsertPost,
   recordSyncRun,
   recordPlatformFollowers,
+  runPostGrouper,
 } from "../_shared/db.ts";
 import {
   buildAudience,
@@ -325,6 +326,10 @@ export async function syncTikTok(): Promise<SyncResult> {
     result.ok = false;
     result.errors.push({ message: (e as Error).message });
   }
+
+  // Group new posts into cross-platform campaigns immediately so the
+  // dashboard reflects the merge before the next 4h grouper cron.
+  await runPostGrouper(client, "tiktok");
 
   result.duration_ms = Date.now() - start;
   await recordSyncRun(client, "tiktok", result.ok, {
