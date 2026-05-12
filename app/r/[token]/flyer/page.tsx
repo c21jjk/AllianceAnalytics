@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { Barlow } from "next/font/google";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   formatCompactNumber,
@@ -9,6 +10,15 @@ import type { PropertyReportKpis } from "@/lib/types/report";
 import type { Platform, AudienceSlice } from "@/lib/types/post";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
 
+// Direction B uses Barlow exclusively at 400/500. Scope to the public report
+// pages so we don't disturb the rest of the app (Inter remains the default).
+const barlow = Barlow({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  display: "swap",
+  variable: "--font-barlow",
+});
+
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -18,16 +28,19 @@ interface PageProps {
 
 interface FlyerData {
   token: string;
+  recipient_name: string | null;
   property: {
     mls: string;
     address: string;
     list_price: number | null;
     hero_image_url: string | null;
+    agent_name: string | null;
+    agent_email: string | null;
   };
   period_start: string | null;
   period_end: string | null;
   kpis: PropertyReportKpis;
-  campaigns: FlyerCampaign[];
+  posts: FlyerPost[];
   audience: {
     top_locations: AudienceSlice[];
     age_buckets: AudienceSlice[];
@@ -39,13 +52,16 @@ interface FlyerData {
   companyRollup: CompanyRollup;
 }
 
-interface FlyerCampaign {
+interface FlyerPost {
   id: string;
-  label: string;
+  platform: Platform;
+  posted_at: string | null;
+  caption: string;
   thumbnail_url: string | null;
-  total_reach: number;
-  total_engagements: number;
-  by_platform: { platform: Platform; reach: number; engagements: number }[];
+  media_url: string | null;
+  permalink: string | null;
+  reach: number;
+  engagements: number;
 }
 
 interface DbReportRow {
@@ -70,6 +86,8 @@ interface DbPropertyRow {
   list_price: number | null;
   hero_image_url: string | null;
   listing_date: string | null;
+  agent_name: string | null;
+  agent_email: string | null;
 }
 
 interface DbPostRow {
@@ -79,6 +97,8 @@ interface DbPostRow {
   caption: string | null;
   thumbnail_url: string | null;
   media_url: string | null;
+  permalink: string | null;
+  posted_at: string | null;
   metrics: Record<string, unknown> | null;
 }
 
@@ -141,8 +161,11 @@ function loadClosing(json: unknown): string {
 async function loadFlyerData(token: string): Promise<FlyerData | null> {
   const supabase = createAdminClient();
 
-  // Resolve report (try report_token first, then delivery share_token)
+  // Resolve report (try report_token first, then delivery share_token).
+  // Carry through the recipient_name from the matching delivery row when
+  // available — Direction B uses it in the "Prepared for" eyebrow.
   let reportRow: DbReportRow | null = null;
+  let recipientName: string | null = null;
   const { data: directReport } = await supabase
     .from("reports")
     .select(
@@ -150,14 +173,25 @@ async function loadFlyerData(token: string): Promise<FlyerData | null> {
     )
     .eq("report_token", token)
     .maybeSingle();
-  if (directReport) reportRow = directReport as DbReportRow;
+  if (directReport) {
+    reportRow = directReport as DbReportRow;
+    const { data: delivery } = await supabase
+      .from("report_deliveries")
+      .select("recipient_name")
+      .eq("report_id", reportRow.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    recipientName = delivery?.recipient_name ?? null;
+  }
   if (!reportRow) {
     const { data: delivery } = await supabase
       .from("report_deliveries")
-      .select("report_id")
+      .select("report_id, recipient_name")
       .eq("share_token", token)
       .maybeSingle();
     if (delivery) {
+      recipientName = delivery.recipient_name ?? null;
       const { data: indirectReport } = await supabase
         .from("reports")
         .select(
@@ -174,7 +208,7 @@ async function loadFlyerData(token: string): Promise<FlyerData | null> {
   const { data: propRow } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, list_price, hero_image_url, listing_date",
+      "id, mls_number, address, city, state, list_price, hero_image_url, listing_date, agent_name, agent_email",
     )
     .eq("id", reportRow.property_id)
     .maybeSingle();
@@ -182,70 +216,49 @@ async function loadFlyerData(token: string): Promise<FlyerData | null> {
   const prop = propRow as DbPropertyRow;
   const addressParts = [prop.address, prop.city, prop.state].filter(Boolean);
 
-  // Company rollup (30d + 365d + followers). Fired in parallel with the post
-  // hydration below so we don't pay a serial round-trip.
+  // Company rollup (30d + 365d + followers).
   const companyRollupPromise = fetchCompanyRollup();
 
-  // Posts -> campaigns. We re-aggregate from posts at render time so that the
-  // flyer always reflects the latest metrics, even if the report row was
-  // created before the most recent sync run.
-  const campaigns: FlyerCampaign[] = [];
+  // Flat chronological post feed (Direction B "Every post we put behind your
+  // home"). Re-aggregated at render time so the flyer always reflects the
+  // most recent metrics regardless of when the report row was generated.
+  let posts: FlyerPost[] = [];
   if (reportRow.post_ids && reportRow.post_ids.length > 0) {
     const { data: postRows } = await supabase
       .from("posts")
       .select(
-        "id, group_id, platform, caption, thumbnail_url, media_url, metrics",
+        "id, group_id, platform, caption, thumbnail_url, media_url, permalink, posted_at, metrics",
       )
-      .in("id", reportRow.post_ids);
-    const posts = (postRows ?? []) as DbPostRow[];
-    const byGroup = new Map<string, FlyerCampaign>();
-    for (const p of posts) {
-      const key = p.group_id ?? `ungrouped:${p.id}`;
-      const m = p.metrics ?? {};
+      .in("id", reportRow.post_ids)
+      .order("posted_at", { ascending: false });
+    const rows = (postRows ?? []) as DbPostRow[];
+    posts = rows.map((row) => {
+      const m = row.metrics ?? {};
       const reach = readNum(m.reach) || readNum(m.impressions);
       const engagements =
         readNum(m.likes) +
         readNum(m.comments) +
         readNum(m.shares) +
         readNum(m.saves);
-      const platform = asPlatform(p.platform);
-      const existing = byGroup.get(key);
-      if (!existing) {
-        const caption = (p.caption ?? "").trim();
-        const label = caption.length > 0
-          ? caption.split(/[.!?]\s/)[0].slice(0, 80)
-          : "Untitled campaign";
-        byGroup.set(key, {
-          id: key,
-          label,
-          thumbnail_url: p.thumbnail_url ?? p.media_url ?? null,
-          total_reach: reach,
-          total_engagements: engagements,
-          by_platform: [{ platform, reach, engagements }],
-        });
-      } else {
-        existing.total_reach += reach;
-        existing.total_engagements += engagements;
-        const slot = existing.by_platform.find((x) => x.platform === platform);
-        if (slot) {
-          slot.reach += reach;
-          slot.engagements += engagements;
-        } else {
-          existing.by_platform.push({ platform, reach, engagements });
-        }
-      }
-    }
-    campaigns.push(
-      ...Array.from(byGroup.values()).sort(
-        (a, b) => b.total_reach - a.total_reach,
-      ),
-    );
+      return {
+        id: row.id,
+        platform: asPlatform(row.platform),
+        posted_at: row.posted_at,
+        caption: (row.caption ?? "").trim(),
+        thumbnail_url: row.thumbnail_url,
+        media_url: row.media_url,
+        permalink: row.permalink,
+        reach,
+        engagements,
+      };
+    });
   }
 
   const companyRollup = await companyRollupPromise;
 
   return {
     token,
+    recipient_name: recipientName,
     property: {
       mls: prop.mls_number,
       address: addressParts.join(", "),
@@ -254,11 +267,13 @@ async function loadFlyerData(token: string): Promise<FlyerData | null> {
           ? null
           : Number(prop.list_price),
       hero_image_url: prop.hero_image_url ?? null,
+      agent_name: prop.agent_name ?? null,
+      agent_email: prop.agent_email ?? null,
     },
     period_start: reportRow.period_start,
     period_end: reportRow.period_end,
     kpis: loadKpis(reportRow.kpis),
-    campaigns: campaigns.slice(0, 6),
+    posts,
     audience: loadAudience(reportRow.audience),
     narrative_closing: loadClosing(reportRow.narrative),
     generated_at: reportRow.generated_at,
@@ -284,390 +299,687 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
   const data = await loadFlyerData(token);
   if (!data) notFound();
 
-  const pdfHref = `/r/${encodeURIComponent(token)}/flyer.pdf`;
+  return <FlyerView data={data} printMode={printMode} />;
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Direction B — "Compass / Minimal Modern" (LOCKED design)
+ *
+ *  Flyer = printable variant of the Owner Report. The on-screen render
+ *  matches the live web view (app/r/[token]/page.tsx) exactly; the
+ *  @media print rules (and the ?print=1 emulation) hide the action bar,
+ *  break the document into Letter-size pages before Marketing, Alliance,
+ *  and Agent CTA, and force the grey Alliance band to white to save toner.
+ *
+ *  Strict rules baked in:
+ *   - Barlow only, weights 400/500
+ *   - Gold (#C9A84C) used in exactly 4 places per page:
+ *       1) "Download PDF" link in the top action bar
+ *       2) 1px gold rule between Performance and Marketing
+ *       3) the word "does" in the Alliance closing line
+ *       4) tiny C21 seal mark in the footer at 60% opacity
+ * ----------------------------------------------------------------------- */
+
+const GOLD = "#C9A84C";
+const FONT_STACK = "'Barlow', system-ui, sans-serif";
+const EYEBROW_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  letterSpacing: "0.22em",
+  textTransform: "uppercase",
+  fontWeight: 500,
+  color: "#737373",
+};
+const LINK_LABEL_STYLE: React.CSSProperties = {
+  fontSize: 12,
+  letterSpacing: "0.14em",
+  textTransform: "uppercase",
+  fontWeight: 500,
+};
+
+function FlyerView({ data, printMode }: { data: FlyerData; printMode: boolean }) {
+  const { property, kpis, posts, companyRollup, recipient_name } = data;
+  const pdfHref = `/r/${encodeURIComponent(data.token)}/flyer.pdf`;
+  const totalReach = kpis.total_reach;
+  const totalEngagements = kpis.total_engagements;
+  const postCount = kpis.post_count || posts.length;
+  const audienceTotal = companyRollup.followers.total;
+  const agentFirstName = property.agent_name?.split(" ")[0] ?? "your agent";
+  const officeName = officeFromEmail(property.agent_email);
 
   return (
-    <div className="flyer-root min-h-screen bg-neutral-25 print:bg-white">
-      {/* Print stylesheet — hides UI controls, sizes pages, swaps backgrounds */}
-      <style>{flyerCss(printMode)}</style>
+    <div
+      className={barlow.variable}
+      style={{
+        fontFamily: FONT_STACK,
+        backgroundColor: "#ffffff",
+        color: "#171717",
+        minHeight: "100vh",
+        fontWeight: 400,
+      }}
+    >
+      {/* Print stylesheet — Letter-size pages, page breaks, toolbar hidden */}
+      <style>{flyerPrintCss(printMode)}</style>
 
-      {/* Floating download bar — hidden when printing */}
-      <div className="flyer-toolbar print:hidden">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 py-3 flex items-center justify-between gap-3">
-          <div className="text-xs text-neutral-500">
-            Report for {data.property.address} · MLS {data.property.mls}
-          </div>
-          <div className="flex items-center gap-2">
-            <a
-              href={`/r/${encodeURIComponent(token)}`}
-              className="text-xs text-neutral-600 hover:text-neutral-900 px-3 py-1.5 rounded-md hover:bg-neutral-100"
-            >
-              View standard report
-            </a>
-            <a
-              href={pdfHref}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-white bg-gold-500 hover:bg-gold-600 px-3 py-1.5 rounded-md"
-            >
-              <DownloadIcon />
-              Download PDF
-            </a>
-          </div>
-        </div>
+      {/* 1. Top action bar — hidden in print via .flyer-actions */}
+      <div
+        className="flyer-actions"
+        style={{
+          padding: "22px 36px",
+          borderBottom: "1px solid #f4f4f4",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <span style={EYEBROW_STYLE}>Marketing Report</span>
+        <a
+          href={pdfHref}
+          style={{
+            ...LINK_LABEL_STYLE,
+            color: GOLD,
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <DownloadGlyph />
+          Download PDF
+        </a>
       </div>
 
-      <main className="flyer-main max-w-4xl mx-auto px-4 md:px-6 py-6 md:py-10 print:py-0 print:px-0 print:max-w-none">
-        {/* Page 1 — hero */}
-        <section className="flyer-page">
-          <header className="flyer-header">
-            <div className="flex items-center gap-3">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/brand/c21-seal.png"
-                alt="Century 21 Alliance"
-                className="w-10 h-12 object-contain shrink-0"
-              />
-              <div className="leading-tight">
-                <div className="text-sm font-semibold text-neutral-900">
-                  Century 21 Alliance
-                </div>
-                <div className="text-[11px] text-neutral-500 uppercase tracking-wider">
-                  Property performance report
-                </div>
-              </div>
-            </div>
-            <div className="text-[11px] text-neutral-500 uppercase tracking-wider">
-              {data.period_start && data.period_end
-                ? `${formatShortDate(data.period_start)} – ${formatShortDate(data.period_end)}`
-                : data.generated_at
-                  ? formatShortDate(data.generated_at)
-                  : ""}
-            </div>
-          </header>
+      <main>
+        {/* 2. Property identity */}
+        <section className="flyer-section flyer-section-identity" style={{ padding: "80px 36px 24px" }}>
+          <div style={EYEBROW_STYLE}>
+            {recipient_name
+              ? `Prepared for ${recipient_name}`
+              : "Prepared for the owner"}
+          </div>
 
-          <div className="flyer-hero flyer-hero-bleed">
-            {data.property.hero_image_url ? (
+          <h1
+            style={{
+              marginTop: 18,
+              fontSize: "clamp(30px, 6vw, 44px)",
+              lineHeight: 1.02,
+              letterSpacing: "-0.03em",
+              fontWeight: 500,
+              color: "#171717",
+            }}
+          >
+            {firstLineOfAddress(property.address)}
+          </h1>
+          {secondLineOfAddress(property.address) ? (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: "clamp(20px, 4vw, 28px)",
+                lineHeight: 1.05,
+                letterSpacing: "-0.02em",
+                fontWeight: 400,
+                color: "#737373",
+              }}
+            >
+              {secondLineOfAddress(property.address)}
+            </div>
+          ) : null}
+
+          <div
+            style={{
+              marginTop: 36,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "28px 56px",
+            }}
+          >
+            <PropertyStat
+              label="List Price"
+              value={
+                property.list_price
+                  ? formatCurrency(property.list_price)
+                  : "—"
+              }
+            />
+            <PropertyStat label="MLS" value={property.mls} />
+            <PropertyStat
+              label="Listed"
+              value={
+                data.listed_date
+                  ? formatShortDate(data.listed_date)
+                  : "—"
+              }
+            />
+          </div>
+        </section>
+
+        {/* 3. Property photo — full bleed */}
+        <section className="flyer-section flyer-section-photo" style={{ padding: "0 0 48px" }}>
+          <div
+            className="flyer-hero-frame"
+            style={{
+              width: "100%",
+              backgroundColor: "#f4f4f4",
+              overflow: "hidden",
+              height: 360,
+            }}
+          >
+            {property.hero_image_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={data.property.hero_image_url}
-                alt={`Cover photo for ${data.property.address}`}
-                className="flyer-hero-img"
+                src={property.hero_image_url}
+                alt={`Cover photo for ${property.address}`}
+                className="text-transparent flyer-hero-img"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
               />
             ) : (
-              <div className="flyer-hero-fallback" aria-hidden="true">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/brand/c21-seal.png"
-                  alt=""
-                  className="flyer-hero-fallback-mark"
-                />
+              <div
+                aria-hidden="true"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#a3a3a3",
+                  fontSize: 13,
+                  letterSpacing: "0.14em",
+                  textTransform: "uppercase",
+                }}
+              >
+                No cover photo on file
               </div>
             )}
-            <div className="flyer-hero-overlay">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-white/80">
-                MLS {data.property.mls}
-              </div>
-              <h1 className="mt-1.5 text-3xl md:text-4xl font-semibold tracking-tight text-white">
-                {data.property.address}
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                {data.property.list_price ? (
-                  <div className="inline-flex items-center rounded-md bg-white/95 px-3 py-1.5">
-                    <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-                      List price
-                    </span>
-                    <span className="ml-2 text-sm font-semibold text-gold-700">
-                      {formatCurrency(data.property.list_price)}
-                    </span>
-                  </div>
-                ) : null}
-                {data.listed_date ? (
-                  <div className="inline-flex items-center rounded-md bg-white/95 px-3 py-1.5">
-                    <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-                      Listed
-                    </span>
-                    <span className="ml-2 text-sm font-semibold text-neutral-900">
-                      {formatShortDate(data.listed_date)}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <div className="flyer-callout">
-            <div className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-              Prepared for
-            </div>
-            <div className="mt-1 text-base font-semibold text-neutral-900">
-              The seller of {data.property.address}
-            </div>
-            <div className="mt-1 text-sm text-neutral-600">
-              An Alliance Social marketing report covering every post we put
-              behind your home across Instagram, Facebook, and TikTok.
-            </div>
           </div>
         </section>
 
-        {/* Page 2 — Your Home's Performance */}
-        <section className="flyer-page flyer-page-break">
-          <h2 className="flyer-section-h">The numbers, at a glance</h2>
-          <p className="flyer-section-sub">
-            Aggregated across every post that ran for {data.property.address}{" "}
-            during the report period.
+        {/* 4. Performance */}
+        <section className="flyer-section flyer-section-performance" style={{ padding: "64px 36px" }}>
+          <div style={EYEBROW_STYLE}>Performance</div>
+
+          <div
+            style={{
+              marginTop: 28,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "baseline",
+              gap: "0 28px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "clamp(64px, 14vw, 96px)",
+                lineHeight: 0.95,
+                letterSpacing: "-0.04em",
+                fontWeight: 500,
+                color: "#171717",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {formatCompactNumber(totalReach)}
+            </div>
+            <div
+              style={{
+                fontSize: 22,
+                lineHeight: 1.2,
+                color: "#737373",
+                fontWeight: 400,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              people reached
+            </div>
+          </div>
+
+          <p
+            style={{
+              marginTop: 32,
+              maxWidth: 520,
+              fontSize: 18,
+              lineHeight: 1.6,
+              color: "#404040",
+              fontWeight: 400,
+            }}
+          >
+            We published{" "}
+            <span style={{ color: "#171717", fontWeight: 500 }}>
+              {formatCompactNumber(postCount)}{" "}
+              {postCount === 1 ? "post" : "posts"}
+            </span>{" "}
+            behind your home, generating{" "}
+            <span style={{ color: "#171717", fontWeight: 500 }}>
+              {formatCompactNumber(totalEngagements)} engagements
+            </span>{" "}
+            across an audience of{" "}
+            <span style={{ color: "#171717", fontWeight: 500 }}>
+              {formatCompactNumber(audienceTotal)}
+            </span>{" "}
+            on Instagram, Facebook, and TikTok.
           </p>
-          <div className="flyer-kpi-grid">
-            <Kpi
-              label="Total reach"
-              value={formatCompactNumber(data.kpis.total_reach)}
-              hero
+        </section>
+
+        {/* 5. Single gold horizontal rule */}
+        <div
+          className="flyer-gold-rule"
+          style={{
+            height: 1,
+            backgroundColor: GOLD,
+            margin: "0 36px",
+          }}
+        />
+
+        {/* 6. Marketing (post feed) */}
+        <section className="flyer-section flyer-section-marketing" style={{ padding: "64px 36px" }}>
+          <div style={EYEBROW_STYLE}>Marketing</div>
+          <h2
+            style={{
+              marginTop: 18,
+              fontSize: "clamp(26px, 4.5vw, 32px)",
+              lineHeight: 1.05,
+              letterSpacing: "-0.025em",
+              fontWeight: 500,
+              color: "#171717",
+            }}
+          >
+            Every post we put behind your home.
+          </h2>
+
+          <div style={{ marginTop: 40 }}>
+            <PostFeed posts={posts} />
+          </div>
+        </section>
+
+        {/* 7. Alliance section — single break band (#fafafa) */}
+        <section
+          className="flyer-section flyer-section-alliance"
+          style={{
+            padding: "88px 36px 80px",
+            backgroundColor: "#fafafa",
+          }}
+        >
+          <div style={EYEBROW_STYLE}>Alliance</div>
+          <h2
+            style={{
+              marginTop: 18,
+              fontSize: "clamp(28px, 5vw, 36px)",
+              lineHeight: 1.05,
+              letterSpacing: "-0.025em",
+              fontWeight: 500,
+              color: "#171717",
+              maxWidth: 720,
+            }}
+          >
+            Your home isn&apos;t being marketed in a silo.
+          </h2>
+          <p
+            style={{
+              marginTop: 20,
+              maxWidth: 640,
+              fontSize: 18,
+              lineHeight: 1.6,
+              color: "#404040",
+              fontWeight: 400,
+            }}
+          >
+            It&apos;s part of an audience built over years — and the work has
+            shown up every month.
+          </p>
+
+          <div
+            style={{
+              marginTop: 56,
+              maxWidth: 520,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 64,
+            }}
+          >
+            <AllianceStat
+              value={formatCompactNumber(companyRollup.window_30d.posts)}
+              label="Posts in the last 30 days"
             />
-            <Kpi
-              label="Total impressions"
-              value={formatCompactNumber(data.kpis.total_impressions)}
+            <AllianceStat
+              value={formatCompactNumber(companyRollup.window_30d.reach)}
+              label="People reached in the last 30 days"
             />
-            <Kpi
-              label="Total engagements"
-              value={formatCompactNumber(data.kpis.total_engagements)}
+            <AllianceStat
+              value={formatCompactNumber(companyRollup.window_365d.posts)}
+              label="Posts in the last 365 days"
             />
-            <Kpi label="Posts" value={data.kpis.post_count.toString()} />
-            <Kpi
-              label="Platforms"
-              value={data.kpis.platforms_covered.toString()}
-            />
-            <Kpi
-              label="Audience"
-              value={formatCompactNumber(data.companyRollup.followers.total)}
-              hint="Followers across IG, FB & TikTok"
+            <AllianceStat
+              value={formatCompactNumber(companyRollup.window_365d.reach)}
+              label="People reached in the last 365 days"
             />
           </div>
 
-          {data.audience.platform_share.length > 0 ? (
-            <div className="mt-6">
-              <div className="text-xs font-medium uppercase tracking-wider text-neutral-500 mb-2">
-                Where the reach came from
-              </div>
-              <div className="flyer-platform-share">
-                {data.audience.platform_share.map((slice) => (
-                  <div key={slice.platform} className="flyer-platform-row">
-                    <span className="flyer-platform-label">
-                      {platformLabel(slice.platform)}
-                    </span>
-                    <div className="flyer-platform-bar">
-                      <div
-                        className="flyer-platform-bar-fill"
-                        style={{ width: `${Math.round(slice.share * 100)}%` }}
-                      />
-                    </div>
-                    <span className="flyer-platform-pct">
-                      {Math.round(slice.share * 100)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <p
+            style={{
+              marginTop: 64,
+              fontSize: 18,
+              lineHeight: 1.55,
+              color: "#171717",
+              fontWeight: 400,
+              maxWidth: 640,
+            }}
+          >
+            Other firms don&apos;t open the books like this.
+            <br />
+            Alliance <span style={{ color: GOLD, fontWeight: 500 }}>does</span>.
+          </p>
+        </section>
+
+        {/* 8. Agent CTA */}
+        <section className="flyer-section flyer-section-agent" style={{ padding: "80px 36px 24px" }}>
+          <div style={EYEBROW_STYLE}>Your Agent</div>
+          <h3
+            style={{
+              marginTop: 18,
+              fontSize: 28,
+              lineHeight: 1.05,
+              letterSpacing: "-0.02em",
+              fontWeight: 500,
+              color: "#171717",
+            }}
+          >
+            {property.agent_name ?? "Your Alliance agent"}
+          </h3>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 15,
+              lineHeight: 1.5,
+              color: "#737373",
+              fontWeight: 400,
+            }}
+          >
+            Century 21 Alliance{officeName ? ` · ${officeName}` : ""}
+          </div>
+
+          {property.agent_email ? (
+            <a
+              href={`mailto:${property.agent_email}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+                marginTop: 28,
+                padding: "14px 28px",
+                backgroundColor: "#171717",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontSize: 13,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                fontWeight: 500,
+              }}
+            >
+              Reach {agentFirstName}
+              <ArrowRightGlyph />
+            </a>
           ) : null}
         </section>
 
-        {/* Page 3 — top campaigns */}
-        {data.campaigns.length > 0 ? (
-          <section className="flyer-page flyer-page-break">
-            <h2 className="flyer-section-h">Top campaigns</h2>
-            <p className="flyer-section-sub">
-              The posts that drove the most reach for your home.
-            </p>
-            <div className="flyer-campaign-list">
-              {data.campaigns.slice(0, 3).map((c) => (
-                <article key={c.id} className="flyer-campaign">
-                  {c.thumbnail_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={c.thumbnail_url}
-                      alt=""
-                      className="flyer-campaign-thumb"
-                    />
-                  ) : (
-                    <div className="flyer-campaign-thumb flyer-campaign-thumb-placeholder" />
-                  )}
-                  <div className="flyer-campaign-body">
-                    <div className="text-sm font-semibold text-neutral-900 line-clamp-2">
-                      {c.label}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-neutral-600">
-                      <span>
-                        <strong className="text-neutral-900">
-                          {formatCompactNumber(c.total_reach)}
-                        </strong>{" "}
-                        reach
-                      </span>
-                      <span>
-                        <strong className="text-neutral-900">
-                          {formatCompactNumber(c.total_engagements)}
-                        </strong>{" "}
-                        engagements
-                      </span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-                      {c.by_platform.map((p) => (
-                        <span
-                          key={p.platform}
-                          className="inline-flex items-center gap-1 rounded border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 text-neutral-700"
-                        >
-                          {platformLabel(p.platform)} ·{" "}
-                          {formatCompactNumber(p.reach)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {/* Page 4 — The Alliance Marketing Engine */}
-        <section className="flyer-page flyer-page-break">
-          <h2 className="flyer-section-h">The Alliance Marketing Engine</h2>
-          <p className="flyer-section-sub">
-            Your listing is part of a brokerage-wide marketing program. Here&apos;s
-            the volume behind every Alliance home.
-          </p>
-          <div className="flyer-engine-grid">
-            <div className="flyer-engine-window">
-              <div className="flyer-engine-window-label">Last 30 days</div>
-              <div className="flyer-engine-tiles">
-                <div className="flyer-engine-tile">
-                  <div className="flyer-engine-tile-label">Posts</div>
-                  <div className="flyer-engine-tile-value">
-                    {formatCompactNumber(data.companyRollup.window_30d.posts)}
-                  </div>
-                </div>
-                <div className="flyer-engine-tile">
-                  <div className="flyer-engine-tile-label">People reached</div>
-                  <div className="flyer-engine-tile-value">
-                    {formatCompactNumber(data.companyRollup.window_30d.reach)}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="flyer-engine-window">
-              <div className="flyer-engine-window-label">Trailing 365 days</div>
-              <div className="flyer-engine-tiles">
-                <div className="flyer-engine-tile">
-                  <div className="flyer-engine-tile-label">Posts</div>
-                  <div className="flyer-engine-tile-value">
-                    {formatCompactNumber(data.companyRollup.window_365d.posts)}
-                  </div>
-                </div>
-                <div className="flyer-engine-tile">
-                  <div className="flyer-engine-tile-label">People reached</div>
-                  <div className="flyer-engine-tile-value">
-                    {formatCompactNumber(data.companyRollup.window_365d.reach)}
-                  </div>
-                </div>
-              </div>
-            </div>
+        {/* 9. Footer */}
+        <footer
+          className="flyer-section flyer-section-footer"
+          style={{
+            padding: "80px 36px 36px",
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 12,
+              opacity: 0.6,
+            }}
+          >
+            <C21SealMark />
+            <span
+              style={{
+                fontSize: 13,
+                color: "#171717",
+                letterSpacing: "0.01em",
+                fontWeight: 400,
+              }}
+            >
+              Century 21 Alliance
+            </span>
           </div>
-
-          <div className="flyer-engine-followers">
-            <div className="flyer-engine-followers-label">
-              Followers — across all platforms
-            </div>
-            <div className="flyer-engine-followers-total">
-              {formatCompactNumber(data.companyRollup.followers.total)}
-            </div>
-            <div className="flyer-engine-followers-breakdown">
-              <span>
-                FB{" "}
-                {formatCompactNumber(data.companyRollup.followers.facebook ?? 0)}
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>
-                IG{" "}
-                {formatCompactNumber(data.companyRollup.followers.instagram ?? 0)}
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>
-                TT{" "}
-                {formatCompactNumber(data.companyRollup.followers.tiktok ?? 0)}
-              </span>
-            </div>
+          <div
+            style={{
+              marginTop: 32,
+              fontSize: 11,
+              letterSpacing: "0.22em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+              color: "#a3a3a3",
+            }}
+          >
+            Prepared by Alliance Social
           </div>
-
-          <blockquote className="flyer-engine-quote">
-            &ldquo;Other firms don&apos;t open the books like this — Alliance
-            does.&rdquo;
-          </blockquote>
-        </section>
-
-        {/* Page 5 — narrative + sign-off */}
-        <section className="flyer-page flyer-page-break">
-          <h2 className="flyer-section-h">What this means for your sale</h2>
-          <p className="flyer-narrative">{data.narrative_closing}</p>
-          {data.audience.top_locations.length > 0 ? (
-            <div className="mt-6">
-              <div className="text-xs font-medium uppercase tracking-wider text-neutral-500 mb-2">
-                Top locations the audience came from
-              </div>
-              <ul className="flyer-list">
-                {data.audience.top_locations.slice(0, 5).map((loc) => (
-                  <li key={loc.label} className="flyer-list-row">
-                    <span className="text-sm text-neutral-700">{loc.label}</span>
-                    <span className="text-xs text-neutral-500">
-                      {Math.round(loc.share * 100)}%
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <div className="flyer-signoff text-center">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/alliance-wordmark.png"
-              alt="Century 21 Alliance"
-              className="mx-auto h-7 md:h-8 w-auto opacity-90 mb-3"
-            />
-            <div className="text-sm text-neutral-700">
-              Prepared by Alliance Social
-            </div>
-            <div className="mt-1 text-xs text-neutral-500">
-              Questions? Reply to the email this report came from, or contact
-              your Alliance agent directly.
-            </div>
-          </div>
-        </section>
+        </footer>
       </main>
     </div>
   );
 }
 
-function Kpi({
-  label,
-  value,
-  hint,
-  hero,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  hero?: boolean;
-}) {
+/* ----------------------------------------------------------------------- *
+ *  Direction B — atomic sub-components
+ * ----------------------------------------------------------------------- */
+
+function PropertyStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className={hero ? "flyer-kpi flyer-kpi-hero" : "flyer-kpi"}>
-      <div className="flyer-kpi-label">{label}</div>
-      <div className="flyer-kpi-value">{value}</div>
-      {hint ? <div className="flyer-kpi-hint">{hint}</div> : null}
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <span style={EYEBROW_STYLE}>{label}</span>
+      <span
+        style={{
+          fontSize: 22,
+          lineHeight: 1.1,
+          fontWeight: 500,
+          color: "#171717",
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: "-0.01em",
+        }}
+      >
+        {value}
+      </span>
     </div>
   );
 }
 
-function DownloadIcon() {
+function AllianceStat({ value, label }: { value: string; label: string }) {
   return (
-    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" aria-hidden="true">
+    <div>
+      <div
+        style={{
+          fontSize: "clamp(40px, 8vw, 56px)",
+          lineHeight: 0.98,
+          letterSpacing: "-0.03em",
+          fontWeight: 500,
+          color: "#171717",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
+      <div
+        style={{
+          marginTop: 12,
+          fontSize: 13,
+          lineHeight: 1.5,
+          color: "#737373",
+          fontWeight: 400,
+        }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function PostFeed({ posts }: { posts: FlyerPost[] }) {
+  if (posts.length === 0) {
+    return (
+      <div
+        style={{
+          padding: "48px 0",
+          textAlign: "center",
+          color: "#a3a3a3",
+          fontSize: 15,
+          borderTop: "1px solid #ececec",
+          borderBottom: "1px solid #ececec",
+        }}
+      >
+        No posts attached to this listing yet.
+      </div>
+    );
+  }
+
+  return (
+    <ol style={{ listStyle: "none", padding: 0, margin: 0 }}>
+      {posts.map((post, idx) => {
+        const isLast = idx === posts.length - 1;
+        return <PostRow key={post.id} post={post} isLast={isLast} />;
+      })}
+    </ol>
+  );
+}
+
+function PostRow({ post, isLast }: { post: FlyerPost; isLast: boolean }) {
+  const thumb = post.thumbnail_url || post.media_url || null;
+  const caption = post.caption || "No caption recorded.";
+
+  return (
+    <li
+      className="flyer-post-row"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "96px minmax(0, 1fr) auto",
+        gap: 28,
+        padding: "24px 0",
+        borderTop: "1px solid #ececec",
+        borderBottom: isLast ? "1px solid #ececec" : undefined,
+        alignItems: "center",
+      }}
+    >
+      {/* Thumbnail with blurred backdrop (matches live web view pattern) */}
+      <div
+        style={{
+          position: "relative",
+          width: 96,
+          height: 96,
+          overflow: "hidden",
+          backgroundColor: "#f4f4f4",
+        }}
+      >
+        {thumb ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumb}
+              alt=""
+              aria-hidden="true"
+              className="text-transparent"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                filter: "blur(16px)",
+                transform: "scale(1.15)",
+                opacity: 0.55,
+              }}
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumb}
+              alt=""
+              className="text-transparent"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+              }}
+            />
+          </>
+        ) : null}
+      </div>
+
+      <div style={{ minWidth: 0 }}>
+        <div style={EYEBROW_STYLE}>
+          {platformLabel(post.platform)}
+          {post.posted_at ? ` · ${formatShortDate(post.posted_at)}` : ""}
+        </div>
+        <p
+          style={{
+            marginTop: 8,
+            fontSize: 15,
+            lineHeight: 1.55,
+            color: "#171717",
+            fontWeight: 400,
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {caption}
+        </p>
+      </div>
+
+      <div style={{ textAlign: "right" }}>
+        <div
+          style={{
+            fontSize: 24,
+            lineHeight: 1.1,
+            fontWeight: 500,
+            color: "#171717",
+            fontVariantNumeric: "tabular-nums",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          {formatCompactNumber(post.reach)}
+        </div>
+        <div
+          style={{
+            marginTop: 4,
+            fontSize: 10,
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            fontWeight: 500,
+            color: "#737373",
+          }}
+        >
+          Reach
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function DownloadGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      aria-hidden="true"
+    >
       <path
         d="M12 4v12m0 0l-4-4m4 4l4-4M4 18v2h16v-2"
         stroke="currentColor"
-        strokeWidth={1.8}
+        strokeWidth={1.5}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -675,298 +987,141 @@ function DownloadIcon() {
   );
 }
 
-function flyerCss(printMode: boolean): string {
+function ArrowRightGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M5 12h14m0 0l-5-5m5 5l-5 5"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Tiny gold seal mark — approximates the C21 21 mark at 24x28 to anchor the
+// footer without shipping a heavy image. 60% opacity is applied by the parent
+// wrapper, per the gold-allowance spec.
+function C21SealMark() {
+  return (
+    <svg
+      width={24}
+      height={28}
+      viewBox="0 0 24 28"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      <rect width={24} height={28} fill={GOLD} />
+      <text
+        x="50%"
+        y="58%"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontFamily={FONT_STACK}
+        fontSize={11}
+        fontWeight={500}
+        fill="#ffffff"
+        letterSpacing="0.04em"
+      >
+        21
+      </text>
+    </svg>
+  );
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Address & office helpers (mirrored from the live web view)
+ * ----------------------------------------------------------------------- */
+
+function firstLineOfAddress(address: string): string {
+  if (!address) return "";
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return parts[0] ?? address;
+  return parts[0];
+}
+
+function secondLineOfAddress(address: string): string {
+  if (!address) return "";
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return "";
+  return parts.slice(1).join(", ");
+}
+
+function officeFromEmail(email: string | null): string {
+  if (!email) return "";
+  const at = email.indexOf("@");
+  if (at === -1) return "";
+  const host = email.slice(at + 1).toLowerCase();
+  if (host.includes("c21alliance")) return "C21 Alliance";
+  if (host.includes("century21")) return "Century 21";
+  return "";
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Print CSS — Letter (8.5×11"), page breaks before Marketing / Alliance
+ *  / Agent CTA, no #fafafa band in print (white saves toner), action bar
+ *  hidden. The same rules apply inside @media print AND when ?print=1
+ *  is set so the in-browser preview matches the final PDF exactly.
+ * ----------------------------------------------------------------------- */
+
+function flyerPrintCss(printMode: boolean): string {
+  const printRules = `
+.flyer-actions { display: none !important; }
+.flyer-section-photo { padding: 0 0 24px !important; }
+.flyer-hero-frame { height: 320px !important; }
+.flyer-hero-img,
+.flyer-section-photo img {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.flyer-post-row img {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.flyer-section-alliance {
+  background-color: #ffffff !important;
+}
+.flyer-section-marketing {
+  page-break-before: always;
+  break-before: page;
+}
+.flyer-section-alliance {
+  page-break-before: always;
+  break-before: page;
+}
+.flyer-section-agent {
+  page-break-before: always;
+  break-before: page;
+}
+.flyer-section-footer {
+  page-break-before: avoid;
+  break-before: avoid;
+}
+.flyer-post-row {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+@page {
+  size: 8.5in 11in;
+  margin: 0.5in;
+}
+body { background: #ffffff !important; }
+`;
   return `
-.flyer-root { color-scheme: light; }
-.flyer-toolbar {
-  position: sticky; top: 0; z-index: 50;
-  background: rgba(255,255,255,0.92);
-  backdrop-filter: blur(6px);
-  border-bottom: 1px solid #e5e5e5;
-}
-.flyer-page {
-  background: #ffffff;
-  border: 1px solid #e5e5e5;
-  border-radius: 14px;
-  padding: 32px;
-  margin-bottom: 20px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-}
-.flyer-page + .flyer-page-break { /* spacing on screen, page break on print */ }
-.flyer-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f1f1f1;
-  margin-bottom: 20px;
-}
-.flyer-hero {
-  position: relative; overflow: hidden;
-  border-radius: 12px;
-  aspect-ratio: 16/9;
-  background: #f5f5f5;
-}
-.flyer-hero-img {
-  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
-}
-.flyer-hero-fallback {
-  position: absolute; inset: 0;
-  background: linear-gradient(135deg, #b78b3f 0%, #f3d57e 100%);
-  display: flex; align-items: center; justify-content: center;
-}
-.flyer-hero-fallback-mark {
-  width: 30%; max-width: 200px; height: auto;
-  object-fit: contain;
-  opacity: 0.92;
-}
-.flyer-hero-overlay {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  padding: 24px;
-  background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0));
-}
-.flyer-callout {
-  margin-top: 24px; padding: 18px 20px;
-  border: 1px solid #efe2c4;
-  background: linear-gradient(135deg, #fffbf1 0%, #ffffff 60%);
-  border-radius: 10px;
-}
-.flyer-section-h {
-  font-size: 22px; font-weight: 600; letter-spacing: -0.01em;
-  color: #171717;
-}
-.flyer-section-sub {
-  margin-top: 4px; font-size: 13px; color: #6b6b6b;
-}
-.flyer-kpi-grid {
-  margin-top: 20px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-@media (min-width: 700px) {
-  .flyer-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-.flyer-kpi {
-  border: 1px solid #e5e5e5;
-  border-radius: 10px;
-  padding: 14px 16px;
-  background: #ffffff;
-}
-.flyer-kpi-label {
-  font-size: 10px; font-weight: 500;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: #6b6b6b;
-}
-.flyer-kpi-value {
-  margin-top: 6px;
-  font-size: 24px; font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: #111111;
-}
-.flyer-kpi-hint {
-  margin-top: 4px;
-  font-size: 10px; color: #8a8a8a;
-  letter-spacing: 0.02em;
-}
-.flyer-kpi-hero {
-  grid-column: span 2;
-  background: linear-gradient(135deg, #fffbf1 0%, #ffffff 70%);
-  border-color: #efe2c4;
-}
-.flyer-kpi-hero .flyer-kpi-value {
-  font-size: 40px;
-  color: #252526;
-}
-.flyer-kpi-hero .flyer-kpi-label {
-  color: #8a6f1f;
-}
-@media (min-width: 700px) {
-  .flyer-kpi-hero { grid-column: span 3; }
-}
-.flyer-hero-bleed {
-  /* Full-bleed property photo for page 1 — slightly taller than the
-     default 16/9 to give the address & meta room without crowding. */
-  aspect-ratio: 3/2;
-}
-.flyer-platform-share { display: flex; flex-direction: column; gap: 8px; }
-.flyer-platform-row {
-  display: grid;
-  grid-template-columns: 92px 1fr 40px;
-  align-items: center;
-  gap: 12px;
-}
-.flyer-platform-label { font-size: 12px; color: #404040; }
-.flyer-platform-bar {
-  height: 8px; background: #f1f1f1; border-radius: 4px; overflow: hidden;
-}
-.flyer-platform-bar-fill {
-  height: 100%; background: linear-gradient(90deg, #d8a93c, #b78b3f);
-}
-.flyer-platform-pct {
-  font-size: 12px; color: #404040; text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.flyer-campaign-list {
-  margin-top: 16px;
-  display: flex; flex-direction: column; gap: 12px;
-}
-.flyer-campaign {
-  display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 14px;
-  padding: 12px;
-  border: 1px solid #e5e5e5;
-  border-radius: 10px;
-  background: #ffffff;
-}
-.flyer-campaign-thumb {
-  width: 96px; height: 96px;
-  object-fit: cover;
-  border-radius: 8px;
-  background: #f1f1f1;
-}
-.flyer-campaign-thumb-placeholder {
-  background: linear-gradient(135deg, #f3d57e 0%, #b78b3f 100%);
-}
-.flyer-campaign-body { min-width: 0; }
-.flyer-narrative {
-  margin-top: 12px;
-  font-size: 14px; line-height: 1.65; color: #404040;
-  max-width: 70ch;
-}
-.flyer-list { margin: 0; padding: 0; list-style: none; }
-.flyer-list-row {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px dashed #ececec;
-}
-.flyer-list-row:last-child { border-bottom: none; }
-.flyer-signoff {
-  margin-top: 28px; padding-top: 16px;
-  border-top: 1px solid #efefef;
-}
-
-/* Page 4 — The Alliance Marketing Engine */
-.flyer-engine-grid {
-  margin-top: 20px;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
-}
-@media (min-width: 700px) {
-  .flyer-engine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-.flyer-engine-window {
-  border: 1px solid #e5e5e5;
-  border-radius: 12px;
-  padding: 18px 20px;
-  background: #ffffff;
-}
-.flyer-engine-window-label {
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #8a6f1f;
-}
-.flyer-engine-tiles {
-  margin-top: 10px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.flyer-engine-tile {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: #faf7ef;
-  border: 1px solid #f1e8cf;
-}
-.flyer-engine-tile-label {
-  font-size: 10px; font-weight: 500;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: #6b6b6b;
-}
-.flyer-engine-tile-value {
-  margin-top: 4px;
-  font-size: 22px; font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: #252526;
-}
-.flyer-engine-followers {
-  margin-top: 16px;
-  padding: 18px 20px;
-  border: 1px solid #efe2c4;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #fffbf1 0%, #ffffff 70%);
-  text-align: center;
-}
-.flyer-engine-followers-label {
-  font-size: 11px; font-weight: 500;
-  text-transform: uppercase; letter-spacing: 0.08em;
-  color: #8a6f1f;
-}
-.flyer-engine-followers-total {
-  margin-top: 6px;
-  font-size: 36px; font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: #252526;
-}
-.flyer-engine-followers-breakdown {
-  margin-top: 4px;
-  display: flex; justify-content: center; align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 12px; color: #6b6b6b;
-  font-variant-numeric: tabular-nums;
-}
-.flyer-engine-quote {
-  margin: 22px 0 0;
-  padding: 14px 18px;
-  border-left: 3px solid #c9a84c;
-  background: #fafafa;
-  font-size: 13px;
-  font-style: italic;
-  color: #404040;
-  border-radius: 0 8px 8px 0;
-}
-
-/* Print rules — emulate when ?print=1 is set so the in-browser preview
-   already looks like the final PDF. */
-${
-  printMode
-    ? `
-.flyer-toolbar { display: none !important; }
-.flyer-main { padding: 0 !important; max-width: 100% !important; }
-.flyer-page {
-  border-radius: 0;
-  border: none;
-  box-shadow: none;
-  page-break-after: always;
-  break-after: page;
-  margin-bottom: 0;
-  padding: 28px 32px;
-  min-height: 96vh;
-}
-.flyer-page:last-child { page-break-after: auto; break-after: auto; }
-body, .flyer-root { background: #ffffff !important; }
-`
-    : ""
-}
+.flyer-actions { color-scheme: light; }
 
 @media print {
-  .flyer-toolbar { display: none !important; }
-  .flyer-main { padding: 0 !important; max-width: 100% !important; }
-  .flyer-page {
-    border-radius: 0;
-    border: none;
-    box-shadow: none;
-    page-break-after: always;
-    break-after: page;
-    margin-bottom: 0;
-    padding: 28px 32px;
-    min-height: 96vh;
-  }
-  .flyer-page:last-child { page-break-after: auto; break-after: auto; }
-  body, .flyer-root { background: #ffffff !important; }
+${printRules}
 }
+
+${printMode ? printRules : ""}
 `;
 }

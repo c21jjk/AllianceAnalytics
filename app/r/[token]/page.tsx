@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { Barlow } from "next/font/google";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildReportPayload } from "@/lib/reports/build";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
@@ -12,7 +13,7 @@ import PropertyKpiRollup from "@/components/PropertyKpiRollup";
 import PostThumbnailGrid from "@/components/PostThumbnailGrid";
 import AudienceReachRollup from "@/components/AudienceReachRollup";
 import ReportNarrativeBlock from "@/components/ReportNarrativeBlock";
-import PlatformBadge from "@/components/PlatformBadge";
+import PrintLink from "@/components/reports/PrintLink";
 import {
   formatCompactNumber,
   formatCurrency,
@@ -21,6 +22,15 @@ import {
 import type { Platform, PropertyRef } from "@/lib/types/post";
 import type { PropertyReport } from "@/lib/types/report";
 import type { ReportPayload } from "@/lib/reports/build";
+
+// Direction B uses Barlow exclusively at 400/500. Scope to the public report
+// pages so we don't disturb the rest of the app (Inter remains the default).
+const barlow = Barlow({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  display: "swap",
+  variable: "--font-barlow",
+});
 
 export const dynamic = "force-dynamic";
 
@@ -268,614 +278,776 @@ export default async function PublicReportPage({ params }: PageProps) {
 
 /* ----------------------------------------------------------------------- *
  *  Live report — DB-backed, seller-facing
+ *  Direction B — "Compass / Minimal Modern" (LOCKED design)
+ *
+ *  Strict rules baked in:
+ *   - Barlow only, weights 400/500
+ *   - Gold (#C9A84C) used in exactly 4 places per page:
+ *       1) "Download PDF" link in the top action bar
+ *       2) 1px gold rule between Performance and Marketing
+ *       3) the word "does" in the Alliance closing line
+ *       4) tiny C21 seal mark in the footer at 60% opacity
+ *   - No card boxes around posts; editorial post feed with hairlines
+ *   - Single break band (#fafafa) for the Alliance section
  * ----------------------------------------------------------------------- */
+
+const GOLD = "#C9A84C";
+const FONT_STACK = "'Barlow', system-ui, sans-serif";
+const EYEBROW_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  letterSpacing: "0.22em",
+  textTransform: "uppercase",
+  fontWeight: 500,
+  color: "#737373",
+};
+const LINK_LABEL_STYLE: React.CSSProperties = {
+  fontSize: 12,
+  letterSpacing: "0.14em",
+  textTransform: "uppercase",
+  fontWeight: 500,
+};
 
 function LiveReportView({ data }: { data: LiveData }) {
   const { property, payload, posts, rollup, recipient_name } = data;
   const pdfHref = `/r/${encodeURIComponent(data.token)}/flyer.pdf`;
-  const flyerHref = `/r/${encodeURIComponent(data.token)}/flyer`;
 
-  return (
-    <div className="min-h-screen bg-neutral-25">
-      {/* Floating toolbar — hidden on print */}
-      <div className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-neutral-200 print:hidden">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 py-3 flex items-center justify-between gap-3">
-          <div className="text-xs text-neutral-500 truncate">
-            Report for {property.address} · MLS {property.mls}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <a
-              href={flyerHref}
-              className="text-xs text-neutral-600 hover:text-neutral-900 px-3 py-1.5 rounded-md hover:bg-neutral-100"
-            >
-              Flyer view
-            </a>
-            <a
-              href={pdfHref}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-white bg-gold-500 hover:bg-gold-600 px-3 py-1.5 rounded-md"
-            >
-              <DownloadIcon />
-              Download PDF
-            </a>
-          </div>
-        </div>
-      </div>
-
-      {/* Brand header */}
-      <header className="bg-white border-b border-neutral-200">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 py-5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/c21-seal.png"
-              alt="Century 21 Alliance"
-              className="w-10 h-12 object-contain shrink-0 text-transparent"
-            />
-            <div className="leading-tight">
-              <div className="text-sm font-semibold text-neutral-900">
-                Century 21 Alliance
-              </div>
-              <div className="text-[11px] text-neutral-500 uppercase tracking-wider">
-                Property Marketing Report
-              </div>
-            </div>
-          </div>
-          {recipient_name ? (
-            <div className="hidden sm:block text-right">
-              <div className="text-[11px] text-neutral-500 uppercase tracking-wider">
-                Prepared for
-              </div>
-              <div className="text-sm font-medium text-neutral-900">
-                {recipient_name}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-4 md:px-6 py-8 md:py-10 space-y-12 md:space-y-14">
-        {/* 1. Property hero */}
-        <PropertyHero property={property} recipientName={recipient_name} />
-
-        {/* 2. Your Home's Performance */}
-        <ListingPerformanceSection
-          payload={payload}
-          postsCount={posts.length}
-          audienceTotal={rollup.followers.total}
-        />
-
-        {/* 3. Every Post Behind Your Home */}
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
-              Every post behind your home
-            </h2>
-            <p className="mt-1 text-sm text-neutral-500">
-              {posts.length === 0
-                ? "Posts attached to your listing will show up here."
-                : `${posts.length} ${posts.length === 1 ? "post" : "posts"} across Instagram, Facebook, and TikTok, newest first.`}
-            </p>
-          </div>
-          <PostTimeline posts={posts} />
-        </section>
-
-        {/* 4. The Alliance Marketing Engine */}
-        <MarketingEngineSection rollup={rollup} />
-
-        {/* 5. Agent CTA + Closing */}
-        <AgentCtaSection property={property} />
-      </main>
-
-      <footer className="border-t border-neutral-200 bg-white mt-8">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 py-8 text-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/alliance-wordmark.png"
-            alt="Century 21 Alliance"
-            className="mx-auto h-7 md:h-8 w-auto opacity-90 text-transparent"
-          />
-          <div className="mt-4 text-sm text-neutral-700">
-            Prepared by Alliance Social
-          </div>
-          <div className="mt-1 text-xs text-neutral-500">
-            Thank you for trusting us with your home.
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------------- *
- *  Property hero — page-level, full-bleed
- * ----------------------------------------------------------------------- */
-
-function PropertyHero({
-  property,
-  recipientName,
-}: {
-  property: LiveData["property"];
-  recipientName: string | null;
-}) {
-  return (
-    <section className="rounded-2xl overflow-hidden ring-1 ring-neutral-200 shadow-card bg-white">
-      <div className="relative w-full aspect-[16/9] sm:aspect-[21/9] bg-neutral-100">
-        {property.hero_image_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={property.hero_image_url}
-            alt={`Cover photo for ${property.address}`}
-            className="absolute inset-0 w-full h-full object-cover text-transparent"
-          />
-        ) : (
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gold-400 to-gold-600"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/c21-seal.png"
-              alt=""
-              className="w-32 h-40 object-contain opacity-90 text-transparent"
-            />
-          </div>
-        )}
-        {/* Bottom overlay */}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-5 md:px-8 py-5 md:py-8">
-          {recipientName ? (
-            <div className="mb-2 inline-flex items-center rounded-md bg-gold-500/95 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-white">
-              Prepared for {recipientName}
-            </div>
-          ) : null}
-          <div className="text-[11px] font-medium uppercase tracking-wider text-white/85">
-            MLS {property.mls}
-          </div>
-          <h1 className="mt-1 text-2xl md:text-4xl font-semibold tracking-tight text-white">
-            {property.address}
-          </h1>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {property.list_price ? (
-              <span className="inline-flex items-center rounded-md bg-white/95 px-3 py-1.5">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
-                  List price
-                </span>
-                <span className="ml-2 text-sm font-semibold text-gold-700">
-                  {formatCurrency(property.list_price)}
-                </span>
-              </span>
-            ) : null}
-            {property.listing_date ? (
-              <span className="inline-flex items-center rounded-md bg-white/80 px-3 py-1.5 text-[11px] text-neutral-700">
-                Listed {formatShortDate(property.listing_date)}
-              </span>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ----------------------------------------------------------------------- *
- *  Section 2 — Your Home's Performance
- * ----------------------------------------------------------------------- */
-
-function ListingPerformanceSection({
-  payload,
-  postsCount,
-  audienceTotal,
-}: {
-  payload: ReportPayload;
-  postsCount: number;
-  audienceTotal: number;
-}) {
   const totalReach = payload.kpis.total_reach;
   const totalEngagements = payload.kpis.total_engagements;
-  // Prefer the kpis post_count (post_ids length); fall back to query result.
-  const postCount = payload.kpis.post_count || postsCount;
+  const postCount = payload.kpis.post_count || posts.length;
+  const audienceTotal = rollup.followers.total;
+  const agentFirstName = property.agent_name?.split(" ")[0] ?? "your agent";
+  const officeName = officeFromEmail(property.agent_email);
 
   return (
-    <section className="space-y-6">
-      <div>
-        <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
-          Your home&apos;s performance
-        </h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          Aggregated across every post that ran for your listing.
-        </p>
-      </div>
-
-      {/* Hero number — total reach */}
-      <div className="rounded-2xl bg-[#252526] text-white p-6 md:p-10 shadow-card relative overflow-hidden">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -top-16 -right-16 w-64 h-64 rounded-full bg-gold-500/20 blur-3xl"
-        />
-        <div className="relative">
-          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gold-400">
-            Total Reach
-          </div>
-          <div className="mt-2 text-5xl md:text-7xl font-semibold tabular-nums tracking-tight text-gold-400">
-            {formatCompactNumber(totalReach)}
-          </div>
-          <div className="mt-2 text-sm md:text-base text-white/75 max-w-xl">
-            People reached by the posts behind your home — the audience that
-            saw, scrolled, or watched.
-          </div>
+    <div
+      className={barlow.variable}
+      style={{
+        fontFamily: FONT_STACK,
+        backgroundColor: "#ffffff",
+        color: "#171717",
+        minHeight: "100vh",
+        fontWeight: 400,
+      }}
+    >
+      {/* 1. Top action bar */}
+      <div
+        className="print:hidden"
+        style={{
+          padding: "22px 36px",
+          borderBottom: "1px solid #f4f4f4",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+        }}
+      >
+        <span style={EYEBROW_STYLE}>Marketing Report</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
+          <PrintLink />
+          <a
+            href={pdfHref}
+            style={{
+              ...LINK_LABEL_STYLE,
+              color: GOLD,
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <DownloadGlyph />
+            Download PDF
+          </a>
         </div>
       </div>
 
-      {/* 3-tile row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <PerformanceTile
-          label="Posts published"
-          value={formatCompactNumber(postCount)}
-          sublabel="Across Instagram, Facebook, and TikTok"
-        />
-        <PerformanceTile
-          label="Total Engagements"
-          value={formatCompactNumber(totalEngagements)}
-          sublabel="Likes, comments, shares, and saves"
-        />
-        <PerformanceTile
-          label="Audience"
-          value={formatCompactNumber(audienceTotal)}
-          sublabel="The audience your listing is being marketed to"
-        />
-      </div>
-    </section>
-  );
-}
+      <main>
+        {/* 2. Property identity */}
+        <section style={{ padding: "80px 36px 24px" }}>
+          {recipient_name ? (
+            <div style={EYEBROW_STYLE}>Prepared for {recipient_name}</div>
+          ) : (
+            <div style={EYEBROW_STYLE}>Prepared for the owner</div>
+          )}
 
-function PerformanceTile({
-  label,
-  value,
-  sublabel,
-}: {
-  label: string;
-  value: string;
-  sublabel?: string;
-}) {
-  return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card flex flex-col">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
-        {label}
-      </span>
-      <span className="mt-2 text-3xl md:text-4xl font-semibold tabular-nums text-neutral-900">
-        {value}
-      </span>
-      {sublabel ? (
-        <span className="mt-1.5 text-[11px] text-neutral-500 leading-snug">
-          {sublabel}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------------- *
- *  Section 5 — Agent CTA + closing
- * ----------------------------------------------------------------------- */
-
-function AgentCtaSection({ property }: { property: LiveData["property"] }) {
-  return (
-    <section className="rounded-2xl border border-neutral-200 bg-white p-6 md:p-8 shadow-card">
-      <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
-        Questions about this report?
-      </h2>
-      <p className="mt-2 text-sm md:text-base text-neutral-600 leading-relaxed max-w-2xl">
-        Reply to the email this report came from, or reach out to your
-        Alliance agent directly. We want every seller to see exactly how their
-        home is being marketed — no black box.
-      </p>
-      {property.agent_name ? (
-        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-gold-200 bg-gold-50/40 px-4 py-3">
-          <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gold-500 text-white text-base font-semibold">
-            {property.agent_name.charAt(0).toUpperCase()}
-          </span>
-          <div className="leading-tight">
-            <div className="text-sm font-medium text-neutral-900">
-              {property.agent_name}
+          <h1
+            style={{
+              marginTop: 18,
+              fontSize: "clamp(30px, 6vw, 44px)",
+              lineHeight: 1.02,
+              letterSpacing: "-0.03em",
+              fontWeight: 500,
+              color: "#171717",
+            }}
+          >
+            {firstLineOfAddress(property.address)}
+          </h1>
+          {secondLineOfAddress(property.address) ? (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: "clamp(20px, 4vw, 28px)",
+                lineHeight: 1.05,
+                letterSpacing: "-0.02em",
+                fontWeight: 400,
+                color: "#737373",
+              }}
+            >
+              {secondLineOfAddress(property.address)}
             </div>
-            {property.agent_email ? (
-              <a
-                href={`mailto:${property.agent_email}`}
-                className="text-xs text-gold-700 hover:underline"
-              >
-                {property.agent_email}
-              </a>
+          ) : null}
+
+          {/* Stat row */}
+          <div
+            style={{
+              marginTop: 36,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "28px 56px",
+            }}
+          >
+            <PropertyStat
+              label="List Price"
+              value={
+                property.list_price
+                  ? formatCurrency(property.list_price)
+                  : "—"
+              }
+            />
+            <PropertyStat label="MLS" value={property.mls} />
+            <PropertyStat
+              label="Listed"
+              value={
+                property.listing_date
+                  ? formatShortDate(property.listing_date)
+                  : "—"
+              }
+            />
+          </div>
+        </section>
+
+        {/* 3. Property photo — full bleed */}
+        <section style={{ padding: "0 0 48px" }}>
+          <div
+            style={{
+              width: "100%",
+              backgroundColor: "#f4f4f4",
+              overflow: "hidden",
+            }}
+            className="h-[240px] md:h-[360px]"
+          >
+            {property.hero_image_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={property.hero_image_url}
+                alt={`Cover photo for ${property.address}`}
+                className="text-transparent"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
             ) : (
-              <div className="text-xs text-neutral-500">
-                Your Alliance listing agent
+              <div
+                aria-hidden="true"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#a3a3a3",
+                  fontSize: 13,
+                  letterSpacing: "0.14em",
+                  textTransform: "uppercase",
+                }}
+              >
+                No cover photo on file
               </div>
             )}
           </div>
+        </section>
+
+        {/* 4. Performance */}
+        <section style={{ padding: "64px 36px" }}>
+          <div style={EYEBROW_STYLE}>Performance</div>
+
+          <div
+            style={{
+              marginTop: 28,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "baseline",
+              gap: "0 28px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "clamp(64px, 14vw, 96px)",
+                lineHeight: 0.95,
+                letterSpacing: "-0.04em",
+                fontWeight: 500,
+                color: "#171717",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {formatCompactNumber(totalReach)}
+            </div>
+            <div
+              style={{
+                fontSize: 22,
+                lineHeight: 1.2,
+                color: "#737373",
+                fontWeight: 400,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              people reached
+            </div>
+          </div>
+
+          <p
+            style={{
+              marginTop: 32,
+              maxWidth: 520,
+              fontSize: 18,
+              lineHeight: 1.6,
+              color: "#404040",
+              fontWeight: 400,
+            }}
+          >
+            We published{" "}
+            <span style={{ color: "#171717", fontWeight: 500 }}>
+              {formatCompactNumber(postCount)}{" "}
+              {postCount === 1 ? "post" : "posts"}
+            </span>{" "}
+            behind your home, generating{" "}
+            <span style={{ color: "#171717", fontWeight: 500 }}>
+              {formatCompactNumber(totalEngagements)} engagements
+            </span>{" "}
+            across an audience of{" "}
+            <span style={{ color: "#171717", fontWeight: 500 }}>
+              {formatCompactNumber(audienceTotal)}
+            </span>{" "}
+            on Instagram, Facebook, and TikTok.
+          </p>
+        </section>
+
+        {/* 5. Single gold horizontal rule */}
+        <div
+          style={{
+            height: 1,
+            backgroundColor: GOLD,
+            margin: "0 36px",
+          }}
+        />
+
+        {/* 6. Marketing (post feed) */}
+        <section style={{ padding: "64px 36px" }}>
+          <div style={EYEBROW_STYLE}>Marketing</div>
+          <h2
+            style={{
+              marginTop: 18,
+              fontSize: "clamp(26px, 4.5vw, 32px)",
+              lineHeight: 1.05,
+              letterSpacing: "-0.025em",
+              fontWeight: 500,
+              color: "#171717",
+            }}
+          >
+            Every post we put behind your home.
+          </h2>
+
+          <div style={{ marginTop: 40 }}>
+            <PostFeed posts={posts} />
+          </div>
+        </section>
+
+        {/* 7. Alliance section */}
+        <section
+          style={{
+            padding: "88px 36px 80px",
+            backgroundColor: "#fafafa",
+          }}
+        >
+          <div style={EYEBROW_STYLE}>Alliance</div>
+          <h2
+            style={{
+              marginTop: 18,
+              fontSize: "clamp(28px, 5vw, 36px)",
+              lineHeight: 1.05,
+              letterSpacing: "-0.025em",
+              fontWeight: 500,
+              color: "#171717",
+              maxWidth: 720,
+            }}
+          >
+            Your home isn&apos;t being marketed in a silo.
+          </h2>
+          <p
+            style={{
+              marginTop: 20,
+              maxWidth: 640,
+              fontSize: 18,
+              lineHeight: 1.6,
+              color: "#404040",
+              fontWeight: 400,
+            }}
+          >
+            It&apos;s part of an audience built over years — and the work has
+            shown up every month.
+          </p>
+
+          {/* 2×2 stat grid */}
+          <div
+            style={{
+              marginTop: 56,
+              maxWidth: 520,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 64,
+            }}
+          >
+            <AllianceStat
+              value={formatCompactNumber(rollup.window_30d.posts)}
+              label="Posts in the last 30 days"
+            />
+            <AllianceStat
+              value={formatCompactNumber(rollup.window_30d.reach)}
+              label="People reached in the last 30 days"
+            />
+            <AllianceStat
+              value={formatCompactNumber(rollup.window_365d.posts)}
+              label="Posts in the last 365 days"
+            />
+            <AllianceStat
+              value={formatCompactNumber(rollup.window_365d.reach)}
+              label="People reached in the last 365 days"
+            />
+          </div>
+
+          <p
+            style={{
+              marginTop: 64,
+              fontSize: 18,
+              lineHeight: 1.55,
+              color: "#171717",
+              fontWeight: 400,
+              maxWidth: 640,
+            }}
+          >
+            Other firms don&apos;t open the books like this.
+            <br />
+            Alliance <span style={{ color: GOLD, fontWeight: 500 }}>does</span>.
+          </p>
+        </section>
+
+        {/* 8. Agent CTA */}
+        <section style={{ padding: "80px 36px 24px" }}>
+          <div style={EYEBROW_STYLE}>Your Agent</div>
+          <h3
+            style={{
+              marginTop: 18,
+              fontSize: 28,
+              lineHeight: 1.05,
+              letterSpacing: "-0.02em",
+              fontWeight: 500,
+              color: "#171717",
+            }}
+          >
+            {property.agent_name ?? "Your Alliance agent"}
+          </h3>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 15,
+              lineHeight: 1.5,
+              color: "#737373",
+              fontWeight: 400,
+            }}
+          >
+            Century 21 Alliance{officeName ? ` · ${officeName}` : ""}
+          </div>
+
           {property.agent_email ? (
             <a
               href={`mailto:${property.agent_email}`}
-              className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-white bg-gold-500 hover:bg-gold-600 px-3 py-2 rounded-md"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+                marginTop: 28,
+                padding: "14px 28px",
+                backgroundColor: "#171717",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontSize: 13,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                fontWeight: 500,
+              }}
             >
-              Email {property.agent_name.split(" ")[0]}
+              Reach {agentFirstName}
+              <ArrowRightGlyph />
             </a>
           ) : null}
-        </div>
-      ) : null}
-    </section>
+        </section>
+
+        {/* 9. Footer */}
+        <footer
+          style={{
+            padding: "80px 36px 36px",
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 12,
+              opacity: 0.6,
+            }}
+          >
+            <C21SealMark />
+            <span
+              style={{
+                fontSize: 13,
+                color: "#171717",
+                letterSpacing: "0.01em",
+                fontWeight: 400,
+              }}
+            >
+              Century 21 Alliance
+            </span>
+          </div>
+          <div
+            style={{
+              marginTop: 32,
+              fontSize: 11,
+              letterSpacing: "0.22em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+              color: "#a3a3a3",
+            }}
+          >
+            Prepared by Alliance Social
+          </div>
+        </footer>
+      </main>
+    </div>
   );
 }
 
 /* ----------------------------------------------------------------------- *
- *  Vertical timeline of every post
+ *  Direction B — atomic sub-components
  * ----------------------------------------------------------------------- */
 
-function PostTimeline({ posts }: { posts: LivePost[] }) {
+function PropertyStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <span style={EYEBROW_STYLE}>{label}</span>
+      <span
+        style={{
+          fontSize: 22,
+          lineHeight: 1.1,
+          fontWeight: 500,
+          color: "#171717",
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: "-0.01em",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function AllianceStat({ value, label }: { value: string; label: string }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: "clamp(40px, 8vw, 56px)",
+          lineHeight: 0.98,
+          letterSpacing: "-0.03em",
+          fontWeight: 500,
+          color: "#171717",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
+      <div
+        style={{
+          marginTop: 12,
+          fontSize: 13,
+          lineHeight: 1.5,
+          color: "#737373",
+          fontWeight: 400,
+        }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function PostFeed({ posts }: { posts: LivePost[] }) {
   if (posts.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-neutral-300 bg-white p-8 text-center">
-        <p className="text-sm text-neutral-500">
-          No posts attached to this listing yet.
-        </p>
+      <div
+        style={{
+          padding: "48px 0",
+          textAlign: "center",
+          color: "#a3a3a3",
+          fontSize: 15,
+          borderTop: "1px solid #ececec",
+          borderBottom: "1px solid #ececec",
+        }}
+      >
+        No posts attached to this listing yet.
       </div>
     );
   }
 
   return (
-    <ol className="space-y-3">
-      {posts.map((post) => {
-        const thumb = post.thumbnail_url || post.media_url || null;
+    <ol style={{ listStyle: "none", padding: 0, margin: 0 }}>
+      {posts.map((post, idx) => {
+        const isLast = idx === posts.length - 1;
         return (
-          <li
-            key={post.id}
-            className="flex gap-4 rounded-xl border border-neutral-200 bg-white p-3 md:p-4 shadow-card"
-          >
-            <div className="relative shrink-0 w-24 h-24 md:w-28 md:h-28 rounded-lg overflow-hidden bg-neutral-100">
-              {thumb ? (
-                <>
-                  {/* Blurred backdrop preserves portrait reels and flyers
-                      in the seller-facing report — full headline + branding
-                      visible instead of being top/bottom-cropped. */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={thumb}
-                    alt=""
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full object-cover blur-lg scale-110 opacity-55 text-transparent"
-                  />
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={thumb}
-                    alt=""
-                    className="absolute inset-0 w-full h-full object-contain text-transparent"
-                  />
-                </>
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-neutral-200 to-neutral-100">
-                  <PlatformBadge platform={post.platform} size="md" />
-                </div>
-              )}
-              <div className="absolute top-1 left-1 z-10">
-                <PlatformBadge platform={post.platform} size="sm" />
-              </div>
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-[11px] text-neutral-500 uppercase tracking-wider">
-                <span>{platformLabel(post.platform)}</span>
-                {post.posted_at ? (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <time dateTime={post.posted_at}>
-                      {formatShortDate(post.posted_at)}
-                    </time>
-                  </>
-                ) : null}
-              </div>
-              <p className="mt-1 text-sm text-neutral-900 line-clamp-2 leading-snug">
-                {post.caption || (
-                  <span className="text-neutral-400 italic">
-                    No caption recorded.
-                  </span>
-                )}
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-neutral-600">
-                <span>
-                  <strong className="text-neutral-900 font-semibold tabular-nums">
-                    {formatCompactNumber(post.reach)}
-                  </strong>{" "}
-                  reach
-                </span>
-                <span>
-                  <strong className="text-neutral-900 font-semibold tabular-nums">
-                    {formatCompactNumber(post.engagements)}
-                  </strong>{" "}
-                  engagements
-                </span>
-                {post.permalink ? (
-                  <a
-                    href={post.permalink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-auto inline-flex items-center gap-1 text-gold-700 hover:text-gold-800 hover:underline"
-                  >
-                    View on {platformLabel(post.platform)}
-                    <ExternalIcon />
-                  </a>
-                ) : null}
-              </div>
-            </div>
-          </li>
+          <PostRow key={post.id} post={post} isLast={isLast} />
         );
       })}
     </ol>
   );
 }
 
-/* ----------------------------------------------------------------------- *
- *  Alliance Marketing Engine — company-wide differentiator
- * ----------------------------------------------------------------------- */
-
-function MarketingEngineSection({ rollup }: { rollup: CompanyRollup }) {
-  const followersTotalLabel = formatCompactNumber(rollup.followers.total);
-  const breakdownParts: string[] = [];
-  if (rollup.followers.instagram)
-    breakdownParts.push(
-      `${formatCompactNumber(rollup.followers.instagram)} Instagram`,
-    );
-  if (rollup.followers.facebook)
-    breakdownParts.push(
-      `${formatCompactNumber(rollup.followers.facebook)} Facebook`,
-    );
-  if (rollup.followers.tiktok)
-    breakdownParts.push(
-      `${formatCompactNumber(rollup.followers.tiktok)} TikTok`,
-    );
+function PostRow({ post, isLast }: { post: LivePost; isLast: boolean }) {
+  const thumb = post.thumbnail_url || post.media_url || null;
+  const caption = post.caption || "No caption recorded.";
 
   return (
-    <section className="rounded-2xl border border-gold-200 bg-gradient-to-br from-gold-50/60 via-white to-white p-6 md:p-8 shadow-card relative overflow-hidden">
+    <li
+      style={{
+        display: "grid",
+        gridTemplateColumns: "96px minmax(0, 1fr) auto",
+        gap: 28,
+        padding: "24px 0",
+        borderTop: "1px solid #ececec",
+        borderBottom: isLast ? "1px solid #ececec" : undefined,
+        alignItems: "center",
+      }}
+    >
+      {/* Thumbnail with blurred backdrop */}
       <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -top-12 -right-12 w-56 h-56 rounded-full bg-gold-200/40 blur-3xl"
-      />
-
-      <div className="relative space-y-6">
-        <div>
-          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gold-700">
+        style={{
+          position: "relative",
+          width: 96,
+          height: 96,
+          overflow: "hidden",
+          backgroundColor: "#f4f4f4",
+        }}
+      >
+        {thumb ? (
+          <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/brand/c21-seal.png"
+              src={thumb}
               alt=""
-              className="w-5 h-6 object-contain shrink-0 text-transparent"
+              aria-hidden="true"
+              className="text-transparent"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                filter: "blur(16px)",
+                transform: "scale(1.15)",
+                opacity: 0.55,
+              }}
             />
-            The Alliance Marketing Engine
-          </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumb}
+              alt=""
+              className="text-transparent"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+              }}
+            />
+          </>
+        ) : null}
+      </div>
 
-          <h2 className="mt-3 text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
-            Your listing isn&apos;t being marketed in a silo.
-          </h2>
-
-          <p className="mt-3 max-w-3xl text-sm md:text-[15px] text-neutral-700 leading-relaxed">
-            Every post we publish — for every Alliance listing — adds to a
-            single marketing engine. Here&apos;s what that engine has produced
-            recently, and over the last full year.
-          </p>
+      {/* Caption block */}
+      <div style={{ minWidth: 0 }}>
+        <div style={EYEBROW_STYLE}>
+          {platformLabel(post.platform)}
+          {post.posted_at ? ` · ${formatShortDate(post.posted_at)}` : ""}
         </div>
+        <p
+          style={{
+            marginTop: 8,
+            fontSize: 15,
+            lineHeight: 1.55,
+            color: "#171717",
+            fontWeight: 400,
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {caption}
+        </p>
+      </div>
 
-        {/* 30d vs 365d side-by-side */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <EngineWindow
-            label="Last 30 Days"
-            sublabel="Recent momentum"
-            posts={rollup.window_30d.posts}
-            reach={rollup.window_30d.reach}
-          />
-          <EngineWindow
-            label="Trailing 365 Days"
-            sublabel="A full year of work"
-            posts={rollup.window_365d.posts}
-            reach={rollup.window_365d.reach}
-            accent
-          />
+      {/* Reach number */}
+      <div style={{ textAlign: "right" }}>
+        <div
+          style={{
+            fontSize: 24,
+            lineHeight: 1.1,
+            fontWeight: 500,
+            color: "#171717",
+            fontVariantNumeric: "tabular-nums",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          {formatCompactNumber(post.reach)}
         </div>
-
-        {/* Followers — single full-width row (same in both windows) */}
-        <div className="rounded-xl border border-gold-200/70 bg-white/85 backdrop-blur p-5 md:p-6">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-            <div>
-              <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-gold-700">
-                Followers across platforms
-              </span>
-              <div className="mt-2 text-4xl md:text-5xl font-semibold tabular-nums text-neutral-900">
-                {followersTotalLabel}
-              </div>
-              {breakdownParts.length > 0 ? (
-                <div className="mt-2 text-xs md:text-sm text-neutral-500">
-                  {breakdownParts.join(" · ")}
-                </div>
-              ) : null}
-            </div>
-            <div className="text-xs md:text-sm text-neutral-600 md:text-right max-w-xs">
-              The same audience is exposed to your listing in both windows —
-              followers carry over.
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-gold-200/60 pt-4">
-          <p className="text-sm md:text-base font-medium text-neutral-900 leading-relaxed">
-            Your listing is part of all of this. Other firms don&apos;t open
-            the books like this — Alliance does.
-          </p>
-          <div className="mt-2 text-[11px] text-neutral-500">
-            As of {formatShortDate(rollup.captured_at)} ·{" "}
-            {rollup.active_listings} active Alliance listings · Numbers update
-            automatically as our cron sync runs.
-          </div>
+        <div
+          style={{
+            marginTop: 4,
+            fontSize: 10,
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            fontWeight: 500,
+            color: "#737373",
+          }}
+        >
+          Reach
         </div>
       </div>
-    </section>
+    </li>
   );
 }
 
-function EngineWindow({
-  label,
-  sublabel,
-  posts,
-  reach,
-  accent,
-}: {
-  label: string;
-  sublabel?: string;
-  posts: number;
-  reach: number;
-  accent?: boolean;
-}) {
+function DownloadGlyph() {
   return (
-    <div
-      className={
-        accent
-          ? "rounded-xl border border-gold-300 bg-white p-5 md:p-6 shadow-sm"
-          : "rounded-xl border border-neutral-200 bg-white p-5 md:p-6 shadow-sm"
-      }
+    <svg
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      aria-hidden="true"
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <div>
-          <div
-            className={
-              accent
-                ? "text-[11px] font-semibold uppercase tracking-[0.18em] text-gold-700"
-                : "text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-700"
-            }
-          >
-            {label}
-          </div>
-          {sublabel ? (
-            <div className="mt-0.5 text-[11px] text-neutral-500">
-              {sublabel}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div>
-          <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
-            Posts published
-          </div>
-          <div className="mt-1 text-2xl md:text-3xl font-semibold tabular-nums text-neutral-900">
-            {formatCompactNumber(posts)}
-          </div>
-        </div>
-        <div>
-          <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
-            People reached
-          </div>
-          <div className="mt-1 text-2xl md:text-3xl font-semibold tabular-nums text-neutral-900">
-            {formatCompactNumber(reach)}
-          </div>
-        </div>
-      </div>
-    </div>
+      <path
+        d="M12 4v12m0 0l-4-4m4 4l4-4M4 18v2h16v-2"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
+}
+
+function ArrowRightGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M5 12h14m0 0l-5-5m5 5l-5 5"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Tiny gold seal mark — approximates the C21 21 mark at 24x28 to anchor the
+// footer without shipping a heavy image. 60% opacity is applied by the parent
+// wrapper, per the gold-allowance spec.
+function C21SealMark() {
+  return (
+    <svg
+      width={24}
+      height={28}
+      viewBox="0 0 24 28"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      <rect width={24} height={28} fill={GOLD} />
+      <text
+        x="50%"
+        y="58%"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontFamily={FONT_STACK}
+        fontSize={11}
+        fontWeight={500}
+        fill="#ffffff"
+        letterSpacing="0.04em"
+      >
+        21
+      </text>
+    </svg>
+  );
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Address & office helpers
+ * ----------------------------------------------------------------------- */
+
+// Address is stored as "Street, Unit, City, State" or similar comma-joined
+// shape. We split into:
+//   line 1: the street + optional unit token (the part before the second-to-
+//           last comma)
+//   line 2: "Unit X, City" or "City, State" — whichever is more useful
+// This is a best-effort split that keeps the hero clean on real data.
+function firstLineOfAddress(address: string): string {
+  if (!address) return "";
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return parts[0] ?? address;
+  // First segment is the street address; the rest goes on line 2.
+  return parts[0];
+}
+
+function secondLineOfAddress(address: string): string {
+  if (!address) return "";
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return "";
+  return parts.slice(1).join(", ");
+}
+
+// Office name is not on the property row today, so we infer from the agent
+// email host where possible. Falls back to empty string (the CTA still reads
+// cleanly: "Century 21 Alliance").
+function officeFromEmail(email: string | null): string {
+  if (!email) return "";
+  const at = email.indexOf("@");
+  if (at === -1) return "";
+  const host = email.slice(at + 1).toLowerCase();
+  // Most Alliance offices use a single shared domain; surface the host as a
+  // crude tag (the design treats this as a soft subtitle).
+  if (host.includes("c21alliance")) return "C21 Alliance";
+  if (host.includes("century21")) return "Century 21";
+  return "";
 }
 
 /* ----------------------------------------------------------------------- *
@@ -964,34 +1136,3 @@ function FixtureReportView({
   );
 }
 
-/* ----------------------------------------------------------------------- *
- *  Icons
- * ----------------------------------------------------------------------- */
-
-function DownloadIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" aria-hidden="true">
-      <path
-        d="M12 4v12m0 0l-4-4m4 4l4-4M4 18v2h16v-2"
-        stroke="currentColor"
-        strokeWidth={1.8}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ExternalIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" aria-hidden="true">
-      <path
-        d="M14 4h6v6m0-6L10 14M9 4H4v16h16v-5"
-        stroke="currentColor"
-        strokeWidth={1.8}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
