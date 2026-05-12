@@ -14,22 +14,40 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * Numbers are computed at request time. The route renders with
  * `force-dynamic`, so each report load picks up the latest cron-synced
  * follower/post counts.
+ *
+ * Two windows are returned: 30d (recent momentum) and trailing-365d
+ * (full year's body of work). Sellers see them side-by-side in the
+ * Marketing Engine section.
  */
 export interface CompanyRollup {
   followers: {
     facebook: number | null;
     instagram: number | null;
     tiktok: number | null;
+    /** Sum across the three platforms — surfaced as "Audience" on the listing report. */
     total: number;
   };
-  /** Total posts published across all properties in the last 30 days */
-  posts_30d: number;
-  /** Sum of reach across those posts */
-  reach_30d: number;
-  /** Count of properties where status = 'active' */
+  /** Rolling 30-day window — short-term momentum. */
+  window_30d: WindowStats;
+  /** Trailing 365-day window — full year of work behind every listing. */
+  window_365d: WindowStats;
+  /** Count of properties where status = 'active'. Same in either window. */
   active_listings: number;
-  /** ISO timestamp when these numbers were computed */
+  /** ISO timestamp when these numbers were computed. */
   captured_at: string;
+
+  // --- Back-compat aliases (legacy callers reading the flat shape) ---
+  /** @deprecated use `window_30d.posts` */
+  posts_30d: number;
+  /** @deprecated use `window_30d.reach` */
+  reach_30d: number;
+}
+
+export interface WindowStats {
+  /** Number of posts published in this window across all properties. */
+  posts: number;
+  /** Sum of post-level reach in this window. */
+  reach: number;
 }
 
 function readNum(value: unknown): number {
@@ -42,6 +60,7 @@ function readNum(value: unknown): number {
 }
 
 function emptyRollup(): CompanyRollup {
+  const empty: WindowStats = { posts: 0, reach: 0 };
   return {
     followers: {
       facebook: null,
@@ -49,10 +68,12 @@ function emptyRollup(): CompanyRollup {
       tiktok: null,
       total: 0,
     },
-    posts_30d: 0,
-    reach_30d: 0,
+    window_30d: empty,
+    window_365d: empty,
     active_listings: 0,
     captured_at: new Date().toISOString(),
+    posts_30d: 0,
+    reach_30d: 0,
   };
 }
 
@@ -96,25 +117,55 @@ async function loadLatestFollowers(
   return result;
 }
 
-async function loadPosts30d(
+/**
+ * Load posts within both windows in a single query, then bucket in JS. One
+ * round-trip beats two; the data set is small (a few hundred rows over a
+ * full year for one brokerage).
+ */
+async function loadPostWindows(
   supabase: ReturnType<typeof createAdminClient>,
-): Promise<{ posts_30d: number; reach_30d: number }> {
+): Promise<{ window_30d: WindowStats; window_365d: WindowStats }> {
   try {
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const now = Date.now();
+    const cutoff30 = new Date(now - 30 * 86_400_000).toISOString();
+    const cutoff365 = new Date(now - 365 * 86_400_000).toISOString();
+
     const { data, error } = await supabase
       .from("posts")
       .select("metrics, posted_at")
-      .gte("posted_at", cutoff);
-    if (error || !data) return { posts_30d: 0, reach_30d: 0 };
+      .gte("posted_at", cutoff365);
+    if (error || !data) {
+      const empty: WindowStats = { posts: 0, reach: 0 };
+      return { window_30d: empty, window_365d: empty };
+    }
 
-    let reach = 0;
+    const cutoff30Ms = new Date(cutoff30).getTime();
+    let posts30 = 0;
+    let reach30 = 0;
+    let posts365 = 0;
+    let reach365 = 0;
+
     for (const row of data) {
       const m = (row.metrics ?? {}) as Record<string, unknown>;
-      reach += readNum(m.reach) || readNum(m.impressions);
+      const reach = readNum(m.reach) || readNum(m.impressions);
+      posts365 += 1;
+      reach365 += reach;
+      if (
+        row.posted_at &&
+        new Date(row.posted_at).getTime() >= cutoff30Ms
+      ) {
+        posts30 += 1;
+        reach30 += reach;
+      }
     }
-    return { posts_30d: data.length, reach_30d: reach };
+
+    return {
+      window_30d: { posts: posts30, reach: reach30 },
+      window_365d: { posts: posts365, reach: reach365 },
+    };
   } catch {
-    return { posts_30d: 0, reach_30d: 0 };
+    const empty: WindowStats = { posts: 0, reach: 0 };
+    return { window_30d: empty, window_365d: empty };
   }
 }
 
@@ -140,18 +191,20 @@ async function loadActiveListings(
 export async function fetchCompanyRollup(): Promise<CompanyRollup> {
   try {
     const supabase = createAdminClient();
-    const [followers, posts30d, activeListings] = await Promise.all([
+    const [followers, windows, activeListings] = await Promise.all([
       loadLatestFollowers(supabase),
-      loadPosts30d(supabase),
+      loadPostWindows(supabase),
       loadActiveListings(supabase),
     ]);
 
     return {
       followers,
-      posts_30d: posts30d.posts_30d,
-      reach_30d: posts30d.reach_30d,
+      window_30d: windows.window_30d,
+      window_365d: windows.window_365d,
       active_listings: activeListings,
       captured_at: new Date().toISOString(),
+      posts_30d: windows.window_30d.posts,
+      reach_30d: windows.window_30d.reach,
     };
   } catch {
     return emptyRollup();

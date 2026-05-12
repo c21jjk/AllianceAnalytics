@@ -11,10 +11,10 @@ import {
   pdf,
 } from "@react-pdf/renderer";
 import type { ReportPayload } from "./build";
+import type { CompanyRollup } from "@/lib/data/company-rollup";
 import {
   formatCompactNumber,
   formatCurrency,
-  formatPercent,
   formatShortDate,
 } from "@/lib/format";
 import type { Platform } from "@/lib/types/post";
@@ -252,12 +252,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     marginBottom: 12,
   },
+  kpiColWide: {
+    // Visually elevated "Total reach" tile spanning two columns.
+    width: "66.666%",
+    paddingHorizontal: 6,
+    marginBottom: 12,
+  },
   kpiCard: {
     borderWidth: 1,
     borderColor: COLOR_BORDER,
     borderRadius: 6,
     padding: 14,
     backgroundColor: COLOR_PANEL,
+  },
+  kpiCardHero: {
+    borderWidth: 1,
+    borderColor: "#efe2c4",
+    borderRadius: 6,
+    padding: 16,
+    backgroundColor: "#fffbf1",
   },
   kpiLabel: {
     fontSize: 8,
@@ -270,6 +283,137 @@ const styles = StyleSheet.create({
     fontFamily: "Helvetica-Bold",
     fontSize: 22,
     color: COLOR_TEXT,
+  },
+  kpiValueHero: {
+    marginTop: 6,
+    fontFamily: "Helvetica-Bold",
+    fontSize: 36,
+    color: COLOR_GOLD_DARK,
+  },
+
+  // Per-platform reach share bars (below KPI grid)
+  shareList: {
+    marginTop: 8,
+  },
+  shareRow: {
+    marginBottom: 8,
+  },
+  shareRowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  shareLabel: {
+    fontSize: 9,
+    color: "#404040",
+    fontFamily: "Helvetica-Bold",
+  },
+  shareValue: {
+    fontSize: 9,
+    color: COLOR_TEXT_MUTED,
+  },
+  shareTrack: {
+    height: 6,
+    backgroundColor: "#f1f1f1",
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  shareFill: {
+    height: 6,
+    backgroundColor: COLOR_GOLD,
+    borderRadius: 3,
+  },
+
+  // Alliance Marketing Engine page
+  engineGrid: {
+    flexDirection: "row",
+    marginHorizontal: -6,
+    marginBottom: 14,
+  },
+  engineWindow: {
+    flex: 1,
+    paddingHorizontal: 6,
+  },
+  engineWindowLabel: {
+    fontSize: 8,
+    color: COLOR_TEXT_MUTED,
+    letterSpacing: 1.2,
+    fontFamily: "Helvetica-Bold",
+    marginBottom: 6,
+  },
+  engineTile: {
+    borderWidth: 1,
+    borderColor: "#efe2c4",
+    backgroundColor: "#fffbf1",
+    borderRadius: 6,
+    padding: 14,
+    marginBottom: 10,
+  },
+  engineTileLabel: {
+    fontSize: 8,
+    color: COLOR_TEXT_MUTED,
+    letterSpacing: 1.2,
+    fontFamily: "Helvetica-Bold",
+  },
+  engineTileValue: {
+    marginTop: 6,
+    fontFamily: "Helvetica-Bold",
+    fontSize: 26,
+    color: COLOR_TEXT,
+  },
+  engineFollowerRow: {
+    borderWidth: 1,
+    borderColor: "#efe2c4",
+    backgroundColor: "#fffbf1",
+    borderRadius: 6,
+    padding: 16,
+    marginBottom: 14,
+  },
+  engineFollowerLabel: {
+    fontSize: 8,
+    color: COLOR_TEXT_MUTED,
+    letterSpacing: 1.2,
+    fontFamily: "Helvetica-Bold",
+  },
+  engineFollowerTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
+  engineFollowerTotal: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 32,
+    color: COLOR_GOLD_DARK,
+  },
+  engineFollowerBreakdown: {
+    flexDirection: "row",
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#efe2c4",
+  },
+  engineFollowerCell: {
+    flex: 1,
+  },
+  engineFollowerCellLabel: {
+    fontSize: 8,
+    color: COLOR_TEXT_MUTED,
+    letterSpacing: 1.2,
+    fontFamily: "Helvetica-Bold",
+  },
+  engineFollowerCellValue: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 14,
+    color: COLOR_TEXT,
+    marginTop: 4,
+  },
+  engineQuote: {
+    fontSize: 11,
+    color: "#404040",
+    lineHeight: 1.5,
+    fontFamily: "Helvetica-Oblique",
+    marginTop: 8,
   },
 
   // Campaigns
@@ -529,19 +673,45 @@ function KpiCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function KpiPage({ payload }: { payload: ReportPayload }) {
+/**
+ * Wide hero KPI tile that spans 2/3 of the grid width. Used to give "Total
+ * reach" the visual emphasis John called for in the redesign spec.
+ */
+function HeroKpiCard({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.kpiColWide}>
+      <View style={styles.kpiCardHero}>
+        <Text style={styles.kpiLabel}>{label.toUpperCase()}</Text>
+        <Text style={styles.kpiValueHero}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function KpiPage({
+  payload,
+  companyRollup,
+}: {
+  payload: ReportPayload;
+  companyRollup: CompanyRollup;
+}) {
   const k = payload.kpis;
+  const platformShare = payload.audience.platform_share;
   return (
     <Page size="LETTER" style={styles.page} wrap={false}>
       <BrandHeader payload={payload} />
-      <Text style={styles.sectionH}>The numbers, at a glance</Text>
+      <Text style={styles.sectionH}>Your home&apos;s performance</Text>
       <Text style={styles.sectionSub}>
         Aggregated across every post that ran for {payload.property.address}{" "}
         during the report period.
       </Text>
 
       <View style={styles.kpiGrid}>
-        <KpiCard label="Total reach" value={formatCompactNumber(k.total_reach)} />
+        {/* Hero tile — emphasized total reach */}
+        <HeroKpiCard
+          label="Total reach"
+          value={formatCompactNumber(k.total_reach)}
+        />
         <KpiCard
           label="Total impressions"
           value={formatCompactNumber(k.total_impressions)}
@@ -550,22 +720,135 @@ function KpiPage({ payload }: { payload: ReportPayload }) {
           label="Total engagements"
           value={formatCompactNumber(k.total_engagements)}
         />
-        <KpiCard
-          label="Engagement rate"
-          value={formatPercent(k.engagement_rate)}
-        />
         <KpiCard label="Posts" value={k.post_count.toString()} />
         <KpiCard
           label="Platforms"
           value={k.platforms_covered.toString()}
         />
-        {typeof k.link_clicks === "number" && k.link_clicks > 0 ? (
-          <KpiCard
-            label="Link clicks"
-            value={formatCompactNumber(k.link_clicks)}
-          />
-        ) : null}
+        <KpiCard
+          label="Audience"
+          value={formatCompactNumber(companyRollup.followers.total)}
+        />
       </View>
+
+      {platformShare.length > 0 ? (
+        <View style={styles.shareList}>
+          <Text style={styles.listKicker}>REACH SHARE BY PLATFORM</Text>
+          {platformShare.map((p) => (
+            <View key={p.platform} style={styles.shareRow}>
+              <View style={styles.shareRowHeader}>
+                <Text style={styles.shareLabel}>{platformLabel(p.platform)}</Text>
+                <Text style={styles.shareValue}>
+                  {formatCompactNumber(p.reach)} reach {"·"}{" "}
+                  {Math.round(p.share * 100)}%
+                </Text>
+              </View>
+              <View style={styles.shareTrack}>
+                <View
+                  style={[
+                    styles.shareFill,
+                    {
+                      width: `${Math.max(2, Math.round(p.share * 100))}%`,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </Page>
+  );
+}
+
+function EnginePage({
+  payload,
+  companyRollup,
+}: {
+  payload: ReportPayload;
+  companyRollup: CompanyRollup;
+}) {
+  const w30 = companyRollup.window_30d;
+  const w365 = companyRollup.window_365d;
+  const f = companyRollup.followers;
+  return (
+    <Page size="LETTER" style={styles.page} wrap={false}>
+      <BrandHeader payload={payload} />
+      <Text style={styles.sectionH}>The Alliance Marketing Engine</Text>
+      <Text style={styles.sectionSub}>
+        Your listing rides on the volume Alliance puts out every day. Here is the
+        full body of work behind it.
+      </Text>
+
+      <View style={styles.engineGrid}>
+        <View style={styles.engineWindow}>
+          <Text style={styles.engineWindowLabel}>LAST 30 DAYS</Text>
+          <View style={styles.engineTile}>
+            <Text style={styles.engineTileLabel}>POSTS PUBLISHED</Text>
+            <Text style={styles.engineTileValue}>
+              {formatCompactNumber(w30.posts)}
+            </Text>
+          </View>
+          <View style={styles.engineTile}>
+            <Text style={styles.engineTileLabel}>PEOPLE REACHED</Text>
+            <Text style={styles.engineTileValue}>
+              {formatCompactNumber(w30.reach)}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.engineWindow}>
+          <Text style={styles.engineWindowLabel}>TRAILING 365 DAYS</Text>
+          <View style={styles.engineTile}>
+            <Text style={styles.engineTileLabel}>POSTS PUBLISHED</Text>
+            <Text style={styles.engineTileValue}>
+              {formatCompactNumber(w365.posts)}
+            </Text>
+          </View>
+          <View style={styles.engineTile}>
+            <Text style={styles.engineTileLabel}>PEOPLE REACHED</Text>
+            <Text style={styles.engineTileValue}>
+              {formatCompactNumber(w365.reach)}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.engineFollowerRow}>
+        <Text style={styles.engineFollowerLabel}>
+          FOLLOWERS ACROSS PLATFORMS
+        </Text>
+        <View style={styles.engineFollowerTopRow}>
+          <Text style={styles.engineFollowerTotal}>
+            {formatCompactNumber(f.total)}
+          </Text>
+          <Text style={styles.shareValue}>combined audience</Text>
+        </View>
+        <View style={styles.engineFollowerBreakdown}>
+          <View style={styles.engineFollowerCell}>
+            <Text style={styles.engineFollowerCellLabel}>FACEBOOK</Text>
+            <Text style={styles.engineFollowerCellValue}>
+              {formatCompactNumber(f.facebook ?? 0)}
+            </Text>
+          </View>
+          <View style={styles.engineFollowerCell}>
+            <Text style={styles.engineFollowerCellLabel}>INSTAGRAM</Text>
+            <Text style={styles.engineFollowerCellValue}>
+              {formatCompactNumber(f.instagram ?? 0)}
+            </Text>
+          </View>
+          <View style={styles.engineFollowerCell}>
+            <Text style={styles.engineFollowerCellLabel}>TIKTOK</Text>
+            <Text style={styles.engineFollowerCellValue}>
+              {formatCompactNumber(f.tiktok ?? 0)}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <Text style={styles.engineQuote}>
+        Your listing is part of all of this. Other firms don&apos;t open the
+        books like this — Alliance does.
+      </Text>
     </Page>
   );
 }
@@ -679,7 +962,13 @@ function NarrativePage({ payload }: { payload: ReportPayload }) {
 // Document
 // ---------------------------------------------------------------------------
 
-function ReportDocument({ payload }: { payload: ReportPayload }) {
+function ReportDocument({
+  payload,
+  companyRollup,
+}: {
+  payload: ReportPayload;
+  companyRollup: CompanyRollup;
+}) {
   return (
     <Document
       title={`Alliance Property Report — ${payload.property.mls}`}
@@ -687,8 +976,9 @@ function ReportDocument({ payload }: { payload: ReportPayload }) {
       subject="Property marketing report"
     >
       <HeroPage payload={payload} />
-      <KpiPage payload={payload} />
+      <KpiPage payload={payload} companyRollup={companyRollup} />
       <CampaignsPage payload={payload} />
+      <EnginePage payload={payload} companyRollup={companyRollup} />
       <NarrativePage payload={payload} />
     </Document>
   );
@@ -707,8 +997,11 @@ function ReportDocument({ payload }: { payload: ReportPayload }) {
  */
 export async function renderReportPdf(
   payload: ReportPayload,
+  companyRollup: CompanyRollup,
 ): Promise<Uint8Array> {
-  const instance = pdf(<ReportDocument payload={payload} />);
+  const instance = pdf(
+    <ReportDocument payload={payload} companyRollup={companyRollup} />,
+  );
   // @react-pdf/renderer v4 returns a NodeJS.ReadableStream from toBuffer().
   // Older versions returned a Buffer directly. Handle both shapes so this
   // code keeps working across patch upgrades.

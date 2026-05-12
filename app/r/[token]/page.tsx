@@ -16,7 +16,6 @@ import PlatformBadge from "@/components/PlatformBadge";
 import {
   formatCompactNumber,
   formatCurrency,
-  formatPercent,
   formatShortDate,
 } from "@/lib/format";
 import type { Platform, PropertyRef } from "@/lib/types/post";
@@ -272,7 +271,7 @@ export default async function PublicReportPage({ params }: PageProps) {
  * ----------------------------------------------------------------------- */
 
 function LiveReportView({ data }: { data: LiveData }) {
-  const { property, payload, posts, rollup } = data;
+  const { property, payload, posts, rollup, recipient_name } = data;
   const pdfHref = `/r/${encodeURIComponent(data.token)}/flyer.pdf`;
   const flyerHref = `/r/${encodeURIComponent(data.token)}/flyer`;
 
@@ -310,7 +309,7 @@ function LiveReportView({ data }: { data: LiveData }) {
             <img
               src="/brand/c21-seal.png"
               alt="Century 21 Alliance"
-              className="w-10 h-12 object-contain shrink-0"
+              className="w-10 h-12 object-contain shrink-0 text-transparent"
             />
             <div className="leading-tight">
               <div className="text-sm font-semibold text-neutral-900">
@@ -321,43 +320,37 @@ function LiveReportView({ data }: { data: LiveData }) {
               </div>
             </div>
           </div>
-          {data.recipient_name ? (
+          {recipient_name ? (
             <div className="hidden sm:block text-right">
               <div className="text-[11px] text-neutral-500 uppercase tracking-wider">
                 Prepared for
               </div>
               <div className="text-sm font-medium text-neutral-900">
-                {data.recipient_name}
+                {recipient_name}
               </div>
             </div>
           ) : null}
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 md:px-6 py-8 space-y-10">
-        {/* Property hero */}
-        <PropertyHero property={property} />
+      <main className="max-w-4xl mx-auto px-4 md:px-6 py-8 md:py-10 space-y-12 md:space-y-14">
+        {/* 1. Property hero */}
+        <PropertyHero property={property} recipientName={recipient_name} />
 
-        {/* KPI rollup */}
+        {/* 2. Your Home's Performance */}
+        <ListingPerformanceSection
+          payload={payload}
+          postsCount={posts.length}
+          audienceTotal={rollup.followers.total}
+        />
+
+        {/* 3. Every Post Behind Your Home */}
         <section className="space-y-3">
           <div>
-            <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
-              Your Listing&apos;s Numbers
+            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
+              Every post behind your home
             </h2>
-            <p className="text-sm text-neutral-500">
-              Aggregated across every post that ran for your home.
-            </p>
-          </div>
-          <PropertyKpiRollup kpis={payload.kpis} />
-        </section>
-
-        {/* Chronological post feed */}
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
-              Every post we put behind your home
-            </h2>
-            <p className="text-sm text-neutral-500">
+            <p className="mt-1 text-sm text-neutral-500">
               {posts.length === 0
                 ? "Posts attached to your listing will show up here."
                 : `${posts.length} ${posts.length === 1 ? "post" : "posts"} across Instagram, Facebook, and TikTok, newest first.`}
@@ -366,44 +359,11 @@ function LiveReportView({ data }: { data: LiveData }) {
           <PostTimeline posts={posts} />
         </section>
 
-        {/* Alliance marketing engine — the differentiator */}
+        {/* 4. The Alliance Marketing Engine */}
         <MarketingEngineSection rollup={rollup} />
 
-        {/* Closing / agent contact */}
-        <section className="rounded-xl border border-neutral-200 bg-white p-6 md:p-8 shadow-card">
-          <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
-            Questions about this report?
-          </h2>
-          <p className="mt-2 text-sm text-neutral-600 leading-relaxed max-w-2xl">
-            Reply to the email this report came from, or reach out to your
-            Alliance agent directly. We want every seller to see exactly how
-            their home is being marketed — no black box.
-          </p>
-          {property.agent_name ? (
-            <div className="mt-4 inline-flex items-center gap-3 rounded-lg border border-gold-200 bg-gold-50/40 px-4 py-3">
-              <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-gold-500 text-white text-sm font-semibold">
-                {property.agent_name.charAt(0).toUpperCase()}
-              </span>
-              <div className="leading-tight">
-                <div className="text-sm font-medium text-neutral-900">
-                  {property.agent_name}
-                </div>
-                {property.agent_email ? (
-                  <a
-                    href={`mailto:${property.agent_email}`}
-                    className="text-xs text-gold-700 hover:underline"
-                  >
-                    {property.agent_email}
-                  </a>
-                ) : (
-                  <div className="text-xs text-neutral-500">
-                    Your Alliance listing agent
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : null}
-        </section>
+        {/* 5. Agent CTA + Closing */}
+        <AgentCtaSection property={property} />
       </main>
 
       <footer className="border-t border-neutral-200 bg-white mt-8">
@@ -412,7 +372,7 @@ function LiveReportView({ data }: { data: LiveData }) {
           <img
             src="/brand/alliance-wordmark.png"
             alt="Century 21 Alliance"
-            className="mx-auto h-7 md:h-8 w-auto opacity-90"
+            className="mx-auto h-7 md:h-8 w-auto opacity-90 text-transparent"
           />
           <div className="mt-4 text-sm text-neutral-700">
             Prepared by Alliance Social
@@ -430,16 +390,22 @@ function LiveReportView({ data }: { data: LiveData }) {
  *  Property hero — page-level, full-bleed
  * ----------------------------------------------------------------------- */
 
-function PropertyHero({ property }: { property: LiveData["property"] }) {
+function PropertyHero({
+  property,
+  recipientName,
+}: {
+  property: LiveData["property"];
+  recipientName: string | null;
+}) {
   return (
-    <section className="rounded-xl overflow-hidden ring-1 ring-neutral-200 shadow-card bg-white">
+    <section className="rounded-2xl overflow-hidden ring-1 ring-neutral-200 shadow-card bg-white">
       <div className="relative w-full aspect-[16/9] sm:aspect-[21/9] bg-neutral-100">
         {property.hero_image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={property.hero_image_url}
             alt={`Cover photo for ${property.address}`}
-            className="absolute inset-0 w-full h-full object-cover"
+            className="absolute inset-0 w-full h-full object-cover text-transparent"
           />
         ) : (
           <div
@@ -450,12 +416,17 @@ function PropertyHero({ property }: { property: LiveData["property"] }) {
             <img
               src="/brand/c21-seal.png"
               alt=""
-              className="w-32 h-40 object-contain opacity-90"
+              className="w-32 h-40 object-contain opacity-90 text-transparent"
             />
           </div>
         )}
         {/* Bottom overlay */}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-5 md:px-8 py-5 md:py-7">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-5 md:px-8 py-5 md:py-8">
+          {recipientName ? (
+            <div className="mb-2 inline-flex items-center rounded-md bg-gold-500/95 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-white">
+              Prepared for {recipientName}
+            </div>
+          ) : null}
           <div className="text-[11px] font-medium uppercase tracking-wider text-white/85">
             MLS {property.mls}
           </div>
@@ -481,6 +452,154 @@ function PropertyHero({ property }: { property: LiveData["property"] }) {
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Section 2 — Your Home's Performance
+ * ----------------------------------------------------------------------- */
+
+function ListingPerformanceSection({
+  payload,
+  postsCount,
+  audienceTotal,
+}: {
+  payload: ReportPayload;
+  postsCount: number;
+  audienceTotal: number;
+}) {
+  const totalReach = payload.kpis.total_reach;
+  const totalEngagements = payload.kpis.total_engagements;
+  // Prefer the kpis post_count (post_ids length); fall back to query result.
+  const postCount = payload.kpis.post_count || postsCount;
+
+  return (
+    <section className="space-y-6">
+      <div>
+        <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
+          Your home&apos;s performance
+        </h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          Aggregated across every post that ran for your listing.
+        </p>
+      </div>
+
+      {/* Hero number — total reach */}
+      <div className="rounded-2xl bg-[#252526] text-white p-6 md:p-10 shadow-card relative overflow-hidden">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-16 -right-16 w-64 h-64 rounded-full bg-gold-500/20 blur-3xl"
+        />
+        <div className="relative">
+          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-gold-400">
+            Total Reach
+          </div>
+          <div className="mt-2 text-5xl md:text-7xl font-semibold tabular-nums tracking-tight text-gold-400">
+            {formatCompactNumber(totalReach)}
+          </div>
+          <div className="mt-2 text-sm md:text-base text-white/75 max-w-xl">
+            People reached by the posts behind your home — the audience that
+            saw, scrolled, or watched.
+          </div>
+        </div>
+      </div>
+
+      {/* 3-tile row */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <PerformanceTile
+          label="Posts published"
+          value={formatCompactNumber(postCount)}
+          sublabel="Across Instagram, Facebook, and TikTok"
+        />
+        <PerformanceTile
+          label="Total Engagements"
+          value={formatCompactNumber(totalEngagements)}
+          sublabel="Likes, comments, shares, and saves"
+        />
+        <PerformanceTile
+          label="Audience"
+          value={formatCompactNumber(audienceTotal)}
+          sublabel="The audience your listing is being marketed to"
+        />
+      </div>
+    </section>
+  );
+}
+
+function PerformanceTile({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: string;
+  sublabel?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card flex flex-col">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+        {label}
+      </span>
+      <span className="mt-2 text-3xl md:text-4xl font-semibold tabular-nums text-neutral-900">
+        {value}
+      </span>
+      {sublabel ? (
+        <span className="mt-1.5 text-[11px] text-neutral-500 leading-snug">
+          {sublabel}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Section 5 — Agent CTA + closing
+ * ----------------------------------------------------------------------- */
+
+function AgentCtaSection({ property }: { property: LiveData["property"] }) {
+  return (
+    <section className="rounded-2xl border border-neutral-200 bg-white p-6 md:p-8 shadow-card">
+      <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
+        Questions about this report?
+      </h2>
+      <p className="mt-2 text-sm md:text-base text-neutral-600 leading-relaxed max-w-2xl">
+        Reply to the email this report came from, or reach out to your
+        Alliance agent directly. We want every seller to see exactly how their
+        home is being marketed — no black box.
+      </p>
+      {property.agent_name ? (
+        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-gold-200 bg-gold-50/40 px-4 py-3">
+          <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gold-500 text-white text-base font-semibold">
+            {property.agent_name.charAt(0).toUpperCase()}
+          </span>
+          <div className="leading-tight">
+            <div className="text-sm font-medium text-neutral-900">
+              {property.agent_name}
+            </div>
+            {property.agent_email ? (
+              <a
+                href={`mailto:${property.agent_email}`}
+                className="text-xs text-gold-700 hover:underline"
+              >
+                {property.agent_email}
+              </a>
+            ) : (
+              <div className="text-xs text-neutral-500">
+                Your Alliance listing agent
+              </div>
+            )}
+          </div>
+          {property.agent_email ? (
+            <a
+              href={`mailto:${property.agent_email}`}
+              className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-white bg-gold-500 hover:bg-gold-600 px-3 py-2 rounded-md"
+            >
+              Email {property.agent_name.split(" ")[0]}
+            </a>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -597,8 +716,6 @@ function PostTimeline({ posts }: { posts: LivePost[] }) {
 
 function MarketingEngineSection({ rollup }: { rollup: CompanyRollup }) {
   const followersTotalLabel = formatCompactNumber(rollup.followers.total);
-  const reach30dLabel = formatCompactNumber(rollup.reach_30d);
-  const posts30dLabel = formatCompactNumber(rollup.posts_30d);
   const breakdownParts: string[] = [];
   if (rollup.followers.instagram)
     breakdownParts.push(
@@ -614,88 +731,149 @@ function MarketingEngineSection({ rollup }: { rollup: CompanyRollup }) {
     );
 
   return (
-    <section className="rounded-xl border border-gold-200 bg-gradient-to-br from-gold-50/60 via-white to-white p-6 md:p-8 shadow-card relative overflow-hidden">
+    <section className="rounded-2xl border border-gold-200 bg-gradient-to-br from-gold-50/60 via-white to-white p-6 md:p-8 shadow-card relative overflow-hidden">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -top-12 -right-12 w-48 h-48 rounded-full bg-gold-200/40 blur-3xl"
+        className="pointer-events-none absolute -top-12 -right-12 w-56 h-56 rounded-full bg-gold-200/40 blur-3xl"
       />
 
-      <div className="relative">
-        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-gold-700">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/c21-seal.png"
-            alt=""
-            className="w-5 h-6 object-contain shrink-0"
-          />
-          The Alliance Marketing Engine
+      <div className="relative space-y-6">
+        <div>
+          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gold-700">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/c21-seal.png"
+              alt=""
+              className="w-5 h-6 object-contain shrink-0 text-transparent"
+            />
+            The Alliance Marketing Engine
+          </div>
+
+          <h2 className="mt-3 text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
+            Your listing isn&apos;t being marketed in a silo.
+          </h2>
+
+          <p className="mt-3 max-w-3xl text-sm md:text-[15px] text-neutral-700 leading-relaxed">
+            Every post we publish — for every Alliance listing — adds to a
+            single marketing engine. Here&apos;s what that engine has produced
+            recently, and over the last full year.
+          </p>
         </div>
 
-        <h2 className="mt-3 text-xl md:text-2xl font-semibold tracking-tight text-neutral-900">
-          Your listing isn&apos;t being marketed in a silo.
-        </h2>
-
-        <p className="mt-3 max-w-3xl text-sm md:text-[15px] text-neutral-700 leading-relaxed">
-          It&apos;s part of a marketing engine reaching{" "}
-          <strong className="text-neutral-900">{followersTotalLabel}</strong>{" "}
-          followers across Instagram, Facebook, and TikTok, with{" "}
-          <strong className="text-neutral-900">{posts30dLabel}</strong> posts
-          published in the last 30 days reaching{" "}
-          <strong className="text-neutral-900">{reach30dLabel}</strong> people.
-          Other firms don&apos;t open the books like this — Alliance does.
-        </p>
-
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <EngineTile
-            label="Followers across all platforms"
-            value={followersTotalLabel}
-            sublabel={
-              breakdownParts.length > 0 ? breakdownParts.join(" · ") : undefined
-            }
+        {/* 30d vs 365d side-by-side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <EngineWindow
+            label="Last 30 Days"
+            sublabel="Recent momentum"
+            posts={rollup.window_30d.posts}
+            reach={rollup.window_30d.reach}
           />
-          <EngineTile
-            label="Posts in the last 30 days"
-            value={posts30dLabel}
-            sublabel={`Across ${rollup.active_listings} active Alliance listings`}
-          />
-          <EngineTile
-            label="People reached in the last 30 days"
-            value={reach30dLabel}
-            sublabel="Unique people, not impressions"
+          <EngineWindow
+            label="Trailing 365 Days"
+            sublabel="A full year of work"
+            posts={rollup.window_365d.posts}
+            reach={rollup.window_365d.reach}
+            accent
           />
         </div>
 
-        <div className="mt-4 text-[11px] text-neutral-500">
-          As of {formatShortDate(rollup.captured_at)} · Numbers update
-          automatically as our cron sync runs.
+        {/* Followers — single full-width row (same in both windows) */}
+        <div className="rounded-xl border border-gold-200/70 bg-white/85 backdrop-blur p-5 md:p-6">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+            <div>
+              <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-gold-700">
+                Followers across platforms
+              </span>
+              <div className="mt-2 text-4xl md:text-5xl font-semibold tabular-nums text-neutral-900">
+                {followersTotalLabel}
+              </div>
+              {breakdownParts.length > 0 ? (
+                <div className="mt-2 text-xs md:text-sm text-neutral-500">
+                  {breakdownParts.join(" · ")}
+                </div>
+              ) : null}
+            </div>
+            <div className="text-xs md:text-sm text-neutral-600 md:text-right max-w-xs">
+              The same audience is exposed to your listing in both windows —
+              followers carry over.
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-gold-200/60 pt-4">
+          <p className="text-sm md:text-base font-medium text-neutral-900 leading-relaxed">
+            Your listing is part of all of this. Other firms don&apos;t open
+            the books like this — Alliance does.
+          </p>
+          <div className="mt-2 text-[11px] text-neutral-500">
+            As of {formatShortDate(rollup.captured_at)} ·{" "}
+            {rollup.active_listings} active Alliance listings · Numbers update
+            automatically as our cron sync runs.
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-function EngineTile({
+function EngineWindow({
   label,
-  value,
   sublabel,
+  posts,
+  reach,
+  accent,
 }: {
   label: string;
-  value: string;
   sublabel?: string;
+  posts: number;
+  reach: number;
+  accent?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-gold-200/70 bg-white/85 backdrop-blur p-4 flex flex-col">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-gold-700">
-        {label}
-      </span>
-      <span className="mt-2 text-2xl md:text-3xl font-semibold tabular-nums text-neutral-900">
-        {value}
-      </span>
-      {sublabel ? (
-        <span className="mt-1 text-[11px] text-neutral-500 leading-snug">
-          {sublabel}
-        </span>
-      ) : null}
+    <div
+      className={
+        accent
+          ? "rounded-xl border border-gold-300 bg-white p-5 md:p-6 shadow-sm"
+          : "rounded-xl border border-neutral-200 bg-white p-5 md:p-6 shadow-sm"
+      }
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <div>
+          <div
+            className={
+              accent
+                ? "text-[11px] font-semibold uppercase tracking-[0.18em] text-gold-700"
+                : "text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-700"
+            }
+          >
+            {label}
+          </div>
+          {sublabel ? (
+            <div className="mt-0.5 text-[11px] text-neutral-500">
+              {sublabel}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+            Posts published
+          </div>
+          <div className="mt-1 text-2xl md:text-3xl font-semibold tabular-nums text-neutral-900">
+            {formatCompactNumber(posts)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+            People reached
+          </div>
+          <div className="mt-1 text-2xl md:text-3xl font-semibold tabular-nums text-neutral-900">
+            {formatCompactNumber(reach)}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

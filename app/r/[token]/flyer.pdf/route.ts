@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildReportPayload } from "@/lib/reports/build";
+import { fetchCompanyRollup } from "@/lib/data/company-rollup";
 import { getPdfRedirectTarget, renderReportPdf } from "@/lib/reports/pdf";
 
 export const runtime = "nodejs";
@@ -94,8 +95,11 @@ export async function GET(req: Request, ctx: RouteContext) {
   // 4) Build payload + render PDF. On any failure, fall back to the HTML
   //    print view so the user is never blocked.
   try {
-    const payload = await buildReportPayload(propertyId);
-    const bytes = await renderReportPdf(payload);
+    const [payload, companyRollup] = await Promise.all([
+      buildReportPayload(propertyId),
+      fetchCompanyRollup(),
+    ]);
+    const bytes = await renderReportPdf(payload, companyRollup);
     const filename = `alliance-property-report-${payload.property.mls}.pdf`;
     console.log(
       `[flyer.pdf] via=pdf token=${token} mls=${payload.property.mls} bytes=${bytes.byteLength}`,

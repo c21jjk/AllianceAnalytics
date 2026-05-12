@@ -3,11 +3,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   formatCompactNumber,
   formatCurrency,
-  formatPercent,
   formatShortDate,
 } from "@/lib/format";
 import type { PropertyReportKpis } from "@/lib/types/report";
 import type { Platform, AudienceSlice } from "@/lib/types/post";
+import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,8 @@ interface FlyerData {
   };
   narrative_closing: string;
   generated_at: string | null;
+  listed_date: string | null;
+  companyRollup: CompanyRollup;
 }
 
 interface FlyerCampaign {
@@ -67,6 +69,7 @@ interface DbPropertyRow {
   state: string | null;
   list_price: number | null;
   hero_image_url: string | null;
+  listing_date: string | null;
 }
 
 interface DbPostRow {
@@ -170,12 +173,18 @@ async function loadFlyerData(token: string): Promise<FlyerData | null> {
   // Property
   const { data: propRow } = await supabase
     .from("properties")
-    .select("id, mls_number, address, city, state, list_price, hero_image_url")
+    .select(
+      "id, mls_number, address, city, state, list_price, hero_image_url, listing_date",
+    )
     .eq("id", reportRow.property_id)
     .maybeSingle();
   if (!propRow) return null;
   const prop = propRow as DbPropertyRow;
   const addressParts = [prop.address, prop.city, prop.state].filter(Boolean);
+
+  // Company rollup (30d + 365d + followers). Fired in parallel with the post
+  // hydration below so we don't pay a serial round-trip.
+  const companyRollupPromise = fetchCompanyRollup();
 
   // Posts -> campaigns. We re-aggregate from posts at render time so that the
   // flyer always reflects the latest metrics, even if the report row was
@@ -233,6 +242,8 @@ async function loadFlyerData(token: string): Promise<FlyerData | null> {
     );
   }
 
+  const companyRollup = await companyRollupPromise;
+
   return {
     token,
     property: {
@@ -251,6 +262,8 @@ async function loadFlyerData(token: string): Promise<FlyerData | null> {
     audience: loadAudience(reportRow.audience),
     narrative_closing: loadClosing(reportRow.narrative),
     generated_at: reportRow.generated_at,
+    listed_date: prop.listing_date,
+    companyRollup,
   };
 }
 
@@ -331,7 +344,7 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
             </div>
           </header>
 
-          <div className="flyer-hero">
+          <div className="flyer-hero flyer-hero-bleed">
             {data.property.hero_image_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -356,16 +369,28 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
               <h1 className="mt-1.5 text-3xl md:text-4xl font-semibold tracking-tight text-white">
                 {data.property.address}
               </h1>
-              {data.property.list_price ? (
-                <div className="mt-3 inline-flex items-center rounded-md bg-white/95 px-3 py-1.5">
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-                    List price
-                  </span>
-                  <span className="ml-2 text-sm font-semibold text-gold-700">
-                    {formatCurrency(data.property.list_price)}
-                  </span>
-                </div>
-              ) : null}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {data.property.list_price ? (
+                  <div className="inline-flex items-center rounded-md bg-white/95 px-3 py-1.5">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                      List price
+                    </span>
+                    <span className="ml-2 text-sm font-semibold text-gold-700">
+                      {formatCurrency(data.property.list_price)}
+                    </span>
+                  </div>
+                ) : null}
+                {data.listed_date ? (
+                  <div className="inline-flex items-center rounded-md bg-white/95 px-3 py-1.5">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                      Listed
+                    </span>
+                    <span className="ml-2 text-sm font-semibold text-neutral-900">
+                      {formatShortDate(data.listed_date)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -383,7 +408,7 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
           </div>
         </section>
 
-        {/* Page 2 — KPIs */}
+        {/* Page 2 — Your Home's Performance */}
         <section className="flyer-page flyer-page-break">
           <h2 className="flyer-section-h">The numbers, at a glance</h2>
           <p className="flyer-section-sub">
@@ -391,14 +416,18 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
             during the report period.
           </p>
           <div className="flyer-kpi-grid">
-            <Kpi label="Total reach" value={formatCompactNumber(data.kpis.total_reach)} />
+            <Kpi
+              label="Total reach"
+              value={formatCompactNumber(data.kpis.total_reach)}
+              hero
+            />
+            <Kpi
+              label="Total impressions"
+              value={formatCompactNumber(data.kpis.total_impressions)}
+            />
             <Kpi
               label="Total engagements"
               value={formatCompactNumber(data.kpis.total_engagements)}
-            />
-            <Kpi
-              label="Engagement rate"
-              value={formatPercent(data.kpis.engagement_rate)}
             />
             <Kpi label="Posts" value={data.kpis.post_count.toString()} />
             <Kpi
@@ -406,12 +435,9 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
               value={data.kpis.platforms_covered.toString()}
             />
             <Kpi
-              label="Link clicks"
-              value={
-                data.kpis.link_clicks !== undefined
-                  ? formatCompactNumber(data.kpis.link_clicks)
-                  : "—"
-              }
+              label="Audience"
+              value={formatCompactNumber(data.companyRollup.followers.total)}
+              hint="Followers across IG, FB & TikTok"
             />
           </div>
 
@@ -498,7 +524,82 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
           </section>
         ) : null}
 
-        {/* Page 4 — narrative + sign-off */}
+        {/* Page 4 — The Alliance Marketing Engine */}
+        <section className="flyer-page flyer-page-break">
+          <h2 className="flyer-section-h">The Alliance Marketing Engine</h2>
+          <p className="flyer-section-sub">
+            Your listing is part of a brokerage-wide marketing program. Here&apos;s
+            the volume behind every Alliance home.
+          </p>
+          <div className="flyer-engine-grid">
+            <div className="flyer-engine-window">
+              <div className="flyer-engine-window-label">Last 30 days</div>
+              <div className="flyer-engine-tiles">
+                <div className="flyer-engine-tile">
+                  <div className="flyer-engine-tile-label">Posts</div>
+                  <div className="flyer-engine-tile-value">
+                    {formatCompactNumber(data.companyRollup.window_30d.posts)}
+                  </div>
+                </div>
+                <div className="flyer-engine-tile">
+                  <div className="flyer-engine-tile-label">People reached</div>
+                  <div className="flyer-engine-tile-value">
+                    {formatCompactNumber(data.companyRollup.window_30d.reach)}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flyer-engine-window">
+              <div className="flyer-engine-window-label">Trailing 365 days</div>
+              <div className="flyer-engine-tiles">
+                <div className="flyer-engine-tile">
+                  <div className="flyer-engine-tile-label">Posts</div>
+                  <div className="flyer-engine-tile-value">
+                    {formatCompactNumber(data.companyRollup.window_365d.posts)}
+                  </div>
+                </div>
+                <div className="flyer-engine-tile">
+                  <div className="flyer-engine-tile-label">People reached</div>
+                  <div className="flyer-engine-tile-value">
+                    {formatCompactNumber(data.companyRollup.window_365d.reach)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flyer-engine-followers">
+            <div className="flyer-engine-followers-label">
+              Followers — across all platforms
+            </div>
+            <div className="flyer-engine-followers-total">
+              {formatCompactNumber(data.companyRollup.followers.total)}
+            </div>
+            <div className="flyer-engine-followers-breakdown">
+              <span>
+                FB{" "}
+                {formatCompactNumber(data.companyRollup.followers.facebook ?? 0)}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>
+                IG{" "}
+                {formatCompactNumber(data.companyRollup.followers.instagram ?? 0)}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>
+                TT{" "}
+                {formatCompactNumber(data.companyRollup.followers.tiktok ?? 0)}
+              </span>
+            </div>
+          </div>
+
+          <blockquote className="flyer-engine-quote">
+            &ldquo;Other firms don&apos;t open the books like this — Alliance
+            does.&rdquo;
+          </blockquote>
+        </section>
+
+        {/* Page 5 — narrative + sign-off */}
         <section className="flyer-page flyer-page-break">
           <h2 className="flyer-section-h">What this means for your sale</h2>
           <p className="flyer-narrative">{data.narrative_closing}</p>
@@ -540,11 +641,22 @@ export default async function FlyerPage({ params, searchParams }: PageProps) {
   );
 }
 
-function Kpi({ label, value }: { label: string; value: string }) {
+function Kpi({
+  label,
+  value,
+  hint,
+  hero,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  hero?: boolean;
+}) {
   return (
-    <div className="flyer-kpi">
+    <div className={hero ? "flyer-kpi flyer-kpi-hero" : "flyer-kpi"}>
       <div className="flyer-kpi-label">{label}</div>
       <div className="flyer-kpi-value">{value}</div>
+      {hint ? <div className="flyer-kpi-hint">{hint}</div> : null}
     </div>
   );
 }
@@ -650,6 +762,31 @@ function flyerCss(printMode: boolean): string {
   font-variant-numeric: tabular-nums;
   color: #111111;
 }
+.flyer-kpi-hint {
+  margin-top: 4px;
+  font-size: 10px; color: #8a8a8a;
+  letter-spacing: 0.02em;
+}
+.flyer-kpi-hero {
+  grid-column: span 2;
+  background: linear-gradient(135deg, #fffbf1 0%, #ffffff 70%);
+  border-color: #efe2c4;
+}
+.flyer-kpi-hero .flyer-kpi-value {
+  font-size: 40px;
+  color: #252526;
+}
+.flyer-kpi-hero .flyer-kpi-label {
+  color: #8a6f1f;
+}
+@media (min-width: 700px) {
+  .flyer-kpi-hero { grid-column: span 3; }
+}
+.flyer-hero-bleed {
+  /* Full-bleed property photo for page 1 — slightly taller than the
+     default 16/9 to give the address & meta room without crowding. */
+  aspect-ratio: 3/2;
+}
 .flyer-platform-share { display: flex; flex-direction: column; gap: 8px; }
 .flyer-platform-row {
   display: grid;
@@ -706,6 +843,90 @@ function flyerCss(printMode: boolean): string {
 .flyer-signoff {
   margin-top: 28px; padding-top: 16px;
   border-top: 1px solid #efefef;
+}
+
+/* Page 4 — The Alliance Marketing Engine */
+.flyer-engine-grid {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+@media (min-width: 700px) {
+  .flyer-engine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.flyer-engine-window {
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 18px 20px;
+  background: #ffffff;
+}
+.flyer-engine-window-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8a6f1f;
+}
+.flyer-engine-tiles {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.flyer-engine-tile {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #faf7ef;
+  border: 1px solid #f1e8cf;
+}
+.flyer-engine-tile-label {
+  font-size: 10px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: #6b6b6b;
+}
+.flyer-engine-tile-value {
+  margin-top: 4px;
+  font-size: 22px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #252526;
+}
+.flyer-engine-followers {
+  margin-top: 16px;
+  padding: 18px 20px;
+  border: 1px solid #efe2c4;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fffbf1 0%, #ffffff 70%);
+  text-align: center;
+}
+.flyer-engine-followers-label {
+  font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: #8a6f1f;
+}
+.flyer-engine-followers-total {
+  margin-top: 6px;
+  font-size: 36px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #252526;
+}
+.flyer-engine-followers-breakdown {
+  margin-top: 4px;
+  display: flex; justify-content: center; align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px; color: #6b6b6b;
+  font-variant-numeric: tabular-nums;
+}
+.flyer-engine-quote {
+  margin: 22px 0 0;
+  padding: 14px 18px;
+  border-left: 3px solid #c9a84c;
+  background: #fafafa;
+  font-size: 13px;
+  font-style: italic;
+  color: #404040;
+  border-radius: 0 8px 8px 0;
 }
 
 /* Print rules — emulate when ?print=1 is set so the in-browser preview
