@@ -25,7 +25,7 @@ export default function LoginPage({
             <img
               src="/brand/analytics-wordmark.png"
               alt="Alliance Social Analytics"
-              className="h-20 w-auto opacity-95"
+              className="h-40 w-auto opacity-95"
             />
           </div>
 
