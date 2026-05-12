@@ -81,22 +81,25 @@ const COLOR_TEXT_FAINT = "#a3a3a3";
 const COLOR_HAIRLINE = "#ececec";
 const COLOR_GOLD = "#C9A84C";
 
-// Type scale (Letter page, ~530pt content area)
-const SIZE_DISPLAY_1 = 64; // Performance hero number
-const SIZE_DISPLAY_2 = 30; // Property address
-const SIZE_DISPLAY_3 = 36; // Alliance stat numbers
-const SIZE_SECTION_H = 22; // Section headline
-const SIZE_AGENT = 20; // Agent name
-const SIZE_BODY_LG = 12;
-const SIZE_BODY = 11;
-const SIZE_BODY_SM = 10;
-const SIZE_STAT_RIGHT = 16; // post-row right-aligned reach
-const SIZE_EYEBROW = 8;
+// Type scale (Letter page, ~548pt content area after tightened padding).
+// Tightened from the original Direction B scale to fit more info per page
+// without overwhelming the reader — the seller wants density, not a billboard.
+const SIZE_DISPLAY_1 = 44; // Performance hero number
+const SIZE_DISPLAY_2 = 22; // Property address
+const SIZE_DISPLAY_3 = 24; // Alliance stat numbers
+const SIZE_SECTION_H = 16; // Section headline
+const SIZE_AGENT = 15; // Agent name
+const SIZE_BODY_LG = 10;
+const SIZE_BODY = 9.5;
+const SIZE_BODY_SM = 9;
+const SIZE_STAT_RIGHT = 13; // post-row right-aligned reach
+const SIZE_PLATFORM_CHIP = 8.5; // per-platform breakdown chips
+const SIZE_EYEBROW = 7;
 
-// Page padding — keeps the content area ~530pt wide on Letter (612pt)
-const PAGE_PADDING_X = 44;
-const PAGE_PADDING_Y_TOP = 56;
-const PAGE_PADDING_Y_BOTTOM = 56;
+// Page padding — tightened to give the content more room
+const PAGE_PADDING_X = 32;
+const PAGE_PADDING_Y_TOP = 36;
+const PAGE_PADDING_Y_BOTTOM = 36;
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -142,32 +145,32 @@ const styles = StyleSheet.create({
 
   // -------- Page 1: Property identity --------
   identityAddress: {
-    marginTop: 18,
+    marginTop: 10,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_DISPLAY_2,
     color: COLOR_TEXT,
     lineHeight: 1.05,
-    letterSpacing: -0.6,
+    letterSpacing: -0.4,
   },
   identityAddressLine2: {
-    marginTop: 6,
+    marginTop: 4,
     fontFamily: "Helvetica",
-    fontSize: 20,
+    fontSize: 13,
     color: COLOR_TEXT_MUTED,
     lineHeight: 1.1,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
   identityStatRow: {
-    marginTop: 36,
+    marginTop: 18,
     flexDirection: "row",
     flexWrap: "wrap",
   },
   identityStatCell: {
-    marginRight: 56,
-    marginBottom: 16,
+    marginRight: 32,
+    marginBottom: 8,
   },
   identityStatValue: {
-    marginTop: 6,
+    marginTop: 4,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_STAT_RIGHT,
     color: COLOR_TEXT,
@@ -175,8 +178,8 @@ const styles = StyleSheet.create({
   },
 
   identityHeroBox: {
-    marginTop: 40,
-    height: 280,
+    marginTop: 18,
+    height: 200,
     backgroundColor: "#f4f4f4",
     overflow: "hidden",
   },
@@ -199,9 +202,9 @@ const styles = StyleSheet.create({
     fontFamily: "Helvetica-Bold",
   },
 
-  // -------- Page 2: Performance --------
+  // -------- Performance section (now lives on page 1, below identity) --------
   perfHeroRow: {
-    marginTop: 28,
+    marginTop: 22,
     flexDirection: "row",
     alignItems: "flex-end",
   },
@@ -210,21 +213,21 @@ const styles = StyleSheet.create({
     fontSize: SIZE_DISPLAY_1,
     color: COLOR_TEXT,
     lineHeight: 0.98,
-    letterSpacing: -2,
+    letterSpacing: -1.4,
   },
   perfHeroLabel: {
-    marginLeft: 16,
-    paddingBottom: 8,
+    marginLeft: 12,
+    paddingBottom: 6,
     fontFamily: "Helvetica",
-    fontSize: 18,
+    fontSize: 12,
     color: COLOR_TEXT_MUTED,
   },
   perfBody: {
-    marginTop: 28,
-    maxWidth: 400,
+    marginTop: 14,
+    maxWidth: 440,
     fontFamily: "Helvetica",
     fontSize: SIZE_BODY_LG,
-    lineHeight: 1.6,
+    lineHeight: 1.55,
     color: COLOR_TEXT_BODY,
   },
   perfBodyEmphasis: {
@@ -233,28 +236,28 @@ const styles = StyleSheet.create({
   },
 
   goldRule: {
-    marginTop: 56,
+    marginTop: 22,
     height: 1,
     backgroundColor: COLOR_GOLD,
   },
 
-  // -------- Page 3: Marketing post feed --------
+  // -------- Marketing post feed (own page, wrappable) --------
   marketingHeadline: {
-    marginTop: 18,
+    marginTop: 8,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_SECTION_H,
     color: COLOR_TEXT,
     lineHeight: 1.1,
-    letterSpacing: -0.4,
+    letterSpacing: -0.3,
   },
   postFeed: {
-    marginTop: 28,
+    marginTop: 14,
   },
   postRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingTop: 18,
-    paddingBottom: 18,
+    paddingTop: 10,
+    paddingBottom: 10,
     borderTopWidth: 1,
     borderTopColor: COLOR_HAIRLINE,
   },
@@ -263,27 +266,46 @@ const styles = StyleSheet.create({
     borderBottomColor: COLOR_HAIRLINE,
   },
   postThumbBox: {
-    width: 80,
-    height: 80,
-    marginRight: 20,
+    width: 56,
+    height: 56,
+    marginRight: 14,
     backgroundColor: "#f4f4f4",
     overflow: "hidden",
   },
   postThumbImage: {
-    width: 80,
-    height: 80,
+    width: 56,
+    height: 56,
     objectFit: "cover",
   },
   postBody: {
     flex: 1,
-    paddingRight: 16,
+    paddingRight: 12,
   },
   postCaption: {
-    marginTop: 6,
+    marginTop: 3,
     fontFamily: "Helvetica",
     fontSize: SIZE_BODY,
     color: COLOR_TEXT,
-    lineHeight: 1.45,
+    lineHeight: 1.4,
+  },
+  // Per-platform breakdown chip strip — shows reach on each platform under
+  // the caption. This is the fix for the "only TikTok shows" complaint: every
+  // platform that ran this content appears here with its own number.
+  postPlatformRow: {
+    marginTop: 4,
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  postPlatformChip: {
+    marginRight: 10,
+    fontFamily: "Helvetica",
+    fontSize: SIZE_PLATFORM_CHIP,
+    color: COLOR_TEXT_MUTED,
+    letterSpacing: 0.2,
+  },
+  postPlatformChipValue: {
+    fontFamily: "Helvetica-Bold",
+    color: COLOR_TEXT,
   },
   postReachCell: {
     alignItems: "flex-end",
@@ -295,16 +317,16 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   postReachLabel: {
-    marginTop: 4,
+    marginTop: 2,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_EYEBROW,
     color: COLOR_TEXT_MUTED,
     textTransform: "uppercase",
-    letterSpacing: 1.6,
+    letterSpacing: 1.4,
   },
   emptyFeed: {
-    paddingTop: 36,
-    paddingBottom: 36,
+    paddingTop: 24,
+    paddingBottom: 24,
     borderTopWidth: 1,
     borderTopColor: COLOR_HAIRLINE,
     borderBottomWidth: 1,
@@ -316,54 +338,54 @@ const styles = StyleSheet.create({
 
   // -------- Page 4: Alliance --------
   allianceHeadline: {
-    marginTop: 18,
+    marginTop: 8,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_SECTION_H,
     color: COLOR_TEXT,
-    lineHeight: 1.1,
-    letterSpacing: -0.4,
-    maxWidth: 460,
+    lineHeight: 1.15,
+    letterSpacing: -0.3,
+    maxWidth: 500,
   },
   allianceBody: {
-    marginTop: 16,
+    marginTop: 8,
     fontFamily: "Helvetica",
     fontSize: SIZE_BODY_LG,
-    lineHeight: 1.6,
+    lineHeight: 1.55,
     color: COLOR_TEXT_BODY,
-    maxWidth: 440,
+    maxWidth: 480,
   },
   allianceGrid: {
-    marginTop: 44,
+    marginTop: 18,
     flexDirection: "row",
     flexWrap: "wrap",
-    width: 460,
+    width: 500,
   },
   allianceCell: {
     width: "50%",
-    paddingRight: 24,
-    paddingBottom: 36,
+    paddingRight: 18,
+    paddingBottom: 14,
   },
   allianceCellValue: {
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_DISPLAY_3,
     color: COLOR_TEXT,
     lineHeight: 1,
-    letterSpacing: -0.8,
+    letterSpacing: -0.6,
   },
   allianceCellLabel: {
-    marginTop: 10,
+    marginTop: 4,
     fontFamily: "Helvetica",
     fontSize: SIZE_BODY_SM,
     color: COLOR_TEXT_MUTED,
-    lineHeight: 1.4,
+    lineHeight: 1.35,
   },
   allianceClosing: {
-    marginTop: 28,
+    marginTop: 12,
     fontFamily: "Helvetica",
     fontSize: SIZE_BODY_LG,
     color: COLOR_TEXT,
-    lineHeight: 1.55,
-    maxWidth: 460,
+    lineHeight: 1.5,
+    maxWidth: 500,
   },
   allianceClosingGold: {
     fontFamily: "Helvetica-Bold",
@@ -372,24 +394,24 @@ const styles = StyleSheet.create({
 
   // -------- Agent + Footer --------
   agentBlock: {
-    marginTop: 56,
+    marginTop: 22,
   },
   agentName: {
-    marginTop: 14,
+    marginTop: 6,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_AGENT,
     color: COLOR_TEXT,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
   agentOffice: {
-    marginTop: 6,
+    marginTop: 3,
     fontFamily: "Helvetica",
     fontSize: SIZE_BODY,
     color: COLOR_TEXT_MUTED,
-    lineHeight: 1.4,
+    lineHeight: 1.35,
   },
   agentEmail: {
-    marginTop: 16,
+    marginTop: 8,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_BODY,
     color: COLOR_TEXT,
@@ -397,7 +419,7 @@ const styles = StyleSheet.create({
   },
 
   footer: {
-    marginTop: 56,
+    marginTop: 22,
     alignItems: "center",
   },
   footerSealRow: {
@@ -406,15 +428,15 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   footerSealImage: {
-    width: 18,
-    height: 22,
-    marginRight: 10,
+    width: 14,
+    height: 17,
+    marginRight: 8,
     objectFit: "contain",
   },
   footerSealFallback: {
-    width: 18,
-    height: 22,
-    marginRight: 10,
+    width: 14,
+    height: 17,
+    marginRight: 8,
     backgroundColor: COLOR_GOLD,
   },
   footerWordmark: {
@@ -423,12 +445,12 @@ const styles = StyleSheet.create({
     color: COLOR_TEXT,
   },
   footerCaption: {
-    marginTop: 24,
+    marginTop: 14,
     fontFamily: "Helvetica-Bold",
     fontSize: SIZE_EYEBROW,
     color: COLOR_TEXT_FAINT,
     textTransform: "uppercase",
-    letterSpacing: 1.8,
+    letterSpacing: 1.6,
   },
 });
 
@@ -462,12 +484,6 @@ function secondLineOfAddress(address: string): string {
   const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
   if (parts.length <= 1) return "";
   return parts.slice(1).join(", ");
-}
-
-/** The campaign's dominant platform (highest reach) for the row label. */
-function dominantPlatform(c: ReportCampaign): Platform | null {
-  if (c.by_platform.length === 0) return null;
-  return [...c.by_platform].sort((a, b) => b.reach - a.reach)[0]?.platform ?? null;
 }
 
 interface PdfExtras {
@@ -513,20 +529,32 @@ function PropertyStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function IdentityPage({
+/**
+ * Page 1 — combined identity + performance. Packs the property hero, three
+ * key facts (price/MLS/listed), the photo, and the headline reach/posts/
+ * engagements numbers onto a single sheet so the seller sees the headline
+ * story at a glance, then dives into the per-post detail on page 2+.
+ */
+function IdentityAndPerformancePage({
   payload,
+  companyRollup,
   extras,
 }: {
   payload: ReportPayload;
+  companyRollup: CompanyRollup;
   extras: PdfExtras;
 }) {
   const { property } = payload;
   const recipientLabel = extras.recipient_name
     ? `Prepared for ${extras.recipient_name}`
     : "Prepared for the owner";
+  const k = payload.kpis;
+  const postCount = k.post_count;
+  const totalEngagements = k.total_engagements;
+  const audienceTotal = companyRollup.followers.total;
 
   return (
-    <Page size="LETTER" style={styles.page} wrap={false}>
+    <Page size="LETTER" style={styles.page} wrap>
       <Text style={styles.eyebrow}>{recipientLabel.toUpperCase()}</Text>
 
       <Text style={styles.identityAddress}>
@@ -559,25 +587,10 @@ function IdentityPage({
       <View style={styles.identityHeroBox}>
         <HeroImage url={property.hero_image_url ?? null} />
       </View>
-    </Page>
-  );
-}
 
-function PerformancePage({
-  payload,
-  companyRollup,
-}: {
-  payload: ReportPayload;
-  companyRollup: CompanyRollup;
-}) {
-  const k = payload.kpis;
-  const postCount = k.post_count;
-  const totalEngagements = k.total_engagements;
-  const audienceTotal = companyRollup.followers.total;
-
-  return (
-    <Page size="LETTER" style={styles.page} wrap={false}>
-      <Text style={styles.eyebrow}>PERFORMANCE</Text>
+      {/* Performance summary — same data shape as the standalone page,
+          but tightened to fit alongside the identity block. */}
+      <Text style={[styles.eyebrow, { marginTop: 20 }]}>PERFORMANCE</Text>
 
       <View style={styles.perfHeroRow}>
         <Text style={styles.perfHeroNumber}>
@@ -615,11 +628,19 @@ function PostRow({
   campaign: ReportCampaign;
   isLast: boolean;
 }) {
-  const plat = dominantPlatform(campaign);
   const date = campaign.posted_at ? formatShortDate(campaign.posted_at) : "";
-  const eyebrowText = [plat ? platformLabel(plat) : null, date]
+  const platformCount = campaign.by_platform.length;
+  const eyebrowText = [
+    date,
+    `${platformCount} ${platformCount === 1 ? "platform" : "platforms"}`,
+  ]
     .filter(Boolean)
     .join(" · ");
+
+  // Sort by reach DESC so the strongest platform reads first.
+  const platforms = [...campaign.by_platform].sort(
+    (a, b) => b.reach - a.reach,
+  );
 
   return (
     <View
@@ -634,12 +655,27 @@ function PostRow({
       <View style={styles.postBody}>
         <Text style={styles.eyebrow}>{eyebrowText.toUpperCase()}</Text>
         <Text style={styles.postCaption}>{truncate(campaign.label, 140)}</Text>
+        {/* Per-platform breakdown — the fix for "only TikTok shows": every
+            platform that ran this content gets its own visible number, so the
+            seller sees the full picture instead of just the dominant one. */}
+        {platforms.length > 0 ? (
+          <View style={styles.postPlatformRow}>
+            {platforms.map((p) => (
+              <Text key={p.platform} style={styles.postPlatformChip}>
+                {platformLabel(p.platform)}{" "}
+                <Text style={styles.postPlatformChipValue}>
+                  {formatCompactNumber(p.reach)}
+                </Text>
+              </Text>
+            ))}
+          </View>
+        ) : null}
       </View>
       <View style={styles.postReachCell}>
         <Text style={styles.postReachValue}>
           {formatCompactNumber(campaign.total_reach)}
         </Text>
-        <Text style={styles.postReachLabel}>REACH</Text>
+        <Text style={styles.postReachLabel}>TOTAL REACH</Text>
       </View>
     </View>
   );
@@ -690,11 +726,9 @@ function AllianceStatCell({
 }
 
 function AlliancePage({
-  payload,
   companyRollup,
   extras,
 }: {
-  payload: ReportPayload;
   companyRollup: CompanyRollup;
   extras: PdfExtras;
 }) {
@@ -707,7 +741,7 @@ function AlliancePage({
   const officeLine = "Century 21 Alliance";
 
   return (
-    <Page size="LETTER" style={styles.pageAlliance} wrap={false}>
+    <Page size="LETTER" style={styles.pageAlliance} wrap>
       <Text style={styles.eyebrow}>ALLIANCE</Text>
       <Text style={styles.allianceHeadline}>
         Your home isn&apos;t being marketed in a silo.
@@ -783,14 +817,13 @@ function ReportDocument({
       author="Century 21 Alliance"
       subject="Property marketing report"
     >
-      <IdentityPage payload={payload} extras={extras} />
-      <PerformancePage payload={payload} companyRollup={companyRollup} />
-      <MarketingPage payload={payload} />
-      <AlliancePage
+      <IdentityAndPerformancePage
         payload={payload}
         companyRollup={companyRollup}
         extras={extras}
       />
+      <MarketingPage payload={payload} />
+      <AlliancePage companyRollup={companyRollup} extras={extras} />
     </Document>
   );
 }
