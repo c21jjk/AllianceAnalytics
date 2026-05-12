@@ -147,27 +147,26 @@ export default async function LivePropertyDetail({
         </div>
       </section>
 
-      {/* Owner Report — promoted to the top, dominant action card on the
-          page. Charcoal background + gold-accented controls make it the
-          unmistakable primary action. Owner reports are the headline output
-          of the system, so the act of generating/sharing them gets the
-          first piece of real estate after the listing identity. */}
-      <section className="relative overflow-hidden rounded-2xl bg-neutral-900 text-white shadow-elevated p-6 md:p-8">
-        {/* Top gold accent strip — matches the dashboard nav cue. */}
+      {/* Owner Report — dominant first card after listing identity. Warm
+          cream-and-gold treatment instead of dark/charcoal: matches the
+          luxury-real-estate aesthetic and keeps the page's visual rhythm
+          while still giving the headline action serious weight. */}
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-gold-50 via-white to-gold-50/60 ring-1 ring-gold-200 shadow-card p-6 md:p-8">
+        {/* Top gold accent strip */}
         <div
           aria-hidden="true"
-          className="absolute top-0 left-6 right-6 h-0.5 rounded-full bg-gradient-to-r from-gold-300/0 via-gold-500/80 to-gold-300/0"
+          className="absolute top-0 left-6 right-6 h-0.5 rounded-full bg-gradient-to-r from-gold-300/0 via-gold-500/70 to-gold-300/0"
         />
 
         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-gold-400">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gold-700">
               Primary action
             </div>
-            <h2 className="mt-1 text-2xl md:text-3xl font-semibold tracking-tight text-white">
+            <h2 className="mt-1 text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
               Owner Report
             </h2>
-            <p className="mt-1.5 text-sm text-neutral-300 max-w-xl">
+            <p className="mt-1.5 text-sm text-neutral-600 max-w-xl">
               Branded marketing summary your seller can view in their browser
               or download as a PDF.
             </p>
@@ -175,12 +174,12 @@ export default async function LivePropertyDetail({
         </div>
 
         {existingReport ? (
-          <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-lg bg-white/5 ring-1 ring-white/10 px-4 py-3">
-            <div className="text-sm text-neutral-300 min-w-0">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+          <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-lg bg-white/70 ring-1 ring-gold-200/70 px-4 py-3">
+            <div className="text-sm text-neutral-700 min-w-0">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gold-700">
                 Shareable link
               </span>
-              <code className="block md:inline-block md:ml-2 mt-1 md:mt-0 px-2 py-1 text-xs bg-white/10 text-neutral-100 rounded break-all">
+              <code className="block md:inline-block md:ml-2 mt-1 md:mt-0 px-2 py-1 text-xs bg-gold-100/60 text-neutral-800 rounded break-all">
                 /r/{existingReport.report_token}
               </code>
             </div>
@@ -189,7 +188,7 @@ export default async function LivePropertyDetail({
         ) : null}
 
         {existingReport ? (
-          <div className="mt-3 flex items-center gap-2 text-[11px] text-neutral-400">
+          <div className="mt-3 flex items-center gap-2 text-[11px] text-neutral-500">
             <span>
               Generated{" "}
               {existingReport.generated_at
@@ -197,7 +196,7 @@ export default async function LivePropertyDetail({
                 : "just now"}
             </span>
             {existingReport.is_locked ? (
-              <span className="inline-flex items-center rounded-md bg-white/10 ring-1 ring-white/20 px-1.5 py-0.5 text-[10px] font-medium text-neutral-200">
+              <span className="inline-flex items-center rounded-md bg-white/80 ring-1 ring-gold-200 px-1.5 py-0.5 text-[10px] font-medium text-neutral-700">
                 Locked snapshot — won&rsquo;t refresh on regenerate
               </span>
             ) : null}
