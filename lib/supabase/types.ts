@@ -47,6 +47,42 @@ export type Database = {
         }
         Relationships: []
       }
+      coach_insights: {
+        Row: {
+          id: string
+          scope: string
+          kind: string
+          data: Json
+          generated_at: string
+          is_stale: boolean
+          last_error: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          scope: string
+          kind: string
+          data?: Json
+          generated_at?: string
+          is_stale?: boolean
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          scope?: string
+          kind?: string
+          data?: Json
+          generated_at?: string
+          is_stale?: boolean
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       mls_feeds: {
         Row: {
           api_key: string | null

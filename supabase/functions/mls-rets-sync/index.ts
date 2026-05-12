@@ -895,9 +895,25 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
       const { rows, rawCount } = await rets.search("Property", cls, DMQL2_QUERY);
       classResult.records_seen = rawCount;
       totalSeen += rawCount;
+      // Ingest active + pending + recently-sold (last 90 days). Expired
+      // and withdrawn drop out so the DB doesn't bloat with stale rows.
+      // Sold listings older than 90 days also drop — the "Recently Sold"
+      // dashboard surface only shows the last 30, so we keep a buffer
+      // for variations in cron timing.
+      const RECENT_SOLD_DAYS = 90;
+      const recentSoldCutoff = Date.now() - RECENT_SOLD_DAYS * 86400_000;
       const mapped = rows
         .map((r) => mapRow(r, sourceMls))
-        .filter((r): r is MappedListing => r !== null && r.status === "active");
+        .filter((r): r is MappedListing => {
+          if (r === null) return false;
+          if (r.status === "active" || r.status === "pending") return true;
+          if (r.status === "sold") {
+            if (!r.close_date) return true; // unknown close date — keep, dashboard handles it
+            const closeMs = new Date(`${r.close_date}T00:00:00Z`).getTime();
+            return Number.isFinite(closeMs) && closeMs >= recentSoldCutoff;
+          }
+          return false; // expired, withdrawn
+        });
       const upserted = await upsertListings(listings, mapped);
       classResult.records_upserted = upserted;
       totalUpserted += upserted;

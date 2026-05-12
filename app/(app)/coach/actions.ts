@@ -3,17 +3,23 @@
 /**
  * Server actions for /coach.
  *
- * generatePlanAction is invoked by the "Generate this week's plan" button on
- * the Coach page. Always returns a StrategyPlan — even when Anthropic isn't
- * configured the underlying generator returns a baseline outline so the UI
- * has something to render.
+ * Two surfaces:
+ *   - generatePlanAction      — long-form strategy plan generator (Phase 1)
+ *   - refreshCoachInsightsAction — admin-only manual refresh of the cached
+ *     Spend Recommendations + Per-listing Budgets surfaces (Phase 2)
+ *
+ * The cron refresh of coach_insights runs daily via the supabase
+ * coach-refresh Edge Function — this manual action lets admins regenerate on
+ * demand without waiting for the next cron tick.
  */
-import { requireUser } from "@/lib/auth";
+import { revalidatePath } from "next/cache";
+import { requireAdmin, requireUser } from "@/lib/auth";
 import {
   generateStrategyPlan,
   type StrategyPlan,
   type StrategyScope,
 } from "@/lib/ai/strategy";
+import { refreshCoachInsights } from "@/lib/ai/coach-insights";
 
 export type PlanScopeKind = "brand_wide" | "single_office" | "multi_office";
 
@@ -55,6 +61,42 @@ export async function generatePlanAction(
     return {
       ok: false,
       error: e instanceof Error ? e.message : "plan generation failed",
+    };
+  }
+}
+
+export interface RefreshInsightsResult {
+  ok: boolean;
+  recommendations_count?: number;
+  budgets_count?: number;
+  generated_at?: string;
+  error?: string;
+}
+
+/**
+ * Admin-only refresh of the cached Coach insights. Calls Claude twice
+ * (recommendations + budgets), upserts to coach_insights, and revalidates
+ * the /coach route so the freshly-generated data renders on next load.
+ *
+ * Scope defaults to "brand_wide" — future-proofs per-office refresh.
+ */
+export async function refreshCoachInsightsAction(
+  scope: string = "brand_wide",
+): Promise<RefreshInsightsResult> {
+  await requireAdmin();
+  try {
+    const result = await refreshCoachInsights(scope);
+    revalidatePath("/coach");
+    return {
+      ok: true,
+      recommendations_count: result.recommendations.length,
+      budgets_count: result.budgets.length,
+      generated_at: result.generated_at ?? new Date().toISOString(),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "refresh failed",
     };
   }
 }
