@@ -51,7 +51,7 @@ export function TopNav({
       <div className="h-0.5 bg-gradient-to-r from-gold-500/0 via-gold-500/60 to-gold-500/0" />
 
       <div className="px-4 md:px-8 max-w-7xl mx-auto">
-        <div className="h-20 flex items-center gap-6 md:gap-10">
+        <div className="h-28 flex items-center gap-6 md:gap-10">
           {/* Brand — custom "C21 Alliance Social Analytics" lockup used on
               internal surfaces. Seller-facing surfaces (Owner Report, flyer,
               PDF) keep the official C21 seal to preserve the parent-brand
@@ -65,7 +65,7 @@ export function TopNav({
             <img
               src="/brand/analytics-wordmark.png"
               alt="Alliance Social Analytics"
-              className="h-12 w-auto object-contain group-hover:opacity-90 transition-opacity"
+              className="h-24 w-auto object-contain group-hover:opacity-90 transition-opacity"
             />
           </Link>
 
