@@ -10,7 +10,7 @@ import {
   Image,
   pdf,
 } from "@react-pdf/renderer";
-import type { ReportPayload } from "./build";
+import type { ReportPayload, ReportCampaign } from "./build";
 import type { CompanyRollup } from "@/lib/data/company-rollup";
 import {
   formatCompactNumber,
@@ -20,11 +20,10 @@ import {
 import type { Platform } from "@/lib/types/post";
 
 /**
- * Read the C21 seal once at module load and cache the bytes. Used by the
- * cover page only — other pages keep the plain gold "A" placeholder per
- * design spec. Returns null if the asset isn't bundled (e.g. local dev with
- * a missing public/brand directory) so render failures fall through to the
- * HTML print view.
+ * Read the C21 seal once at module load and cache the bytes. Used on the
+ * footer (Direction B) at 60% opacity. Returns null if the asset isn't
+ * bundled (e.g. local dev with a missing public/brand directory) — the
+ * footer still renders with just the wordmark in that case.
  */
 function loadSealBuffer(): Buffer | null {
   try {
@@ -38,499 +37,398 @@ function loadSealBuffer(): Buffer | null {
 const SEAL_BUFFER: Buffer | null = loadSealBuffer();
 
 /**
- * Server-side PDF rendering for property report flyers, using
+ * Server-side PDF rendering for property report flyers using
  * @react-pdf/renderer. The route handler at
  * app/r/[token]/flyer.pdf/route.ts calls renderReportPdf and streams the
- * resulting bytes back as application/pdf.
+ * bytes back as application/pdf.
+ *
+ * Direction B — "Compass / Minimal Modern" (LOCKED). Mirrors the live
+ * web report at app/r/[token]/page.tsx:
+ *   - Typography: Helvetica fallback for Barlow (see FONT NOTE below)
+ *   - Weights 400/500 only — mapped to Helvetica + Helvetica-Bold
+ *   - Gold (#C9A84C) reserved for 3 surfaces inside the PDF:
+ *       1) 1pt gold rule between Performance and Marketing
+ *       2) the word "does" in the Alliance closing line
+ *       3) tiny C21 seal mark in the footer at 60% opacity
+ *     (The 4th gold slot — the "Download PDF" link in the web action bar —
+ *     has no analog inside a PDF and is intentionally unused.)
+ *   - No card boxes; editorial post-rows with hairlines between them
+ *   - Single break band (#fafafa) for the Alliance section
  *
  * If rendering throws (e.g. font issue, image fetch failure), the route
  * handler falls back to a 302-redirect to the print-styled HTML flyer at
  * /r/[token]/flyer?print=1, so the user always gets a printable view.
+ *
+ * FONT NOTE: Barlow registration via @react-pdf/renderer is brittle in a
+ * Vercel serverless environment (font network fetches at render time can
+ * race the function timeout and cause silent fallbacks to system fonts).
+ * To keep the never-throw contract, we stick with the built-in PDF
+ * Helvetica and use weight 700 ("Helvetica-Bold") to emulate Barlow 500.
+ * If/when we ship a local Barlow .ttf with the deployment, swap in
+ * Font.register here.
  */
 
 // ---------------------------------------------------------------------------
-// Brand
+// Brand tokens (Direction B)
 // ---------------------------------------------------------------------------
 
-// Obsessed Grey reserved for future dark accents — kept inline where used.
-const COLOR_GOLD = "#C9A84C"; // Relentless Gold
-const COLOR_GOLD_DARK = "#B78B3F";
-const COLOR_TEXT = "#171717";
-const COLOR_TEXT_MUTED = "#6b6b6b";
-const COLOR_BORDER = "#e5e5e5";
-const COLOR_PANEL = "#ffffff";
 const COLOR_BG = "#ffffff";
+const COLOR_BG_ALLIANCE = "#fafafa";
+const COLOR_TEXT = "#171717";
+const COLOR_TEXT_BODY = "#404040";
+const COLOR_TEXT_MUTED = "#737373";
+const COLOR_TEXT_FAINT = "#a3a3a3";
+const COLOR_HAIRLINE = "#ececec";
+const COLOR_GOLD = "#C9A84C";
+
+// Type scale (Letter page, ~530pt content area)
+const SIZE_DISPLAY_1 = 64; // Performance hero number
+const SIZE_DISPLAY_2 = 30; // Property address
+const SIZE_DISPLAY_3 = 36; // Alliance stat numbers
+const SIZE_SECTION_H = 22; // Section headline
+const SIZE_AGENT = 20; // Agent name
+const SIZE_BODY_LG = 12;
+const SIZE_BODY = 11;
+const SIZE_BODY_SM = 10;
+const SIZE_STAT_RIGHT = 16; // post-row right-aligned reach
+const SIZE_EYEBROW = 8;
+
+// Page padding — keeps the content area ~530pt wide on Letter (612pt)
+const PAGE_PADDING_X = 44;
+const PAGE_PADDING_Y_TOP = 56;
+const PAGE_PADDING_Y_BOTTOM = 56;
 
 // ---------------------------------------------------------------------------
 // Styles
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
+  // Page shells
   page: {
     backgroundColor: COLOR_BG,
-    paddingTop: 40,
-    paddingBottom: 48,
-    paddingHorizontal: 44,
+    paddingTop: PAGE_PADDING_Y_TOP,
+    paddingBottom: PAGE_PADDING_Y_BOTTOM,
+    paddingHorizontal: PAGE_PADDING_X,
     fontFamily: "Helvetica",
     color: COLOR_TEXT,
-    fontSize: 10,
+    fontSize: SIZE_BODY,
   },
-
-  // Brand header
-  brandHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f1f1",
-    marginBottom: 18,
-  },
-  brandLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  brandLogo: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    backgroundColor: COLOR_GOLD,
-    color: "#ffffff",
-    fontFamily: "Helvetica-Bold",
-    fontSize: 14,
-    textAlign: "center",
-    paddingTop: 6,
-    marginRight: 10,
-  },
-  brandLogoSeal: {
-    width: 30,
-    height: 36,
-    objectFit: "contain",
-    marginRight: 10,
-  },
-  brandName: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 11,
+  pageAlliance: {
+    backgroundColor: COLOR_BG_ALLIANCE,
+    paddingTop: PAGE_PADDING_Y_TOP + 20,
+    paddingBottom: PAGE_PADDING_Y_BOTTOM,
+    paddingHorizontal: PAGE_PADDING_X,
+    fontFamily: "Helvetica",
     color: COLOR_TEXT,
-  },
-  brandSub: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    marginTop: 2,
-    letterSpacing: 1.2,
-  },
-  brandPeriod: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
+    fontSize: SIZE_BODY,
   },
 
-  // Hero
-  heroBox: {
-    height: 280,
-    borderRadius: 8,
-    overflow: "hidden",
-    backgroundColor: "#f5f5f5",
-    position: "relative",
-    marginBottom: 18,
+  // Eyebrow label — uppercase + bold + a tiny letter-spacing emulation
+  // (react-pdf supports letterSpacing as a numeric pt offset)
+  eyebrow: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_EYEBROW,
+    color: COLOR_TEXT_MUTED,
+    textTransform: "uppercase",
+    letterSpacing: 1.6,
   },
-  heroImage: {
+  eyebrowFaint: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_EYEBROW,
+    color: COLOR_TEXT_FAINT,
+    textTransform: "uppercase",
+    letterSpacing: 1.6,
+  },
+
+  // -------- Page 1: Property identity --------
+  identityAddress: {
+    marginTop: 18,
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_DISPLAY_2,
+    color: COLOR_TEXT,
+    lineHeight: 1.05,
+    letterSpacing: -0.6,
+  },
+  identityAddressLine2: {
+    marginTop: 6,
+    fontFamily: "Helvetica",
+    fontSize: 20,
+    color: COLOR_TEXT_MUTED,
+    lineHeight: 1.1,
+    letterSpacing: -0.3,
+  },
+  identityStatRow: {
+    marginTop: 36,
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  identityStatCell: {
+    marginRight: 56,
+    marginBottom: 16,
+  },
+  identityStatValue: {
+    marginTop: 6,
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_STAT_RIGHT,
+    color: COLOR_TEXT,
+    letterSpacing: -0.2,
+  },
+
+  identityHeroBox: {
+    marginTop: 40,
+    height: 280,
+    backgroundColor: "#f4f4f4",
+    overflow: "hidden",
+  },
+  identityHeroImage: {
     width: "100%",
     height: "100%",
     objectFit: "cover",
   },
-  heroFallback: {
+  identityHeroEmpty: {
     width: "100%",
     height: "100%",
-    backgroundColor: COLOR_GOLD,
     alignItems: "center",
     justifyContent: "center",
   },
-  heroFallbackMark: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 96,
-    color: "#ffffff",
-    opacity: 0.95,
-  },
-  heroOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 22,
-    paddingVertical: 22,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  heroMls: {
-    fontSize: 9,
-    color: "#ffffff",
-    opacity: 0.85,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-  },
-  heroAddress: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 22,
-    color: "#ffffff",
-    marginTop: 6,
-  },
-  heroPriceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 12,
-  },
-  heroPriceChip: {
-    flexDirection: "row",
-    backgroundColor: "#ffffff",
-    borderRadius: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    alignItems: "center",
-  },
-  heroPriceChipLabel: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-    marginRight: 8,
-  },
-  heroPriceChipValue: {
-    fontSize: 11,
-    color: COLOR_GOLD_DARK,
-    fontFamily: "Helvetica-Bold",
-  },
-
-  // Callout
-  callout: {
-    marginTop: 4,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#efe2c4",
-    backgroundColor: "#fffbf1",
-    borderRadius: 6,
-  },
-  calloutKicker: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-  },
-  calloutTitle: {
-    marginTop: 4,
-    fontFamily: "Helvetica-Bold",
-    fontSize: 13,
-    color: COLOR_TEXT,
-  },
-  calloutBody: {
-    marginTop: 4,
+  identityHeroEmptyLabel: {
     fontSize: 10,
-    color: COLOR_TEXT_MUTED,
-    lineHeight: 1.5,
+    color: COLOR_TEXT_FAINT,
+    textTransform: "uppercase",
+    letterSpacing: 1.8,
+    fontFamily: "Helvetica-Bold",
   },
 
-  // Section headings
-  sectionH: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 18,
-    color: COLOR_TEXT,
-    marginBottom: 4,
-  },
-  sectionSub: {
-    fontSize: 10,
-    color: COLOR_TEXT_MUTED,
-    marginBottom: 16,
-  },
-
-  // KPI grid
-  kpiGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginHorizontal: -6,
-  },
-  kpiCol: {
-    width: "33.333%",
-    paddingHorizontal: 6,
-    marginBottom: 12,
-  },
-  kpiColWide: {
-    // Visually elevated "Total reach" tile spanning two columns.
-    width: "66.666%",
-    paddingHorizontal: 6,
-    marginBottom: 12,
-  },
-  kpiCard: {
-    borderWidth: 1,
-    borderColor: COLOR_BORDER,
-    borderRadius: 6,
-    padding: 14,
-    backgroundColor: COLOR_PANEL,
-  },
-  kpiCardHero: {
-    borderWidth: 1,
-    borderColor: "#efe2c4",
-    borderRadius: 6,
-    padding: 16,
-    backgroundColor: "#fffbf1",
-  },
-  kpiLabel: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-  },
-  kpiValue: {
-    marginTop: 6,
-    fontFamily: "Helvetica-Bold",
-    fontSize: 22,
-    color: COLOR_TEXT,
-  },
-  kpiValueHero: {
-    marginTop: 6,
-    fontFamily: "Helvetica-Bold",
-    fontSize: 36,
-    color: COLOR_GOLD_DARK,
-  },
-
-  // Per-platform reach share bars (below KPI grid)
-  shareList: {
-    marginTop: 8,
-  },
-  shareRow: {
-    marginBottom: 8,
-  },
-  shareRowHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  shareLabel: {
-    fontSize: 9,
-    color: "#404040",
-    fontFamily: "Helvetica-Bold",
-  },
-  shareValue: {
-    fontSize: 9,
-    color: COLOR_TEXT_MUTED,
-  },
-  shareTrack: {
-    height: 6,
-    backgroundColor: "#f1f1f1",
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  shareFill: {
-    height: 6,
-    backgroundColor: COLOR_GOLD,
-    borderRadius: 3,
-  },
-
-  // Alliance Marketing Engine page
-  engineGrid: {
-    flexDirection: "row",
-    marginHorizontal: -6,
-    marginBottom: 14,
-  },
-  engineWindow: {
-    flex: 1,
-    paddingHorizontal: 6,
-  },
-  engineWindowLabel: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-    marginBottom: 6,
-  },
-  engineTile: {
-    borderWidth: 1,
-    borderColor: "#efe2c4",
-    backgroundColor: "#fffbf1",
-    borderRadius: 6,
-    padding: 14,
-    marginBottom: 10,
-  },
-  engineTileLabel: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-  },
-  engineTileValue: {
-    marginTop: 6,
-    fontFamily: "Helvetica-Bold",
-    fontSize: 26,
-    color: COLOR_TEXT,
-  },
-  engineFollowerRow: {
-    borderWidth: 1,
-    borderColor: "#efe2c4",
-    backgroundColor: "#fffbf1",
-    borderRadius: 6,
-    padding: 16,
-    marginBottom: 14,
-  },
-  engineFollowerLabel: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-  },
-  engineFollowerTopRow: {
+  // -------- Page 2: Performance --------
+  perfHeroRow: {
+    marginTop: 28,
     flexDirection: "row",
     alignItems: "flex-end",
-    justifyContent: "space-between",
-    marginTop: 6,
   },
-  engineFollowerTotal: {
+  perfHeroNumber: {
     fontFamily: "Helvetica-Bold",
-    fontSize: 32,
-    color: COLOR_GOLD_DARK,
-  },
-  engineFollowerBreakdown: {
-    flexDirection: "row",
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: "#efe2c4",
-  },
-  engineFollowerCell: {
-    flex: 1,
-  },
-  engineFollowerCellLabel: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
-    fontFamily: "Helvetica-Bold",
-  },
-  engineFollowerCellValue: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 14,
+    fontSize: SIZE_DISPLAY_1,
     color: COLOR_TEXT,
-    marginTop: 4,
+    lineHeight: 0.98,
+    letterSpacing: -2,
   },
-  engineQuote: {
-    fontSize: 11,
-    color: "#404040",
-    lineHeight: 1.5,
-    fontFamily: "Helvetica-Oblique",
-    marginTop: 8,
+  perfHeroLabel: {
+    marginLeft: 16,
+    paddingBottom: 8,
+    fontFamily: "Helvetica",
+    fontSize: 18,
+    color: COLOR_TEXT_MUTED,
+  },
+  perfBody: {
+    marginTop: 28,
+    maxWidth: 400,
+    fontFamily: "Helvetica",
+    fontSize: SIZE_BODY_LG,
+    lineHeight: 1.6,
+    color: COLOR_TEXT_BODY,
+  },
+  perfBodyEmphasis: {
+    fontFamily: "Helvetica-Bold",
+    color: COLOR_TEXT,
   },
 
-  // Campaigns
-  campaign: {
-    flexDirection: "row",
-    borderWidth: 1,
-    borderColor: COLOR_BORDER,
-    borderRadius: 6,
-    padding: 10,
-    marginBottom: 12,
-    backgroundColor: COLOR_PANEL,
-  },
-  campaignThumb: {
-    width: 84,
-    height: 84,
-    borderRadius: 4,
-    backgroundColor: "#f1f1f1",
-    objectFit: "cover",
-    marginRight: 12,
-  },
-  campaignThumbFallback: {
-    width: 84,
-    height: 84,
-    borderRadius: 4,
+  goldRule: {
+    marginTop: 56,
+    height: 1,
     backgroundColor: COLOR_GOLD,
-    marginRight: 12,
   },
-  campaignBody: {
-    flex: 1,
-  },
-  campaignLabel: {
+
+  // -------- Page 3: Marketing post feed --------
+  marketingHeadline: {
+    marginTop: 18,
     fontFamily: "Helvetica-Bold",
-    fontSize: 11,
+    fontSize: SIZE_SECTION_H,
     color: COLOR_TEXT,
-    marginBottom: 6,
+    lineHeight: 1.1,
+    letterSpacing: -0.4,
   },
-  campaignTotalsRow: {
+  postFeed: {
+    marginTop: 28,
+  },
+  postRow: {
     flexDirection: "row",
-    marginBottom: 6,
+    alignItems: "center",
+    paddingTop: 18,
+    paddingBottom: 18,
+    borderTopWidth: 1,
+    borderTopColor: COLOR_HAIRLINE,
   },
-  campaignTotalCell: {
-    fontSize: 9,
-    color: COLOR_TEXT_MUTED,
-    marginRight: 16,
+  postRowLast: {
+    borderBottomWidth: 1,
+    borderBottomColor: COLOR_HAIRLINE,
   },
-  campaignTotalCellStrong: {
-    fontFamily: "Helvetica-Bold",
+  postThumbBox: {
+    width: 80,
+    height: 80,
+    marginRight: 20,
+    backgroundColor: "#f4f4f4",
+    overflow: "hidden",
+  },
+  postThumbImage: {
+    width: 80,
+    height: 80,
+    objectFit: "cover",
+  },
+  postBody: {
+    flex: 1,
+    paddingRight: 16,
+  },
+  postCaption: {
+    marginTop: 6,
+    fontFamily: "Helvetica",
+    fontSize: SIZE_BODY,
     color: COLOR_TEXT,
+    lineHeight: 1.45,
   },
-  badgeRow: {
+  postReachCell: {
+    alignItems: "flex-end",
+  },
+  postReachValue: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_STAT_RIGHT,
+    color: COLOR_TEXT,
+    letterSpacing: -0.2,
+  },
+  postReachLabel: {
+    marginTop: 4,
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_EYEBROW,
+    color: COLOR_TEXT_MUTED,
+    textTransform: "uppercase",
+    letterSpacing: 1.6,
+  },
+  emptyFeed: {
+    paddingTop: 36,
+    paddingBottom: 36,
+    borderTopWidth: 1,
+    borderTopColor: COLOR_HAIRLINE,
+    borderBottomWidth: 1,
+    borderBottomColor: COLOR_HAIRLINE,
+    textAlign: "center",
+    fontSize: SIZE_BODY,
+    color: COLOR_TEXT_FAINT,
+  },
+
+  // -------- Page 4: Alliance --------
+  allianceHeadline: {
+    marginTop: 18,
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_SECTION_H,
+    color: COLOR_TEXT,
+    lineHeight: 1.1,
+    letterSpacing: -0.4,
+    maxWidth: 460,
+  },
+  allianceBody: {
+    marginTop: 16,
+    fontFamily: "Helvetica",
+    fontSize: SIZE_BODY_LG,
+    lineHeight: 1.6,
+    color: COLOR_TEXT_BODY,
+    maxWidth: 440,
+  },
+  allianceGrid: {
+    marginTop: 44,
     flexDirection: "row",
     flexWrap: "wrap",
+    width: 460,
   },
-  badge: {
-    flexDirection: "row",
-    borderWidth: 1,
-    borderColor: COLOR_BORDER,
-    backgroundColor: "#fafafa",
-    borderRadius: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    marginRight: 6,
-    marginBottom: 4,
+  allianceCell: {
+    width: "50%",
+    paddingRight: 24,
+    paddingBottom: 36,
   },
-  badgeText: {
-    fontSize: 8,
-    color: "#404040",
-  },
-
-  // Narrative
-  narrative: {
-    fontSize: 11,
-    color: "#404040",
-    lineHeight: 1.6,
-    marginBottom: 12,
-  },
-
-  // Top locations list
-  listKicker: {
-    fontSize: 8,
-    color: COLOR_TEXT_MUTED,
-    letterSpacing: 1.2,
+  allianceCellValue: {
     fontFamily: "Helvetica-Bold",
-    marginTop: 14,
-    marginBottom: 6,
+    fontSize: SIZE_DISPLAY_3,
+    color: COLOR_TEXT,
+    lineHeight: 1,
+    letterSpacing: -0.8,
   },
-  locRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ececec",
-    borderBottomStyle: "dashed",
-  },
-  locLabel: {
-    fontSize: 10,
-    color: "#404040",
-  },
-  locShare: {
-    fontSize: 9,
+  allianceCellLabel: {
+    marginTop: 10,
+    fontFamily: "Helvetica",
+    fontSize: SIZE_BODY_SM,
     color: COLOR_TEXT_MUTED,
+    lineHeight: 1.4,
+  },
+  allianceClosing: {
+    marginTop: 28,
+    fontFamily: "Helvetica",
+    fontSize: SIZE_BODY_LG,
+    color: COLOR_TEXT,
+    lineHeight: 1.55,
+    maxWidth: 460,
+  },
+  allianceClosingGold: {
+    fontFamily: "Helvetica-Bold",
+    color: COLOR_GOLD,
   },
 
-  signoff: {
-    marginTop: 28,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: "#efefef",
+  // -------- Agent + Footer --------
+  agentBlock: {
+    marginTop: 56,
   },
-  signoffMain: {
-    fontSize: 10,
-    color: "#404040",
+  agentName: {
+    marginTop: 14,
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_AGENT,
+    color: COLOR_TEXT,
+    letterSpacing: -0.3,
   },
-  signoffSub: {
-    fontSize: 9,
+  agentOffice: {
+    marginTop: 6,
+    fontFamily: "Helvetica",
+    fontSize: SIZE_BODY,
     color: COLOR_TEXT_MUTED,
-    marginTop: 2,
+    lineHeight: 1.4,
+  },
+  agentEmail: {
+    marginTop: 16,
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_BODY,
+    color: COLOR_TEXT,
+    letterSpacing: 0.2,
+  },
+
+  footer: {
+    marginTop: 56,
+    alignItems: "center",
+  },
+  footerSealRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    opacity: 0.6,
+  },
+  footerSealImage: {
+    width: 18,
+    height: 22,
+    marginRight: 10,
+    objectFit: "contain",
+  },
+  footerSealFallback: {
+    width: 18,
+    height: 22,
+    marginRight: 10,
+    backgroundColor: COLOR_GOLD,
+  },
+  footerWordmark: {
+    fontFamily: "Helvetica",
+    fontSize: SIZE_BODY,
+    color: COLOR_TEXT,
+  },
+  footerCaption: {
+    marginTop: 24,
+    fontFamily: "Helvetica-Bold",
+    fontSize: SIZE_EYEBROW,
+    color: COLOR_TEXT_FAINT,
+    textTransform: "uppercase",
+    letterSpacing: 1.8,
   },
 });
 
@@ -546,149 +444,126 @@ function platformLabel(p: Platform): string {
 
 function truncate(text: string, max: number): string {
   const t = text.trim();
+  if (!t) return "No caption recorded.";
   if (t.length <= max) return t;
   return `${t.slice(0, max - 1).trimEnd()}…`;
 }
 
-function loadNarrative(payload: ReportPayload): {
-  hero?: string;
-  reach_summary?: string;
-  closing?: string;
-} {
-  // The build.ts payload doesn't currently expose `narrative`, but the
-  // reports row in supabase carries one. We accept either by reading off
-  // payload as a record. Defensive coercion keeps the doc happy if missing.
-  const anyPayload = payload as unknown as {
-    narrative?: { hero?: string; reach_summary?: string; closing?: string };
-  };
-  return anyPayload.narrative ?? {};
+/** Best-effort 2-line address split mirroring the live web view. */
+function firstLineOfAddress(address: string): string {
+  if (!address) return "";
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return parts[0] ?? address;
+  return parts[0];
 }
 
-const DEFAULT_CLOSING =
-  "Alliance Social put your home in front of a measured, qualified audience across the platforms most likely to drive serious buyer interest.";
+function secondLineOfAddress(address: string): string {
+  if (!address) return "";
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return "";
+  return parts.slice(1).join(", ");
+}
+
+/** The campaign's dominant platform (highest reach) for the row label. */
+function dominantPlatform(c: ReportCampaign): Platform | null {
+  if (c.by_platform.length === 0) return null;
+  return [...c.by_platform].sort((a, b) => b.reach - a.reach)[0]?.platform ?? null;
+}
+
+interface PdfExtras {
+  /** Optional recipient nameplate ("PREPARED FOR ..."). */
+  recipient_name?: string | null;
+  /** Optional agent contact info — falls back gracefully when absent. */
+  agent_name?: string | null;
+  agent_email?: string | null;
+  /** Optional listing date for the property-identity stat row. */
+  listing_date?: string | null;
+}
+
+function loadExtras(payload: ReportPayload): PdfExtras {
+  // The build.ts payload doesn't expose these fields directly, but the public
+  // route can attach them onto the payload before passing it in. Defensive
+  // coercion keeps tsc + runtime happy if missing.
+  const anyPayload = payload as unknown as { __pdf_extras?: PdfExtras };
+  return anyPayload.__pdf_extras ?? {};
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
-interface HeroImageProps {
-  url?: string | null;
-}
-
-function HeroImage({ url }: HeroImageProps) {
-  // Defensive: react-pdf will fetch the URL during render. If it fails, the
-  // whole document throws — but the route handler has a try/catch fallback,
-  // so a failing image just sends the user to the HTML print view. We still
-  // render the gold block for the no-URL case directly here.
+function HeroImage({ url }: { url?: string | null }) {
+  // No URL -> render the empty-state label like the live web view.
   if (!url) {
     return (
-      <View style={styles.heroFallback}>
-        <Text style={styles.heroFallbackMark}>A</Text>
+      <View style={styles.identityHeroEmpty}>
+        <Text style={styles.identityHeroEmptyLabel}>No cover photo on file</Text>
       </View>
     );
   }
-  return <Image src={url} style={styles.heroImage} />;
+  return <Image src={url} style={styles.identityHeroImage} />;
 }
 
-function BrandHeader({
-  payload,
-  withSeal = false,
-}: {
-  payload: ReportPayload;
-  /**
-   * When true, render the C21 seal image instead of the gold "A" placeholder.
-   * Used on the cover (HeroPage) only; subsequent pages keep the placeholder
-   * to preserve the report's lighter visual rhythm.
-   */
-  withSeal?: boolean;
-}) {
-  const periodText =
-    payload.period_start && payload.period_end
-      ? `${formatShortDate(payload.period_start)} – ${formatShortDate(payload.period_end)}`
-      : "";
+function PropertyStat({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.brandHeader}>
-      <View style={styles.brandLeft}>
-        {withSeal && SEAL_BUFFER ? (
-          <Image src={SEAL_BUFFER} style={styles.brandLogoSeal} />
-        ) : (
-          <Text style={styles.brandLogo}>A</Text>
-        )}
-        <View>
-          <Text style={styles.brandName}>Century 21 Alliance</Text>
-          <Text style={styles.brandSub}>PROPERTY PERFORMANCE REPORT</Text>
-        </View>
-      </View>
-      <Text style={styles.brandPeriod}>{periodText.toUpperCase()}</Text>
+    <View style={styles.identityStatCell}>
+      <Text style={styles.eyebrow}>{label.toUpperCase()}</Text>
+      <Text style={styles.identityStatValue}>{value}</Text>
     </View>
   );
 }
 
-function HeroPage({ payload }: { payload: ReportPayload }) {
+function IdentityPage({
+  payload,
+  extras,
+}: {
+  payload: ReportPayload;
+  extras: PdfExtras;
+}) {
   const { property } = payload;
+  const recipientLabel = extras.recipient_name
+    ? `Prepared for ${extras.recipient_name}`
+    : "Prepared for the owner";
+
   return (
     <Page size="LETTER" style={styles.page} wrap={false}>
-      <BrandHeader payload={payload} withSeal />
+      <Text style={styles.eyebrow}>{recipientLabel.toUpperCase()}</Text>
 
-      <View style={styles.heroBox}>
-        <HeroImage url={property.hero_image_url ?? null} />
-        <View style={styles.heroOverlay}>
-          <Text style={styles.heroMls}>MLS {property.mls}</Text>
-          <Text style={styles.heroAddress}>{property.address}</Text>
-          {typeof property.list_price === "number" ? (
-            <View style={styles.heroPriceRow}>
-              <View style={styles.heroPriceChip}>
-                <Text style={styles.heroPriceChipLabel}>LIST PRICE</Text>
-                <Text style={styles.heroPriceChipValue}>
-                  {formatCurrency(property.list_price)}
-                </Text>
-              </View>
-            </View>
-          ) : null}
-        </View>
+      <Text style={styles.identityAddress}>
+        {firstLineOfAddress(property.address)}
+      </Text>
+      {secondLineOfAddress(property.address) ? (
+        <Text style={styles.identityAddressLine2}>
+          {secondLineOfAddress(property.address)}
+        </Text>
+      ) : null}
+
+      <View style={styles.identityStatRow}>
+        <PropertyStat
+          label="List Price"
+          value={
+            typeof property.list_price === "number"
+              ? formatCurrency(property.list_price)
+              : "—"
+          }
+        />
+        <PropertyStat label="MLS" value={property.mls} />
+        <PropertyStat
+          label="Listed"
+          value={
+            extras.listing_date ? formatShortDate(extras.listing_date) : "—"
+          }
+        />
       </View>
 
-      <View style={styles.callout}>
-        <Text style={styles.calloutKicker}>PREPARED FOR</Text>
-        <Text style={styles.calloutTitle}>
-          The seller of {property.address}
-        </Text>
-        <Text style={styles.calloutBody}>
-          An Alliance Social marketing report covering every post we put behind
-          your home across Instagram, Facebook, and TikTok.
-        </Text>
+      <View style={styles.identityHeroBox}>
+        <HeroImage url={property.hero_image_url ?? null} />
       </View>
     </Page>
   );
 }
 
-function KpiCard({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.kpiCol}>
-      <View style={styles.kpiCard}>
-        <Text style={styles.kpiLabel}>{label.toUpperCase()}</Text>
-        <Text style={styles.kpiValue}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-/**
- * Wide hero KPI tile that spans 2/3 of the grid width. Used to give "Total
- * reach" the visual emphasis John called for in the redesign spec.
- */
-function HeroKpiCard({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.kpiColWide}>
-      <View style={styles.kpiCardHero}>
-        <Text style={styles.kpiLabel}>{label.toUpperCase()}</Text>
-        <Text style={styles.kpiValueHero}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-function KpiPage({
+function PerformancePage({
   payload,
   companyRollup,
 }: {
@@ -696,263 +571,195 @@ function KpiPage({
   companyRollup: CompanyRollup;
 }) {
   const k = payload.kpis;
-  const platformShare = payload.audience.platform_share;
+  const postCount = k.post_count;
+  const totalEngagements = k.total_engagements;
+  const audienceTotal = companyRollup.followers.total;
+
   return (
     <Page size="LETTER" style={styles.page} wrap={false}>
-      <BrandHeader payload={payload} />
-      <Text style={styles.sectionH}>Your home&apos;s performance</Text>
-      <Text style={styles.sectionSub}>
-        Aggregated across every post that ran for {payload.property.address}{" "}
-        during the report period.
-      </Text>
+      <Text style={styles.eyebrow}>PERFORMANCE</Text>
 
-      <View style={styles.kpiGrid}>
-        {/* Hero tile — emphasized total reach */}
-        <HeroKpiCard
-          label="Total reach"
-          value={formatCompactNumber(k.total_reach)}
-        />
-        <KpiCard
-          label="Total impressions"
-          value={formatCompactNumber(k.total_impressions)}
-        />
-        <KpiCard
-          label="Total engagements"
-          value={formatCompactNumber(k.total_engagements)}
-        />
-        <KpiCard label="Posts" value={k.post_count.toString()} />
-        <KpiCard
-          label="Platforms"
-          value={k.platforms_covered.toString()}
-        />
-        <KpiCard
-          label="Audience"
-          value={formatCompactNumber(companyRollup.followers.total)}
-        />
+      <View style={styles.perfHeroRow}>
+        <Text style={styles.perfHeroNumber}>
+          {formatCompactNumber(k.total_reach)}
+        </Text>
+        <Text style={styles.perfHeroLabel}>people reached</Text>
       </View>
 
-      {platformShare.length > 0 ? (
-        <View style={styles.shareList}>
-          <Text style={styles.listKicker}>REACH SHARE BY PLATFORM</Text>
-          {platformShare.map((p) => (
-            <View key={p.platform} style={styles.shareRow}>
-              <View style={styles.shareRowHeader}>
-                <Text style={styles.shareLabel}>{platformLabel(p.platform)}</Text>
-                <Text style={styles.shareValue}>
-                  {formatCompactNumber(p.reach)} reach {"·"}{" "}
-                  {Math.round(p.share * 100)}%
-                </Text>
-              </View>
-              <View style={styles.shareTrack}>
-                <View
-                  style={[
-                    styles.shareFill,
-                    {
-                      width: `${Math.max(2, Math.round(p.share * 100))}%`,
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          ))}
-        </View>
-      ) : null}
+      <Text style={styles.perfBody}>
+        We published{" "}
+        <Text style={styles.perfBodyEmphasis}>
+          {formatCompactNumber(postCount)} {postCount === 1 ? "post" : "posts"}
+        </Text>{" "}
+        behind your home, generating{" "}
+        <Text style={styles.perfBodyEmphasis}>
+          {formatCompactNumber(totalEngagements)} engagements
+        </Text>{" "}
+        across an audience of{" "}
+        <Text style={styles.perfBodyEmphasis}>
+          {formatCompactNumber(audienceTotal)}
+        </Text>{" "}
+        on Instagram, Facebook, and TikTok.
+      </Text>
+
+      {/* Gold accent #1 — single 1pt rule */}
+      <View style={styles.goldRule} />
     </Page>
   );
 }
 
-function EnginePage({
+function PostRow({
+  campaign,
+  isLast,
+}: {
+  campaign: ReportCampaign;
+  isLast: boolean;
+}) {
+  const plat = dominantPlatform(campaign);
+  const date = campaign.posted_at ? formatShortDate(campaign.posted_at) : "";
+  const eyebrowText = [plat ? platformLabel(plat) : null, date]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <View
+      style={[styles.postRow, isLast ? styles.postRowLast : {}]}
+      wrap={false}
+    >
+      <View style={styles.postThumbBox}>
+        {campaign.thumbnail_url ? (
+          <Image src={campaign.thumbnail_url} style={styles.postThumbImage} />
+        ) : null}
+      </View>
+      <View style={styles.postBody}>
+        <Text style={styles.eyebrow}>{eyebrowText.toUpperCase()}</Text>
+        <Text style={styles.postCaption}>{truncate(campaign.label, 140)}</Text>
+      </View>
+      <View style={styles.postReachCell}>
+        <Text style={styles.postReachValue}>
+          {formatCompactNumber(campaign.total_reach)}
+        </Text>
+        <Text style={styles.postReachLabel}>REACH</Text>
+      </View>
+    </View>
+  );
+}
+
+function MarketingPage({ payload }: { payload: ReportPayload }) {
+  const campaigns = payload.campaigns;
+
+  return (
+    <Page size="LETTER" style={styles.page} wrap>
+      <Text style={styles.eyebrow}>MARKETING</Text>
+      <Text style={styles.marketingHeadline}>
+        Every post we put behind your home.
+      </Text>
+
+      <View style={styles.postFeed}>
+        {campaigns.length === 0 ? (
+          <Text style={styles.emptyFeed}>
+            No posts attached to this listing yet.
+          </Text>
+        ) : (
+          campaigns.map((c, idx) => (
+            <PostRow
+              key={c.id}
+              campaign={c}
+              isLast={idx === campaigns.length - 1}
+            />
+          ))
+        )}
+      </View>
+    </Page>
+  );
+}
+
+function AllianceStatCell({
+  value,
+  label,
+}: {
+  value: string;
+  label: string;
+}) {
+  return (
+    <View style={styles.allianceCell}>
+      <Text style={styles.allianceCellValue}>{value}</Text>
+      <Text style={styles.allianceCellLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function AlliancePage({
   payload,
   companyRollup,
+  extras,
 }: {
   payload: ReportPayload;
   companyRollup: CompanyRollup;
+  extras: PdfExtras;
 }) {
   const w30 = companyRollup.window_30d;
   const w365 = companyRollup.window_365d;
-  const f = companyRollup.followers;
+
+  // Derive a polite office line — the PDF doesn't get the agent_email host
+  // unless extras provides it. Fall back to the brand name.
+  const agentName = extras.agent_name ?? "Your Alliance agent";
+  const officeLine = "Century 21 Alliance";
+
   return (
-    <Page size="LETTER" style={styles.page} wrap={false}>
-      <BrandHeader payload={payload} />
-      <Text style={styles.sectionH}>The Alliance Marketing Engine</Text>
-      <Text style={styles.sectionSub}>
-        Your listing rides on the volume Alliance puts out every day. Here is the
-        full body of work behind it.
+    <Page size="LETTER" style={styles.pageAlliance} wrap={false}>
+      <Text style={styles.eyebrow}>ALLIANCE</Text>
+      <Text style={styles.allianceHeadline}>
+        Your home isn&apos;t being marketed in a silo.
+      </Text>
+      <Text style={styles.allianceBody}>
+        It&apos;s part of an audience built over years — and the work has shown
+        up every month.
       </Text>
 
-      <View style={styles.engineGrid}>
-        <View style={styles.engineWindow}>
-          <Text style={styles.engineWindowLabel}>LAST 30 DAYS</Text>
-          <View style={styles.engineTile}>
-            <Text style={styles.engineTileLabel}>POSTS PUBLISHED</Text>
-            <Text style={styles.engineTileValue}>
-              {formatCompactNumber(w30.posts)}
-            </Text>
-          </View>
-          <View style={styles.engineTile}>
-            <Text style={styles.engineTileLabel}>PEOPLE REACHED</Text>
-            <Text style={styles.engineTileValue}>
-              {formatCompactNumber(w30.reach)}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.engineWindow}>
-          <Text style={styles.engineWindowLabel}>TRAILING 365 DAYS</Text>
-          <View style={styles.engineTile}>
-            <Text style={styles.engineTileLabel}>POSTS PUBLISHED</Text>
-            <Text style={styles.engineTileValue}>
-              {formatCompactNumber(w365.posts)}
-            </Text>
-          </View>
-          <View style={styles.engineTile}>
-            <Text style={styles.engineTileLabel}>PEOPLE REACHED</Text>
-            <Text style={styles.engineTileValue}>
-              {formatCompactNumber(w365.reach)}
-            </Text>
-          </View>
-        </View>
+      <View style={styles.allianceGrid}>
+        <AllianceStatCell
+          value={formatCompactNumber(w30.posts)}
+          label="Posts in the last 30 days"
+        />
+        <AllianceStatCell
+          value={formatCompactNumber(w30.reach)}
+          label="People reached in the last 30 days"
+        />
+        <AllianceStatCell
+          value={formatCompactNumber(w365.posts)}
+          label="Posts in the last 365 days"
+        />
+        <AllianceStatCell
+          value={formatCompactNumber(w365.reach)}
+          label="People reached in the last 365 days"
+        />
       </View>
 
-      <View style={styles.engineFollowerRow}>
-        <Text style={styles.engineFollowerLabel}>
-          FOLLOWERS ACROSS PLATFORMS
-        </Text>
-        <View style={styles.engineFollowerTopRow}>
-          <Text style={styles.engineFollowerTotal}>
-            {formatCompactNumber(f.total)}
-          </Text>
-          <Text style={styles.shareValue}>combined audience</Text>
-        </View>
-        <View style={styles.engineFollowerBreakdown}>
-          <View style={styles.engineFollowerCell}>
-            <Text style={styles.engineFollowerCellLabel}>FACEBOOK</Text>
-            <Text style={styles.engineFollowerCellValue}>
-              {formatCompactNumber(f.facebook ?? 0)}
-            </Text>
-          </View>
-          <View style={styles.engineFollowerCell}>
-            <Text style={styles.engineFollowerCellLabel}>INSTAGRAM</Text>
-            <Text style={styles.engineFollowerCellValue}>
-              {formatCompactNumber(f.instagram ?? 0)}
-            </Text>
-          </View>
-          <View style={styles.engineFollowerCell}>
-            <Text style={styles.engineFollowerCellLabel}>TIKTOK</Text>
-            <Text style={styles.engineFollowerCellValue}>
-              {formatCompactNumber(f.tiktok ?? 0)}
-            </Text>
-          </View>
-        </View>
+      <Text style={styles.allianceClosing}>
+        Other firms don&apos;t open the books like this. Alliance{" "}
+        <Text style={styles.allianceClosingGold}>does</Text>.
+      </Text>
+
+      <View style={styles.agentBlock}>
+        <Text style={styles.eyebrow}>YOUR AGENT</Text>
+        <Text style={styles.agentName}>{agentName}</Text>
+        <Text style={styles.agentOffice}>{officeLine}</Text>
+        {extras.agent_email ? (
+          <Text style={styles.agentEmail}>{extras.agent_email}</Text>
+        ) : null}
       </View>
 
-      <Text style={styles.engineQuote}>
-        Your listing is part of all of this. Other firms don&apos;t open the
-        books like this — Alliance does.
-      </Text>
-    </Page>
-  );
-}
-
-function CampaignsPage({ payload }: { payload: ReportPayload }) {
-  const top = payload.campaigns.slice(0, 3);
-  return (
-    <Page size="LETTER" style={styles.page} wrap={false}>
-      <BrandHeader payload={payload} />
-      <Text style={styles.sectionH}>Top campaigns</Text>
-      <Text style={styles.sectionSub}>
-        The posts that drove the most reach for your home.
-      </Text>
-
-      {top.length === 0 ? (
-        <Text style={styles.narrative}>
-          No campaigns ran during this period.
-        </Text>
-      ) : (
-        top.map((c) => (
-          <View key={c.id} style={styles.campaign}>
-            {c.thumbnail_url ? (
-              <Image src={c.thumbnail_url} style={styles.campaignThumb} />
-            ) : (
-              <View style={styles.campaignThumbFallback} />
-            )}
-            <View style={styles.campaignBody}>
-              <Text style={styles.campaignLabel}>{truncate(c.label, 120)}</Text>
-              <View style={styles.campaignTotalsRow}>
-                <Text style={styles.campaignTotalCell}>
-                  <Text style={styles.campaignTotalCellStrong}>
-                    {formatCompactNumber(c.total_reach)}
-                  </Text>
-                  {" reach"}
-                </Text>
-                <Text style={styles.campaignTotalCell}>
-                  <Text style={styles.campaignTotalCellStrong}>
-                    {formatCompactNumber(c.total_engagements)}
-                  </Text>
-                  {" engagements"}
-                </Text>
-              </View>
-              <View style={styles.badgeRow}>
-                {c.by_platform.map((p) => (
-                  <View key={p.platform} style={styles.badge}>
-                    <Text style={styles.badgeText}>
-                      {platformLabel(p.platform)} {"·"}{" "}
-                      {formatCompactNumber(p.reach)} reach {"·"}{" "}
-                      {formatCompactNumber(p.engagements)} eng
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          </View>
-        ))
-      )}
-    </Page>
-  );
-}
-
-function NarrativePage({ payload }: { payload: ReportPayload }) {
-  const narrative = loadNarrative(payload);
-  const closing = narrative.closing ?? DEFAULT_CLOSING;
-  return (
-    <Page size="LETTER" style={styles.page} wrap={false}>
-      <BrandHeader payload={payload} />
-      <Text style={styles.sectionH}>What this means for your sale</Text>
-      <Text style={styles.sectionSub}>
-        Plain-English summary of the marketing effort behind your home.
-      </Text>
-
-      {narrative.hero ? (
-        <Text style={styles.narrative}>{narrative.hero}</Text>
-      ) : null}
-      {narrative.reach_summary ? (
-        <Text style={styles.narrative}>{narrative.reach_summary}</Text>
-      ) : null}
-      <Text style={styles.narrative}>{closing}</Text>
-
-      {payload.audience.top_locations.length > 0 ? (
-        <View>
-          <Text style={styles.listKicker}>
-            TOP LOCATIONS THE AUDIENCE CAME FROM
-          </Text>
-          {payload.audience.top_locations.slice(0, 5).map((loc) => (
-            <View key={loc.label} style={styles.locRow}>
-              <Text style={styles.locLabel}>{loc.label}</Text>
-              <Text style={styles.locShare}>
-                {Math.round(loc.share * 100)}%
-              </Text>
-            </View>
-          ))}
+      <View style={styles.footer}>
+        <View style={styles.footerSealRow}>
+          {SEAL_BUFFER ? (
+            <Image src={SEAL_BUFFER} style={styles.footerSealImage} />
+          ) : (
+            <View style={styles.footerSealFallback} />
+          )}
+          <Text style={styles.footerWordmark}>Century 21 Alliance</Text>
         </View>
-      ) : null}
-
-      <View style={styles.signoff}>
-        <Text style={styles.signoffMain}>
-          Prepared by Alliance Social {"·"} Century 21 Alliance
-        </Text>
-        <Text style={styles.signoffSub}>
-          Questions? Reply to the email this report came from, or contact your
-          Alliance agent directly.
-        </Text>
+        <Text style={styles.footerCaption}>PREPARED BY ALLIANCE SOCIAL</Text>
       </View>
     </Page>
   );
@@ -969,17 +776,21 @@ function ReportDocument({
   payload: ReportPayload;
   companyRollup: CompanyRollup;
 }) {
+  const extras = loadExtras(payload);
   return (
     <Document
       title={`Alliance Property Report — ${payload.property.mls}`}
       author="Century 21 Alliance"
       subject="Property marketing report"
     >
-      <HeroPage payload={payload} />
-      <KpiPage payload={payload} companyRollup={companyRollup} />
-      <CampaignsPage payload={payload} />
-      <EnginePage payload={payload} companyRollup={companyRollup} />
-      <NarrativePage payload={payload} />
+      <IdentityPage payload={payload} extras={extras} />
+      <PerformancePage payload={payload} companyRollup={companyRollup} />
+      <MarketingPage payload={payload} />
+      <AlliancePage
+        payload={payload}
+        companyRollup={companyRollup}
+        extras={extras}
+      />
     </Document>
   );
 }
