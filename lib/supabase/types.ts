@@ -532,6 +532,8 @@ export type Database = {
           bathrooms_half: number | null
           bedrooms: number | null
           city: string | null
+          close_date: string | null
+          close_price: number | null
           created_at: string
           dom_days: number | null
           hero_image_url: string | null
@@ -564,6 +566,8 @@ export type Database = {
           bathrooms_half?: number | null
           bedrooms?: number | null
           city?: string | null
+          close_date?: string | null
+          close_price?: number | null
           created_at?: string
           dom_days?: number | null
           hero_image_url?: string | null
@@ -596,6 +600,8 @@ export type Database = {
           bathrooms_half?: number | null
           bedrooms?: number | null
           city?: string | null
+          close_date?: string | null
+          close_price?: number | null
           created_at?: string
           dom_days?: number | null
           hero_image_url?: string | null

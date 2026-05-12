@@ -6,7 +6,7 @@ import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import ListingsFilterChips from "./ListingsFilterChips";
 import NeedsPostsCard from "./NeedsPostsCard";
 
-interface NeedsPostsRowProps {
+interface RecentlyListedRowProps {
   listings: ListingNeedingPosts[];
   /** Currently active office filter short_code, when one is set. */
   officeShortCode?: string | null;
@@ -22,7 +22,9 @@ interface NeedsPostsRowProps {
 const COLLAPSED_KEY = "recent-listings-collapsed";
 
 /**
- * Dashboard "Recent listings (14d)" strip.
+ * Dashboard "Recently Listed — needs coverage" card (renamed from
+ * NeedsPostsRow for symmetry with UnderContractRow + RecentlySoldRow).
+ * Lives in the left column of the milestones grid on the dashboard.
  *
  * Each row shows hero thumb, address, price, days, missing-platform chips,
  * MLS# copy chip, and a Status menu (Mark as posted / Dismiss / Reset).
@@ -36,12 +38,12 @@ const COLLAPSED_KEY = "recent-listings-collapsed";
  * the list so the user can focus on the post stream below. State persists
  * across reloads via localStorage so the dashboard remembers your choice.
  */
-export default function NeedsPostsRow({
+export default function RecentlyListedRow({
   listings,
   officeShortCode,
   statusFilter = "needs_only",
   className,
-}: NeedsPostsRowProps) {
+}: RecentlyListedRowProps) {
   // Hide entirely when there's nothing to show in "needs_only" view —
   // dashboard doesn't grow a permanent empty section. In "all" view we
   // always render the chrome so the toggle stays accessible.
@@ -95,9 +97,9 @@ export default function NeedsPostsRow({
           <ChevronIcon collapsed={collapsed} />
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-neutral-900">
-              Recent listings
+              Recently Listed
               <span className="text-neutral-400 font-normal">
-                {" "}· last 14 days{scope}
+                {" "}· last 14 days · needs coverage{scope}
               </span>
               {collapsed ? (
                 <span className="ml-2 inline-flex items-center rounded-full bg-gold-200/70 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-medium text-gold-800 tabular-nums">

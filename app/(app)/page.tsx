@@ -7,6 +7,10 @@ import {
 } from "@/lib/data";
 import { getGroupsLastNDays } from "@/lib/data/groups";
 import { getListingsNeedingPosts } from "@/lib/data/listings-needing-posts";
+import {
+  getRecentlySoldListings,
+  getUnderContractListings,
+} from "@/lib/data/recently-sold";
 import { listOffices } from "@/lib/data/offices";
 import {
   searchPosts,
@@ -18,7 +22,9 @@ import CompanyAnalyticsStrip from "@/components/CompanyAnalyticsStrip";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
 import GlobalSearch from "@/components/GlobalSearch";
 import GroupCard from "@/components/GroupCard";
-import NeedsPostsRow from "@/components/NeedsPostsRow";
+import RecentlyListedRow from "@/components/RecentlyListedRow";
+import UnderContractRow from "@/components/UnderContractRow";
+import RecentlySoldRow from "@/components/RecentlySoldRow";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
@@ -124,6 +130,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     posts,
     accountHealth,
     listingsNeedingPosts,
+    underContractListings,
+    recentlySoldListings,
     companyAnalytics,
     followerSummary,
   ] = await Promise.all([
@@ -152,6 +160,15 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     getListingsNeedingPosts({
       office_short_code: officeFilter,
       status_filter: listingsFilter,
+    }),
+    getUnderContractListings({
+      office_short_code: officeFilter,
+      limit: 8,
+    }),
+    getRecentlySoldListings({
+      office_short_code: officeFilter,
+      windowDays: 30,
+      limit: 8,
     }),
     getCompanyAnalytics({ days, office_short_code: officeFilter }),
     getFollowerSummary(days),
@@ -203,11 +220,30 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         {profile.role === "admin" ? <SyncNowButton /> : null}
       </div>
 
-      <NeedsPostsRow
-        listings={listingsNeedingPosts}
-        statusFilter={listingsFilter}
-        officeShortCode={officeFilter}
-      />
+      {/* Milestones grid — three cards.
+          Desktop layout: 2-column grid.
+            Left  (50%): Recently Listed — needs coverage (full height)
+            Right (50%): Under Contract (top half) + Recently Sold (bottom half)
+          Mobile: single column, stacked top-to-bottom in the same order.
+          Both right-column cards respect the active office filter. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <RecentlyListedRow
+          listings={listingsNeedingPosts}
+          statusFilter={listingsFilter}
+          officeShortCode={officeFilter}
+        />
+        <div className="grid grid-cols-1 gap-4">
+          <UnderContractRow
+            listings={underContractListings}
+            officeShortCode={officeFilter}
+          />
+          <RecentlySoldRow
+            listings={recentlySoldListings}
+            windowDays={30}
+            officeShortCode={officeFilter}
+          />
+        </div>
+      </div>
 
       {/* Section break + sort tabs — visually separates the "Recent listings
           to action" zone above from the "Posts to review" zone below. The

@@ -12,6 +12,12 @@
  *   - Hero photo via GetObject (Location=1 returns Paragon CDN URL in
  *     `Location:` HTTP header on a 200 response — NOT a 3xx redirect)
  *
+ * Phase 7 add-ons:
+ *   - close_date / close_price capture (from L_ClosingDate + L_SoldPrice).
+ *     Falls through several Paragon field variants since the canonical name
+ *     differs between CMC, SJSR, and property class. Powers the
+ *     "Recently Sold" + "Under Contract" dashboard cards.
+ *
  * Required Edge Function secrets:
  *   - SUPABASE_URL                       (auto-injected)
  *   - SUPABASE_SERVICE_ROLE_KEY          (auto-injected)
@@ -534,7 +540,50 @@ interface MappedListing {
   bathrooms_half: number | null;
   public_remarks: string | null;
   hero_image_url: string | null;
+  /** Settlement / closing date (Paragon L_ClosingDate). NULL for active listings. */
+  close_date: string | null;
+  /** Sold price at settlement (Paragon L_SoldPrice / L_ClosePrice). NULL for active. */
+  close_price: number | null;
   raw_payload: Record<string, unknown>;
+}
+
+/**
+ * Pull close_date from any of Paragon's close-date field variants.
+ * Different feeds + class codes use different keys; this falls through
+ * the common ones in order of preference.
+ */
+function readCloseDate(row: RowMap): string | null {
+  const candidates = [
+    "L_ClosingDate",
+    "L_ClosedDate",
+    "L_CloseDate",
+    "L_SettlementDate",
+    "L_SoldDate",
+  ];
+  for (const key of candidates) {
+    const v = readDate(row[key]);
+    if (v) return v;
+  }
+  return null;
+}
+
+/**
+ * Pull close_price (the actual sold/settled amount, NOT the asking price)
+ * from any of Paragon's price field variants. Falls back to NULL when
+ * the listing hasn't sold yet.
+ */
+function readClosePrice(row: RowMap): number | null {
+  const candidates = [
+    "L_SoldPrice",
+    "L_ClosePrice",
+    "L_ClosingPrice",
+    "L_SalePrice",
+  ];
+  for (const key of candidates) {
+    const v = readPrice(row[key]);
+    if (v && v > 0) return v;
+  }
+  return null;
 }
 
 function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
@@ -563,6 +612,8 @@ function mapRow(row: RowMap, sourceMls: "cmc" | "sjsr"): MappedListing | null {
     bathrooms_half: beds.bathrooms_half,
     public_remarks: readPublicRemarks(row, sourceMls),
     hero_image_url: null, // populated by syncPhotosForRows after upsert
+    close_date: readCloseDate(row),
+    close_price: readClosePrice(row),
     raw_payload: row,
   };
 }
@@ -653,6 +704,8 @@ async function upsertListings(client: SupabaseClient, rows: MappedListing[]): Pr
     bathrooms_half: r.bathrooms_half,
     public_remarks: r.public_remarks,
     hero_image_url: r.hero_image_url,
+    close_date: r.close_date,
+    close_price: r.close_price,
     raw_payload: r.raw_payload,
     synced_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -684,6 +737,8 @@ async function replicateToProperties(client: SupabaseClient, rows: MappedListing
     bathrooms_half: r.bathrooms_half,
     public_remarks: r.public_remarks,
     hero_image_url: r.hero_image_url,
+    close_date: r.close_date,
+    close_price: r.close_price,
     status: r.status === "withdrawn" ? "expired" : r.status,
     source_mls: r.source_mls,
     updated_at: new Date().toISOString(),
