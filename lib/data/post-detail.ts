@@ -107,6 +107,7 @@ function asCategory(value: string | null): PostCategory | undefined {
     value === "marketing" ||
     value === "community" ||
     value === "sold" ||
+    value === "open_house" ||
     value === "other"
   ) {
     return value;
