@@ -147,6 +147,77 @@ export default async function LivePropertyDetail({
         </div>
       </section>
 
+      {/* Owner Report — promoted to the top, dominant action card on the
+          page. Charcoal background + gold-accented controls make it the
+          unmistakable primary action. Owner reports are the headline output
+          of the system, so the act of generating/sharing them gets the
+          first piece of real estate after the listing identity. */}
+      <section className="relative overflow-hidden rounded-2xl bg-neutral-900 text-white shadow-elevated p-6 md:p-8">
+        {/* Top gold accent strip — matches the dashboard nav cue. */}
+        <div
+          aria-hidden="true"
+          className="absolute top-0 left-6 right-6 h-0.5 rounded-full bg-gradient-to-r from-gold-300/0 via-gold-500/80 to-gold-300/0"
+        />
+
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-gold-400">
+              Primary action
+            </div>
+            <h2 className="mt-1 text-2xl md:text-3xl font-semibold tracking-tight text-white">
+              Owner Report
+            </h2>
+            <p className="mt-1.5 text-sm text-neutral-300 max-w-xl">
+              Branded marketing summary your seller can view in their browser
+              or download as a PDF.
+            </p>
+          </div>
+        </div>
+
+        {existingReport ? (
+          <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-lg bg-white/5 ring-1 ring-white/10 px-4 py-3">
+            <div className="text-sm text-neutral-300 min-w-0">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+                Shareable link
+              </span>
+              <code className="block md:inline-block md:ml-2 mt-1 md:mt-0 px-2 py-1 text-xs bg-white/10 text-neutral-100 rounded break-all">
+                /r/{existingReport.report_token}
+              </code>
+            </div>
+            <ReportActionBar shareToken={existingReport.report_token} />
+          </div>
+        ) : null}
+
+        {existingReport ? (
+          <div className="mt-3 flex items-center gap-2 text-[11px] text-neutral-400">
+            <span>
+              Generated{" "}
+              {existingReport.generated_at
+                ? formatRelativeTime(existingReport.generated_at)
+                : "just now"}
+            </span>
+            {existingReport.is_locked ? (
+              <span className="inline-flex items-center rounded-md bg-white/10 ring-1 ring-white/20 px-1.5 py-0.5 text-[10px] font-medium text-neutral-200">
+                Locked snapshot — won&rsquo;t refresh on regenerate
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-end gap-3">
+          <GenerateReportButton
+            mls={property.mls_number}
+            newestPostAgeDays={newestPostAgeDays}
+          />
+          <SendToAgentButton
+            propertyAddress={property.address ?? property.mls_number}
+            flyerUrl={existingReport?.flyer_url_path ?? ""}
+            pdfUrl={existingReport?.pdf_url_path ?? ""}
+            disabled={!existingReport}
+          />
+        </div>
+      </section>
+
       {/* Quick stats — only meaningful when there are posts */}
       {property.post_count > 0 ? (
         <section className="grid grid-cols-3 gap-3">
@@ -169,60 +240,6 @@ export default async function LivePropertyDetail({
           syncs, it&rsquo;ll appear here automatically.
         </section>
       )}
-
-      {/* Owner Report — generate + share link */}
-      <section className="rounded-xl border border-neutral-200 bg-white shadow-card p-4 md:p-5 space-y-3">
-        <div>
-          <h2 className="text-sm font-semibold text-neutral-900">
-            Owner Report
-          </h2>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Branded marketing summary your seller can view in their browser
-            or as a PDF.
-          </p>
-        </div>
-
-        {existingReport ? (
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div className="text-sm text-neutral-500 min-w-0">
-              Shareable link:
-              <code className="ml-2 px-1.5 py-0.5 text-xs bg-neutral-100 rounded break-all">
-                /r/{existingReport.report_token}
-              </code>
-            </div>
-            <ReportActionBar shareToken={existingReport.report_token} />
-          </div>
-        ) : null}
-
-        {existingReport ? (
-          <div className="flex items-center gap-2 text-[11px] text-neutral-500">
-            <span>
-              Generated{" "}
-              {existingReport.generated_at
-                ? formatRelativeTime(existingReport.generated_at)
-                : "just now"}
-            </span>
-            {existingReport.is_locked ? (
-              <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 text-[10px] font-medium text-neutral-700">
-                Locked snapshot — won&rsquo;t refresh on regenerate
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3 pt-1">
-          <GenerateReportButton
-            mls={property.mls_number}
-            newestPostAgeDays={newestPostAgeDays}
-          />
-          <SendToAgentButton
-            propertyAddress={property.address ?? property.mls_number}
-            flyerUrl={existingReport?.flyer_url_path ?? ""}
-            pdfUrl={existingReport?.pdf_url_path ?? ""}
-            disabled={!existingReport}
-          />
-        </div>
-      </section>
 
       {/* Recipients + cadence — only after a report exists */}
       {existingReport ? (
