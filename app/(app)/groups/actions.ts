@@ -136,6 +136,179 @@ export async function mergeIntoGroupAction(
 }
 
 /**
+ * Drag-and-drop merge — merges TWO groups (or solo posts) into one.
+ *
+ * Direction: dragging A onto B means "A becomes part of B's campaign."
+ * If A is a real group, all its posts move into B's group (or a new group
+ * promoted from B's solo post). The original A group is cleaned up.
+ *
+ * IDs follow the dashboard convention:
+ *   - real group ID  → UUID like "abc-def-..."
+ *   - solo post      → "solo-<post_id>"
+ *
+ * The action handles all four combinations:
+ *   solo + solo   → new group created, both posts join
+ *   solo + group  → solo post added to target group
+ *   group + solo  → target promoted to a group, source posts added
+ *   group + group → source posts moved to target, source group deleted
+ *
+ * The resulting group is marked manual + locked so the auto-grouper
+ * never touches it.
+ */
+export async function mergeGroupsAction(
+  sourceId: string,
+  targetId: string,
+): Promise<MergeActionResult> {
+  await requireAdmin();
+  if (!sourceId || !targetId) {
+    return { ok: false, error: "Missing source or target id." };
+  }
+  if (sourceId === targetId) {
+    return { ok: false, error: "Cannot merge a card with itself." };
+  }
+
+  const supabase = createAdminClient();
+  const nowIso = new Date().toISOString();
+
+  // Resolve each side to (groupId | null, soloPostId | null).
+  function parseId(id: string): { groupId: string | null; soloPostId: string | null } {
+    if (id.startsWith("solo-")) {
+      return { groupId: null, soloPostId: id.slice("solo-".length) };
+    }
+    return { groupId: id, soloPostId: null };
+  }
+  const source = parseId(sourceId);
+  const target = parseId(targetId);
+
+  // Resolve target → a real group_id. If target is solo, promote it: create
+  // a fresh post_groups row and assign the solo post into it.
+  let targetGroupId: string;
+  if (target.groupId) {
+    // Verify target group exists.
+    const { data, error } = await supabase
+      .from("post_groups")
+      .select("id")
+      .eq("id", target.groupId)
+      .maybeSingle();
+    if (error || !data) return { ok: false, error: "Target group not found." };
+    targetGroupId = target.groupId;
+  } else if (target.soloPostId) {
+    // Promote solo to a new group.
+    const { data: tPost, error: tErr } = await supabase
+      .from("posts")
+      .select("id, group_id, posted_at, caption, thumbnail_url")
+      .eq("id", target.soloPostId)
+      .maybeSingle();
+    if (tErr || !tPost) return { ok: false, error: "Target post not found." };
+    if (tPost.group_id) {
+      // Race: the target was just assigned a group by another writer. Use it.
+      targetGroupId = tPost.group_id;
+    } else {
+      const { data: newGroup, error: gErr } = await supabase
+        .from("post_groups")
+        .insert({
+          group_method: "manual",
+          is_locked: true,
+          posted_date: tPost.posted_at
+            ? tPost.posted_at.slice(0, 10)
+            : nowIso.slice(0, 10),
+          representative_caption: tPost.caption ?? "",
+          representative_thumbnail: tPost.thumbnail_url ?? "",
+        })
+        .select("id")
+        .single();
+      if (gErr || !newGroup) {
+        return { ok: false, error: `Create-group failed: ${gErr?.message}` };
+      }
+      targetGroupId = newGroup.id;
+      // Move the target's solo post into the new group.
+      const { error: assignErr } = await supabase
+        .from("posts")
+        .update({ group_id: targetGroupId, updated_at: nowIso })
+        .eq("id", target.soloPostId);
+      if (assignErr) {
+        return { ok: false, error: `Assign target failed: ${assignErr.message}` };
+      }
+    }
+  } else {
+    return { ok: false, error: "Invalid target id." };
+  }
+
+  // Collect source post ids. For a real group: all member posts. For a solo:
+  // just the one post.
+  let sourcePostIds: string[] = [];
+  let sourceGroupIdToCleanup: string | null = null;
+  if (source.groupId) {
+    if (source.groupId === targetGroupId) {
+      return { ok: false, error: "Source and target are already the same group." };
+    }
+    const { data: rows, error } = await supabase
+      .from("posts")
+      .select("id")
+      .eq("group_id", source.groupId);
+    if (error) return { ok: false, error: `Source posts query: ${error.message}` };
+    sourcePostIds = (rows ?? []).map((r) => r.id);
+    sourceGroupIdToCleanup = source.groupId;
+  } else if (source.soloPostId) {
+    sourcePostIds = [source.soloPostId];
+  } else {
+    return { ok: false, error: "Invalid source id." };
+  }
+
+  if (sourcePostIds.length === 0) {
+    return { ok: false, error: "Source has no posts to merge." };
+  }
+
+  // Reassign all source posts to the target group.
+  const { error: moveErr } = await supabase
+    .from("posts")
+    .update({ group_id: targetGroupId, updated_at: nowIso })
+    .in("id", sourcePostIds);
+  if (moveErr) {
+    return { ok: false, error: `Reassign failed: ${moveErr.message}` };
+  }
+
+  // Cleanup empty source group (only if non-locked — locked groups are
+  // intentional manual containers and we don't auto-delete them).
+  if (sourceGroupIdToCleanup) {
+    try {
+      const { data: srcGroup } = await supabase
+        .from("post_groups")
+        .select("id, is_locked")
+        .eq("id", sourceGroupIdToCleanup)
+        .maybeSingle();
+      if (srcGroup) {
+        const { count } = await supabase
+          .from("posts")
+          .select("id", { count: "exact", head: true })
+          .eq("group_id", sourceGroupIdToCleanup);
+        if ((count ?? 0) === 0) {
+          await supabase
+            .from("post_groups")
+            .delete()
+            .eq("id", sourceGroupIdToCleanup);
+        }
+      }
+    } catch (e) {
+      console.error("mergeGroupsAction: source-group cleanup —", e);
+    }
+  }
+
+  // Lock the target group as manual.
+  await supabase
+    .from("post_groups")
+    .update({
+      group_method: "manual",
+      is_locked: true,
+      updated_at: nowIso,
+    })
+    .eq("id", targetGroupId);
+
+  revalidatePath("/");
+  return { ok: true, merged_post_id: sourcePostIds[0] };
+}
+
+/**
  * Unmerge a single post from a group. Sets posts.group_id = null.
  *
  * If the group has fewer than 2 posts left after the move, delete it so the

@@ -22,7 +22,7 @@ import AccountSyncBar from "@/components/AccountSyncBar";
 import CompanyAnalyticsStrip from "@/components/CompanyAnalyticsStrip";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
 import GlobalSearch from "@/components/GlobalSearch";
-import GroupCard from "@/components/GroupCard";
+import PostStreamDnd from "@/components/PostStreamDnd";
 import RecentlyListedRow from "@/components/RecentlyListedRow";
 import UnderContractRow from "@/components/UnderContractRow";
 import RecentlySoldRow from "@/components/RecentlySoldRow";
@@ -299,19 +299,14 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         groups.length === 0 ? (
           <EmptyGroupedState days={days} />
         ) : (
-          <section className="space-y-3">
-            {groups.map((g) => (
-              <GroupCard
-                key={g.id}
-                group={g}
-                offices={offices.map((o) => ({
-                  short_code: o.short_code,
-                  name: o.name,
-                }))}
-                isAdmin={profile.role === "admin"}
-              />
-            ))}
-          </section>
+          <PostStreamDnd
+            groups={groups}
+            offices={offices.map((o) => ({
+              short_code: o.short_code,
+              name: o.name,
+            }))}
+            isAdmin={profile.role === "admin"}
+          />
         )
       ) : (
         <PostStream posts={posts} pageSize={30} />
