@@ -3,6 +3,7 @@ import archiver from "archiver";
 import { PassThrough } from "node:stream";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { renderFBNewListingV1 } from "./templates/primitives/fb-new-listing-v1";
+import { renderFBOpenHouseV1 } from "./templates/primitives/fb-open-house-v1";
 import type {
   FBBundleListingInput,
   FBBundleRequest,
@@ -74,20 +75,28 @@ export async function generateFBBundle(req: FBBundleRequest): Promise<BundleResu
   }
 
   // --- 3. Fetch each real photo and collect into a manifest -----------
-  let realPhotos: { filename: string; bytes: Buffer; contentType: string }[];
-  try {
-    realPhotos = await fetchAllRealPhotos(req.listings);
-  } catch (e) {
-    return {
-      ok: false,
-      error: `Photo fetch failed: ${e instanceof Error ? e.message : String(e)}`,
-    };
+  //
+  // Two patterns based on caption shape:
+  //   new_listing_single → 1 hero card + N real photos in gallery
+  //   open_house_multi   → N hero cards only (every gallery slot is designed)
+  //
+  // For OH multi we skip the real-photo fetch entirely.
+  let realPhotos: { filename: string; bytes: Buffer; contentType: string }[] = [];
+  if (req.caption_shape !== "open_house_multi") {
+    try {
+      realPhotos = await fetchAllRealPhotos(req.listings);
+    } catch (e) {
+      return {
+        ok: false,
+        error: `Photo fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
   }
 
   // --- 4. Pack into ZIP ------------------------------------------------
   let zipBytes: Buffer;
   try {
-    zipBytes = await packBundle({ heroPngs, realPhotos, caption });
+    zipBytes = await packBundle({ heroPngs, realPhotos, caption, shape: req.caption_shape });
   } catch (e) {
     return {
       ok: false,
@@ -186,7 +195,7 @@ async function renderAllHeroCards(
       }
       const heroDataUri = await fetchAsDataUri(heroUrl);
 
-      // Hero template selection — Phase 7 only ships fb_new_listing_v1.
+      // Hero template selection
       let html: string;
       if (req.hero_template_id === "fb_new_listing_v1") {
         html = renderFBNewListingV1({
@@ -194,8 +203,12 @@ async function renderAllHeroCards(
           heroImageDataUri: heroDataUri,
           customFeature: input.custom_feature ?? null,
         });
+      } else if (req.hero_template_id === "fb_open_house_v1") {
+        html = renderFBOpenHouseV1({
+          listing: input.listing,
+          heroImageDataUri: heroDataUri,
+        });
       } else {
-        // Phase 8 placeholder
         throw new Error(`Unsupported hero_template_id: ${req.hero_template_id}`);
       }
 
@@ -237,41 +250,41 @@ async function renderAllHeroCards(
 // Real photo fetching
 // ---------------------------------------------------------------------
 
+/**
+ * Fetch real (supporting) listing photos for new_listing_single mode.
+ * The caller has already filtered out OH multi-property shape, so this
+ * only handles the single-listing case: skip photo #1 (already used as
+ * the hero card source) and include the rest in the gallery.
+ */
 async function fetchAllRealPhotos(
   inputs: FBBundleListingInput[],
 ): Promise<{ filename: string; bytes: Buffer; contentType: string }[]> {
   const out: { filename: string; bytes: Buffer; contentType: string }[] = [];
-  for (let i = 0; i < inputs.length; i++) {
-    const input = inputs[i];
-    const mls = input.listing.mls_number;
-    const listingSeq = String(i + 1).padStart(2, "0");
-    // Skip the first URL — that's already the hero card photo (Phase 7 uses
-    // photo #1 for the hero). For multi-listing (Phase 8) every URL goes
-    // into the bundle as a separate gallery image.
-    const photoUrlsToFetch = inputs.length === 1
-      ? input.real_photo_urls.slice(1) // Phase 7: skip photo #1 (= hero card source)
-      : input.real_photo_urls; // Phase 8: include all
-    for (let j = 0; j < photoUrlsToFetch.length; j++) {
-      const url = photoUrlsToFetch[j];
-      const photoSeq = String(j + 1).padStart(2, "0");
-      try {
-        const r = await fetch(url, {
-          headers: { "user-agent": "Mozilla/5.0 (compatible; AllianceAnalytics/1.0)" },
-        });
-        if (!r.ok) {
-          console.warn(`[bundle] skipping photo ${url}: HTTP ${r.status}`);
-          continue;
-        }
-        const ct = r.headers.get("content-type") ?? "image/jpeg";
-        const bytes = Buffer.from(await r.arrayBuffer());
-        const ext = ct.toLowerCase().includes("png") ? "png" : "jpg";
-        const filename = inputs.length === 1
-          ? `${String(j + 2).padStart(2, "0")}-${mls}.${ext}` // continues numbering after the hero card
-          : `${listingSeq}-${photoSeq}-${mls}.${ext}`;
-        out.push({ filename, bytes, contentType: ct });
-      } catch (e) {
-        console.warn(`[bundle] photo fetch error ${url}:`, e);
+  // Currently only single-listing for the new_listing_single shape.
+  // If a future shape ships multi-listing-with-real-photos we'll branch here.
+  const input = inputs[0];
+  if (!input) return out;
+  const mls = input.listing.mls_number;
+  const photoUrlsToFetch = input.real_photo_urls.slice(1); // skip hero source
+
+  for (let j = 0; j < photoUrlsToFetch.length; j++) {
+    const url = photoUrlsToFetch[j];
+    try {
+      const r = await fetch(url, {
+        headers: { "user-agent": "Mozilla/5.0 (compatible; AllianceAnalytics/1.0)" },
+      });
+      if (!r.ok) {
+        console.warn(`[bundle] skipping photo ${url}: HTTP ${r.status}`);
+        continue;
       }
+      const ct = r.headers.get("content-type") ?? "image/jpeg";
+      const bytes = Buffer.from(await r.arrayBuffer());
+      const ext = ct.toLowerCase().includes("png") ? "png" : "jpg";
+      // Numbering continues after the hero card (which is "01-…")
+      const filename = `${String(j + 2).padStart(2, "0")}-${mls}.${ext}`;
+      out.push({ filename, bytes, contentType: ct });
+    } catch (e) {
+      console.warn(`[bundle] photo fetch error ${url}:`, e);
     }
   }
   return out;
@@ -302,6 +315,7 @@ async function packBundle(args: {
   heroPngs: { bytes: Buffer; filenameStem: string }[];
   realPhotos: { filename: string; bytes: Buffer; contentType: string }[];
   caption: FBCaptionResult;
+  shape?: "new_listing_single" | "open_house_multi";
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -329,7 +343,22 @@ async function packBundle(args: {
     archive.append(captionTxt, { name: "caption.txt" });
 
     // README walking Larissa through the workflow.
-    const readme = `Century 21 Alliance — Facebook Post Bundle
+    const isOH = args.shape === "open_house_multi";
+    const readme = isOH
+      ? `Century 21 Alliance — Open House Weekend Bundle
+
+WORKFLOW:
+  1. Copy the contents of caption.txt and paste into the Facebook post body.
+     The caption includes day-grouped addresses + times for every property.
+  2. Upload all the hero card PNGs to the FB gallery — Facebook will lay them
+     out in a grid. Order doesn't matter much for OH posts since each card
+     is self-labeled with its address + time.
+  3. Each card is a designed asset; no real photos to drop in.
+  4. The first listing's MLS hashtag (${args.caption.mls_hashtag}) is in the caption
+     for auto-attribution. Add more hashtags by hand if you want per-property
+     attribution for every listing in the post.
+`
+      : `Century 21 Alliance — Facebook Post Bundle
 
 WORKFLOW:
   1. Copy the contents of caption.txt and paste into the Facebook post body.

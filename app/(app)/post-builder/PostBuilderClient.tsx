@@ -111,6 +111,8 @@ export default function PostBuilderClient({
   const [customFeatureLoading, setCustomFeatureLoading] = useState(false);
   const [bundleResult, setBundleResult] = useState<BundleUiResult | null>(null);
   const [bundleGenerating, setBundleGenerating] = useState(false);
+  // Open House FB multi-property state (Phase 8) — set of MLS numbers
+  const [ohMultiSelected, setOhMultiSelected] = useState<Set<string>>(new Set());
   // Photo picker state
   const [availablePhotos, setAvailablePhotos] = useState<PhotoOption[]>([]);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(0);
@@ -438,6 +440,85 @@ export default function PostBuilderClient({
       setBundleGenerating(false);
     }
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Phase 8 — Open House FB Multi-Property
+  // ─────────────────────────────────────────────────────────────────
+  const isOhMultiMode = postType === "open_house" && outputMode === "fb_multi";
+
+  function toggleOhMulti(mls: string) {
+    setOhMultiSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(mls)) next.delete(mls);
+      else next.add(mls);
+      return next;
+    });
+    setBundleResult(null);
+  }
+
+  async function generateOhBundle() {
+    const selectedListings = listings.filter((l) => ohMultiSelected.has(l.mls_number));
+    if (selectedListings.length < 2) {
+      setError("Pick at least 2 open houses for the gallery.");
+      return;
+    }
+    if (selectedListings.length > 15) {
+      setError("Max 15 open houses per post (Facebook gallery limit).");
+      return;
+    }
+    setBundleGenerating(true);
+    setError(null);
+    setBundleResult(null);
+    try {
+      const res = await fetch("/api/post-builder/bundle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          hero_template_id: "fb_open_house_v1",
+          caption_shape: "open_house_multi",
+          listings: selectedListings.map((l) => ({
+            listing: l,
+            // For OH cards, only the hero photo matters (used as the photo
+            // inside the designed card). No supporting photos shipped.
+            real_photo_urls: l.hero_image_url ? [l.hero_image_url] : [],
+            custom_feature: null,
+          })),
+        }),
+      });
+      const text = await res.text();
+      let json: FBBundleResponse | FBBundleErrorResponse | null = null;
+      try {
+        json = JSON.parse(text) as FBBundleResponse | FBBundleErrorResponse;
+      } catch {
+        setError(`Bundle returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+        return;
+      }
+      if (!json.ok) {
+        setError(`OH bundle failed: ${json.error}`);
+        return;
+      }
+      setBundleResult({
+        bundle_url: json.bundle_url,
+        asset_count: json.asset_count,
+        caption: json.caption,
+        hashtags: json.hashtags,
+        mls_hashtag: json.mls_hashtag,
+        mls_number: selectedListings[0].mls_number,
+      });
+      setEditedCaption(json.caption);
+    } catch (e) {
+      setError(`OH bundle threw: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBundleGenerating(false);
+    }
+  }
+
+  // Reset OH selection when leaving OH+FB mode or changing post-type away from OH.
+  useEffect(() => {
+    if (!isOhMultiMode) {
+      setOhMultiSelected(new Set());
+    }
+  }, [isOhMultiMode]);
 
   async function downloadBundle() {
     if (!bundleResult) return;
@@ -796,7 +877,9 @@ export default function PostBuilderClient({
           ) : (
             <div className="max-h-[640px] overflow-y-auto -mx-2 px-2 space-y-1.5">
               {filteredListings.map((l) => {
-                const active = l.mls_number === selectedMls;
+                const active = isOhMultiMode
+                  ? ohMultiSelected.has(l.mls_number)
+                  : l.mls_number === selectedMls;
                 const showPrice =
                   postType === "just_sold" && typeof l.close_price === "number"
                     ? l.close_price
@@ -805,7 +888,9 @@ export default function PostBuilderClient({
                   <button
                     key={l.mls_number}
                     type="button"
-                    onClick={() => pickListing(l.mls_number)}
+                    onClick={() =>
+                      isOhMultiMode ? toggleOhMulti(l.mls_number) : pickListing(l.mls_number)
+                    }
                     className={[
                       "w-full text-left rounded-lg border p-2.5 transition flex gap-3 items-start",
                       active
@@ -813,6 +898,28 @@ export default function PostBuilderClient({
                         : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50",
                     ].join(" ")}
                   >
+                    {isOhMultiMode ? (
+                      <div
+                        className={[
+                          "w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center flex-shrink-0 transition",
+                          active
+                            ? "bg-gold-500 border-gold-500"
+                            : "bg-white border-neutral-300",
+                        ].join(" ")}
+                      >
+                        {active ? (
+                          <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                            <path
+                              d="M2 6l3 3 5-6"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {l.hero_image_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -863,7 +970,21 @@ export default function PostBuilderClient({
 
         {/* Right: Format + Variant + Photo picker + Generate + Preview */}
         <section className="card p-5 min-h-[640px]">
-          {!selectedListing ? (
+          {isOhMultiMode ? (
+            <OhMultiPanel
+              selectedCount={ohMultiSelected.size}
+              selectedListings={listings.filter((l) => ohMultiSelected.has(l.mls_number))}
+              bundleGenerating={bundleGenerating}
+              bundleResult={bundleResult}
+              error={error}
+              editedCaption={editedCaption}
+              onEditedCaptionChange={setEditedCaption}
+              onGenerate={generateOhBundle}
+              onDownload={downloadBundle}
+              onCopyCaption={copyCaption}
+              copyState={copyState}
+            />
+          ) : !selectedListing ? (
             <EmptyPreview />
           ) : (
             <div className="flex flex-col h-full">
@@ -1297,6 +1418,189 @@ export default function PostBuilderClient({
             </div>
           )}
         </section>
+      </div>
+    </div>
+  );
+}
+
+interface OhMultiPanelProps {
+  selectedCount: number;
+  selectedListings: PostBuilderListing[];
+  bundleGenerating: boolean;
+  bundleResult: BundleUiResult | null;
+  error: string | null;
+  editedCaption: string;
+  onEditedCaptionChange: (s: string) => void;
+  onGenerate: () => void;
+  onDownload: () => void;
+  onCopyCaption: () => void;
+  copyState: "idle" | "copied";
+}
+
+function OhMultiPanel(props: OhMultiPanelProps) {
+  const {
+    selectedCount,
+    selectedListings,
+    bundleGenerating,
+    bundleResult,
+    error,
+    editedCaption,
+    onEditedCaptionChange,
+    onGenerate,
+    onDownload,
+    onCopyCaption,
+    copyState,
+  } = props;
+
+  // Day-group the selected listings for the preview list (matches the caption shape)
+  const grouped = useMemo(() => {
+    const byDay = new Map<
+      string,
+      { label: string; rows: { listing: PostBuilderListing; time: string }[] }
+    >();
+    for (const l of selectedListings) {
+      if (!l.oh_start_at) continue;
+      const start = new Date(l.oh_start_at);
+      if (Number.isNaN(start.getTime())) continue;
+      const dayKey = new Intl.DateTimeFormat("en-CA", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        timeZone: "America/New_York",
+      }).format(start);
+      const dayLabel = new Intl.DateTimeFormat("en-US", {
+        weekday: "long",
+        timeZone: "America/New_York",
+      }).format(start);
+      const timeFmt = new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        minute: start.getUTCMinutes() === 0 ? undefined : "2-digit",
+        hour12: true,
+        timeZone: "America/New_York",
+      });
+      const timeStr = timeFmt.format(start);
+      if (!byDay.has(dayKey)) byDay.set(dayKey, { label: dayLabel, rows: [] });
+      byDay.get(dayKey)!.rows.push({ listing: l, time: timeStr });
+    }
+    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [selectedListings]);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+          Open House Weekend · multi-property
+        </div>
+        <div className="text-sm text-emerald-900 mt-1">
+          Multi-select listings from the left panel. Each selection becomes
+          one designed "Open House" card in the FB gallery. The caption
+          auto-builds with day-grouped addresses + times.
+        </div>
+      </div>
+
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <div className="eyebrow mb-1">Step · Generate</div>
+          <h2 className="text-lg font-semibold text-neutral-900">
+            {selectedCount === 0
+              ? "No listings selected"
+              : `${selectedCount} open house${selectedCount === 1 ? "" : "s"} selected`}
+          </h2>
+          <div className="text-sm text-neutral-600">
+            Each generates one designed card. Max 15 per post.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={bundleGenerating || selectedCount < 2}
+          className="btn-primary whitespace-nowrap"
+        >
+          {bundleGenerating ? "Building bundle…" : bundleResult ? "Rebuild" : "Generate OH Bundle"}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
+        {/* Selected listings preview (day-grouped) */}
+        <div className="flex flex-col">
+          <div className="eyebrow mb-2">Selected listings · grouped by OH day</div>
+          <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-3 flex-1 overflow-y-auto min-h-[280px]">
+            {grouped.length === 0 ? (
+              <div className="text-sm text-neutral-500 italic text-center mt-12 px-4">
+                Pick at least 2 listings from the left panel.
+                <br />
+                Each selected listing gets its own Open House card in the FB gallery.
+              </div>
+            ) : (
+              grouped.map(([key, group]) => (
+                <div key={key} className="mb-4 last:mb-0">
+                  <div className="text-xs font-bold uppercase tracking-wide text-neutral-700 mb-1.5">
+                    {group.label}
+                  </div>
+                  <ul className="space-y-1 text-sm text-neutral-700">
+                    {group.rows.map((r) => (
+                      <li key={r.listing.mls_number} className="flex items-baseline gap-2">
+                        <span>📍</span>
+                        <span className="flex-1 truncate">
+                          {r.listing.address}, {r.listing.city}
+                        </span>
+                        <span className="text-xs text-neutral-500 font-mono">{r.time}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            )}
+          </div>
+          {bundleResult ? (
+            <div className="mt-3 flex items-center gap-2">
+              <button type="button" onClick={onDownload} className="btn-primary flex-1">
+                Download ZIP · {bundleResult.asset_count} cards
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Caption preview / editor */}
+        <div className="flex flex-col">
+          <div className="flex items-center justify-between mb-2">
+            <div className="eyebrow">Caption preview</div>
+            {bundleResult ? (
+              <button
+                type="button"
+                onClick={onCopyCaption}
+                className="text-xs text-gold-700 font-medium hover:text-gold-800"
+              >
+                {copyState === "copied" ? "✓ Copied" : "Copy all"}
+              </button>
+            ) : null}
+          </div>
+          <textarea
+            className="input flex-1 min-h-[280px] font-mono text-[13px] leading-relaxed resize-y"
+            placeholder={
+              bundleGenerating
+                ? "Building bundle + caption…"
+                : "Caption appears after Generate. Day-grouped addresses, times, and hashtags built automatically."
+            }
+            value={editedCaption}
+            onChange={(e) => onEditedCaptionChange(e.target.value)}
+          />
+          {bundleResult ? (
+            <div className="mt-3 text-xs text-neutral-500 leading-relaxed">
+              First listing's MLS hashtag{" "}
+              <code className="font-mono text-neutral-700 bg-neutral-100 px-1 rounded">
+                {bundleResult.mls_hashtag}
+              </code>{" "}
+              is in the caption for auto-attribution.
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

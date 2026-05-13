@@ -39,11 +39,192 @@ export async function generateFBCaption(args: {
     return generateNewListingCaption(args.listings[0]);
   }
   if (args.shape === "open_house_multi") {
-    // Phase 8 — placeholder. Returns null for now; the UI shouldn't be
-    // sending this shape until Phase 8 ships.
-    return null;
+    if (args.listings.length === 0) return null;
+    return generateOpenHouseMultiCaption(args.listings);
   }
   return null;
+}
+
+/**
+ * Multi-property Open House caption.
+ *
+ *   🌳 OPEN HOUSE WEEKEND 🌳
+ *   Your weekend plans just got better 👀
+ *   {AI intro mentioning regions}
+ *
+ *   ✨ Stop by, tour these beautiful homes, and find the one that feels like home.
+ *
+ *   SATURDAY:
+ *   📍 {address}
+ *   ⏰ {time}
+ *   ...
+ *
+ *   SUNDAY:
+ *   📍 {address}
+ *   ⏰ {time}
+ *   ...
+ *
+ *   Which one are you checking out first? 👇
+ *
+ *   #century21alliance #openhouse #southjerseyrealestate #{city1} #{city2}
+ */
+async function generateOpenHouseMultiCaption(
+  listings: PostBuilderListing[],
+): Promise<FBCaptionResult | null> {
+  // Group by day-of-week (using America/New_York since OH times are stored UTC).
+  type GroupedListing = {
+    listing: PostBuilderListing;
+    timeRange: string;
+    dayKey: string;
+    dayLabel: string;
+    sortStamp: number;
+  };
+  const grouped: GroupedListing[] = [];
+  for (const l of listings) {
+    if (!l.oh_start_at) continue;
+    const start = new Date(l.oh_start_at);
+    if (Number.isNaN(start.getTime())) continue;
+    const end = l.oh_end_at ? new Date(l.oh_end_at) : null;
+    const dayKey = new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone: "America/New_York",
+    }).format(start);
+    const dayLabel = new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      timeZone: "America/New_York",
+    })
+      .format(start)
+      .toUpperCase();
+    const timeRange = formatTimeRange(start, end);
+    grouped.push({
+      listing: l,
+      timeRange,
+      dayKey,
+      dayLabel,
+      sortStamp: start.getTime(),
+    });
+  }
+  if (grouped.length === 0) return null;
+
+  // Sort by start time ascending, then bucket by dayKey preserving order.
+  grouped.sort((a, b) => a.sortStamp - b.sortStamp);
+  const byDay: Map<string, GroupedListing[]> = new Map();
+  for (const g of grouped) {
+    if (!byDay.has(g.dayKey)) byDay.set(g.dayKey, []);
+    byDay.get(g.dayKey)!.push(g);
+  }
+
+  // AI generates the intro paragraph (mentions specific regions).
+  // Cities for hashtag use (top 2 by frequency).
+  const cityCounts = new Map<string, number>();
+  for (const g of grouped) {
+    const c = (g.listing.city ?? "").trim();
+    if (c) cityCounts.set(c, (cityCounts.get(c) ?? 0) + 1);
+  }
+  const topCities = [...cityCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([city]) => city);
+
+  let aiIntro =
+    `From ${formatCityList(topCities)} & more, we've got something for everyone this weekend!`;
+  try {
+    const client = await getAnthropic();
+    if (client && topCities.length > 0) {
+      const response = await client.messages.create({
+        model: ANTHROPIC_MODELS.sonnet,
+        max_tokens: 150,
+        system:
+          "You are a real estate social media writer at Century 21 Alliance NJ. You write ONE punchy intro sentence for an Open House Weekend Facebook post. Mention the specific regions/cities listed. Use 1 emoji max. Return just the sentence, no quotes, no preamble.",
+        messages: [
+          {
+            role: "user",
+            content: `Cities/areas in this weekend's open house lineup: ${topCities.join(", ")}.\n\nWrite ONE intro sentence (under 25 words) that mentions a couple of the regions and previews the variety. End with an exclamation point.`,
+          },
+        ],
+      });
+      const block = response.content.find((b) => b.type === "text");
+      const raw = block && block.type === "text" ? block.text.trim() : "";
+      if (raw && raw.length > 5 && raw.length < 250) aiIntro = raw;
+    }
+  } catch (e) {
+    console.error("[captions-fb] OH intro Claude error:", e);
+  }
+
+  // Assemble caption
+  const parts: string[] = [];
+  parts.push("🌳 OPEN HOUSE WEEKEND 🌳");
+  parts.push("Your weekend plans just got better 👀");
+  parts.push(aiIntro);
+  parts.push("");
+  parts.push("✨ Stop by, tour these beautiful homes, and find the one that feels like home.");
+  parts.push("");
+
+  // Day-grouped listings (Saturday before Sunday in calendar order)
+  for (const [, items] of byDay) {
+    if (items.length === 0) continue;
+    parts.push(`${items[0].dayLabel}:`);
+    for (const g of items) {
+      const addr = [g.listing.address, g.listing.city].filter(Boolean).join(", ");
+      parts.push(`📍 ${addr}`);
+      parts.push(`⏰ ${g.timeRange}`);
+    }
+    parts.push("");
+  }
+
+  parts.push("Which one are you checking out first? 👇");
+  parts.push("");
+
+  // Hashtags — location-led, all lowercase per the sample.
+  const cityHashtags = topCities.slice(0, 2).map(
+    (c) => `#${c.replace(/[^A-Za-z0-9]/g, "").toLowerCase()}`,
+  );
+  const allHashtags = dedupeHashtags([
+    "#century21alliance",
+    "#openhouse",
+    "#southjerseyrealestate",
+    ...cityHashtags,
+  ]);
+  parts.push(allHashtags.join(" "));
+
+  // MLS hashtag for auto-linker. For multi-property posts, the first
+  // listing's hashtag goes in so at least one auto-attribution happens.
+  const firstMlsHashtag = canonicalMlsHashtag(
+    grouped[0].listing.mls_number,
+    grouped[0].listing.source_mls,
+  );
+
+  return {
+    caption: parts.join("\n"),
+    hashtags: allHashtags,
+    mls_hashtag: firstMlsHashtag,
+  };
+}
+
+function formatTimeRange(start: Date, end: Date | null): string {
+  const tz = "America/New_York";
+  const fmtHour = (d: Date) => {
+    const f = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: d.getUTCMinutes() === 0 ? undefined : "2-digit",
+      hour12: true,
+      timeZone: tz,
+    });
+    return f.format(d).replace(/\s/g, "").toUpperCase();
+  };
+  const startStr = fmtHour(start);
+  if (!end || Number.isNaN(end.getTime())) return startStr;
+  return `${startStr}-${fmtHour(end)}`;
+}
+
+function formatCityList(cities: string[]): string {
+  if (cities.length === 0) return "the shore";
+  if (cities.length === 1) return cities[0];
+  if (cities.length === 2) return `${cities[0]} to ${cities[1]}`;
+  const head = cities.slice(0, -1).join(", ");
+  return `${head} to ${cities[cities.length - 1]}`;
 }
 
 /**
