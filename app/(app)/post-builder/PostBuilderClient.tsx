@@ -6,10 +6,13 @@ import type {
   PostFormat,
   PostType,
   PostVariant,
+  OutputMode,
   CaptionResponse,
   CaptionErrorResponse,
   RenderResponse,
   RenderErrorResponse,
+  FBBundleResponse,
+  FBBundleErrorResponse,
 } from "@/lib/post-builder/types";
 import { saveGeneratedPostAction } from "./actions";
 
@@ -74,17 +77,40 @@ const FORMATS: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
 const STORAGE_KEY_POST_TYPE = "post-builder.post_type";
 const STORAGE_KEY_VARIANT = "post-builder.variant";
 const STORAGE_KEY_FORMAT = "post-builder.format";
+const STORAGE_KEY_OUTPUT_MODE = "post-builder.output_mode";
+
+const OUTPUT_MODES: { id: OutputMode; label: string; sub: string }[] = [
+  { id: "ig_single", label: "Instagram", sub: "One designed image · 75 templates" },
+  { id: "fb_multi", label: "Facebook", sub: "Hero card + real photos · bundled ZIP" },
+];
+
+interface BundleUiResult {
+  bundle_url: string;
+  asset_count: number;
+  caption: string;
+  hashtags: string[];
+  mls_hashtag: string;
+  mls_number: string;
+}
 
 export default function PostBuilderClient({
   listingsByPostType,
   variantsByPostTypeAndFormat,
   formatMeta,
 }: Props) {
+  const [outputMode, setOutputMode] = useState<OutputMode>("ig_single");
   const [postType, setPostType] = useState<PostType>("just_listed");
   const [format, setFormat] = useState<PostFormat>("square_1x1");
   const [variantId, setVariantId] = useState<PostVariant>("v1");
   const [search, setSearch] = useState("");
   const [selectedMls, setSelectedMls] = useState<string | null>(null);
+  // FB Native multi-photo state
+  const [fbSelectedPhotos, setFbSelectedPhotos] = useState<Set<number>>(new Set([0, 1, 2, 3]));
+  const [customFeature, setCustomFeature] = useState("");
+  const [customFeatureSuggestion, setCustomFeatureSuggestion] = useState<string | null>(null);
+  const [customFeatureLoading, setCustomFeatureLoading] = useState(false);
+  const [bundleResult, setBundleResult] = useState<BundleUiResult | null>(null);
+  const [bundleGenerating, setBundleGenerating] = useState(false);
   // Photo picker state
   const [availablePhotos, setAvailablePhotos] = useState<PhotoOption[]>([]);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(0);
@@ -101,6 +127,10 @@ export default function PostBuilderClient({
 
   // Restore last-used preferences on mount.
   useEffect(() => {
+    const savedMode = localStorage.getItem(STORAGE_KEY_OUTPUT_MODE) as OutputMode | null;
+    if (savedMode === "ig_single" || savedMode === "fb_multi") {
+      setOutputMode(savedMode);
+    }
     const savedPT = localStorage.getItem(STORAGE_KEY_POST_TYPE) as PostType | null;
     if (savedPT && POST_TYPES.some((p) => p.id === savedPT)) {
       setPostType(savedPT);
@@ -114,6 +144,10 @@ export default function PostBuilderClient({
       setVariantId(savedV);
     }
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_OUTPUT_MODE, outputMode);
+  }, [outputMode]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_POST_TYPE, postType);
@@ -273,6 +307,154 @@ export default function PostBuilderClient({
     setCaptionResult(null);
     setEditedCaption("");
     setError(null);
+    // Reset FB state when listing changes
+    setBundleResult(null);
+    setFbSelectedPhotos(new Set([0, 1, 2, 3]));
+    setCustomFeature("");
+    setCustomFeatureSuggestion(null);
+  }
+
+  function toggleFbPhoto(index: number) {
+    setFbSelectedPhotos((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+    // Photo set change invalidates the bundle but not the caption.
+    setBundleResult(null);
+  }
+
+  /** Fetch AI-suggested custom feature when listing changes (FB mode only). */
+  useEffect(() => {
+    if (outputMode !== "fb_multi" || !selectedListing) {
+      setCustomFeatureSuggestion(null);
+      return;
+    }
+    let cancelled = false;
+    setCustomFeatureLoading(true);
+    fetch("/api/post-builder/custom-feature", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ listing: selectedListing }),
+    })
+      .then((r) => r.json())
+      .then((json: { ok?: boolean; suggestion?: string | null }) => {
+        if (cancelled) return;
+        const suggestion = json.ok && json.suggestion ? json.suggestion : null;
+        setCustomFeatureSuggestion(suggestion);
+        // Pre-fill the input with the suggestion, but only if user hasn't typed
+        if (suggestion && !customFeature) {
+          setCustomFeature(suggestion);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setCustomFeatureLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: customFeature shouldn't re-trigger
+  }, [outputMode, selectedListing?.mls_number]);
+
+  async function regenerateCustomFeature() {
+    if (!selectedListing) return;
+    setCustomFeatureLoading(true);
+    try {
+      const r = await fetch("/api/post-builder/custom-feature", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ listing: selectedListing }),
+      });
+      const json = (await r.json()) as { ok?: boolean; suggestion?: string | null };
+      const suggestion = json.ok && json.suggestion ? json.suggestion : null;
+      setCustomFeatureSuggestion(suggestion);
+      if (suggestion) setCustomFeature(suggestion);
+    } catch {
+      // ignore
+    } finally {
+      setCustomFeatureLoading(false);
+    }
+  }
+
+  async function generateBundle() {
+    if (!selectedListing) return;
+    const sortedIndexes = [...fbSelectedPhotos].sort((a, b) => a - b);
+    if (sortedIndexes.length < 2) {
+      setError("Pick at least 2 photos for the FB gallery (the first one becomes the hero card).");
+      return;
+    }
+    const realPhotoUrls = sortedIndexes
+      .map((i) => availablePhotos[i]?.url)
+      .filter((u): u is string => typeof u === "string" && u.length > 0);
+    if (realPhotoUrls.length < 2) {
+      setError("Could not resolve enough photo URLs. Try refreshing.");
+      return;
+    }
+    setBundleGenerating(true);
+    setError(null);
+    setBundleResult(null);
+    try {
+      const res = await fetch("/api/post-builder/bundle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          hero_template_id: "fb_new_listing_v1",
+          caption_shape: "new_listing_single",
+          listings: [
+            {
+              listing: selectedListing,
+              real_photo_urls: realPhotoUrls,
+              custom_feature: customFeature.trim() || null,
+            },
+          ],
+        }),
+      });
+      const text = await res.text();
+      let json: FBBundleResponse | FBBundleErrorResponse | null = null;
+      try {
+        json = JSON.parse(text) as FBBundleResponse | FBBundleErrorResponse;
+      } catch {
+        setError(`Bundle returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+        return;
+      }
+      if (!json.ok) {
+        setError(`Bundle failed: ${json.error}`);
+        return;
+      }
+      setBundleResult({
+        bundle_url: json.bundle_url,
+        asset_count: json.asset_count,
+        caption: json.caption,
+        hashtags: json.hashtags,
+        mls_hashtag: json.mls_hashtag,
+        mls_number: selectedListing.mls_number,
+      });
+      setEditedCaption(json.caption);
+    } catch (e) {
+      setError(`Bundle generate threw: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBundleGenerating(false);
+    }
+  }
+
+  async function downloadBundle() {
+    if (!bundleResult) return;
+    try {
+      const res = await fetch(bundleResult.bundle_url);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `c21-alliance_fb_${bundleResult.mls_number}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(`Bundle download failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   function pickPhoto(index: number) {
@@ -517,6 +699,36 @@ export default function PostBuilderClient({
 
   return (
     <div className="space-y-5">
+      {/* Output mode toggle — Instagram (one designed image) vs Facebook (hero card + real photos bundled) */}
+      <div className="card p-2 flex gap-1">
+        {OUTPUT_MODES.map((mode) => {
+          const active = mode.id === outputMode;
+          return (
+            <button
+              key={mode.id}
+              type="button"
+              onClick={() => {
+                setOutputMode(mode.id);
+                setBundleResult(null);
+                setRenderResult(null);
+                setError(null);
+              }}
+              className={[
+                "flex-1 px-4 py-3 rounded-lg transition text-left",
+                active
+                  ? "bg-neutral-900 text-white"
+                  : "bg-white text-neutral-700 hover:bg-neutral-50 ring-1 ring-neutral-200",
+              ].join(" ")}
+            >
+              <div className="text-sm font-semibold">{mode.label}</div>
+              <div className={["text-xs mt-0.5", active ? "text-neutral-300" : "text-neutral-500"].join(" ")}>
+                {mode.sub}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Post type segmented picker */}
       <div className="card p-2 flex flex-wrap gap-1">
         {POST_TYPES.map((pt) => {
@@ -655,7 +867,8 @@ export default function PostBuilderClient({
             <EmptyPreview />
           ) : (
             <div className="flex flex-col h-full">
-              {/* Format + Variant */}
+              {/* Format + Variant (only shown in IG single-image mode) */}
+              {outputMode === "ig_single" ? (
               <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 mb-4">
                 <div>
                   <div className="eyebrow mb-2">Step 2 · Format</div>
@@ -719,16 +932,35 @@ export default function PostBuilderClient({
                   </div>
                 </div>
               </div>
+              ) : null}
 
-              {/* Photo picker */}
+              {/* FB-mode header: shows which template is in play */}
+              {outputMode === "fb_multi" ? (
+                <div className="mb-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Step 2 · Hero card
+                    </div>
+                    <div className="text-sm font-semibold text-neutral-900 mt-0.5">
+                      NEW LISTING · Editorial card with photo + stats strip
+                    </div>
+                  </div>
+                  <span className="text-xs font-mono text-neutral-500">fb_new_listing_v1</span>
+                </div>
+              ) : null}
+
+              {/* Photo picker — single-select (IG) or multi-select (FB) */}
               {availablePhotos.length > 1 ? (
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="eyebrow">
-                      Step 4 · {photoCount === 1 ? "Hero photo" : `${photoCount} photos`}
-                      {photoCount === 1
-                        ? ` · ${selectedPhotoIndex + 1} of ${availablePhotos.length}`
-                        : ` · slots ${(selectedPhotoIndex % availablePhotos.length) + 1}–${((selectedPhotoIndex + photoCount - 1) % availablePhotos.length) + 1}`}
+                      {outputMode === "fb_multi"
+                        ? `Step 3 · Photos · ${fbSelectedPhotos.size} selected (FB gallery, first becomes hero card)`
+                        : `Step 4 · ${photoCount === 1 ? "Hero photo" : `${photoCount} photos`}${
+                            photoCount === 1
+                              ? ` · ${selectedPhotoIndex + 1} of ${availablePhotos.length}`
+                              : ` · slots ${(selectedPhotoIndex % availablePhotos.length) + 1}–${((selectedPhotoIndex + photoCount - 1) % availablePhotos.length) + 1}`
+                          }`}
                     </div>
                     {photosLoading ? (
                       <span className="text-xs text-neutral-500">Loading…</span>
@@ -736,9 +968,64 @@ export default function PostBuilderClient({
                   </div>
                   <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
                     {availablePhotos.map((p, i) => {
-                      // Compute slot membership: this photo is part of the
-                      // active set if its index falls within the rolling
-                      // window starting at selectedPhotoIndex.
+                      // Two selection models depending on output mode:
+                      //   IG: rolling window from selectedPhotoIndex sized by photoCount
+                      //   FB: free multi-select via fbSelectedPhotos Set
+                      if (outputMode === "fb_multi") {
+                        const isSelected = fbSelectedPhotos.has(i);
+                        // Slot number reflects ORDER in the gallery (sorted ascending)
+                        const slotNum = isSelected
+                          ? [...fbSelectedPhotos].sort((a, b) => a - b).indexOf(i) + 1
+                          : null;
+                        return (
+                          <button
+                            key={`${p.sequence}-${i}`}
+                            type="button"
+                            onClick={() => toggleFbPhoto(i)}
+                            className={[
+                              "relative shrink-0 rounded-lg overflow-hidden transition",
+                              isSelected
+                                ? slotNum === 1
+                                  ? "ring-2 ring-gold-500 ring-offset-2 ring-offset-white"
+                                  : "ring-2 ring-emerald-500 ring-offset-1 ring-offset-white"
+                                : "ring-1 ring-neutral-200 hover:ring-neutral-400 opacity-70 hover:opacity-100",
+                            ].join(" ")}
+                            title={
+                              isSelected
+                                ? slotNum === 1
+                                  ? `Photo ${p.sequence} · HERO (becomes the designed card)`
+                                  : `Photo ${p.sequence} · gallery slot ${slotNum}`
+                                : `Photo ${p.sequence} — click to add`
+                            }
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={p.url}
+                              alt=""
+                              className="w-20 h-20 object-cover bg-neutral-100"
+                              loading="lazy"
+                            />
+                            <span
+                              className={[
+                                "absolute bottom-1 left-1 rounded-full px-1.5 py-px text-[10px] font-semibold",
+                                slotNum === 1
+                                  ? "bg-gold-500 text-neutral-900"
+                                  : isSelected
+                                    ? "bg-emerald-500 text-white"
+                                    : "bg-black/55 text-white",
+                              ].join(" ")}
+                            >
+                              {slotNum === 1
+                                ? "HERO"
+                                : isSelected
+                                  ? `#${slotNum}`
+                                  : p.sequence || "★"}
+                            </span>
+                          </button>
+                        );
+                      }
+
+                      // IG single-image mode (original behavior)
                       const slotPosition = computeSlotPosition(
                         i,
                         selectedPhotoIndex,
@@ -794,6 +1081,50 @@ export default function PostBuilderClient({
                 </div>
               ) : null}
 
+              {/* FB-mode custom feature input + generate bundle */}
+              {outputMode === "fb_multi" ? (
+                <div className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-gold-700">
+                        Step 4 · Custom feature (stat #3)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={regenerateCustomFeature}
+                        disabled={customFeatureLoading}
+                        className="text-xs text-neutral-600 hover:text-neutral-900 font-medium disabled:opacity-40"
+                      >
+                        {customFeatureLoading ? "Thinking…" : "↻ AI suggest"}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      className="input"
+                      placeholder={customFeatureSuggestion || "e.g. SUNSET VIEWS"}
+                      value={customFeature}
+                      onChange={(e) => {
+                        setCustomFeature(e.target.value);
+                        setBundleResult(null);
+                      }}
+                      maxLength={30}
+                    />
+                    <div className="mt-1 text-[11px] text-neutral-500">
+                      Appears on the hero card after BD/BA. ALL CAPS, 1-3 words. Falls back to property type if blank.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={generateBundle}
+                    disabled={bundleGenerating || fbSelectedPhotos.size < 2}
+                    className="btn-primary whitespace-nowrap"
+                  >
+                    {bundleGenerating ? "Building bundle…" : bundleResult ? "Rebuild bundle" : "Generate FB Bundle"}
+                  </button>
+                </div>
+              ) : null}
+
+              {outputMode === "ig_single" ? (
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
                   <div className="eyebrow mb-1">
@@ -817,6 +1148,7 @@ export default function PostBuilderClient({
                   {generating ? "Generating…" : renderResult ? "Regenerate" : "Generate Post"}
                 </button>
               </div>
+              ) : null}
 
               {error ? (
                 <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
@@ -825,11 +1157,49 @@ export default function PostBuilderClient({
               ) : null}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
-                {/* Preview pane */}
+                {/* Preview pane (IG mode shows rendered image; FB mode shows bundle summary) */}
                 <div className="flex flex-col">
                   <div className="eyebrow mb-2">
-                    Preview · {dimensionsLabel(format)}
+                    {outputMode === "fb_multi"
+                      ? `Bundle · ${bundleResult ? `${bundleResult.asset_count} assets` : `${fbSelectedPhotos.size} photo${fbSelectedPhotos.size === 1 ? "" : "s"} selected`}`
+                      : `Preview · ${dimensionsLabel(format)}`}
                   </div>
+                  {outputMode === "fb_multi" ? (
+                    <div className="relative rounded-xl bg-neutral-50 border border-neutral-200 overflow-hidden mx-auto w-full max-w-md aspect-square flex items-center justify-center text-center p-6">
+                      {bundleGenerating ? (
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="w-10 h-10 rounded-full border-2 border-gold-500 border-t-transparent animate-spin" />
+                          <div className="text-sm font-medium text-neutral-700">Building FB bundle…</div>
+                          <div className="text-xs text-neutral-500 max-w-[260px]">
+                            Rendering hero card, fetching {fbSelectedPhotos.size - 1} real photo{fbSelectedPhotos.size - 1 === 1 ? "" : "s"}, zipping everything.
+                          </div>
+                        </div>
+                      ) : bundleResult ? (
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="text-3xl">📦</div>
+                          <div className="text-sm font-semibold text-neutral-900">
+                            Bundle ready
+                          </div>
+                          <div className="text-xs text-neutral-600 max-w-[260px]">
+                            {bundleResult.asset_count} files packaged. Download, unzip, drag photos to FB in numerical order, paste the caption.
+                          </div>
+                          <button
+                            type="button"
+                            onClick={downloadBundle}
+                            className="btn-primary mt-1"
+                          >
+                            Download ZIP
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-neutral-500">
+                          {fbSelectedPhotos.size < 2
+                            ? "Pick at least 2 photos to enable bundle generation."
+                            : "Click Generate FB Bundle to package the caption + hero card + selected photos."}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
                   <div
                     className={[
                       "relative rounded-xl bg-neutral-100 border border-neutral-200 overflow-hidden mx-auto w-full max-w-md",
@@ -862,7 +1232,8 @@ export default function PostBuilderClient({
                       </button>
                     ) : null}
                   </div>
-                  {renderResult ? (
+                  )}
+                  {outputMode === "ig_single" && renderResult ? (
                     <div className="mt-3 flex gap-2">
                       <button
                         type="button"

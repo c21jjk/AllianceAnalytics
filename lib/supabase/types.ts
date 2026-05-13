@@ -85,10 +85,14 @@ export type Database = {
       }
       generated_posts: {
         Row: {
+          asset_count: number
+          bundle_path: string | null
+          bundle_url: string | null
           caption: string | null
           confirmed_platforms: string[] | null
           created_at: string
           created_by: string | null
+          custom_feature: string | null
           downloaded_at: string | null
           format: string
           hashtags: string[] | null
@@ -99,6 +103,7 @@ export type Database = {
           mls_hashtag: string | null
           mls_number: string
           notes: string | null
+          output_mode: string
           post_type: string
           property_id: string | null
           source_mls: string | null
@@ -109,10 +114,14 @@ export type Database = {
           variant: string
         }
         Insert: {
+          asset_count?: number
+          bundle_path?: string | null
+          bundle_url?: string | null
           caption?: string | null
           confirmed_platforms?: string[] | null
           created_at?: string
           created_by?: string | null
+          custom_feature?: string | null
           downloaded_at?: string | null
           format: string
           hashtags?: string[] | null
@@ -123,6 +132,7 @@ export type Database = {
           mls_hashtag?: string | null
           mls_number: string
           notes?: string | null
+          output_mode?: string
           post_type: string
           property_id?: string | null
           source_mls?: string | null
@@ -133,10 +143,14 @@ export type Database = {
           variant: string
         }
         Update: {
+          asset_count?: number
+          bundle_path?: string | null
+          bundle_url?: string | null
           caption?: string | null
           confirmed_platforms?: string[] | null
           created_at?: string
           created_by?: string | null
+          custom_feature?: string | null
           downloaded_at?: string | null
           format?: string
           hashtags?: string[] | null
@@ -147,6 +161,7 @@ export type Database = {
           mls_hashtag?: string | null
           mls_number?: string
           notes?: string | null
+          output_mode?: string
           post_type?: string
           property_id?: string | null
           source_mls?: string | null

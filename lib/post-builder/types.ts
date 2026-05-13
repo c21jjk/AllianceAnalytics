@@ -14,6 +14,20 @@ export type PostType =
   | "open_house"
   | "price_reduction";
 export type PostFormat = "square_1x1" | "portrait_4x5" | "story_9x16";
+
+/**
+ * How the post is rendered + delivered.
+ *
+ * - `ig_single` (Phase 1-6): one rendered PNG with all text baked on, optimized
+ *   for Instagram feed/story where text-on-image works well and clickable
+ *   hashtags aren't a thing.
+ *
+ * - `fb_multi` (Phase 7+): caption text shipped separately (paste into FB body),
+ *   plus a multi-photo gallery — first photo is a designed "hero card" and the
+ *   rest are real listing photos. Optimized for Facebook where the gallery grid
+ *   + clickable hashtags + native typography all out-perform image-with-text.
+ */
+export type OutputMode = "ig_single" | "fb_multi";
 /**
  * Variant identifier. Single-photo: v1 (Hero Editorial), v2 (Bold Stats),
  * v3 (Side-by-Side). Multi-photo: v4 (Two-Photo Diptych — 2 photos),
@@ -124,6 +138,48 @@ export interface SaveGeneratedPostInput {
   caption: string;
   hashtags: string[];
   mls_hashtag: string;
+}
+
+/**
+ * Phase 7+: per-listing input for the FB Native bundle generator. The
+ * generator accepts an ARRAY of these so the same code path serves
+ * single-listing (Phase 7 New Listing) and multi-listing (Phase 8 Open
+ * House) workflows.
+ */
+export interface FBBundleListingInput {
+  listing: PostBuilderListing;
+  /** Real-photo URLs to include in the FB gallery, in order. */
+  real_photo_urls: string[];
+  /** Optional override for the hero card's third stat (e.g. "SUNSET VIEWS"). */
+  custom_feature?: string | null;
+}
+
+export interface FBBundleRequest {
+  /**
+   * Which hero card design to use. v1 is the only one for Phase 7.
+   * Phase 8 will add an open-house variant.
+   */
+  hero_template_id: "fb_new_listing_v1" | "fb_open_house_v1";
+  /** Caption shape — drives the multi-block format. */
+  caption_shape: "new_listing_single" | "open_house_multi";
+  listings: FBBundleListingInput[];
+}
+
+export interface FBBundleResponse {
+  ok: true;
+  bundle_url: string;
+  bundle_path: string;
+  asset_count: number;
+  caption: string;
+  hashtags: string[];
+  mls_hashtag: string;
+  generated_post_id: string;
+  rendered_at: string;
+}
+
+export interface FBBundleErrorResponse {
+  ok: false;
+  error: string;
 }
 
 export interface SaveGeneratedPostResult {
