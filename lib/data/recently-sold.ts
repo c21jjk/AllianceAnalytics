@@ -51,6 +51,9 @@ export interface ListingMilestone {
   buyer_agent_name: string | null;
   /** Phase 8: Which side(s) Alliance had on the transaction. */
   alliance_role: AllianceRole;
+  /** When the row's STATUS last transitioned (active→pending→sold). Drives
+   *  the "fresh in last 24h" dashboard badge. */
+  first_seen_at: string;
 }
 
 export interface GetUnderContractOptions {
@@ -79,6 +82,7 @@ interface DbPropertyRow {
   agent_name: string | null;
   office_id: string | null;
   updated_at: string;
+  status_changed_at: string;
   close_date: string | null;
   close_price: number | null;
   buyer_agent_name: string | null;
@@ -169,6 +173,7 @@ function rowToSold(
       : null,
     buyer_agent_name: p.buyer_agent_name,
     alliance_role: coerceAllianceRole(p.alliance_role),
+    first_seen_at: p.status_changed_at,
   };
 }
 
@@ -199,6 +204,7 @@ function rowToPending(
       : null,
     buyer_agent_name: p.buyer_agent_name,
     alliance_role: coerceAllianceRole(p.alliance_role),
+    first_seen_at: p.status_changed_at,
   };
 }
 
@@ -219,7 +225,7 @@ export async function getUnderContractListings(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, close_date, close_price, buyer_agent_name, alliance_role",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "pending")
     .order("listing_date", { ascending: false, nullsFirst: false })
@@ -264,7 +270,7 @@ export async function getRecentlySoldListings(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, close_date, close_price, buyer_agent_name, alliance_role",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "sold")
     .or(

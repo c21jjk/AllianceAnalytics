@@ -27,6 +27,9 @@ export interface UpcomingOpenHouse {
   list_price: number | null;
   /** Office short_code from the listing's office record (e.g. "WWC"). */
   office_short_code: string | null;
+  /** When this OH was first inserted into our DB. Drives the dashboard's
+   *  "fresh in last 24h" badge. */
+  first_seen_at: string;
 }
 
 interface DbOpenHouseRow {
@@ -36,6 +39,7 @@ interface DbOpenHouseRow {
   start_at: string;
   end_at: string | null;
   comments: string | null;
+  created_at: string;
 }
 
 interface DbPropertyRow {
@@ -85,7 +89,7 @@ export async function getUpcomingOpenHouses(
 
   const { data: ohRows, error: ohErr } = await supabase
     .from("open_houses")
-    .select("id, mls_number, property_id, start_at, end_at, comments")
+    .select("id, mls_number, property_id, start_at, end_at, comments, created_at")
     .gte("start_at", startCutoff)
     .lte("start_at", endCutoff)
     .order("start_at", { ascending: true })
@@ -196,6 +200,7 @@ export async function getUpcomingOpenHouses(
         property?.office_id
           ? officeShortByID.get(property.office_id) ?? null
           : null,
+      first_seen_at: oh.created_at,
     });
   }
   return out;
@@ -218,7 +223,7 @@ export async function getOpenHousesForProperty(
 
   const { data: ohRows, error } = await supabase
     .from("open_houses")
-    .select("id, mls_number, property_id, start_at, end_at, comments")
+    .select("id, mls_number, property_id, start_at, end_at, comments, created_at")
     .eq("property_id", propertyId)
     .gte("start_at", startCutoff)
     .lte("start_at", endCutoff)

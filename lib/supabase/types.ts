@@ -650,6 +650,7 @@ export type Database = {
           source_mls: string | null
           state: string | null
           status: Database["public"]["Enums"]["property_status"]
+          status_changed_at: string
           updated_at: string
           zip: string | null
         }
@@ -687,6 +688,7 @@ export type Database = {
           source_mls?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
+          status_changed_at?: string
           updated_at?: string
           zip?: string | null
         }
@@ -724,6 +726,7 @@ export type Database = {
           source_mls?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
+          status_changed_at?: string
           updated_at?: string
           zip?: string | null
         }

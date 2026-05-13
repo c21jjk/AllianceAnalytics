@@ -67,6 +67,9 @@ export interface ListingNeedingPosts {
   promotion_dismissed_at: string | null;
   /** Reason chip slug or free text from the dismissal flow. Null when not dismissed. */
   promotion_dismissed_reason: string | null;
+  /** When this listing first landed in our DB. Used for the "fresh in last
+   *  24h" badge on the dashboard card. */
+  first_seen_at: string;
 }
 
 export interface GetListingsNeedingPostsOptions {
@@ -296,6 +299,7 @@ export async function getListingsNeedingPosts(
       posts_confirmed_at: p.posts_confirmed_at,
       promotion_dismissed_at: p.promotion_dismissed_at,
       promotion_dismissed_reason: p.promotion_dismissed_reason,
+      first_seen_at: p.created_at,
     });
 
     if (out.length >= limit) break;
