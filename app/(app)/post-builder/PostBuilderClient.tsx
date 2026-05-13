@@ -1162,7 +1162,8 @@ export default function PostBuilderClient({
             <div className="flex flex-col h-full">
               {/* Format + Variant (only shown in IG single-image mode) */}
               {outputMode === "ig_single" ? (
-              <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 mb-4">
+              <div className="mb-4 space-y-4">
+                {/* Step 2 · Format — full-width row */}
                 <div>
                   <div className="eyebrow mb-2">Step 2 · Format</div>
                   <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
@@ -1191,12 +1192,18 @@ export default function PostBuilderClient({
                     })}
                   </div>
                 </div>
+
+                {/* Step 3 · Variant — full-width row, large previews on top */}
                 <div>
-                  <div className="eyebrow mb-2">Step 3 · Variant</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="eyebrow mb-2">
+                    Step 3 · Variant{" "}
+                    <span className="text-neutral-400 font-normal normal-case tracking-normal">
+                      · live preview with this listing's photos
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                     {variants.map((v) => {
                       const active = v.variant === variantId;
-                      // Listing doesn't have enough photos for this variant?
                       const photosAvailable = availablePhotos.length;
                       const insufficient =
                         photosAvailable > 0 && photosAvailable < v.photo_count;
@@ -1225,60 +1232,59 @@ export default function PostBuilderClient({
                               : v.description
                           }
                           className={[
-                            "text-left rounded-lg border p-2 transition relative",
+                            "text-left rounded-xl border p-2.5 transition relative flex flex-col",
                             disabled
                               ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
                               : active
-                                ? "border-gold-500 bg-gold-50/40 ring-1 ring-gold-500/20"
-                                : "border-neutral-200 bg-white hover:border-neutral-300",
+                                ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm"
+                                : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
                           ].join(" ")}
                         >
-                          <div className="flex gap-2.5 items-start">
-                            <VariantPreviewThumb
-                              templateId={v.template_id}
-                              listing={selectedListing}
-                              heroUrls={previewHeroUrls}
-                              format={format}
-                              disabled={disabled}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-1">
-                                <div
-                                  className={[
-                                    "text-sm font-semibold truncate",
-                                    disabled
-                                      ? "text-neutral-500"
-                                      : active
-                                        ? "text-gold-800"
-                                        : "text-neutral-900",
-                                  ].join(" ")}
-                                >
-                                  {v.display_name}
-                                </div>
-                                <span
-                                  className={[
-                                    "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
-                                    disabled
-                                      ? "bg-rose-100 text-rose-700"
-                                      : v.photo_count > 1
-                                        ? "bg-gold-100 text-gold-800"
-                                        : "bg-neutral-100 text-neutral-600",
-                                  ].join(" ")}
-                                >
-                                  {v.photo_count}📷
-                                </span>
-                              </div>
-                              <div
-                                className={[
-                                  "text-[11px] mt-1 leading-snug line-clamp-2",
-                                  disabled ? "text-rose-700" : "text-neutral-500",
-                                ].join(" ")}
-                              >
-                                {insufficient
-                                  ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
-                                  : v.description}
-                              </div>
+                          {/* Large preview on top */}
+                          <VariantPreviewThumb
+                            templateId={v.template_id}
+                            listing={selectedListing}
+                            heroUrls={previewHeroUrls}
+                            format={format}
+                            disabled={disabled}
+                            size="large"
+                          />
+                          {/* Label row */}
+                          <div className="mt-2 flex items-center justify-between gap-1">
+                            <div
+                              className={[
+                                "text-sm font-semibold truncate",
+                                disabled
+                                  ? "text-neutral-500"
+                                  : active
+                                    ? "text-gold-800"
+                                    : "text-neutral-900",
+                              ].join(" ")}
+                            >
+                              {v.display_name}
                             </div>
+                            <span
+                              className={[
+                                "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
+                                disabled
+                                  ? "bg-rose-100 text-rose-700"
+                                  : v.photo_count > 1
+                                    ? "bg-gold-100 text-gold-800"
+                                    : "bg-neutral-100 text-neutral-600",
+                              ].join(" ")}
+                            >
+                              {v.photo_count}📷
+                            </span>
+                          </div>
+                          <div
+                            className={[
+                              "text-[11px] mt-1 leading-snug line-clamp-2",
+                              disabled ? "text-rose-700" : "text-neutral-500",
+                            ].join(" ")}
+                          >
+                            {insufficient
+                              ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
+                              : v.description}
                           </div>
                         </button>
                       );
@@ -2388,26 +2394,30 @@ function VariantPreviewThumb({
   heroUrls,
   format,
   disabled,
+  size = "small",
 }: {
   templateId: string;
   listing: PostBuilderListing | null;
   heroUrls: string[];
   format: PostFormat;
   disabled: boolean;
+  /** "small" = 84px inline thumb. "large" = card-filling preview (responsive). */
+  size?: "small" | "large";
 }) {
   const [html, setHtml] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(false);
 
-  // Thumb display size in CSS pixels. The iframe internally is the real
-  // template dimensions; we scale to fit. Keep this small enough that 3
-  // variants × thumb still fits next to descriptive text.
-  const THUMB_W = 84;
+  // Display dimensions depend on size mode. Large mode fills the card width
+  // (~220px on a 5-col grid at 1280px viewport) so users can actually read
+  // the template typography in the preview. Small mode keeps the original
+  // 84px inline thumb for any caller that wants compact UI.
+  const longSide = size === "large" ? 220 : 84;
   const dims = format === "square_1x1"
-    ? { w: 1080, h: 1080, displayW: THUMB_W, displayH: THUMB_W }
+    ? { w: 1080, h: 1080, displayW: longSide, displayH: longSide }
     : format === "portrait_4x5"
-      ? { w: 1080, h: 1350, displayW: THUMB_W, displayH: Math.round(THUMB_W * 1350 / 1080) }
-      : { w: 1080, h: 1920, displayW: Math.round(THUMB_W * 1080 / 1920), displayH: THUMB_W };
+      ? { w: 1080, h: 1350, displayW: longSide, displayH: Math.round(longSide * 1350 / 1080) }
+      : { w: 1080, h: 1920, displayW: Math.round(longSide * 1080 / 1920), displayH: longSide };
   const scaleX = dims.displayW / dims.w;
   const scaleY = dims.displayH / dims.h;
 
@@ -2451,10 +2461,16 @@ function VariantPreviewThumb({
     };
   }, [templateId, listing?.mls_number, heroUrls.join("|")]);
 
+  // Large mode centers the preview inside the card and gives non-square
+  // formats some background room rather than letterboxing weirdly.
+  const wrapperClass = size === "large"
+    ? "relative rounded-md overflow-hidden bg-neutral-100 ring-1 mx-auto"
+    : "relative rounded-md overflow-hidden bg-neutral-100 ring-1 flex-shrink-0";
+
   return (
     <div
       className={[
-        "relative rounded-md overflow-hidden bg-neutral-100 ring-1 flex-shrink-0",
+        wrapperClass,
         disabled ? "ring-neutral-200 opacity-50" : "ring-neutral-300",
       ].join(" ")}
       style={{
@@ -2481,10 +2497,20 @@ function VariantPreviewThumb({
         />
       ) : loading ? (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-4 h-4 rounded-full border-2 border-gold-500 border-t-transparent animate-spin" />
+          <div
+            className={[
+              "rounded-full border-2 border-gold-500 border-t-transparent animate-spin",
+              size === "large" ? "w-6 h-6" : "w-4 h-4",
+            ].join(" ")}
+          />
         </div>
       ) : err ? (
-        <div className="absolute inset-0 flex items-center justify-center text-[9px] text-neutral-400 text-center px-1">
+        <div
+          className={[
+            "absolute inset-0 flex items-center justify-center text-neutral-400 text-center px-2",
+            size === "large" ? "text-xs" : "text-[9px]",
+          ].join(" ")}
+        >
           preview unavailable
         </div>
       ) : (
