@@ -97,6 +97,8 @@ interface SyncResult {
   photos_uploaded?: number;
   /** Phase 9: count of Open Houses upserted across all classes. */
   open_houses_synced?: number;
+  /** Phase 11: count of listing_photos rows upserted (Post Builder picker). */
+  all_photos_synced?: number;
 }
 
 interface DigestChallenge {
@@ -329,7 +331,7 @@ class RETSClient {
   }
 
   /**
-   * GetObject — fetch the first photo for a property.
+   * GetObject — fetch a single photo at a given sequence position.
    *
    * Tries Location=1 first: Paragon returns HTTP 200 with a `Location:` HEADER
    * pointing at the public CDN URL (NOT a 3xx redirect — the body is a tiny
@@ -337,8 +339,11 @@ class RETSClient {
    *
    * Falls back to Location=0 (image/jpeg or multipart/related body) when the
    * header path doesn't yield a usable URL.
+   *
+   * Sequence is 1-based — Paragon's first photo is `:1`. Out-of-range
+   * sequences return { kind: "none" }.
    */
-  async getFirstPhoto(mlsNumber: string): Promise<
+  async getPhotoAt(mlsNumber: string, sequence: number): Promise<
     | { kind: "url"; url: string }
     | { kind: "binary"; bytes: Uint8Array; contentType: string }
     | { kind: "none" }
@@ -350,7 +355,7 @@ class RETSClient {
 
     // Location=1: header-based redirect to public CDN.
     const params1 = new URLSearchParams({
-      Resource: "Property", Type: "Photo", ID: `${mlsNumber}:1`, Location: "1",
+      Resource: "Property", Type: "Photo", ID: `${mlsNumber}:${sequence}`, Location: "1",
     });
     const url1 = `${baseUrl}${sep}${params1.toString()}`;
     try {
@@ -361,12 +366,12 @@ class RETSClient {
         return { kind: "url", url: locHeader };
       }
     } catch (e) {
-      console.error(`getFirstPhoto Location=1 ${mlsNumber}:`, (e as Error).message);
+      console.error(`getPhotoAt Location=1 ${mlsNumber}:${sequence}:`, (e as Error).message);
     }
 
     // Fallback: Location=0 — body is jpeg or multipart/related.
     const params0 = new URLSearchParams({
-      Resource: "Property", Type: "Photo", ID: `${mlsNumber}:1`, Location: "0",
+      Resource: "Property", Type: "Photo", ID: `${mlsNumber}:${sequence}`, Location: "0",
     });
     const url0 = `${baseUrl}${sep}${params0.toString()}`;
     try {
@@ -385,9 +390,21 @@ class RETSClient {
       if (bytes.length < 2048) return { kind: "none" };
       return { kind: "binary", bytes, contentType: ct || "image/jpeg" };
     } catch (e) {
-      console.error(`getFirstPhoto Location=0 ${mlsNumber}:`, (e as Error).message);
+      console.error(`getPhotoAt Location=0 ${mlsNumber}:${sequence}:`, (e as Error).message);
       return { kind: "none" };
     }
+  }
+
+  /**
+   * Backward-compat: fetch the first (hero) photo. Kept so existing
+   * `syncPhotosForRows` callers don't need to change.
+   */
+  async getFirstPhoto(mlsNumber: string): Promise<
+    | { kind: "url"; url: string }
+    | { kind: "binary"; bytes: Uint8Array; contentType: string }
+    | { kind: "none" }
+  > {
+    return this.getPhotoAt(mlsNumber, 1);
   }
 
   async logout(): Promise<void> {
@@ -1126,6 +1143,131 @@ async function syncPhotosForRows(
   return uploaded;
 }
 
+/**
+ * Phase 11: Multi-photo sync for the Post Builder picker.
+ *
+ * For each listing, looks up Paragon's `L_PictureCount` from raw_payload
+ * and fetches each photo at sequence 1..count via GetObject. Stores the
+ * URL (Paragon CDN) when Location=1 returns one, falls back to uploading
+ * bytes to the property-photos bucket and storing that URL.
+ *
+ * Smart-skip: if we already have the right count of rows for this MLS AND
+ * `L_Last_Photo_updt` is older than our most recent synced_at, we skip
+ * the listing entirely. Keeps steady-state sync runs fast — only new
+ * listings or listings with photo updates re-fetch.
+ *
+ * Errors per-listing or per-photo are logged and swallowed so one bad
+ * listing doesn't break the rest of the sync.
+ *
+ * Returns the count of listing_photos rows upserted across all listings.
+ */
+async function syncAllPhotosForRows(
+  rets: RETSClient,
+  analytics: SupabaseClient,
+  rows: MappedListing[],
+  feedShortCode: "cmc" | "sjsr",
+): Promise<number> {
+  let totalRows = 0;
+  for (const r of rows) {
+    try {
+      const pictureCountRaw = String(r.raw_payload["L_PictureCount"] ?? "").trim();
+      const pictureCount = parseInt(pictureCountRaw, 10);
+      if (!Number.isFinite(pictureCount) || pictureCount < 1) continue;
+
+      const lastPhotoUpdtRaw = String(r.raw_payload["L_Last_Photo_updt"] ?? "").trim();
+
+      // Smart-skip: do we have all the photos AND are they current?
+      const { data: existing, error: existingErr } = await analytics
+        .from("listing_photos")
+        .select("sequence, synced_at")
+        .eq("mls_number", r.mls_number);
+      if (existingErr) {
+        console.error(`listing_photos read ${r.mls_number}:`, existingErr.message);
+      }
+      const existingCount = existing?.length ?? 0;
+      const maxSyncedIso = (existing ?? []).reduce<string>(
+        (max, p) => (p.synced_at && p.synced_at > max ? p.synced_at : max),
+        "",
+      );
+      if (
+        existingCount >= pictureCount &&
+        lastPhotoUpdtRaw &&
+        maxSyncedIso &&
+        new Date(lastPhotoUpdtRaw).getTime() < new Date(maxSyncedIso).getTime()
+      ) {
+        continue; // up to date
+      }
+
+      // Fetch each photo. Sequential per listing — Paragon throttles
+      // aggressive parallel hits, and the sync run isn't user-facing.
+      const photoRows: Array<{
+        mls_number: string;
+        source_mls: string;
+        sequence: number;
+        url: string;
+        source: "paragon" | "storage";
+        storage_path: string | null;
+      }> = [];
+      for (let seq = 1; seq <= pictureCount; seq++) {
+        const result = await rets.getPhotoAt(r.mls_number, seq);
+        if (result.kind === "url") {
+          photoRows.push({
+            mls_number: r.mls_number,
+            source_mls: r.source_mls,
+            sequence: seq,
+            url: result.url,
+            source: "paragon",
+            storage_path: null,
+          });
+        } else if (result.kind === "binary") {
+          const ext = result.contentType.toLowerCase().includes("png") ? "png" : "jpg";
+          const path = `${feedShortCode}/${r.mls_number}/${seq}.${ext}`;
+          const { error: upErr } = await analytics.storage
+            .from(PHOTO_BUCKET)
+            .upload(path, result.bytes, {
+              cacheControl: "31536000",
+              contentType: result.contentType,
+              upsert: true,
+            });
+          if (upErr) {
+            console.error(`listing_photos upload ${r.mls_number}:${seq}:`, upErr.message);
+            continue;
+          }
+          const { data: pub } = analytics.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+          if (pub?.publicUrl) {
+            photoRows.push({
+              mls_number: r.mls_number,
+              source_mls: r.source_mls,
+              sequence: seq,
+              url: pub.publicUrl,
+              source: "storage",
+              storage_path: path,
+            });
+          }
+        }
+        // kind === "none" → skip silently, photo doesn't exist or fetch failed
+      }
+
+      if (photoRows.length > 0) {
+        // Stamp synced_at fresh on every upsert so smart-skip can compare.
+        const now = new Date().toISOString();
+        const rowsWithTimestamp = photoRows.map((p) => ({ ...p, synced_at: now }));
+        const { error } = await analytics
+          .from("listing_photos")
+          .upsert(rowsWithTimestamp, { onConflict: "mls_number,sequence" });
+        if (error) {
+          console.error(`listing_photos upsert ${r.mls_number}:`, error.message);
+        } else {
+          totalRows += photoRows.length;
+        }
+      }
+    } catch (e) {
+      console.error(`syncAllPhotos ${r.mls_number}:`, (e as Error).message);
+    }
+  }
+  return totalRows;
+}
+
 async function syncFeed(shortCode: string): Promise<SyncResult> {
   const start = Date.now();
   const result: SyncResult = {
@@ -1137,6 +1279,7 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     errors: [],
     photos_uploaded: 0,
     open_houses_synced: 0,
+    all_photos_synced: 0,
   };
   if (shortCode !== "cmc" && shortCode !== "sjsr") {
     result.errors.push(`mls-rets-sync only supports CMC + SJSR. Got: ${shortCode}`);
@@ -1282,12 +1425,21 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
           records_upserted: upserted,
         });
       }
-      // Photos for this class — the session is fresh and authenticated.
+      // Hero photo (single) per class — drives the dashboard thumbnail.
       try {
         const ups = await syncPhotosForRows(rets, analytics, mapped, sourceMls);
         result.photos_uploaded = (result.photos_uploaded ?? 0) + ups;
       } catch (e) {
         console.error(`syncPhotosForRows [${cls}]:`, (e as Error).message);
+      }
+
+      // All-photos pass (Post Builder picker). Smart-skips listings whose
+      // photos haven't changed. Per-class so the session stays warm.
+      try {
+        const allUps = await syncAllPhotosForRows(rets, analytics, mapped, sourceMls);
+        result.all_photos_synced = (result.all_photos_synced ?? 0) + allUps;
+      } catch (e) {
+        console.error(`syncAllPhotosForRows [${cls}]:`, (e as Error).message);
       }
 
       // Phase 9: OpenHouse pass for this class. Reuses the authenticated
