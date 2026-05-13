@@ -1108,7 +1108,7 @@ export default function PostBuilderClient({
                         {[l.city, l.state].filter(Boolean).join(", ")}
                         {l.zip ? ` ${l.zip}` : ""}
                       </div>
-                      <div className="text-xs text-neutral-500 mt-0.5 flex items-center gap-2">
+                      <div className="text-xs text-neutral-500 mt-0.5 flex items-center gap-2 flex-wrap">
                         <span className="font-mono uppercase tracking-wide">
                           {l.mls_number}
                         </span>
@@ -1118,12 +1118,13 @@ export default function PostBuilderClient({
                             {postType === "just_sold" ? " sold" : ""}
                           </span>
                         ) : null}
-                        {postType === "open_house" && l.oh_start_at ? (
-                          <span className="text-emerald-700 font-medium">
-                            OH {formatOhBadge(l.oh_start_at)}
-                          </span>
-                        ) : null}
                       </div>
+                      {postType === "open_house" && l.oh_start_at ? (
+                        <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-2 py-1 text-[11px] font-medium text-emerald-800 leading-tight">
+                          <span aria-hidden="true">🗓</span>
+                          <span>{formatOhBadge(l.oh_start_at, l.oh_end_at ?? null)}</span>
+                        </div>
+                      ) : null}
                     </div>
                   </button>
                 );
@@ -2259,19 +2260,92 @@ function joinCaptionAndTags(caption: string, hashtags: string[]): string {
   return `${caption.trim()}\n\n${hashtags.join(" ")}`;
 }
 
-function formatOhBadge(start_at: string): string {
+/**
+ * Render a compact Open House badge: "Sat, 5/16 · 1–3pm".
+ *
+ * If end_at is missing/invalid, falls back to "Sat, 5/16 · 1pm" (start only).
+ * If start_at is missing/invalid, returns "". Times collapse to hour-only
+ * when on the hour (e.g. "1pm"); otherwise show "1:30pm". When start +
+ * end share am/pm, the suffix is shown only on the end ("1–3pm");
+ * otherwise both get a suffix ("11am–1pm").
+ */
+function formatOhBadge(start_at: string, end_at?: string | null): string {
   try {
-    const d = new Date(start_at);
-    if (Number.isNaN(d.getTime())) return "";
-    return new Intl.DateTimeFormat("en-US", {
+    const start = new Date(start_at);
+    if (Number.isNaN(start.getTime())) return "";
+    const datePart = new Intl.DateTimeFormat("en-US", {
       weekday: "short",
       month: "numeric",
       day: "numeric",
       timeZone: "America/New_York",
-    }).format(d);
+    }).format(start);
+
+    const end = end_at ? new Date(end_at) : null;
+    const validEnd = end && !Number.isNaN(end.getTime()) ? end : null;
+
+    const timePart = validEnd
+      ? formatTimeRangeET(start, validEnd)
+      : formatSingleTimeET(start);
+
+    return timePart ? `${datePart} · ${timePart}` : datePart;
   } catch {
     return "";
   }
+}
+
+/** Returns "1pm" or "1:30pm" for a single date, NY time. */
+function formatSingleTimeET(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "numeric",
+    hour12: true,
+    timeZone: "America/New_York",
+  }).formatToParts(d);
+  const hour = parts.find((p) => p.type === "hour")?.value ?? "";
+  const minute = parts.find((p) => p.type === "minute")?.value ?? "00";
+  const dayPeriod = (parts.find((p) => p.type === "dayPeriod")?.value ?? "").toLowerCase();
+  const period = dayPeriod.replace(/\s/g, "").replace(/\./g, "");
+  return minute === "00" ? `${hour}${period}` : `${hour}:${minute}${period}`;
+}
+
+/**
+ * Returns a compact range like "1–3pm" or "11am–1pm".
+ *
+ * Same am/pm: "1–3pm" (suffix on end only).
+ * Different am/pm: "11am–1pm" (suffix on both).
+ */
+function formatTimeRangeET(start: Date, end: Date): string {
+  const startParts = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "numeric",
+    hour12: true,
+    timeZone: "America/New_York",
+  }).formatToParts(start);
+  const endParts = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "numeric",
+    hour12: true,
+    timeZone: "America/New_York",
+  }).formatToParts(end);
+
+  const getPart = (parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+
+  const sH = getPart(startParts, "hour");
+  const sM = getPart(startParts, "minute") || "00";
+  const sP = (getPart(startParts, "dayPeriod") || "").toLowerCase().replace(/\s/g, "").replace(/\./g, "");
+  const eH = getPart(endParts, "hour");
+  const eM = getPart(endParts, "minute") || "00";
+  const eP = (getPart(endParts, "dayPeriod") || "").toLowerCase().replace(/\s/g, "").replace(/\./g, "");
+
+  const startStr = sM === "00" ? sH : `${sH}:${sM}`;
+  const endStr = eM === "00" ? eH : `${eH}:${eM}`;
+
+  if (sP === eP) {
+    // Same period — suffix on the end only.
+    return `${startStr}–${endStr}${eP}`;
+  }
+  return `${startStr}${sP}–${endStr}${eP}`;
 }
 
 function formatShortName(format: PostFormat): string {
