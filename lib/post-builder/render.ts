@@ -174,10 +174,22 @@ async function fetchAsDataUri(url: string): Promise<string> {
 /**
  * Screenshot HTML at exact dimensions using headless Chromium.
  *
- * On Vercel the @sparticuz/chromium package provides a Lambda-friendly
- * Chromium binary. Locally we fall back to puppeteer-core's auto-detected
- * system Chrome path via PUPPETEER_EXECUTABLE_PATH env var.
+ * On Vercel the @sparticuz/chromium-min package is paired with a
+ * publicly-hosted Chromium tarball — the binary downloads on cold start
+ * and gets cached in /tmp. This sidesteps Vercel's 50 MB compressed
+ * function size limit (the full @sparticuz/chromium package was ~50 MB
+ * on its own and tipped us over).
+ *
+ * The CHROMIUM_PACK_URL must match the chromium-min package version. Bump
+ * both together when upgrading. Sparticuz publishes the tarball as a
+ * GitHub release for every chromium version.
+ *
+ * Locally we fall back to puppeteer-core's auto-detected system Chrome
+ * via PUPPETEER_EXECUTABLE_PATH or the standard macOS path.
  */
+const CHROMIUM_PACK_URL =
+  "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.x64.tar";
+
 async function screenshotHtml(args: {
   html: string;
   width: number;
@@ -185,11 +197,11 @@ async function screenshotHtml(args: {
 }): Promise<Buffer> {
   // Dynamic imports — these libs are heavy, only load when actually rendering.
   const puppeteer = (await import("puppeteer-core")).default;
-  const chromium = (await import("@sparticuz/chromium")).default;
+  const chromium = (await import("@sparticuz/chromium-min")).default;
 
   const isVercel = !!process.env.VERCEL;
   const executablePath = isVercel
-    ? await chromium.executablePath()
+    ? await chromium.executablePath(CHROMIUM_PACK_URL)
     : process.env.PUPPETEER_EXECUTABLE_PATH ||
       // Common local dev paths
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
