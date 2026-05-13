@@ -29,6 +29,8 @@ import { renderV5ThreePhotoGrid } from "./primitives/v5-three-photo-grid";
 import { renderV5ThreePhotoGridPortrait } from "./primitives/v5-three-photo-grid-portrait";
 import { renderV5ThreePhotoGridStory } from "./primitives/v5-three-photo-grid-story";
 import { POST_TYPE_THEMES, getTheme } from "./themes";
+import { buildLayerTreeForTemplate } from "./layer-builders";
+import type { LayerTree } from "../layers/types";
 
 /**
  * Template registry.
@@ -265,4 +267,53 @@ export function listVariantsForPostType(post_type: PostType, format: PostFormat)
       description: VARIANT_META[t.variant].description,
       photo_count: VARIANT_META[t.variant].photo_count,
     }));
+}
+
+/**
+ * Path B — build a LayerTree from a template_id. Parallel to `getTemplate(id).render`,
+ * but emits the structured layer tree the editor manipulates instead of an HTML
+ * string. The HTML pipeline still ships in parallel during the migration; B-6
+ * retires HTML once the editor is proven.
+ *
+ * Returns null when the template_id doesn't map to a known builder (FB pair
+ * or `${post_type}_${format_short}_${variant}`).
+ */
+export function templateToLayerTree(args: {
+  template_id: string;
+  listing: PostBuilderListingWithOH;
+  heroImageUrls: string[];
+  /**
+   * Optional Path A customizations. Currently passed through to the theme
+   * applier so accent + text overrides land in the layer tree at seed time.
+   * Visual overrides (badge sizing, hide flags, eyebrow position) will be
+   * baked into the editor's per-layer state in B-3.
+   */
+  customizations?: PostCustomizations | null;
+  /** FB New Listing only. */
+  customFeature?: string | null;
+}): LayerTree | null {
+  // Resolve theme by parsing the post_type prefix from the template_id.
+  // This matches the same parsing the layer-builders dispatch does — keep
+  // them in sync if the id format ever changes.
+  let theme: PostTypeTheme | undefined;
+  const id = args.template_id;
+  if (id !== "fb_new_listing_v1" && id !== "fb_open_house_v1") {
+    const parts = id.split("_");
+    if (parts.length >= 3) {
+      const postType = parts.slice(0, parts.length - 2).join("_") as PostType;
+      if (POST_TYPE_THEMES[postType]) {
+        theme = getTheme(postType);
+        theme = applyColorCustomizations(theme, args.customizations);
+        theme = applyTextCustomizations(theme, args.customizations);
+      }
+    }
+  }
+
+  return buildLayerTreeForTemplate({
+    template_id: args.template_id,
+    listing: args.listing,
+    heroImageUrls: args.heroImageUrls,
+    theme,
+    customFeature: args.customFeature,
+  });
 }
