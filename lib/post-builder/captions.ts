@@ -149,10 +149,17 @@ function buildPrompt(args: {
     ? `\n\nMLS public remarks (use sparingly — pull at most one specific detail):\n"""\n${listing.public_remarks.slice(0, 1200)}\n"""`
     : "";
 
+  // Open House — surface the start time so the AI can mention "Saturday at 1 PM"
+  // rather than a generic "this weekend".
+  const ohContext =
+    post_type === "open_house" && listing.oh_start_at
+      ? `\n\nOPEN HOUSE: ${formatOpenHouseForPrompt(listing.oh_start_at, listing.oh_end_at)}. Reference the day and time naturally in the caption.`
+      : "";
+
   return `Write a ${humanPostType(post_type)} caption for the property below.
 
 PROPERTY FACTS:
-${facts}${remarks}
+${facts}${remarks}${ohContext}
 
 TONE: ${tone}
 
@@ -202,6 +209,37 @@ function deterministicFallbackCaption(
       return `Under contract: ${addr}${city}. Have something similar in mind? We'll help you find it.`;
     case "open_house":
       return `Open house at ${addr}${city} this weekend. Come walk through and see for yourself.`;
+  }
+}
+
+function formatOpenHouseForPrompt(
+  start_at: string,
+  end_at: string | null | undefined,
+): string {
+  try {
+    const start = new Date(start_at);
+    if (Number.isNaN(start.getTime())) return "scheduled soon";
+    const datePart = new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      timeZone: "America/New_York",
+    }).format(start);
+    const timeFmt: Intl.DateTimeFormatOptions = {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "America/New_York",
+    };
+    const startTime = new Intl.DateTimeFormat("en-US", timeFmt).format(start);
+    const end = end_at ? new Date(end_at) : null;
+    if (end && !Number.isNaN(end.getTime())) {
+      const endTime = new Intl.DateTimeFormat("en-US", timeFmt).format(end);
+      return `${datePart}, ${startTime} to ${endTime} ET`;
+    }
+    return `${datePart}, ${startTime} ET`;
+  } catch {
+    return "scheduled soon";
   }
 }
 

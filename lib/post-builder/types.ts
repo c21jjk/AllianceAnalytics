@@ -21,6 +21,8 @@ export interface PostBuilderListing {
   state: string | null;
   zip: string | null;
   list_price: number | null;
+  /** Used by Just Sold templates. May be null. */
+  close_price?: number | null;
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
@@ -31,6 +33,10 @@ export interface PostBuilderListing {
   agent_name: string | null;
   listing_date: string | null;
   status: "active" | "pending" | "sold" | "expired";
+  /** Open House start (UTC ISO). Set by the listings fetcher when post_type='open_house'. */
+  oh_start_at?: string | null;
+  /** Open House end (UTC ISO). May be null even when start is set. */
+  oh_end_at?: string | null;
 }
 
 export interface TemplateDimensions {

@@ -1,0 +1,248 @@
+import type { PostBuilderListing, PostType } from "../../types";
+
+/**
+ * Helpers shared by all variant primitive renderers.
+ *
+ * The "primitive" layer takes a (listing, theme, heroImage) tuple and emits
+ * a complete HTML document. Themes carry post-type-specific text + colors so
+ * one variant primitive can render Just Listed, Just Sold, Under Contract,
+ * and Open House by swapping themes.
+ */
+
+export interface PostTypeTheme {
+  post_type: PostType;
+  /** Top-of-image label text — uppercased at render time. */
+  eyebrow: string;
+  /** Primary accent color (gold-500 by default). */
+  accent: string;
+  /** Darker accent for gradients (gold-700 family). */
+  accent_dark: string;
+  /** Optional corner overlay treatment — typically "SOLD". */
+  badge?: {
+    text: string;
+    /** Stamp = rotated outlined block. Banner = horizontal across photo. */
+    style: "stamp" | "banner";
+  };
+  /**
+   * What to show in the price slot:
+   *   "list_price"    → use listing.list_price
+   *   "close_price"   → use listing.close_price (Just Sold)
+   *   "label"         → use the theme's price_label string instead (Under Contract)
+   *   "none"          → omit the price line entirely
+   */
+  price_mode: "list_price" | "close_price" | "label" | "none";
+  /** Used when price_mode === "label". */
+  price_label?: string;
+  /**
+   * Whether to render the open house date/time slot. Templates check
+   * heroImageDataUri's listing for oh_start_at when this is true.
+   */
+  show_open_house_datetime?: boolean;
+  /** Soft footer CTA shown next to the brand mark, e.g. "Tour link in bio". */
+  footer_cta?: string;
+}
+
+/**
+ * Alias kept for clarity in templates — the OH fields live on
+ * PostBuilderListing as optional, but templates that render the OH
+ * date/time slot should accept this name to make the contract explicit.
+ */
+export type PostBuilderListingWithOH = PostBuilderListing;
+
+/**
+ * HTML escape — applied to ALL user-controlled strings before they hit the
+ * template HTML. Tested in the edge case suite.
+ */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Canonical MLS hashtag. Mirrors lib/data/listings-needing-posts.ts toHashtag()
+ * so the auto-linker recognizes the output.
+ */
+export function canonicalMlsHashtag(
+  mls_number: string,
+  source_mls: PostBuilderListing["source_mls"],
+): string {
+  const normalized = mls_number.replace(/^#/, "").trim();
+  if (source_mls === "cmc") return `#CMC${normalized}`;
+  if (source_mls === "sjsr") return `#SJSR${normalized}`;
+  if (source_mls === "bright" || /^NJ[A-Z]{2}\d+$/i.test(normalized)) {
+    return `#${normalized.toUpperCase()}`;
+  }
+  return `#${normalized}`;
+}
+
+/**
+ * Resolve the price text to render based on theme.price_mode.
+ * Returns null when nothing should be drawn in the price slot.
+ */
+export function resolvePriceText(
+  listing: PostBuilderListing,
+  theme: PostTypeTheme,
+): string | null {
+  if (theme.price_mode === "none") return null;
+  if (theme.price_mode === "label") return theme.price_label ?? null;
+  const price =
+    theme.price_mode === "close_price" ? listing.close_price : listing.list_price;
+  if (typeof price !== "number") {
+    // Fall back gracefully: if a sold listing has no close_price, show "SOLD"
+    // text via the price_label, otherwise omit.
+    if (theme.price_mode === "close_price" && theme.price_label) {
+      return theme.price_label;
+    }
+    return null;
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(price);
+}
+
+/**
+ * Build the bed/bath/property-type chips list. Returns the visible strings;
+ * order is BD → BA → property type.
+ */
+export function buildChips(listing: PostBuilderListing): string[] {
+  const totalBaths =
+    (listing.bathrooms_full ?? 0) + (listing.bathrooms_half ?? 0) * 0.5;
+  const bathLabel =
+    totalBaths > 0
+      ? totalBaths % 1 === 0
+        ? `${totalBaths.toFixed(0)} BA`
+        : `${totalBaths.toFixed(1)} BA`
+      : null;
+  const bedLabel =
+    typeof listing.bedrooms === "number" && listing.bedrooms > 0
+      ? `${listing.bedrooms} BD`
+      : null;
+  const propTypeLabel = listing.property_type
+    ? listing.property_type.toUpperCase().replace(/_/g, " ")
+    : null;
+  return [bedLabel, bathLabel, propTypeLabel].filter(
+    (s): s is string => typeof s === "string" && s.length > 0,
+  );
+}
+
+/**
+ * Format an Open House date+time pair for display on the post image.
+ * UTC ISO timestamps in → "SAT MAY 16 · 2-5 PM" out (America/New_York).
+ *
+ * If end_at is null, returns "SAT MAY 16 · 2 PM".
+ * Returns null if start_at is null.
+ */
+export function formatOpenHouse(
+  start_at: string | null | undefined,
+  end_at: string | null | undefined,
+): string | null {
+  if (!start_at) return null;
+  try {
+    const start = new Date(start_at);
+    const end = end_at ? new Date(end_at) : null;
+    if (Number.isNaN(start.getTime())) return null;
+
+    const datePart = new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: "America/New_York",
+    }).format(start).toUpperCase();
+
+    const startHour = formatHour(start);
+    const endHour = end && !Number.isNaN(end.getTime()) ? formatHour(end) : null;
+
+    const timePart = endHour ? `${startHour}-${endHour}` : startHour;
+    return `${datePart} · ${timePart}`;
+  } catch {
+    return null;
+  }
+}
+
+function formatHour(d: Date): string {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 ? undefined : "2-digit",
+    hour12: true,
+    timeZone: "America/New_York",
+  });
+  return fmt.format(d).replace(/\s/g, "").toUpperCase(); // "1PM" / "1:30PM"
+}
+
+/**
+ * Common <head> block for all square 1080x1080 templates.
+ * Loads Inter from Google Fonts (cached aggressively, sub-second on repeat
+ * renders).
+ */
+export function commonSquareHead(title: string): string {
+  return `<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=block" rel="stylesheet" />
+</head>`;
+}
+
+/**
+ * Renders the optional badge overlay (e.g. SOLD stamp). Returns empty string
+ * when the theme has no badge configured.
+ */
+export function renderBadge(theme: PostTypeTheme): string {
+  if (!theme.badge) return "";
+  if (theme.badge.style === "stamp") {
+    return `<div class="badge-stamp"><span>${escapeHtml(theme.badge.text)}</span></div>`;
+  }
+  // banner
+  return `<div class="badge-banner"><span>${escapeHtml(theme.badge.text)}</span></div>`;
+}
+
+/** CSS rules for the optional badge overlays. Included in every template. */
+export const BADGE_CSS = `
+  .badge-stamp {
+    position: absolute;
+    top: 110px;
+    right: 56px;
+    z-index: 4;
+    transform: rotate(-8deg);
+    pointer-events: none;
+  }
+  .badge-stamp span {
+    display: inline-block;
+    padding: 14px 32px;
+    border: 5px solid #FCFCFB;
+    border-radius: 8px;
+    background: rgba(184, 60, 60, 0.92);
+    color: #FFFFFF;
+    font-size: 38px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+  .badge-banner {
+    position: absolute;
+    top: 130px;
+    left: 0;
+    right: 0;
+    z-index: 4;
+    background: rgba(184, 60, 60, 0.92);
+    color: #FFFFFF;
+    text-align: center;
+    padding: 12px 0;
+    pointer-events: none;
+  }
+  .badge-banner span {
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  }
+`;
