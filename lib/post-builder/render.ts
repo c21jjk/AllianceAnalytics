@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { screenshotHtml } from "./chromium";
 import { getTemplate } from "./templates/registry";
 import type { PostBuilderListing, PostCustomizations } from "./types";
 
