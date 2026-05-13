@@ -2813,12 +2813,12 @@ function CustomizePanel(props: CustomizePanelProps) {
               <div className="text-xs font-semibold text-neutral-600 mt-2 mb-1.5">Size</div>
               <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
                 {(["sm", "md", "lg", "xl"] as const).map((s) => {
-                  const active = (customizations.eyebrow_size ?? "md") === s;
+                  const active = customizations.eyebrow_size === s;
                   return (
                     <button
                       key={`eb-${s}`}
                       type="button"
-                      onClick={() => patch({ eyebrow_size: s === "md" ? undefined : s })}
+                      onClick={() => patch({ eyebrow_size: s })}
                       className={[
                         "px-4 py-2 text-xs font-semibold uppercase border-r border-neutral-200 last:border-r-0 transition",
                         active ? "bg-gold-100 text-gold-900" : "text-neutral-600 hover:bg-neutral-50",
@@ -2828,6 +2828,16 @@ function CustomizePanel(props: CustomizePanelProps) {
                     </button>
                   );
                 })}
+                {customizations.eyebrow_size ? (
+                  <button
+                    type="button"
+                    onClick={() => patch({ eyebrow_size: undefined })}
+                    className="px-3 py-2 text-xs font-semibold text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50 transition border-l border-neutral-200"
+                    title="Use template default size"
+                  >
+                    ↺
+                  </button>
+                ) : null}
               </div>
               <div className="text-xs font-semibold text-neutral-600 mt-3 mb-1.5">Position</div>
               <div className="grid grid-cols-2 gap-1.5 max-w-[220px]">

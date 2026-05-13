@@ -409,14 +409,17 @@ export function buildCustomizationCSS(c?: PostCustomizations | null): string {
 
   // ── Eyebrow sizing ───────────────────────────────────────────────
   // Scales the eyebrow text + the gold rule together so they keep their
-  // visual relationship. Base sizes vary slightly by format (story has
-  // a different default), but multiplying always works.
-  if (c.eyebrow_size && c.eyebrow_size !== "md") {
+  // visual relationship. The original 22px default felt too small in
+  // practice — bumped 3× across the board so that even SM is meaningfully
+  // larger than the un-customized template default.
+  // Selecting any preset (including md) emits the override; "no preset"
+  // (eyebrow_size undefined) falls back to the original template default.
+  if (c.eyebrow_size) {
     const scaleFor: Record<NonNullable<PostCustomizations["eyebrow_size"]>, number> = {
-      sm: 0.8,
-      md: 1.0,
-      lg: 1.3,
-      xl: 1.6,
+      sm: 2.4,
+      md: 3.0,
+      lg: 3.9,
+      xl: 4.8,
     };
     const s = scaleFor[c.eyebrow_size];
     lines.push(`
