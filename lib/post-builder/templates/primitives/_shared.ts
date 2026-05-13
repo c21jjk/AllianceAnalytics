@@ -407,6 +407,39 @@ export function buildCustomizationCSS(c?: PostCustomizations | null): string {
     `);
   }
 
+  // ── Eyebrow sizing ───────────────────────────────────────────────
+  // Scales the eyebrow text + the gold rule together so they keep their
+  // visual relationship. Base sizes vary slightly by format (story has
+  // a different default), but multiplying always works.
+  if (c.eyebrow_size && c.eyebrow_size !== "md") {
+    const scaleFor: Record<NonNullable<PostCustomizations["eyebrow_size"]>, number> = {
+      sm: 0.8,
+      md: 1.0,
+      lg: 1.3,
+      xl: 1.6,
+    };
+    const s = scaleFor[c.eyebrow_size];
+    lines.push(`
+      .eyebrow { gap: ${Math.round(18 * s)}px !important; }
+      .eyebrow-text { font-size: ${Math.round(22 * s)}px !important; }
+      .eyebrow-rule { width: ${Math.round(56 * s)}px !important; height: ${Math.max(2, Math.round(3 * s))}px !important; }
+    `);
+  }
+
+  // ── Eyebrow position ─────────────────────────────────────────────
+  // Default in every template today is top_left at 56px inset.
+  if (c.eyebrow_position) {
+    const positions: Record<NonNullable<PostCustomizations["eyebrow_position"]>, string> = {
+      top_left: "top: 56px; right: auto; bottom: auto; left: 56px;",
+      top_right: "top: 56px; right: 56px; bottom: auto; left: auto;",
+      bottom_left: "top: auto; right: auto; bottom: 56px; left: 56px;",
+      bottom_right: "top: auto; right: 56px; bottom: 56px; left: auto;",
+    };
+    lines.push(`
+      .eyebrow { ${positions[c.eyebrow_position]} }
+    `);
+  }
+
   if (lines.length === 0) return "";
   return `<style data-customizations="1">\n${lines.join("\n")}\n</style>`;
 }

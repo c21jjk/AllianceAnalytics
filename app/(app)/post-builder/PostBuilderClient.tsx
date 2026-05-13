@@ -2649,7 +2649,7 @@ interface CustomizePanelProps {
  */
 function CustomizePanel(props: CustomizePanelProps) {
   const { customizations, onChange, onReset, onApply, hasCustomizations, rendering } = props;
-  const [section, setSection] = useState<"colors" | "badge" | "text" | "visibility">("colors");
+  const [section, setSection] = useState<"colors" | "labels" | "text" | "visibility">("colors");
 
   function patch(next: Partial<PostCustomizations>) {
     onChange({ ...customizations, ...next });
@@ -2728,7 +2728,7 @@ function CustomizePanel(props: CustomizePanelProps) {
 
       {/* Section tabs */}
       <div className="flex gap-1 px-2 pt-2 border-b border-gold-200">
-        {(["colors", "badge", "text", "visibility"] as const).map((s) => {
+        {(["colors", "labels", "text", "visibility"] as const).map((s) => {
           const active = s === section;
           return (
             <button
@@ -2802,10 +2802,76 @@ function CustomizePanel(props: CustomizePanelProps) {
           </div>
         ) : null}
 
-        {section === "badge" ? (
-          <div className="space-y-4">
+        {section === "labels" ? (
+          <div className="space-y-5">
+            {/* ── Eyebrow ────────────────────────────────────────── */}
             <div>
-              <div className="text-xs font-semibold text-neutral-700 mb-2">Badge size</div>
+              <div className="flex items-baseline justify-between mb-1">
+                <div className="text-xs font-semibold text-neutral-700">Eyebrow label</div>
+                <div className="text-[10px] text-neutral-500">"JUST LISTED" tag at the corner</div>
+              </div>
+              <div className="text-xs font-semibold text-neutral-600 mt-2 mb-1.5">Size</div>
+              <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
+                {(["sm", "md", "lg", "xl"] as const).map((s) => {
+                  const active = (customizations.eyebrow_size ?? "md") === s;
+                  return (
+                    <button
+                      key={`eb-${s}`}
+                      type="button"
+                      onClick={() => patch({ eyebrow_size: s === "md" ? undefined : s })}
+                      className={[
+                        "px-4 py-2 text-xs font-semibold uppercase border-r border-neutral-200 last:border-r-0 transition",
+                        active ? "bg-gold-100 text-gold-900" : "text-neutral-600 hover:bg-neutral-50",
+                      ].join(" ")}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-xs font-semibold text-neutral-600 mt-3 mb-1.5">Position</div>
+              <div className="grid grid-cols-2 gap-1.5 max-w-[220px]">
+                {(
+                  [
+                    { id: "top_left", label: "↖ Top-Left" },
+                    { id: "top_right", label: "Top-Right ↗" },
+                    { id: "bottom_left", label: "↙ Bot-Left" },
+                    { id: "bottom_right", label: "Bot-Right ↘" },
+                  ] as const
+                ).map((p) => {
+                  const active = (customizations.eyebrow_position ?? "top_left") === p.id;
+                  return (
+                    <button
+                      key={`eb-${p.id}`}
+                      type="button"
+                      onClick={() => patch({ eyebrow_position: p.id === "top_left" ? undefined : p.id })}
+                      className={[
+                        "px-3 py-2 text-[11px] font-semibold rounded transition",
+                        active
+                          ? "bg-gold-100 text-gold-900 ring-1 ring-gold-500"
+                          : "bg-white text-neutral-700 ring-1 ring-neutral-200 hover:bg-neutral-50",
+                      ].join(" ")}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="h-px bg-neutral-200" />
+
+            {/* ── Badge stamp ────────────────────────────────────── */}
+            <div>
+              <div className="flex items-baseline justify-between mb-1">
+                <div className="text-xs font-semibold text-neutral-700">Badge stamp</div>
+                <div className="text-[10px] text-neutral-500">Rotated overlay (SOLD / ↓ NEW PRICE)</div>
+              </div>
+              <div className="text-[11px] text-amber-700 bg-amber-50 ring-1 ring-amber-200 rounded px-2 py-1.5 mb-2 leading-snug">
+                ⓘ Only Just Sold and Price Reduced posts have a badge stamp by default. These controls do nothing on Just Listed / Under Contract / Open House.
+              </div>
+              <div className="text-xs font-semibold text-neutral-600 mb-1.5">Size</div>
               <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
                 {(["sm", "md", "lg", "xl"] as const).map((s) => {
                   const active = (customizations.badge_size ?? "md") === s;
@@ -2816,9 +2882,7 @@ function CustomizePanel(props: CustomizePanelProps) {
                       onClick={() => patch({ badge_size: s === "md" ? undefined : s })}
                       className={[
                         "px-4 py-2 text-xs font-semibold uppercase border-r border-neutral-200 last:border-r-0 transition",
-                        active
-                          ? "bg-gold-100 text-gold-900"
-                          : "text-neutral-600 hover:bg-neutral-50",
+                        active ? "bg-gold-100 text-gold-900" : "text-neutral-600 hover:bg-neutral-50",
                       ].join(" ")}
                     >
                       {s}
@@ -2826,9 +2890,7 @@ function CustomizePanel(props: CustomizePanelProps) {
                   );
                 })}
               </div>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-neutral-700 mb-2">Badge position (stamp only)</div>
+              <div className="text-xs font-semibold text-neutral-600 mt-3 mb-1.5">Position</div>
               <div className="grid grid-cols-2 gap-1.5 max-w-[220px]">
                 {(
                   [

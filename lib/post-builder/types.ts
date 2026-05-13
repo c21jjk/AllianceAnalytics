@@ -116,6 +116,8 @@ export interface PostCustomizations {
   /**
    * Badge sizing — applies to .badge-stamp / .badge-banner via CSS scale.
    * Default is "md" (no scale). "sm" = 0.75x, "lg" = 1.25x, "xl" = 1.5x.
+   * NOTE: only Just Sold and Price Reduced post types have a badge in the
+   * default themes. Just Listed / Under Contract / Open House have none.
    */
   badge_size?: "sm" | "md" | "lg" | "xl";
   /**
@@ -124,6 +126,17 @@ export interface PostCustomizations {
    * always full-width.
    */
   badge_position?: "top_left" | "top_right" | "bottom_left" | "bottom_right";
+  /**
+   * Eyebrow label sizing (the "JUST LISTED" / "JUST SOLD" tag at the
+   * corner of the post). Scales font-size + rule width together.
+   * Default is "md" (no scale). "sm" = 0.8x, "lg" = 1.3x, "xl" = 1.6x.
+   */
+  eyebrow_size?: "sm" | "md" | "lg" | "xl";
+  /**
+   * Which corner the .eyebrow anchors to. Default is top_left for all
+   * templates today.
+   */
+  eyebrow_position?: "top_left" | "top_right" | "bottom_left" | "bottom_right";
 }
 
 export interface TemplateDimensions {
