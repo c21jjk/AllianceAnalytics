@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Just Listed · 102 E Primrose Road</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=block" rel="stylesheet" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1080px; height: 1080px; overflow: hidden; background: #18181B; }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #FCFCFB;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+  .frame {
+    position: relative;
+    width: 1080px;
+    height: 1080px;
+    overflow: hidden;
+  }
+  .hero {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDgwIDEwODAiPgogICAgICA8ZGVmcz4KICAgICAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzNGM0YzRCIvPgogICAgICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTgxODFCIi8+CiAgICAgICAgPC9saW5lYXJHcmFkaWVudD4KICAgICAgPC9kZWZzPgogICAgICA8cmVjdCB3aWR0aD0iMTA4MCIgaGVpZ2h0PSIxMDgwIiBmaWxsPSJ1cmwoI2cpIi8+CiAgICAgIDx0ZXh0IHg9IjU0MCIgeT0iNTQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI0OCIKICAgICAgICAgICAgZmlsbD0iIzczNzM3MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+WyBoZXJvIHBob3RvIHBsYWNlaG9sZGVyIF08L3RleHQ+CiAgICA8L3N2Zz4=");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .hero-tint {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg,
+      rgba(24,24,27,0.55) 0%,
+      rgba(24,24,27,0.18) 14%,
+      rgba(24,24,27,0.0) 32%,
+      rgba(24,24,27,0.0) 50%,
+      rgba(24,24,27,0.55) 70%,
+      rgba(24,24,27,0.92) 100%);
+  }
+  .eyebrow {
+    position: absolute;
+    top: 56px;
+    left: 56px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    z-index: 3;
+  }
+  .eyebrow-rule {
+    width: 56px;
+    height: 3px;
+    background: linear-gradient(90deg, #C9A961 0%, #B69552 100%);
+    border-radius: 2px;
+  }
+  .eyebrow-text {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: #FBF7EE;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  }
+  .content {
+    position: absolute;
+    left: 56px;
+    right: 56px;
+    bottom: 56px;
+    z-index: 3;
+  }
+  .gold-rule {
+    width: 64px;
+    height: 4px;
+    background: linear-gradient(90deg, #C9A961 0%, #B69552 100%);
+    border-radius: 2px;
+    margin-bottom: 22px;
+  }
+  .address {
+    font-size: 56px;
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: #FFFFFF;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    word-break: break-word;
+  }
+  .citystate {
+    margin-top: 8px;
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: #F1F1EF;
+    text-transform: uppercase;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.3);
+  }
+  .price {
+    margin-top: 28px;
+    font-size: 64px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #C9A961;
+    text-shadow: 0 2px 14px rgba(0,0,0,0.45);
+    line-height: 1;
+  }
+  .chips {
+    margin-top: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 12px 22px;
+    background: rgba(252,252,251,0.10);
+    border: 1.5px solid rgba(201,169,97,0.55);
+    border-radius: 999px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #FCFCFB;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .footer {
+    margin-top: 32px;
+    padding-top: 22px;
+    border-top: 1px solid rgba(252,252,251,0.18);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #C9A961 0%, #937843 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 800;
+    color: #18181B;
+    letter-spacing: -0.02em;
+  }
+  .brand-text {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #FCFCFB;
+    text-transform: uppercase;
+  }
+  .mls-tag {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    color: rgba(252,252,251,0.65);
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="hero"></div>
+    <div class="hero-tint"></div>
+    <div class="eyebrow">
+      <span class="eyebrow-rule"></span>
+      <span class="eyebrow-text">Just Listed</span>
+    </div>
+    <div class="content">
+      <div class="gold-rule"></div>
+      <div class="address">102 E Primrose Road</div>
+      <div class="citystate">Wildwood Crest, NJ 08260</div>
+      <div class="price">$599,900</div>
+      <div class="chips"><span class="chip">2 BD</span><span class="chip">1.5 BA</span><span class="chip">CONDO</span></div>
+      <div class="footer">
+        <div class="brand">
+          <div class="brand-mark">21</div>
+          <div class="brand-text">Century 21 Alliance</div>
+        </div>
+        <div class="mls-tag">#CMC261231</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
