@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   PostBuilderListing,
   PostFormat,
@@ -1201,7 +1201,7 @@ export default function PostBuilderClient({
                       · live preview with this listing's photos
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {variants.map((v) => {
                       const active = v.variant === variantId;
                       const photosAvailable = availablePhotos.length;
@@ -2408,16 +2408,43 @@ function VariantPreviewThumb({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(false);
 
-  // Display dimensions depend on size mode. Large mode fills the card width
-  // (~220px on a 5-col grid at 1280px viewport) so users can actually read
-  // the template typography in the preview. Small mode keeps the original
-  // 84px inline thumb for any caller that wants compact UI.
-  const longSide = size === "large" ? 220 : 84;
+  // For small mode we hard-code 84px so the inline thumb has predictable
+  // size. For large mode we measure the actual rendered width and scale
+  // the iframe to match — this lets each card fill its grid column on any
+  // viewport without overflow.
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [measuredW, setMeasuredW] = useState<number>(size === "large" ? 280 : 84);
+
+  useEffect(() => {
+    if (size !== "large" || !wrapperRef.current) return;
+    const el = wrapperRef.current;
+    const update = () => {
+      const w = el.clientWidth;
+      if (w > 0) setMeasuredW(w);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [size]);
+
+  // Native template dimensions per format.
+  const nativeDims =
+    format === "square_1x1"
+      ? { w: 1080, h: 1080 }
+      : format === "portrait_4x5"
+        ? { w: 1080, h: 1350 }
+        : { w: 1080, h: 1920 };
+
+  // Display dimensions. Large mode: container is 100% width, height
+  // derived from the aspect ratio. Small mode: fixed pixel box (legacy
+  // callers — currently unused after the layout refactor, kept for the API).
+  const longSide = size === "large" ? measuredW : 84;
   const dims = format === "square_1x1"
-    ? { w: 1080, h: 1080, displayW: longSide, displayH: longSide }
+    ? { w: nativeDims.w, h: nativeDims.h, displayW: longSide, displayH: longSide }
     : format === "portrait_4x5"
-      ? { w: 1080, h: 1350, displayW: longSide, displayH: Math.round(longSide * 1350 / 1080) }
-      : { w: 1080, h: 1920, displayW: Math.round(longSide * 1080 / 1920), displayH: longSide };
+      ? { w: nativeDims.w, h: nativeDims.h, displayW: longSide, displayH: Math.round(longSide * 1350 / 1080) }
+      : { w: nativeDims.w, h: nativeDims.h, displayW: Math.round(longSide * 1080 / 1920), displayH: longSide };
   const scaleX = dims.displayW / dims.w;
   const scaleY = dims.displayH / dims.h;
 
@@ -2461,22 +2488,24 @@ function VariantPreviewThumb({
     };
   }, [templateId, listing?.mls_number, heroUrls.join("|")]);
 
-  // Large mode centers the preview inside the card and gives non-square
-  // formats some background room rather than letterboxing weirdly.
+  // Large mode: width:100% of the card column, height computed from the
+  // measured width × the format aspect ratio. Small mode: fixed pixel box.
+  const wrapperStyle: React.CSSProperties = size === "large"
+    ? { width: "100%", height: dims.displayH }
+    : { width: dims.displayW, height: dims.displayH };
+
   const wrapperClass = size === "large"
-    ? "relative rounded-md overflow-hidden bg-neutral-100 ring-1 mx-auto"
+    ? "relative rounded-md overflow-hidden bg-neutral-100 ring-1"
     : "relative rounded-md overflow-hidden bg-neutral-100 ring-1 flex-shrink-0";
 
   return (
     <div
+      ref={wrapperRef}
       className={[
         wrapperClass,
         disabled ? "ring-neutral-200 opacity-50" : "ring-neutral-300",
       ].join(" ")}
-      style={{
-        width: dims.displayW,
-        height: dims.displayH,
-      }}
+      style={wrapperStyle}
     >
       {html ? (
         <iframe
