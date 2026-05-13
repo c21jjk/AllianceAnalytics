@@ -224,6 +224,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         data={companyAnalytics}
         followers={followerSummary}
         days={days}
+        officeShortCode={officeFilter}
       />
 
       <div className="flex items-start justify-between gap-3 flex-wrap">

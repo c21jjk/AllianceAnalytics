@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import clsx from "clsx";
 import type {
   CompanyAnalytics,
@@ -5,7 +8,9 @@ import type {
   FollowerSummary,
 } from "@/lib/data/posts-db";
 import type { Platform } from "@/lib/types/post";
+import type { MetricKind } from "@/lib/data/metric-details";
 import { formatCompactNumber } from "@/lib/format";
+import MetricDetailDialog from "./MetricDetailDialog";
 
 interface CompanyAnalyticsStripProps {
   data: CompanyAnalytics;
@@ -13,6 +18,9 @@ interface CompanyAnalyticsStripProps {
   followers: FollowerSummary;
   /** Window length in days — surfaced in the strip subtitle. */
   days: number;
+  /** Active dashboard office filter — passed through to the detail dialog
+   *  so drill-downs match the same audience scope the headline uses. */
+  officeShortCode?: string | null;
   className?: string;
 }
 
@@ -39,8 +47,11 @@ export default function CompanyAnalyticsStrip({
   data,
   followers,
   days,
+  officeShortCode = null,
   className,
 }: CompanyAnalyticsStripProps) {
+  const [openKind, setOpenKind] = useState<MetricKind | null>(null);
+
   const reachDelta = pctDelta(data.reach, data.prev_reach);
   const engagementDelta = pctDelta(data.engagement, data.prev_engagement);
   const ratePctNow = data.engagement_rate * 100;
@@ -52,66 +63,92 @@ export default function CompanyAnalyticsStrip({
   const engagementSeries = data.daily.map((d) => d.engagement);
 
   return (
-    <section
-      className={clsx(
-        "grid grid-cols-2 lg:grid-cols-5 gap-2",
-        className,
-      )}
-      aria-label={`Company analytics for the last ${days} days`}
-    >
-      <Tile
-        label="Reach"
-        value={formatCompactNumber(data.reach)}
-        delta={reachDelta}
-        deltaLabel="vs prior period"
-        series={reachSeries}
-        platforms={data.by_platform}
-        kind="reach"
+    <>
+      <section
+        className={clsx(
+          "grid grid-cols-2 lg:grid-cols-5 gap-2",
+          className,
+        )}
+        aria-label={`Company analytics for the last ${days} days`}
+      >
+        <Tile
+          label="Reach"
+          value={formatCompactNumber(data.reach)}
+          delta={reachDelta}
+          deltaLabel="vs prior period"
+          series={reachSeries}
+          platforms={data.by_platform}
+          kind="reach"
+          onClick={() => setOpenKind("reach")}
+        />
+        <Tile
+          label="Engagement"
+          value={formatCompactNumber(data.engagement)}
+          delta={engagementDelta}
+          deltaLabel="vs prior period"
+          series={engagementSeries}
+          platforms={data.by_platform}
+          kind="engagement"
+          onClick={() => setOpenKind("engagement")}
+        />
+        <Tile
+          label="Engagement rate"
+          value={`${ratePctNow.toFixed(2)}%`}
+          delta={ratePointDelta}
+          deltaLabel="pp vs prior"
+          deltaSuffix="pp"
+          series={null}
+          platforms={data.by_platform}
+          kind="engagement_rate"
+          onClick={() => setOpenKind("engagement_rate")}
+        />
+        <Tile
+          label="Posts published"
+          value={String(data.posts_published)}
+          delta={postsDelta}
+          deltaLabel="vs prior period"
+          series={null}
+          platforms={data.by_platform}
+          kind="posts_published"
+          onClick={() => setOpenKind("posts_published")}
+        />
+        <FollowersTile
+          followers={followers}
+          onClick={() => setOpenKind("followers")}
+        />
+      </section>
+      <MetricDetailDialog
+        open={openKind !== null}
+        kind={openKind}
+        days={days}
+        officeShortCode={officeShortCode}
+        onClose={() => setOpenKind(null)}
       />
-      <Tile
-        label="Engagement"
-        value={formatCompactNumber(data.engagement)}
-        delta={engagementDelta}
-        deltaLabel="vs prior period"
-        series={engagementSeries}
-        platforms={data.by_platform}
-        kind="engagement"
-      />
-      <Tile
-        label="Engagement rate"
-        value={`${ratePctNow.toFixed(2)}%`}
-        delta={ratePointDelta}
-        deltaLabel="pp vs prior"
-        deltaSuffix="pp"
-        series={null}
-        platforms={data.by_platform}
-        kind="engagement_rate"
-      />
-      <Tile
-        label="Posts published"
-        value={String(data.posts_published)}
-        delta={postsDelta}
-        deltaLabel="vs prior period"
-        series={null}
-        platforms={data.by_platform}
-        kind="posts_published"
-      />
-      <FollowersTile followers={followers} />
-    </section>
+    </>
   );
 }
 
-function FollowersTile({ followers }: { followers: FollowerSummary }) {
+function FollowersTile({
+  followers,
+  onClick,
+}: {
+  followers: FollowerSummary;
+  onClick: () => void;
+}) {
   if (!followers.has_data) {
     return (
-      <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
+      <button
+        type="button"
+        onClick={onClick}
+        className="text-left rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5 hover:ring-2 hover:ring-gold-400/40 hover:border-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-500 transition-shadow"
+      >
         <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
           Followers
         </div>
         <div className="text-sm text-neutral-400 mt-1">
           Syncs once per platform — populates within the next 4h cron tick.
         </div>
-      </div>
+      </button>
     );
   }
 
@@ -130,7 +167,12 @@ function FollowersTile({ followers }: { followers: FollowerSummary }) {
     delta == null ? "—" : `${arrow} ${formatCompactNumber(Math.abs(delta))}`;
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Open followers detail"
+      className="text-left rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5 hover:ring-2 hover:ring-gold-400/40 hover:border-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-500 transition-shadow"
+    >
       <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
         Followers
       </div>
@@ -148,7 +190,7 @@ function FollowersTile({ followers }: { followers: FollowerSummary }) {
         <span className="text-neutral-300">·</span>
         <FollowerCell label="TT" cell={followers.tiktok} />
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -185,6 +227,8 @@ interface TileProps {
   platforms: CompanyAnalyticsByPlatform;
   /** Which metric this tile shows — selects which platform field to read. */
   kind: TileKind;
+  /** Click handler — opens the detail dialog for this kind. */
+  onClick: () => void;
 }
 
 function Tile({
@@ -196,6 +240,7 @@ function Tile({
   series,
   platforms,
   kind,
+  onClick,
 }: TileProps) {
   const arrow = delta == null ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
   const tone =
@@ -212,7 +257,12 @@ function Tile({
       : `${arrow} ${Math.abs(delta).toFixed(deltaSuffix === "pp" ? 2 : 0)}${deltaSuffix}`;
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Open ${label.toLowerCase()} detail`}
+      className="text-left rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5 hover:ring-2 hover:ring-gold-400/40 hover:border-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-500 transition-shadow"
+    >
       <div className="flex items-baseline justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
@@ -231,7 +281,7 @@ function Tile({
         <span className="text-neutral-400">{deltaLabel}</span>
       </div>
       <PlatformMiniRow platforms={platforms} kind={kind} />
-    </div>
+    </button>
   );
 }
 
