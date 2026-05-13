@@ -195,9 +195,14 @@ async function screenshotHtml(args: {
   width: number;
   height: number;
 }): Promise<Buffer> {
+  const t0 = Date.now();
+  const stage = (label: string) =>
+    console.log(`[render] ${label}: +${Date.now() - t0}ms`);
+
   // Dynamic imports — these libs are heavy, only load when actually rendering.
   const puppeteer = (await import("puppeteer-core")).default;
   const chromium = (await import("@sparticuz/chromium-min")).default;
+  stage("imports done");
 
   const isVercel = !!process.env.VERCEL;
   const executablePath = isVercel
@@ -205,6 +210,7 @@ async function screenshotHtml(args: {
     : process.env.PUPPETEER_EXECUTABLE_PATH ||
       // Common local dev paths
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  stage("executablePath resolved (binary downloaded if cold)");
 
   const browser = await puppeteer.launch({
     args: isVercel ? chromium.args : ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -216,6 +222,7 @@ async function screenshotHtml(args: {
     executablePath,
     headless: true,
   });
+  stage("browser launched");
 
   try {
     const page = await browser.newPage();
@@ -224,12 +231,28 @@ async function screenshotHtml(args: {
       height: args.height,
       deviceScaleFactor: 1,
     });
+    stage("page + viewport ready");
+    // Use domcontentloaded instead of networkidle0 — the hero image is already
+    // a data URI so no network needed for it. Google Fonts may still load
+    // slowly from the function region; we wait explicitly for fonts below
+    // with a hard cap to avoid hanging the whole render.
     await page.setContent(args.html, {
-      waitUntil: "networkidle0",
-      timeout: 20_000,
+      waitUntil: "domcontentloaded",
+      timeout: 15_000,
     });
-    // Make sure web fonts have laid out before snapping.
-    await page.evaluateHandle("document.fonts.ready");
+    stage("setContent done");
+    // Wait for fonts with an explicit timeout — Google Fonts CDN occasionally
+    // stalls from us-east lambdas. After 5s give up and render with system
+    // font fallback (still readable, just slightly off-brand).
+    try {
+      await Promise.race([
+        page.evaluate(() => (document as Document).fonts.ready),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("font-timeout")), 5_000)),
+      ]);
+      stage("fonts ready");
+    } catch (e) {
+      console.warn(`[render] font wait skipped: ${(e as Error).message}`);
+    }
     // Tiny extra beat for any layout settling.
     await new Promise((r) => setTimeout(r, 150));
 
@@ -238,8 +261,10 @@ async function screenshotHtml(args: {
       clip: { x: 0, y: 0, width: args.width, height: args.height },
       omitBackground: false,
     });
+    stage("screenshot captured");
     return Buffer.from(screenshot);
   } finally {
     await browser.close();
+    stage("browser closed");
   }
 }

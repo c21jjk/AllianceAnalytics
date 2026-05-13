@@ -16,10 +16,12 @@ import { renderTemplate } from "@/lib/post-builder/render";
 import type { PostBuilderListing } from "@/lib/post-builder/types";
 
 export const dynamic = "force-dynamic";
-// 90s gives the @sparticuz/chromium-min cold-start binary download headroom
-// (binary fetches from GitHub release on first invocation per function instance,
-// then cached in /tmp). Steady-state renders typically finish in 6–10s.
-export const maxDuration = 90;
+// 300s ceiling for cold-start safety — the @sparticuz/chromium-min binary
+// downloads from GitHub release (~50MB) on first invocation per function
+// instance, which we measured at 90s+ on production. Once Path B (Supabase-
+// hosted binary, same region) lands this can drop back to 60s. Fluid Compute
+// on Pro allows up to 800s; 300 is a safety belt.
+export const maxDuration = 300;
 export const runtime = "nodejs";
 
 interface RenderRequestBody {
