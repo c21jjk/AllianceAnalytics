@@ -365,6 +365,10 @@ function Sparkline({
     .map((v, i) => `${(i * stepX).toFixed(2)},${(h - (v / max) * h).toFixed(2)}`)
     .join(" ");
 
+  // Thin the stroke as the series gets longer, otherwise a 365-point
+  // polyline overlaps itself into a solid block at this width.
+  const strokeWidth = values.length > 180 ? 0.9 : values.length > 90 ? 1.1 : 1.4;
+
   return (
     <svg
       viewBox={`0 0 ${w} ${h}`}
@@ -374,7 +378,7 @@ function Sparkline({
       <polyline
         fill="none"
         stroke="currentColor"
-        strokeWidth={1.4}
+        strokeWidth={strokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
         points={points}

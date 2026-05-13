@@ -40,7 +40,7 @@ export const metadata = {
 };
 export const dynamic = "force-dynamic";
 
-const ALLOWED_RANGES = [7, 14, 30, 90] as const;
+const ALLOWED_RANGES = [7, 14, 30, 90, 365] as const;
 type View = "grouped" | "list";
 
 interface HomePageProps {
@@ -325,6 +325,10 @@ export default async function HomePage({ searchParams }: HomePageProps) {
 
 function parseRange(raw: string | undefined): number {
   if (raw === "ytd") return ytdDays();
+  // "1y" is the canonical rolling-12-months token. Literal "365" is also
+  // accepted because it's in ALLOWED_RANGES — keeps deep links from older
+  // builds (and any direct URL hacking) working.
+  if (raw === "1y") return 365;
   const parsed = Number(raw);
   if (
     Number.isFinite(parsed) &&

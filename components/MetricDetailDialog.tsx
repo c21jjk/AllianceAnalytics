@@ -261,6 +261,8 @@ function ReachBody({ detail }: { detail: ReachDetail }) {
               tick={{ fontSize: 11, fill: "#737373" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
+              interval={axisTickInterval(detail.days)}
+              minTickGap={8}
             />
             <YAxis
               tick={{ fontSize: 11, fill: "#737373" }}
@@ -361,6 +363,8 @@ function EngagementBody({ detail }: { detail: EngagementDetail }) {
                 tick={{ fontSize: 11, fill: "#737373" }}
                 tickLine={false}
                 axisLine={{ stroke: "#e5e7eb" }}
+                interval={axisTickInterval(detail.days)}
+                minTickGap={8}
               />
               <YAxis
                 tick={{ fontSize: 11, fill: "#737373" }}
@@ -390,6 +394,8 @@ function EngagementBody({ detail }: { detail: EngagementDetail }) {
                 tick={{ fontSize: 11, fill: "#737373" }}
                 tickLine={false}
                 axisLine={{ stroke: "#e5e7eb" }}
+                interval={axisTickInterval(detail.days)}
+                minTickGap={8}
               />
               <YAxis
                 tick={{ fontSize: 11, fill: "#737373" }}
@@ -479,6 +485,8 @@ function EngagementRateBody({ detail }: { detail: EngagementRateDetail }) {
               tick={{ fontSize: 11, fill: "#737373" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
+              interval={axisTickInterval(detail.days)}
+              minTickGap={8}
             />
             <YAxis
               tick={{ fontSize: 11, fill: "#737373" }}
@@ -612,6 +620,8 @@ function PostsPublishedBody({ detail }: { detail: PostsPublishedDetail }) {
               tick={{ fontSize: 11, fill: "#737373" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
+              interval={axisTickInterval(detail.days)}
+              minTickGap={8}
             />
             <YAxis
               tick={{ fontSize: 11, fill: "#737373" }}
@@ -781,6 +791,8 @@ function FollowersBody({ detail }: { detail: FollowersDetail }) {
               tick={{ fontSize: 11, fill: "#737373" }}
               tickLine={false}
               axisLine={{ stroke: "#e5e7eb" }}
+              interval={axisTickInterval(detail.days)}
+              minTickGap={8}
             />
             <YAxis
               tick={{ fontSize: 11, fill: "#737373" }}
@@ -1127,6 +1139,20 @@ function shortDayLabel(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/**
+ * Number of ticks to skip between displayed labels on the X-axis.
+ * Tuned for daily-resolution data: small windows show every tick;
+ * 365-day windows get a label every ~2 weeks. Passed to Recharts'
+ * <XAxis interval={...}> prop.
+ */
+function axisTickInterval(points: number): number {
+  if (points <= 30) return 0;
+  if (points <= 60) return 2;
+  if (points <= 120) return 6;
+  if (points <= 200) return 13;
+  return 29; // 365d → roughly monthly
 }
 
 function bestDayLabel(rows: Array<{ date: string; value: number }>): string {
