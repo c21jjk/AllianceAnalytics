@@ -132,3 +132,20 @@ export interface AccountHealth {
    */
   next_scheduled_at?: string;
 }
+
+/**
+ * MLS feed health — analog of AccountHealth for the Paragon RETS + Bright
+ * RETS feeds. Powers the MLS-side chips on the dashboard sync bar.
+ */
+export interface MlsFeedHealth {
+  /** Short code from mls_feeds.short_code: "cmc" | "sjsr" | "bright". */
+  short_code: string;
+  /** Display name e.g. "CMC", "SJSR", "Bright". */
+  short_label: string;
+  status: "connected" | "needs_attention" | "disconnected";
+  /** ISO timestamp of the most recent listing upsert from this feed. NULL
+   *  when no successful sync yet. */
+  last_synced_at: string | null;
+  /** Number of active listings currently tracked from this feed. */
+  active_listings: number;
+}

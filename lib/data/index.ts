@@ -187,3 +187,18 @@ export async function getAccountHealth(): Promise<AccountHealth[]> {
     return FIXTURE_HEALTH;
   }
 }
+
+/**
+ * MLS feed sync health for the dashboard sync bar. Returns CMC, SJSR, Bright
+ * rows. Never throws — returns [] on any error so the bar renders even when
+ * the mls_feeds query is misbehaving.
+ */
+export async function getMlsFeedHealth() {
+  try {
+    const { fetchMlsFeedHealth } = await import("./posts-db");
+    return await fetchMlsFeedHealth();
+  } catch (e) {
+    console.error("getMlsFeedHealth: returning empty —", e);
+    return [];
+  }
+}

@@ -362,18 +362,39 @@ export async function fetchAccountHealth(): Promise<AccountHealth[]> {
   if (error || !data) return [];
 
   const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
-  const { data: counts } = await supabase
+  // Pull BOTH the recent post count AND the most-recent last_synced_at per
+  // platform. last_synced_at is set on every upsertPost, so it captures
+  // "the sync touched something" even when the function later times out —
+  // a more honest signal than api_credentials.last_validated_at (which only
+  // updates on a fully-clean run).
+  const { data: posts } = await supabase
     .from("posts")
-    .select("platform")
-    .gte("posted_at", cutoff);
+    .select("platform, posted_at, last_synced_at")
+    .gte("last_synced_at", cutoff);
   const countMap: Record<Platform, number> = {
     facebook: 0,
     instagram: 0,
     tiktok: 0,
   };
-  for (const r of (counts ?? []) as { platform: string }[]) {
+  const lastTouchMap: Record<Platform, string> = {
+    facebook: new Date(0).toISOString(),
+    instagram: new Date(0).toISOString(),
+    tiktok: new Date(0).toISOString(),
+  };
+  for (const r of (posts ?? []) as {
+    platform: string;
+    posted_at: string | null;
+    last_synced_at: string | null;
+  }[]) {
     const p = asPlatform(r.platform);
-    countMap[p] = (countMap[p] ?? 0) + 1;
+    // Count posts whose posted_at is within the 30-day window.
+    if (r.posted_at && r.posted_at >= cutoff) {
+      countMap[p] = (countMap[p] ?? 0) + 1;
+    }
+    // Track the most recent last_synced_at — that's our "real" sync timestamp.
+    if (r.last_synced_at && r.last_synced_at > lastTouchMap[p]) {
+      lastTouchMap[p] = r.last_synced_at;
+    }
   }
 
   return data
@@ -384,14 +405,76 @@ export async function fetchAccountHealth(): Promise<AccountHealth[]> {
     )
     .map((row) => {
       const platform = asPlatform(row.platform as string);
+      // Prefer the live posts-table signal; fall back to api_credentials.
+      const fallback = row.last_validated_at ?? new Date(0).toISOString();
+      const liveSync = lastTouchMap[platform];
+      const last_synced_at =
+        liveSync > fallback ? liveSync : fallback;
       return {
         platform,
         status: row.is_active ? ("connected" as const) : ("disconnected" as const),
-        last_synced_at: row.last_validated_at ?? new Date(0).toISOString(),
+        last_synced_at,
         posts_last_30d: countMap[platform] ?? 0,
         next_scheduled_at: nextCronRunAt(platform).toISOString(),
       };
     });
+}
+
+/**
+ * MLS feed health for the dashboard sync bar (CMC, SJSR, Bright). Reads
+ * `mls_feeds.last_sync_at` as the timestamp source — that's set inside
+ * the mls-rets-sync function on success. Active listings count comes from
+ * the AllianceAnalytics.properties table joined to the source MLS.
+ */
+export async function fetchMlsFeedHealth(): Promise<
+  import("@/lib/types/post").MlsFeedHealth[]
+> {
+  const supabase = createAdminClient();
+  const { data: feeds, error } = await supabase
+    .from("mls_feeds")
+    .select("short_code, name, is_active, last_sync_at, last_validated_ok")
+    .in("short_code", ["cmc", "sjsr", "bright"])
+    .order("short_code");
+  if (error || !feeds) return [];
+
+  // Count active listings per feed (source_mls column).
+  const { data: propRows } = await supabase
+    .from("properties")
+    .select("source_mls")
+    .eq("status", "active");
+  const countBySource: Record<string, number> = {};
+  for (const r of (propRows ?? []) as { source_mls: string | null }[]) {
+    if (!r.source_mls) continue;
+    const key = r.source_mls.toLowerCase();
+    countBySource[key] = (countBySource[key] ?? 0) + 1;
+  }
+
+  return feeds.map((f) => {
+    const code = f.short_code as string;
+    const label =
+      code === "cmc"
+        ? "CMC"
+        : code === "sjsr"
+          ? "SJSR"
+          : code === "bright"
+            ? "Bright"
+            : code.toUpperCase();
+    let status: "connected" | "needs_attention" | "disconnected";
+    if (!f.is_active) {
+      status = "disconnected";
+    } else if (f.last_validated_ok === false) {
+      status = "needs_attention";
+    } else {
+      status = "connected";
+    }
+    return {
+      short_code: code,
+      short_label: label,
+      status,
+      last_synced_at: (f.last_sync_at as string | null) ?? null,
+      active_listings: countBySource[code] ?? 0,
+    };
+  });
 }
 
 /**
