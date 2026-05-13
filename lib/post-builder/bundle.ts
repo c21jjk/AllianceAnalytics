@@ -40,6 +40,13 @@ export interface BundleResultOk {
   hashtags: string[];
   mls_hashtag: string;
   rendered_at: string;
+  /**
+   * Public URLs of each gallery asset, in order. Used by the publish API
+   * to feed Meta's Graph endpoints (which require image_url to be public).
+   * For new_listing_single: [hero_card_url, real_photo_url, real_photo_url, ...]
+   * For open_house_multi:   [hero_card_url, hero_card_url, ...]  (one per listing)
+   */
+  asset_urls: string[];
 }
 
 export interface BundleResultErr {
@@ -108,10 +115,13 @@ export async function generateFBBundle(req: FBBundleRequest): Promise<BundleResu
   const supabase = createAdminClient();
   const renderedAt = new Date().toISOString();
   const firstMls = req.listings[0].listing.mls_number;
-  const path = `bundles/${req.hero_template_id}/${firstMls}/${Date.now()}.zip`;
+  const stamp = Date.now();
+
+  // 5a. Upload the ZIP for download convenience.
+  const zipPath = `bundles/${req.hero_template_id}/${firstMls}/${stamp}.zip`;
   const { error: uploadError } = await supabase.storage
     .from(STORAGE_BUCKET)
-    .upload(path, zipBytes, {
+    .upload(zipPath, zipBytes, {
       contentType: "application/zip",
       upsert: false,
       cacheControl: "31536000",
@@ -119,13 +129,42 @@ export async function generateFBBundle(req: FBBundleRequest): Promise<BundleResu
   if (uploadError) {
     return { ok: false, error: `ZIP upload failed: ${uploadError.message}` };
   }
-  const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  const { data: zipPub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(zipPath);
+
+  // 5b. Upload each hero card PNG individually — these need public URLs
+  // for the Phase 5A publish API (Meta Graph wants image_url params).
+  const assetUrls: string[] = [];
+  for (const hero of heroPngs) {
+    const heroPath = `bundle-assets/${req.hero_template_id}/${firstMls}/${stamp}/${hero.filenameStem}.png`;
+    const { error: heroErr } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(heroPath, hero.bytes, {
+        contentType: "image/png",
+        upsert: false,
+        cacheControl: "31536000",
+      });
+    if (heroErr) {
+      console.warn(`[bundle] hero asset upload failed ${heroPath}:`, heroErr.message);
+      continue;
+    }
+    const { data: heroPub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(heroPath);
+    if (heroPub?.publicUrl) assetUrls.push(heroPub.publicUrl);
+  }
+
+  // 5c. Real photos already have public Paragon URLs — include directly.
+  // For new_listing_single, skip photo #1 (it was the hero card source)
+  // to match the ZIP filename numbering (01-hero, 02-photo, 03-photo, ...).
+  if (req.caption_shape === "new_listing_single" && req.listings[0]) {
+    const realUrls = req.listings[0].real_photo_urls.slice(1);
+    for (const u of realUrls) assetUrls.push(u);
+  }
 
   return {
     ok: true,
-    bundle_url: pub.publicUrl,
-    bundle_path: path,
+    bundle_url: zipPub.publicUrl,
+    bundle_path: zipPath,
     asset_count: heroPngs.length + realPhotos.length,
+    asset_urls: assetUrls,
     caption: caption.caption,
     hashtags: caption.hashtags,
     mls_hashtag: caption.mls_hashtag,

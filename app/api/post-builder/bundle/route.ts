@@ -97,6 +97,9 @@ export async function POST(request: Request) {
           custom_feature: l.custom_feature ?? null,
           photo_count: l.real_photo_urls.length,
         })),
+        // Used by the Phase 5A publish API. Each URL is feedable to
+        // Meta Graph's image_url param (Meta fetches the image itself).
+        asset_urls: result.asset_urls,
       },
       caption: result.caption,
       hashtags: result.hashtags,

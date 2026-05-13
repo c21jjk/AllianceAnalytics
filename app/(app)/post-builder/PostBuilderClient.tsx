@@ -35,6 +35,18 @@ interface Props {
   listingsByPostType: Record<PostType, PostBuilderListing[]>;
   variantsByPostTypeAndFormat: Record<PostType, Record<PostFormat, VariantOption[]>>;
   formatMeta: Record<PostFormat, FormatMeta>;
+  isAdmin: boolean;
+}
+
+type PostPlatform = "facebook" | "instagram";
+
+interface PostNowResult {
+  platform: PostPlatform;
+  ok: boolean;
+  platform_post_id?: string;
+  permalink?: string | null;
+  error?: string;
+  scope_error?: boolean;
 }
 
 interface RenderResult {
@@ -91,12 +103,14 @@ interface BundleUiResult {
   hashtags: string[];
   mls_hashtag: string;
   mls_number: string;
+  generated_post_id: string;
 }
 
 export default function PostBuilderClient({
   listingsByPostType,
   variantsByPostTypeAndFormat,
   formatMeta,
+  isAdmin,
 }: Props) {
   const [outputMode, setOutputMode] = useState<OutputMode>("ig_single");
   const [postType, setPostType] = useState<PostType>("just_listed");
@@ -113,6 +127,15 @@ export default function PostBuilderClient({
   const [bundleGenerating, setBundleGenerating] = useState(false);
   // Open House FB multi-property state (Phase 8) — set of MLS numbers
   const [ohMultiSelected, setOhMultiSelected] = useState<Set<string>>(new Set());
+  // Phase 5A — Post Now state
+  const [generatedPostId, setGeneratedPostId] = useState<string | null>(null);
+  const [postNowOpen, setPostNowOpen] = useState(false);
+  const [postNowPlatforms, setPostNowPlatforms] = useState<Set<PostPlatform>>(
+    new Set(["facebook", "instagram"]),
+  );
+  const [postNowArmedAt, setPostNowArmedAt] = useState<number | null>(null);
+  const [postNowSending, setPostNowSending] = useState(false);
+  const [postNowResults, setPostNowResults] = useState<PostNowResult[] | null>(null);
   // Photo picker state
   const [availablePhotos, setAvailablePhotos] = useState<PhotoOption[]>([]);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(0);
@@ -432,7 +455,9 @@ export default function PostBuilderClient({
         hashtags: json.hashtags,
         mls_hashtag: json.mls_hashtag,
         mls_number: selectedListing.mls_number,
+        generated_post_id: json.generated_post_id,
       });
+      setGeneratedPostId(json.generated_post_id);
       setEditedCaption(json.caption);
     } catch (e) {
       setError(`Bundle generate threw: ${e instanceof Error ? e.message : String(e)}`);
@@ -504,7 +529,9 @@ export default function PostBuilderClient({
         hashtags: json.hashtags,
         mls_hashtag: json.mls_hashtag,
         mls_number: selectedListings[0].mls_number,
+        generated_post_id: json.generated_post_id,
       });
+      setGeneratedPostId(json.generated_post_id);
       setEditedCaption(json.caption);
     } catch (e) {
       setError(`OH bundle threw: ${e instanceof Error ? e.message : String(e)}`);
@@ -536,6 +563,148 @@ export default function PostBuilderClient({
     } catch (e) {
       setError(`Bundle download failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Phase 5A — Post Now flow
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Save the IG single-image render to generated_posts if it hasn't been
+   * saved yet, returning the row id. FB bundles already save inside the
+   * bundle endpoint so this is only needed for the IG path.
+   */
+  async function ensureGeneratedPostId(): Promise<string | null> {
+    if (generatedPostId) return generatedPostId;
+    if (!renderResult || !selectedListing) return null;
+    const save = await saveGeneratedPostAction({
+      mls_number: selectedListing.mls_number,
+      source_mls: selectedListing.source_mls,
+      property_id: selectedListing.id,
+      post_type: postType,
+      variant: variantId,
+      format,
+      template_id: renderResult.template_id,
+      image_url: renderResult.image_url,
+      image_path: renderResult.image_path,
+      hero_image_source_url: renderResult.hero_image_source_url,
+      template_props: {
+        listing: selectedListing,
+        photo_count: photoCount,
+        photo_sequences: photoCount === 1
+          ? [availablePhotos[selectedPhotoIndex]?.sequence ?? null]
+          : currentHeroUrls.map((url) => {
+              const match = availablePhotos.find((p) => p.url === url);
+              return match?.sequence ?? null;
+            }),
+        photo_urls: currentHeroUrls,
+      },
+      caption: captionResult?.caption ?? "",
+      hashtags: captionResult?.hashtags ?? [],
+      mls_hashtag: captionResult?.mls_hashtag ?? "",
+    });
+    if (!save.ok) {
+      setError(`Save failed: ${save.error}`);
+      return null;
+    }
+    setGeneratedPostId(save.id);
+    return save.id;
+  }
+
+  function openPostNow() {
+    setPostNowOpen(true);
+    setPostNowArmedAt(Date.now());
+    setPostNowResults(null);
+    // Default platform selection — both for IG-compatible outputs, FB-only
+    // when the bundle has more than 10 photos (IG carousel cap).
+    if (isOhMultiMode && ohMultiSelected.size > 10) {
+      setPostNowPlatforms(new Set(["facebook"]));
+    } else {
+      setPostNowPlatforms(new Set(["facebook", "instagram"]));
+    }
+  }
+
+  function togglePostNowPlatform(p: PostPlatform) {
+    setPostNowPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
+  }
+
+  async function submitPostNow() {
+    if (postNowPlatforms.size === 0) return;
+    setPostNowSending(true);
+    try {
+      let id: string | null = generatedPostId;
+      if (!id) {
+        if (outputMode === "fb_multi" && bundleResult) {
+          // Bundle endpoint already saved — but somehow we don't have the id.
+          // Should never happen since we set it in generateBundle/OhBundle.
+          setError("Bundle was generated but no post id is set. Re-generate.");
+          setPostNowSending(false);
+          return;
+        }
+        id = await ensureGeneratedPostId();
+        if (!id) {
+          setPostNowSending(false);
+          return;
+        }
+      }
+      const platforms = [...postNowPlatforms];
+      const res = await fetch("/api/post-builder/post", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ generated_post_id: id, platforms }),
+      });
+      const json = (await res.json()) as
+        | { ok: true; results: PostNowResult[]; posted_to: PostPlatform[] }
+        | { ok: false; error: string };
+      if (!json.ok) {
+        setError(`Post Now failed: ${json.error}`);
+        setPostNowResults(null);
+      } else {
+        setPostNowResults(json.results);
+      }
+    } catch (e) {
+      setError(`Post Now threw: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPostNowSending(false);
+    }
+  }
+
+  // Reset Post Now state whenever the user changes the selection, output
+  // mode, or rebuilds the bundle. Anything that invalidates the underlying
+  // generated_posts row should also close the Post Now panel and clear
+  // results.
+  useEffect(() => {
+    setPostNowOpen(false);
+    setPostNowResults(null);
+    setPostNowArmedAt(null);
+  }, [selectedMls, outputMode, ohMultiSelected, bundleResult?.generated_post_id, renderResult?.image_url]);
+
+  // If the listing only has N photos but the user has v4 (2) or v5 (3) selected,
+  // auto-fall-back to v1 so the variant card grid never shows a selected-but-
+  // disabled state. Only applies in IG mode.
+  useEffect(() => {
+    if (outputMode !== "ig_single") return;
+    if (availablePhotos.length === 0) return;
+    if (!currentVariant) return;
+    if (availablePhotos.length < currentVariant.photo_count) {
+      // Switch to the first variant in the list that fits.
+      const fallback = variants.find((v) => v.photo_count <= availablePhotos.length);
+      if (fallback && fallback.variant !== variantId) {
+        changeVariant(fallback.variant as PostVariant);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- changeVariant is stable enough for this pattern
+  }, [availablePhotos.length, currentVariant?.photo_count, outputMode]);
+
+  function closePostNow() {
+    setPostNowOpen(false);
+    setPostNowArmedAt(null);
+    // Keep results so user can see what just happened until they close.
   }
 
   function pickPhoto(index: number) {
@@ -853,7 +1022,7 @@ export default function PostBuilderClient({
         })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
         {/* Left: Listing picker */}
         <section className="card p-4">
           <div className="eyebrow mb-2">Step 1 · Pick a listing</div>
@@ -983,6 +1152,8 @@ export default function PostBuilderClient({
               onDownload={downloadBundle}
               onCopyCaption={copyCaption}
               copyState={copyState}
+              isAdmin={isAdmin}
+              onPostNow={isAdmin ? openPostNow : undefined}
             />
           ) : !selectedListing ? (
             <EmptyPreview />
@@ -1024,28 +1195,89 @@ export default function PostBuilderClient({
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {variants.map((v) => {
                       const active = v.variant === variantId;
+                      // Listing doesn't have enough photos for this variant?
+                      const photosAvailable = availablePhotos.length;
+                      const insufficient =
+                        photosAvailable > 0 && photosAvailable < v.photo_count;
+                      const disabled = insufficient;
+                      // Build hero URL set for the preview. v1-v3 single photo,
+                      // v4 takes 2, v5 takes 3 — slice from the rolling window.
+                      const previewHeroUrls = availablePhotos.length > 0
+                        ? Array.from({ length: v.photo_count }, (_, i) =>
+                            availablePhotos[(selectedPhotoIndex + i) % availablePhotos.length]?.url
+                          ).filter((u): u is string => !!u)
+                        : selectedListing?.hero_image_url
+                          ? [selectedListing.hero_image_url]
+                          : [];
                       return (
                         <button
                           key={v.template_id}
                           type="button"
-                          onClick={() => changeVariant(v.variant as PostVariant)}
+                          onClick={() => {
+                            if (disabled) return;
+                            changeVariant(v.variant as PostVariant);
+                          }}
+                          disabled={disabled}
+                          title={
+                            insufficient
+                              ? `Needs ${v.photo_count} photos — this listing only has ${photosAvailable}.`
+                              : v.description
+                          }
                           className={[
-                            "text-left rounded-lg border p-3 transition",
-                            active
-                              ? "border-gold-500 bg-gold-50/40 ring-1 ring-gold-500/20"
-                              : "border-neutral-200 bg-white hover:border-neutral-300",
+                            "text-left rounded-lg border p-2 transition relative",
+                            disabled
+                              ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
+                              : active
+                                ? "border-gold-500 bg-gold-50/40 ring-1 ring-gold-500/20"
+                                : "border-neutral-200 bg-white hover:border-neutral-300",
                           ].join(" ")}
                         >
-                          <div
-                            className={[
-                              "text-sm font-semibold",
-                              active ? "text-gold-800" : "text-neutral-900",
-                            ].join(" ")}
-                          >
-                            {v.display_name}
-                          </div>
-                          <div className="text-xs text-neutral-500 mt-1 leading-snug line-clamp-2">
-                            {v.description}
+                          <div className="flex gap-2.5 items-start">
+                            <VariantPreviewThumb
+                              templateId={v.template_id}
+                              listing={selectedListing}
+                              heroUrls={previewHeroUrls}
+                              format={format}
+                              disabled={disabled}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <div
+                                  className={[
+                                    "text-sm font-semibold truncate",
+                                    disabled
+                                      ? "text-neutral-500"
+                                      : active
+                                        ? "text-gold-800"
+                                        : "text-neutral-900",
+                                  ].join(" ")}
+                                >
+                                  {v.display_name}
+                                </div>
+                                <span
+                                  className={[
+                                    "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
+                                    disabled
+                                      ? "bg-rose-100 text-rose-700"
+                                      : v.photo_count > 1
+                                        ? "bg-gold-100 text-gold-800"
+                                        : "bg-neutral-100 text-neutral-600",
+                                  ].join(" ")}
+                                >
+                                  {v.photo_count}📷
+                                </span>
+                              </div>
+                              <div
+                                className={[
+                                  "text-[11px] mt-1 leading-snug line-clamp-2",
+                                  disabled ? "text-rose-700" : "text-neutral-500",
+                                ].join(" ")}
+                              >
+                                {insufficient
+                                  ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
+                                  : v.description}
+                              </div>
+                            </div>
                           </div>
                         </button>
                       );
@@ -1123,7 +1355,7 @@ export default function PostBuilderClient({
                             <img
                               src={p.url}
                               alt=""
-                              className="w-20 h-20 object-cover bg-neutral-100"
+                              className="w-24 h-24 object-cover bg-neutral-100"
                               loading="lazy"
                             />
                             <span
@@ -1178,7 +1410,7 @@ export default function PostBuilderClient({
                           <img
                             src={p.url}
                             alt=""
-                            className="w-20 h-20 object-cover bg-neutral-100"
+                            className="w-24 h-24 object-cover bg-neutral-100"
                             loading="lazy"
                           />
                           <span
@@ -1304,13 +1536,24 @@ export default function PostBuilderClient({
                           <div className="text-xs text-neutral-600 max-w-[260px]">
                             {bundleResult.asset_count} files packaged. Download, unzip, drag photos to FB in numerical order, paste the caption.
                           </div>
-                          <button
-                            type="button"
-                            onClick={downloadBundle}
-                            className="btn-primary mt-1"
-                          >
-                            Download ZIP
-                          </button>
+                          <div className="flex flex-col items-stretch gap-2 w-full max-w-[260px] mx-auto mt-1">
+                            <button
+                              type="button"
+                              onClick={downloadBundle}
+                              className="btn-primary"
+                            >
+                              Download ZIP
+                            </button>
+                            {isAdmin ? (
+                              <button
+                                type="button"
+                                onClick={openPostNow}
+                                className="btn-secondary"
+                              >
+                                Post Now →
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       ) : (
                         <div className="text-sm text-neutral-500">
@@ -1364,6 +1607,16 @@ export default function PostBuilderClient({
                       >
                         {downloadSaving ? "Saving…" : "Download PNG"}
                       </button>
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          onClick={openPostNow}
+                          className="btn-secondary flex-1"
+                          title="Publish directly to Facebook + Instagram"
+                        >
+                          Post Now →
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -1419,6 +1672,336 @@ export default function PostBuilderClient({
           )}
         </section>
       </div>
+
+      {postNowOpen ? (
+        <PostNowModal
+          outputMode={outputMode}
+          isOhMulti={isOhMultiMode}
+          assetCount={
+            outputMode === "fb_multi"
+              ? bundleResult?.asset_count ?? 0
+              : 1
+          }
+          previewImageUrl={
+            outputMode === "ig_single"
+              ? renderResult?.image_url ?? null
+              : null
+          }
+          listingLabel={
+            isOhMultiMode
+              ? `${ohMultiSelected.size} open house${ohMultiSelected.size === 1 ? "" : "s"}`
+              : selectedListing
+                ? `${selectedListing.address ?? selectedListing.mls_number}`
+                : ""
+          }
+          captionPreview={editedCaption}
+          platforms={postNowPlatforms}
+          onTogglePlatform={togglePostNowPlatform}
+          armedAt={postNowArmedAt}
+          sending={postNowSending}
+          results={postNowResults}
+          onCancel={closePostNow}
+          onConfirm={submitPostNow}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+interface PostNowModalProps {
+  outputMode: OutputMode;
+  isOhMulti: boolean;
+  assetCount: number;
+  previewImageUrl: string | null;
+  listingLabel: string;
+  captionPreview: string;
+  platforms: Set<PostPlatform>;
+  onTogglePlatform: (p: PostPlatform) => void;
+  armedAt: number | null;
+  sending: boolean;
+  results: PostNowResult[] | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+const POST_NOW_ARM_MS = 2000;
+
+function PostNowModal(props: PostNowModalProps) {
+  const {
+    outputMode,
+    isOhMulti,
+    assetCount,
+    previewImageUrl,
+    listingLabel,
+    captionPreview,
+    platforms,
+    onTogglePlatform,
+    armedAt,
+    sending,
+    results,
+    onCancel,
+    onConfirm,
+  } = props;
+
+  const [, forceTick] = useState(0);
+  // Tick every 50ms while arming so the progress bar animates smoothly.
+  useEffect(() => {
+    if (!armedAt || results) return;
+    const elapsed = Date.now() - armedAt;
+    if (elapsed >= POST_NOW_ARM_MS) return;
+    const interval = setInterval(() => forceTick((n) => n + 1), 50);
+    return () => clearInterval(interval);
+  }, [armedAt, results]);
+
+  const armElapsed = armedAt ? Math.min(Date.now() - armedAt, POST_NOW_ARM_MS) : 0;
+  const armed = armElapsed >= POST_NOW_ARM_MS;
+  const armPct = Math.round((armElapsed / POST_NOW_ARM_MS) * 100);
+
+  // IG carousel cap is 10 images. Disable IG checkbox when bundle exceeds it.
+  const igDisabledReason: string | null =
+    outputMode === "fb_multi" && assetCount > 10
+      ? `Instagram carousel max is 10 images — this bundle has ${assetCount}.`
+      : null;
+
+  const canConfirm = platforms.size > 0 && armed && !sending && !results;
+
+  // Trim caption preview for the modal (we have textarea on the main page).
+  const captionShort = captionPreview.length > 280
+    ? captionPreview.slice(0, 280).trimEnd() + "…"
+    : captionPreview;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={(e) => {
+        // Click outside cancels (only when not mid-send).
+        if (e.target === e.currentTarget && !sending) onCancel();
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b border-neutral-200">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="eyebrow text-rose-700 mb-1">
+                ⚠ Live publish · admin only
+              </div>
+              <h3 className="text-lg font-bold text-neutral-900">Post Now</h3>
+              <div className="text-sm text-neutral-600 mt-0.5">
+                Publishes this {outputMode === "fb_multi" ? "bundle" : "image"} directly to Meta. There is no preview step on Facebook or Instagram once submitted.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={sending}
+              className="text-neutral-400 hover:text-neutral-700 text-xl font-light disabled:opacity-40 flex-shrink-0"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Asset summary */}
+          <div className="flex gap-3 items-start rounded-lg bg-neutral-50 ring-1 ring-neutral-200 p-3">
+            {previewImageUrl ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={previewImageUrl}
+                alt=""
+                className="w-16 h-16 rounded-md object-cover bg-neutral-100 flex-shrink-0"
+              />
+            ) : (
+              <div className="w-16 h-16 rounded-md bg-gradient-to-br from-gold-100 to-gold-200 flex items-center justify-center flex-shrink-0">
+                <span className="text-2xl">📦</span>
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-neutral-900 truncate">
+                {listingLabel}
+              </div>
+              <div className="text-xs text-neutral-500 mt-0.5">
+                {outputMode === "fb_multi"
+                  ? `${assetCount} image${assetCount === 1 ? "" : "s"} · ${isOhMulti ? "Open House gallery" : "FB photo bundle"}`
+                  : "1 designed image · IG single post"}
+              </div>
+            </div>
+          </div>
+
+          {/* Platform pickers */}
+          <div>
+            <div className="eyebrow mb-2">Publish to</div>
+            <div className="space-y-2">
+              <label
+                className={[
+                  "flex items-start gap-3 rounded-lg p-3 cursor-pointer transition ring-1",
+                  platforms.has("facebook")
+                    ? "bg-blue-50 ring-blue-300"
+                    : "bg-white ring-neutral-200 hover:bg-neutral-50",
+                ].join(" ")}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={platforms.has("facebook")}
+                  onChange={() => onTogglePlatform("facebook")}
+                  disabled={sending || !!results}
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-neutral-900">Facebook Page</div>
+                  <div className="text-xs text-neutral-600 mt-0.5">
+                    {outputMode === "fb_multi"
+                      ? `Posts a ${assetCount}-photo gallery to the Alliance Page.`
+                      : "Posts a single photo to the Alliance Page."}
+                  </div>
+                </div>
+              </label>
+
+              <label
+                className={[
+                  "flex items-start gap-3 rounded-lg p-3 transition ring-1",
+                  igDisabledReason
+                    ? "bg-neutral-50 ring-neutral-200 opacity-60 cursor-not-allowed"
+                    : platforms.has("instagram")
+                      ? "bg-pink-50 ring-pink-300 cursor-pointer"
+                      : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer",
+                ].join(" ")}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={platforms.has("instagram")}
+                  onChange={() => onTogglePlatform("instagram")}
+                  disabled={sending || !!results || !!igDisabledReason}
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-neutral-900">Instagram Business</div>
+                  <div className="text-xs text-neutral-600 mt-0.5">
+                    {igDisabledReason ?? (outputMode === "fb_multi"
+                      ? `Posts as a ${assetCount}-image carousel.`
+                      : "Posts a single image to the Alliance IG.")}
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Caption preview */}
+          <div>
+            <div className="eyebrow mb-2">Caption</div>
+            <div className="rounded-lg bg-neutral-50 ring-1 ring-neutral-200 p-3 text-xs font-mono text-neutral-700 max-h-[140px] overflow-y-auto whitespace-pre-wrap">
+              {captionShort || <span className="italic text-neutral-400">(empty)</span>}
+            </div>
+          </div>
+
+          {/* Results display */}
+          {results ? (
+            <div className="space-y-2">
+              <div className="eyebrow">Results</div>
+              {results.map((r) => (
+                <div
+                  key={r.platform}
+                  className={[
+                    "rounded-lg p-3 ring-1 text-sm",
+                    r.ok
+                      ? "bg-emerald-50 ring-emerald-200 text-emerald-900"
+                      : "bg-rose-50 ring-rose-200 text-rose-900",
+                  ].join(" ")}
+                >
+                  <div className="font-semibold capitalize">
+                    {r.ok ? "✓" : "✗"} {r.platform}
+                  </div>
+                  {r.ok ? (
+                    r.permalink ? (
+                      <a
+                        href={r.permalink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs underline text-emerald-800 hover:text-emerald-900"
+                      >
+                        View post →
+                      </a>
+                    ) : (
+                      <div className="text-xs text-emerald-800">
+                        ID: <code className="font-mono">{r.platform_post_id}</code>
+                      </div>
+                    )
+                  ) : (
+                    <div className="text-xs mt-1 leading-relaxed">
+                      {r.error}
+                      {r.scope_error ? (
+                        <div className="mt-1 font-medium">
+                          → Re-authorize the Meta app in /settings.
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="p-5 border-t border-neutral-200 bg-neutral-50 rounded-b-2xl">
+          {results ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="btn-primary w-full"
+            >
+              Close
+            </button>
+          ) : (
+            <div className="space-y-3">
+              {/* Arming progress bar */}
+              {!armed && armedAt ? (
+                <div>
+                  <div className="text-xs text-neutral-600 mb-1.5 flex items-center justify-between">
+                    <span>Confirming intent…</span>
+                    <span className="font-mono">{Math.ceil((POST_NOW_ARM_MS - armElapsed) / 1000)}s</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-neutral-200 overflow-hidden">
+                    <div
+                      className="h-full bg-rose-500 transition-all"
+                      style={{ width: `${armPct}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  disabled={sending}
+                  className="btn-secondary flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={onConfirm}
+                  disabled={!canConfirm}
+                  className={[
+                    "flex-[1.4] rounded-lg px-4 py-2.5 text-sm font-semibold transition",
+                    canConfirm
+                      ? "bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
+                      : "bg-neutral-200 text-neutral-500 cursor-not-allowed",
+                  ].join(" ")}
+                >
+                  {sending
+                    ? "Publishing…"
+                    : !armed
+                      ? "Hold to confirm"
+                      : platforms.size === 0
+                        ? "Pick a platform"
+                        : `I confirm — Post to ${[...platforms].map(p => p === "facebook" ? "FB" : "IG").join(" + ")}`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1435,6 +2018,8 @@ interface OhMultiPanelProps {
   onDownload: () => void;
   onCopyCaption: () => void;
   copyState: "idle" | "copied";
+  isAdmin: boolean;
+  onPostNow?: () => void;
 }
 
 function OhMultiPanel(props: OhMultiPanelProps) {
@@ -1559,10 +2144,20 @@ function OhMultiPanel(props: OhMultiPanelProps) {
             )}
           </div>
           {bundleResult ? (
-            <div className="mt-3 flex items-center gap-2">
-              <button type="button" onClick={onDownload} className="btn-primary flex-1">
+            <div className="mt-3 flex flex-col gap-2">
+              <button type="button" onClick={onDownload} className="btn-primary">
                 Download ZIP · {bundleResult.asset_count} cards
               </button>
+              {props.isAdmin && props.onPostNow ? (
+                <button
+                  type="button"
+                  onClick={props.onPostNow}
+                  className="btn-secondary"
+                  title="Publish directly to Facebook"
+                >
+                  Post Now →
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -1699,6 +2294,130 @@ function dimensionsLabel(format: PostFormat): string {
     case "story_9x16":
       return "1080×1920";
   }
+}
+
+/**
+ * Variant preview thumbnail.
+ *
+ * Fetches the actual template HTML from /api/post-builder/preview-html and
+ * renders it inside an iframe at full template dimensions (1080×…), then
+ * scales the iframe down via CSS transform to fit a small swatch.
+ *
+ * This is genuinely "what your post will look like" — not an approximation —
+ * because we're literally rendering the same template the export pipeline
+ * uses. Cached by browser since the HTML is identical for the same
+ * (template_id, listing, hero_urls) combination.
+ */
+function VariantPreviewThumb({
+  templateId,
+  listing,
+  heroUrls,
+  format,
+  disabled,
+}: {
+  templateId: string;
+  listing: PostBuilderListing | null;
+  heroUrls: string[];
+  format: PostFormat;
+  disabled: boolean;
+}) {
+  const [html, setHtml] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(false);
+
+  // Thumb display size in CSS pixels. The iframe internally is the real
+  // template dimensions; we scale to fit. Keep this small enough that 3
+  // variants × thumb still fits next to descriptive text.
+  const THUMB_W = 84;
+  const dims = format === "square_1x1"
+    ? { w: 1080, h: 1080, displayW: THUMB_W, displayH: THUMB_W }
+    : format === "portrait_4x5"
+      ? { w: 1080, h: 1350, displayW: THUMB_W, displayH: Math.round(THUMB_W * 1350 / 1080) }
+      : { w: 1080, h: 1920, displayW: Math.round(THUMB_W * 1080 / 1920), displayH: THUMB_W };
+  const scaleX = dims.displayW / dims.w;
+  const scaleY = dims.displayH / dims.h;
+
+  useEffect(() => {
+    if (!listing || heroUrls.length === 0) {
+      setHtml(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setErr(false);
+    fetch("/api/post-builder/preview-html", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        template_id: templateId,
+        listing,
+        hero_image_urls: heroUrls,
+      }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          setErr(true);
+          return null;
+        }
+        return r.text();
+      })
+      .then((text) => {
+        if (cancelled) return;
+        setHtml(text);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setErr(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [templateId, listing?.mls_number, heroUrls.join("|")]);
+
+  return (
+    <div
+      className={[
+        "relative rounded-md overflow-hidden bg-neutral-100 ring-1 flex-shrink-0",
+        disabled ? "ring-neutral-200 opacity-50" : "ring-neutral-300",
+      ].join(" ")}
+      style={{
+        width: dims.displayW,
+        height: dims.displayH,
+      }}
+    >
+      {html ? (
+        <iframe
+          title={`${templateId} preview`}
+          srcDoc={html}
+          sandbox="allow-same-origin"
+          aria-hidden="true"
+          // The iframe is rendered at full template dimensions, then scaled.
+          // pointer-events:none so clicks pass through to the parent button.
+          style={{
+            border: 0,
+            width: dims.w,
+            height: dims.h,
+            transform: `scale(${scaleX}, ${scaleY})`,
+            transformOrigin: "0 0",
+            pointerEvents: "none",
+          }}
+        />
+      ) : loading ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-4 h-4 rounded-full border-2 border-gold-500 border-t-transparent animate-spin" />
+        </div>
+      ) : err ? (
+        <div className="absolute inset-0 flex items-center justify-center text-[9px] text-neutral-400 text-center px-1">
+          preview unavailable
+        </div>
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-neutral-100 to-neutral-200" />
+      )}
+    </div>
+  );
 }
 
 /**

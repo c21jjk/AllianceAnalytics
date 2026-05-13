@@ -100,11 +100,16 @@ export type Database = {
           id: string
           image_path: string | null
           image_url: string | null
+          last_post_error: string | null
           mls_hashtag: string | null
           mls_number: string
           notes: string | null
           output_mode: string
+          platform_post_ids: Json
           post_type: string
+          posted_at: string | null
+          posted_by: string | null
+          posted_to: string[]
           property_id: string | null
           source_mls: string | null
           status: string
@@ -129,11 +134,16 @@ export type Database = {
           id?: string
           image_path?: string | null
           image_url?: string | null
+          last_post_error?: string | null
           mls_hashtag?: string | null
           mls_number: string
           notes?: string | null
           output_mode?: string
+          platform_post_ids?: Json
           post_type: string
+          posted_at?: string | null
+          posted_by?: string | null
+          posted_to?: string[]
           property_id?: string | null
           source_mls?: string | null
           status?: string
@@ -158,11 +168,16 @@ export type Database = {
           id?: string
           image_path?: string | null
           image_url?: string | null
+          last_post_error?: string | null
           mls_hashtag?: string | null
           mls_number?: string
           notes?: string | null
           output_mode?: string
+          platform_post_ids?: Json
           post_type?: string
+          posted_at?: string | null
+          posted_by?: string | null
+          posted_to?: string[]
           property_id?: string | null
           source_mls?: string | null
           status?: string

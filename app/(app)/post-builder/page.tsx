@@ -37,7 +37,8 @@ const POST_TYPES: PostType[] = [
  * publishes.
  */
 export default async function PostBuilderPage() {
-  await requireUser();
+  const profile = await requireUser();
+  const isAdmin = profile.role === "admin";
 
   const [justListed, justSold, underContract, openHouse, priceReduction] = await Promise.all([
     fetchListingsForPostBuilder({ post_type: "just_listed" }),
@@ -107,6 +108,7 @@ export default async function PostBuilderPage() {
         listingsByPostType={listingsByPostType}
         variantsByPostTypeAndFormat={variantsByPostTypeAndFormat}
         formatMeta={formatMeta}
+        isAdmin={isAdmin}
       />
     </div>
   );
