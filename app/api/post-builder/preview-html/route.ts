@@ -14,6 +14,9 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { getTemplate } from "@/lib/post-builder/templates/registry";
+import { layerTreeToSvg, wrapSvgInHtml } from "@/lib/post-builder/layers/svg-renderer";
+import type { LayerTree } from "@/lib/post-builder/layers/types";
+import { isLayerTree } from "@/lib/post-builder/layers/types";
 import type { PostBuilderListing, PostCustomizations } from "@/lib/post-builder/types";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +29,11 @@ interface RequestBody {
   hero_image_urls?: string[];
   /** Path A — apply user customizations to the preview HTML. */
   customizations?: PostCustomizations;
+  /**
+   * Path B — render a layer tree directly. When present, takes precedence
+   * over template_id (used by the Layer Editor's live preview iframe).
+   */
+  layer_tree?: LayerTree;
 }
 
 export async function POST(request: Request) {
@@ -41,9 +49,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
   }
 
+  // Path B branch — when the body has a layer_tree, we render SVG inside
+  // a minimal HTML wrapper. No template lookup, no listing required, the
+  // tree is fully self-describing.
+  if (body.layer_tree) {
+    if (!isLayerTree(body.layer_tree)) {
+      return NextResponse.json(
+        { ok: false, error: "layer_tree present but does not match LayerTree schema v1" },
+        { status: 400 },
+      );
+    }
+    const svg = layerTreeToSvg(body.layer_tree);
+    const treeHtml = wrapSvgInHtml(svg, body.layer_tree.width, body.layer_tree.height);
+    return new NextResponse(treeHtml, {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "private, max-age=60",
+        "x-frame-options": "SAMEORIGIN",
+      },
+    });
+  }
+
   if (!body.template_id || !body.listing) {
     return NextResponse.json(
-      { ok: false, error: "template_id and listing required" },
+      { ok: false, error: "template_id and listing required (or pass layer_tree)" },
       { status: 400 },
     );
   }
