@@ -21,7 +21,8 @@ interface RecentlyListedRowProps {
 }
 
 /** localStorage key for the collapsed-state preference.
- *  Default is COLLAPSED. Stored value "0" = user explicitly expanded. */
+ *  Recently Listed defaults to EXPANDED — it's the focus surface (new
+ *  listings need posts). Stored "1" = user explicitly collapsed. */
 const COLLAPSED_KEY = "recent-listings-collapsed";
 
 /**
@@ -53,15 +54,16 @@ export default function RecentlyListedRow({
   // always render the chrome so the toggle stays accessible.
   const renderEarly = statusFilter === "needs_only" && listings.length === 0;
 
-  // Collapsed state — default to collapsed; localStorage "0" means the
-  // user explicitly wants this card kept expanded across reloads.
-  const [collapsed, setCollapsed] = useState<boolean>(true);
+  // Collapsed state — Recently Listed defaults to EXPANDED so new listings
+  // stay in Larissa's eye line. localStorage "1" means the user explicitly
+  // collapsed this card and wants it kept collapsed across reloads.
+  const [collapsed, setCollapsed] = useState<boolean>(false);
   const [hydrated, setHydrated] = useState<boolean>(false);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(COLLAPSED_KEY);
-      if (stored === "0") setCollapsed(false);
+      if (stored === "1") setCollapsed(true);
     } catch {
       // localStorage unavailable (Safari private mode etc.) — fall back to
       // session-only state, no persistence.
