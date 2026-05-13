@@ -8,6 +8,11 @@ const ICON: Record<string, ReactNode> = {
     posts: h("svg", SVG_PROPS, [h("rect", { key: "r", x: "3.5", y: "4.5", width: "17", height: "15", rx: "2.5", ...STROKE }), h("path", { key: "p", d: "M3.5 10h17M8 4.5v15", ...STROKE, strokeLinecap: "round" })]),
     properties: h("svg", SVG_PROPS, h("path", { d: "M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1v-9z", ...STROKE, strokeLinejoin: "round" })),
     listings: h("svg", SVG_PROPS, [h("path", { key: "tag", d: "M11 3H5a2 2 0 00-2 2v6l9 9 8-8-9-9z", ...STROKE, strokeLinejoin: "round" }), h("circle", { key: "dot", cx: "8", cy: "8", r: "1.4", fill: "currentColor" })]),
+    postBuilder: h("svg", SVG_PROPS, [
+        h("rect", { key: "frame", x: "3.5", y: "3.5", width: "17", height: "17", rx: "2.5", ...STROKE }),
+        h("path", { key: "mountain", d: "M3.5 16l4.5-4.5 3.5 3.5 3-3 6 6", ...STROKE, strokeLinejoin: "round" }),
+        h("circle", { key: "sun", cx: "16", cy: "8.5", r: "1.6", ...STROKE }),
+    ]),
     coach: h(
         "svg",
         { ...SVG_PROPS, fill: "currentColor" },
@@ -31,6 +36,7 @@ export function getNavItems(role: "admin" | "user"): NavItem[] {
     const base: NavItem[] = [
         { href: "/", label: "Dashboard", icon: ICON.dashboard },
         { href: "/properties", label: "Listings", icon: ICON.listings },
+        { href: "/post-builder", label: "Post Builder", icon: ICON.postBuilder },
         { href: "/coach", label: "Coach", icon: ICON.coach },
         { href: "/reports", label: "Reports", icon: ICON.reports },
         ];

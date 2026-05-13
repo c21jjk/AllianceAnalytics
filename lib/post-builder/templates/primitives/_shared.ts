@@ -176,11 +176,10 @@ function formatHour(d: Date): string {
 }
 
 /**
- * Common <head> block for all square 1080x1080 templates.
- * Loads Inter from Google Fonts (cached aggressively, sub-second on repeat
- * renders).
+ * Common <head> block used by every template regardless of format. Loads
+ * Inter from Google Fonts (cached aggressively, sub-second on repeat renders).
  */
-export function commonSquareHead(title: string): string {
+export function commonHead(title: string): string {
   return `<head>
 <meta charset="utf-8" />
 <title>${escapeHtml(title)}</title>
@@ -189,6 +188,32 @@ export function commonSquareHead(title: string): string {
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=block" rel="stylesheet" />
 </head>`;
 }
+
+/**
+ * Backward-compat alias — existing square primitives call this name.
+ * @deprecated Use commonHead() instead. Kept so older callers still compile.
+ */
+export const commonSquareHead = commonHead;
+
+/**
+ * Story 9:16 safe zones — Instagram and Facebook Story UI overlays both
+ * the top and bottom of the frame. Templates must keep critical content
+ * (address, price, MLS hashtag, footer brand) inside the safe band.
+ *
+ * Values come from Meta's published Story design guidelines; same numbers
+ * work for both IG and FB.
+ */
+export const STORY_SAFE_ZONE = {
+  /** Top region reserved for status bar, profile avatar, and time. */
+  top: 250,
+  /** Bottom region reserved for "Send" box, sticker tray, swipe-up area. */
+  bottom: 340,
+  /** Total frame height. */
+  height: 1920,
+  /** Critical-content band — middle of the frame. */
+  contentTop: 250,
+  contentBottom: 1580, // 1920 - 340
+} as const;
 
 /**
  * Renders the optional badge overlay (e.g. SOLD stamp). Returns empty string
