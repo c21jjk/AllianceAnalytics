@@ -10,6 +10,10 @@ import SendToAgentButton from "@/components/SendToAgentButton";
 import ReportActionBar from "@/components/ReportActionBar";
 import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
+import {
+  getOpenHousesForProperty,
+  type UpcomingOpenHouse,
+} from "@/lib/data/open-houses";
 
 interface LivePropertyDetailProps {
   property: PropertyDetail;
@@ -49,6 +53,7 @@ export default async function LivePropertyDetail({
       : null;
 
   const existingReport = await fetchExistingOwnerReportForProperty(property.id);
+  const openHouses = await getOpenHousesForProperty(property.id);
 
   return (
     <div className="space-y-6">
@@ -163,6 +168,11 @@ export default async function LivePropertyDetail({
           newestPostAgeDays={newestPostAgeDays}
         />
       )}
+
+      {/* Open Houses for this listing — render only when scheduled. */}
+      {openHouses.length > 0 ? (
+        <PropertyOpenHousesSection openHouses={openHouses} />
+      ) : null}
 
       {/* Quick stats — only meaningful when there are posts */}
       {property.post_count > 0 ? (
@@ -389,6 +399,86 @@ function StatTile({ label, value }: { label: string; value: string }) {
 function countPlatforms(property: PropertyDetail): number {
   const set = new Set(property.posts.map((p) => p.platform));
   return set.size;
+}
+
+/**
+ * Small section showing the upcoming open houses scheduled for this
+ * listing. Compact one-row-per-OH layout. Rendered only when there's at
+ * least one OH on file.
+ */
+function PropertyOpenHousesSection({
+  openHouses,
+}: {
+  openHouses: UpcomingOpenHouse[];
+}) {
+  return (
+    <section className="rounded-2xl border border-sky-200/70 bg-sky-50/30 p-4 md:p-5 shadow-card">
+      <header>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-700">
+          Scheduled Open Houses
+        </div>
+        <h2 className="mt-1 text-lg font-semibold tracking-tight text-neutral-900">
+          {openHouses.length} upcoming
+          <span className="text-neutral-400 font-normal">
+            {" "}· next 90 days
+          </span>
+        </h2>
+      </header>
+      <ul className="mt-3 divide-y divide-sky-200/60">
+        {openHouses.map((oh) => {
+          const start = new Date(oh.start_at);
+          const end = oh.end_at ? new Date(oh.end_at) : null;
+          const validStart = !Number.isNaN(start.getTime());
+          const weekday = validStart
+            ? start.toLocaleDateString("en-US", { weekday: "long" })
+            : "—";
+          const dateLine = validStart
+            ? start.toLocaleDateString("en-US", {
+                month: "long",
+                day: "numeric",
+              })
+            : "—";
+          const startTime = validStart
+            ? start
+                .toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  hour12: true,
+                })
+                .replace(/:00 /, " ")
+            : "—";
+          const endTime =
+            end && !Number.isNaN(end.getTime())
+              ? end
+                  .toLocaleTimeString("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    hour12: true,
+                  })
+                  .replace(/:00 /, " ")
+              : null;
+          return (
+            <li key={oh.id} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <div className="font-semibold text-neutral-900 text-sm">
+                  {weekday}, {dateLine}
+                </div>
+                <div className="text-sm font-medium text-sky-700 tabular-nums">
+                  {startTime}
+                  {endTime ? ` – ${endTime}` : ""}
+                </div>
+              </div>
+              {oh.comments ? (
+                <p className="mt-1 text-xs text-neutral-600 leading-relaxed">
+                  {oh.comments}
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
 }
 
 /* ------------------------------------------------------------------ */

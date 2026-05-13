@@ -194,6 +194,62 @@ export type Database = {
         }
         Relationships: []
       }
+      open_houses: {
+        Row: {
+          id: string
+          feed_short_code: string
+          oh_unique_id: string
+          mls_number: string
+          property_id: string | null
+          start_at: string
+          end_at: string | null
+          comments: string | null
+          rets_created_at: string | null
+          rets_updated_at: string | null
+          created_at: string
+          updated_at: string
+          last_synced_at: string
+        }
+        Insert: {
+          id?: string
+          feed_short_code: string
+          oh_unique_id: string
+          mls_number: string
+          property_id?: string | null
+          start_at: string
+          end_at?: string | null
+          comments?: string | null
+          rets_created_at?: string | null
+          rets_updated_at?: string | null
+          created_at?: string
+          updated_at?: string
+          last_synced_at?: string
+        }
+        Update: {
+          id?: string
+          feed_short_code?: string
+          oh_unique_id?: string
+          mls_number?: string
+          property_id?: string | null
+          start_at?: string
+          end_at?: string | null
+          comments?: string | null
+          rets_created_at?: string | null
+          rets_updated_at?: string | null
+          created_at?: string
+          updated_at?: string
+          last_synced_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "open_houses_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       offices: {
         Row: {
           address: string | null

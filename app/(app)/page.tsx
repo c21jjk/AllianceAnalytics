@@ -11,6 +11,7 @@ import {
   getRecentlySoldListings,
   getUnderContractListings,
 } from "@/lib/data/recently-sold";
+import { getUpcomingOpenHouses } from "@/lib/data/open-houses";
 import { listOffices } from "@/lib/data/offices";
 import {
   searchPosts,
@@ -25,6 +26,7 @@ import GroupCard from "@/components/GroupCard";
 import RecentlyListedRow from "@/components/RecentlyListedRow";
 import UnderContractRow from "@/components/UnderContractRow";
 import RecentlySoldRow from "@/components/RecentlySoldRow";
+import UpcomingOpenHousesRow from "@/components/UpcomingOpenHousesRow";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
@@ -132,6 +134,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     listingsNeedingPosts,
     underContractListings,
     recentlySoldListings,
+    upcomingOpenHouses,
     companyAnalytics,
     followerSummary,
   ] = await Promise.all([
@@ -169,6 +172,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       office_short_code: officeFilter,
       windowDays: 30,
       limit: 8,
+    }),
+    getUpcomingOpenHouses({
+      office_short_code: officeFilter,
+      windowDays: 7,
+      limit: 12,
     }),
     getCompanyAnalytics({ days, office_short_code: officeFilter }),
     getFollowerSummary(days),
@@ -233,6 +241,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           officeShortCode={officeFilter}
         />
         <div className="grid grid-cols-1 gap-4">
+          <UpcomingOpenHousesRow
+            openHouses={upcomingOpenHouses}
+            windowDays={7}
+            officeShortCode={officeFilter}
+          />
           <UnderContractRow
             listings={underContractListings}
             officeShortCode={officeFilter}

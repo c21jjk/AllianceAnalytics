@@ -95,6 +95,8 @@ interface SyncResult {
   classes: ClassResult[];
   errors: string[];
   photos_uploaded?: number;
+  /** Phase 9: count of Open Houses upserted across all classes. */
+  open_houses_synced?: number;
 }
 
 interface DigestChallenge {
@@ -548,6 +550,227 @@ function readPublicRemarks(row: RowMap, sourceMls: "cmc" | "sjsr"): string | nul
   return raw.length > 0 ? raw : null;
 }
 
+/* ------------------------------------------------------------------------ */
+/* Phase 9 — OpenHouse pass                                                 */
+/*                                                                          */
+/* After each Property class sync, we run a second pass against the         */
+/* `OpenHouse` resource for the same class. Each Open House row carries     */
+/* L_DisplayId (the MLS number), OH_StartDateTime, OH_EndDateTime, and      */
+/* OH_Comments. We filter to Alliance listings post-fetch by intersecting   */
+/* L_DisplayId with the MLS numbers we just ingested.                       */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Mapped open-house row, ready for upsert into open_houses.
+ */
+interface MappedOpenHouse {
+  oh_unique_id: string;
+  mls_number: string;
+  start_at: string;          // ISO timestamptz
+  end_at: string | null;
+  comments: string | null;
+  rets_created_at: string | null;
+  rets_updated_at: string | null;
+}
+
+/**
+ * Parse a Paragon date+time pair into an ISO timestamptz string. Paragon
+ * usually returns OH_StartDateTime in ISO-ish "YYYY-MM-DDTHH:MM:SS" form
+ * (no timezone). We assume the feed's local TZ is America/New_York; the
+ * Supabase column is timestamptz so the wall-time renders correctly when
+ * the UI converts back to local.
+ */
+function readDateTime(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Already ISO with tz?
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    const d = new Date(trimmed);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  // Treat as Eastern wall-time (Paragon's default for these feeds).
+  // "YYYY-MM-DDTHH:MM:SS" or "YYYY-MM-DD HH:MM:SS"
+  const m = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/,
+  );
+  if (!m) {
+    const d = new Date(trimmed);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const [, y, mo, da, hh, mm, ss] = m;
+  // EST = UTC-5, EDT = UTC-4. Compute which one this date falls in by
+  // testing the standard US DST window. Most reliable cheap heuristic:
+  // ask the JS engine. We construct a date in the Eastern TZ via
+  // `toLocaleString` round-trip.
+  const localStr = `${y}-${mo}-${da}T${hh}:${mm}:${ss ?? "00"}`;
+  const asLocal = new Date(localStr);
+  // Compute Eastern offset on that date by formatting the date in
+  // America/New_York and reading the resulting wall-time.
+  const tzOffsetHours = easternOffsetHoursOn(asLocal);
+  const utcMs = Date.UTC(
+    Number(y),
+    Number(mo) - 1,
+    Number(da),
+    Number(hh) + tzOffsetHours,
+    Number(mm),
+    Number(ss ?? "0"),
+  );
+  return new Date(utcMs).toISOString();
+}
+
+/**
+ * Returns +4 during EDT and +5 during EST (the additive shift needed to
+ * convert Eastern wall-time → UTC). Trivial DST window check — works for
+ * 2007+ rules (DST starts 2nd Sunday March, ends 1st Sunday November).
+ */
+function easternOffsetHoursOn(d: Date): number {
+  // Use toLocaleString to ask the JS engine. The output difference
+  // between UTC and America/New_York gives us the offset.
+  const utc = d.getTime();
+  const ny = new Date(
+    d.toLocaleString("en-US", { timeZone: "America/New_York" }),
+  ).getTime();
+  const diffMin = Math.round((utc - ny) / 60000);
+  return Math.round(diffMin / 60); // 4 in EDT, 5 in EST
+}
+
+/**
+ * Map a Paragon OpenHouse row into our open_houses schema. Returns null
+ * when the row is missing required fields (UID, MLS#, start time).
+ */
+function mapOpenHouseRow(row: RowMap): MappedOpenHouse | null {
+  const oh_unique_id = (row["OH_UniqueID"] ?? "").trim();
+  // L_DisplayId is the MLS number we'd join on. L_ListingID is Paragon's
+  // internal system id (different from the MLS#).
+  const mls_number = (row["L_DisplayId"] ?? "").trim().toUpperCase();
+  const start_at = readDateTime(row["OH_StartDateTime"]);
+  if (!oh_unique_id || !mls_number || !start_at) return null;
+  return {
+    oh_unique_id,
+    mls_number,
+    start_at,
+    end_at: readDateTime(row["OH_EndDateTime"]),
+    comments: (row["OH_Comments"] ?? "").trim() || null,
+    rets_created_at: readDateTime(row["OH_CreateDateTime"]),
+    rets_updated_at: readDateTime(row["OH_UpdateDateTime"]),
+  };
+}
+
+/**
+ * Pull all OpenHouse rows for this property class from RETS, filter to
+ * Alliance MLS numbers (passed in from the Property pass), and upsert.
+ *
+ * Paragon doesn't accept LO1_OrganizationName as an OpenHouse query field,
+ * so we pull everything for the class and filter client-side by MLS#.
+ * Volume is small (a brokerage runs maybe a handful of OHs per week).
+ *
+ * Returns the count of OHs upserted.
+ */
+async function syncOpenHousesForClass(
+  rets: RETSClient,
+  listingsClient: SupabaseClient,
+  analyticsClient: SupabaseClient,
+  feedShortCode: "cmc" | "sjsr",
+  cls: string,
+  allianceMlsNumbers: Set<string>,
+): Promise<number> {
+  if (allianceMlsNumbers.size === 0) return 0;
+
+  // Window: future + last 7 days (so just-ended OHs still surface
+  // briefly in the UI, helpful for postmortem posts).
+  const windowStartIso = new Date(
+    Date.now() - 7 * 86400_000,
+  ).toISOString();
+  // DMQL2 date filter: (OH_StartDateTime=2026-05-05T00:00:00+)
+  // The trailing + means "and after". Strip the trailing Z if present
+  // because Paragon doesn't tolerate the suffix in DMQL.
+  const dateClause = windowStartIso.replace(/\.\d{3}Z$/, "").replace("Z", "");
+  const query = `(OH_StartDateTime=${dateClause}+)`;
+
+  let xml: string;
+  try {
+    const resp = await rets.search("OpenHouse", cls, query);
+    if (resp.rows.length === 0) return 0;
+    xml = "ok";
+    void xml;
+
+    // Filter to Alliance MLS numbers + map.
+    const mapped: MappedOpenHouse[] = [];
+    for (const row of resp.rows) {
+      const oh = mapOpenHouseRow(row);
+      if (!oh) continue;
+      if (!allianceMlsNumbers.has(oh.mls_number)) continue;
+      mapped.push(oh);
+    }
+    if (mapped.length === 0) return 0;
+
+    const now = new Date().toISOString();
+
+    // Upsert to Alliance Listings (source-of-truth) first.
+    const upsertRowsListings = mapped.map((r) => ({
+      feed_short_code: feedShortCode,
+      oh_unique_id: r.oh_unique_id,
+      mls_number: r.mls_number,
+      start_at: r.start_at,
+      end_at: r.end_at,
+      comments: r.comments,
+      rets_created_at: r.rets_created_at,
+      rets_updated_at: r.rets_updated_at,
+      updated_at: now,
+      last_synced_at: now,
+    }));
+    const { error: lErr } = await listingsClient
+      .from("open_houses")
+      .upsert(upsertRowsListings, { onConflict: "feed_short_code,oh_unique_id" });
+    if (lErr) {
+      console.error(`[${cls}] open_houses listings upsert:`, lErr.message);
+      return 0;
+    }
+
+    // Replicate to AllianceAnalytics. We need property_id; look it up by MLS#.
+    const { data: propRows } = await analyticsClient
+      .from("properties")
+      .select("id, mls_number")
+      .in(
+        "mls_number",
+        Array.from(new Set(mapped.map((r) => r.mls_number))),
+      );
+    const propertyIdByMls = new Map<string, string>();
+    for (const p of (propRows ?? []) as Array<{ id: string; mls_number: string }>) {
+      propertyIdByMls.set(p.mls_number, p.id);
+    }
+    const upsertRowsAnalytics = mapped.map((r) => ({
+      feed_short_code: feedShortCode,
+      oh_unique_id: r.oh_unique_id,
+      mls_number: r.mls_number,
+      property_id: propertyIdByMls.get(r.mls_number) ?? null,
+      start_at: r.start_at,
+      end_at: r.end_at,
+      comments: r.comments,
+      rets_created_at: r.rets_created_at,
+      rets_updated_at: r.rets_updated_at,
+      updated_at: now,
+      last_synced_at: now,
+    }));
+    const { error: aErr } = await analyticsClient
+      .from("open_houses")
+      .upsert(upsertRowsAnalytics, { onConflict: "feed_short_code,oh_unique_id" });
+    if (aErr) {
+      console.error(`[${cls}] open_houses analytics upsert:`, aErr.message);
+    }
+    return mapped.length;
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (msg.includes("20200") || msg.includes("20201")) {
+      // No OH data for this class, or query field rejected — skip silently.
+      return 0;
+    }
+    console.error(`[${cls}] OpenHouse sync error:`, msg);
+    return 0;
+  }
+}
+
 interface MappedListing {
   mls_number: string;
   source_mls: "cmc" | "sjsr";
@@ -913,6 +1136,7 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     classes: [],
     errors: [],
     photos_uploaded: 0,
+    open_houses_synced: 0,
   };
   if (shortCode !== "cmc" && shortCode !== "sjsr") {
     result.errors.push(`mls-rets-sync only supports CMC + SJSR. Got: ${shortCode}`);
@@ -1064,6 +1288,25 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
         result.photos_uploaded = (result.photos_uploaded ?? 0) + ups;
       } catch (e) {
         console.error(`syncPhotosForRows [${cls}]:`, (e as Error).message);
+      }
+
+      // Phase 9: OpenHouse pass for this class. Reuses the authenticated
+      // session. Filters to MLS numbers we just ingested so we never store
+      // OHs for non-Alliance listings. Errors swallowed so OH issues don't
+      // fail the whole class.
+      try {
+        const allianceMlsNumbers = new Set(mapped.map((m) => m.mls_number));
+        const ohCount = await syncOpenHousesForClass(
+          rets,
+          listings,
+          analytics,
+          sourceMls,
+          cls,
+          allianceMlsNumbers,
+        );
+        result.open_houses_synced = (result.open_houses_synced ?? 0) + ohCount;
+      } catch (e) {
+        console.error(`syncOpenHousesForClass [${cls}]:`, (e as Error).message);
       }
     } catch (e) {
       anyClassFailed = true;
