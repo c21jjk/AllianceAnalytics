@@ -187,8 +187,11 @@ async function fetchAsDataUri(url: string): Promise<string> {
  * Locally we fall back to puppeteer-core's auto-detected system Chrome
  * via PUPPETEER_EXECUTABLE_PATH or the standard macOS path.
  */
+// IMPORTANT: filename is `chromium-v131.0.1-pack.tar` — NOT `.x64.tar`.
+// The `.x64` suffix returns 404, and chromium-min retries silently for the
+// entire function timeout. Verified asset name via the GitHub releases API.
 const CHROMIUM_PACK_URL =
-  "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.x64.tar";
+  "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar";
 
 async function screenshotHtml(args: {
   html: string;
