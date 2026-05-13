@@ -1,11 +1,18 @@
 import type {
   PostBuilderListing,
+  PostCustomizations,
   PostFormat,
   PostType,
   PostVariant,
   TemplateMeta,
 } from "../types";
 import type { PostBuilderListingWithOH, PostTypeTheme } from "./primitives/_shared";
+import {
+  applyColorCustomizations,
+  applyTextCustomizations,
+  buildCustomizationCSS,
+  injectCustomizationCSS,
+} from "./primitives/_shared";
 import { renderV1HeroEditorial } from "./primitives/v1-hero-editorial";
 import { renderV1HeroEditorialPortrait } from "./primitives/v1-hero-editorial-portrait";
 import { renderV1HeroEditorialStory } from "./primitives/v1-hero-editorial-story";
@@ -47,6 +54,13 @@ export type TemplateRenderer = (args: {
    * from this; single-photo variants ignore it.
    */
   heroImageDataUris?: string[];
+  /**
+   * Path A — user customizations. When provided, the registry wrapper
+   * applies text/color overrides to the theme before calling the
+   * primitive, and injects a CSS override layer at the end of the rendered
+   * HTML so the visual rules win the cascade.
+   */
+  customizations?: PostCustomizations | null;
 }) => string;
 
 interface TemplateEntry {
@@ -183,13 +197,24 @@ function buildTemplateMap(): Record<string, TemplateEntry> {
         };
         out[id] = {
           meta,
-          render: ({ listing, heroImageDataUri, heroImageDataUris }) =>
-            variantRenderer({
+          render: ({ listing, heroImageDataUri, heroImageDataUris, customizations }) => {
+            // Apply text + color overrides to the theme before primitive render.
+            // (Text and brand colors are baked into the HTML at render time.)
+            let theme = getTheme(post_type);
+            theme = applyColorCustomizations(theme, customizations);
+            theme = applyTextCustomizations(theme, customizations);
+            const baseHtml = variantRenderer({
               listing: listing as PostBuilderListingWithOH,
-              theme: getTheme(post_type),
+              theme,
               heroImageDataUri,
               heroImageDataUris,
-            }),
+            });
+            // Inject visual customizations (visibility, badge sizing, badge
+            // position) as a CSS layer after the template's <style> block so
+            // its rules win the cascade.
+            const overrideCss = buildCustomizationCSS(customizations);
+            return injectCustomizationCSS(baseHtml, overrideCss);
+          },
         };
       }
     }

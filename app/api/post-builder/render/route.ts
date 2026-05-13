@@ -13,7 +13,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { renderTemplate } from "@/lib/post-builder/render";
-import type { PostBuilderListing } from "@/lib/post-builder/types";
+import type { PostBuilderListing, PostCustomizations } from "@/lib/post-builder/types";
 
 export const dynamic = "force-dynamic";
 // 300s ceiling for cold-start safety — the @sparticuz/chromium-min binary
@@ -30,6 +30,8 @@ interface RenderRequestBody {
   hero_image_url?: string;
   /** Multi-photo variants (v4/v5) send an ordered list. Single-photo variants can still send hero_image_url. */
   hero_image_urls?: string[];
+  /** Path A — optional user customizations baked into this render. */
+  customizations?: PostCustomizations;
 }
 
 export async function POST(request: Request) {
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
     listing: body.listing,
     hero_image_url: body.hero_image_url,
     hero_image_urls: body.hero_image_urls,
+    customizations: body.customizations,
   });
 
   if (!result.ok) {

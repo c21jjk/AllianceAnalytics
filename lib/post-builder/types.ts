@@ -63,6 +63,69 @@ export interface PostBuilderListing {
   oh_end_at?: string | null;
 }
 
+/**
+ * Path A customizations — user-applied overrides on top of the template.
+ *
+ * Each section is fully optional. An empty object means the post uses the
+ * template defaults. The renderer composes customizations on top of the
+ * theme/primitive output (text overrides mutate the theme before primitive
+ * render; visual overrides are injected as a CSS layer after).
+ *
+ * The shape is forward-compatible with Path B's layer-tree model — every
+ * field here will map cleanly to a per-element override there.
+ */
+export interface PostCustomizations {
+  /**
+   * Color overrides. Hex strings ("#RRGGBB"). When set, override the
+   * theme palette for the corresponding role.
+   */
+  colors?: {
+    /** Primary brand accent (default: Alliance gold #C9A84C). */
+    accent?: string;
+    /** Gradient companion to accent (default: gold-700 #8B7530). */
+    accent_dark?: string;
+  };
+  /**
+   * Text overrides. Replace the auto-generated string for that slot. Useful
+   * when the auto label doesn't fit a specific listing's narrative.
+   */
+  text?: {
+    /** "JUST LISTED" / "JUST SOLD" / etc — replace the eyebrow label. */
+    eyebrow?: string;
+    /** "SOLD" / "↓ NEW PRICE" / etc — replace the badge stamp text. */
+    badge_text?: string;
+    /** FB hero card third stat ("SUNSET VIEWS"). Ignored on IG templates. */
+    custom_feature?: string;
+    /** Footer CTA override ("Tour link in bio" by default). */
+    cta?: string;
+  };
+  /**
+   * Visibility toggles. true = HIDE the element. False/undefined keeps it.
+   */
+  hide?: {
+    eyebrow?: boolean;
+    badge?: boolean;
+    price?: boolean;
+    /** The bd/ba/property-type chip strip. */
+    stats_row?: boolean;
+    /** The bottom-of-image brand + CTA footer block. */
+    footer?: boolean;
+    /** Agent name line (when shown by the template). */
+    agent_name?: boolean;
+  };
+  /**
+   * Badge sizing — applies to .badge-stamp / .badge-banner via CSS scale.
+   * Default is "md" (no scale). "sm" = 0.75x, "lg" = 1.25x, "xl" = 1.5x.
+   */
+  badge_size?: "sm" | "md" | "lg" | "xl";
+  /**
+   * Which corner the .badge-stamp anchors to. Default depends on template
+   * (most use top_right). Banners (.badge-banner) ignore this — they're
+   * always full-width.
+   */
+  badge_position?: "top_left" | "top_right" | "bottom_left" | "bottom_right";
+}
+
 export interface TemplateDimensions {
   width: number;
   height: number;
@@ -89,6 +152,8 @@ export interface RenderRequest {
   template_id: string;
   listing: PostBuilderListing;
   hero_image_url: string;
+  /** Path A — optional user customizations baked into this render. */
+  customizations?: PostCustomizations;
 }
 
 export interface RenderResponse {
@@ -138,6 +203,8 @@ export interface SaveGeneratedPostInput {
   caption: string;
   hashtags: string[];
   mls_hashtag: string;
+  /** Path A — user customizations applied to this render. Empty object = defaults. */
+  customizations?: PostCustomizations;
 }
 
 /**

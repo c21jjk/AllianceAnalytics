@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTemplate } from "./templates/registry";
-import type { PostBuilderListing } from "./types";
+import type { PostBuilderListing, PostCustomizations } from "./types";
 
 /**
  * Server-side rendering pipeline for Post Builder templates.
@@ -34,6 +34,8 @@ export interface RenderTemplateInput {
    */
   hero_image_url?: string;
   hero_image_urls?: string[];
+  /** Path A — user customizations baked into this render. */
+  customizations?: PostCustomizations | null;
 }
 
 export interface RenderTemplateOk {
@@ -94,11 +96,13 @@ export async function renderTemplate(
 
   // Render the template HTML. Backward-compat: primitives that expect a
   // single heroImageDataUri keep getting the first one; multi-photo
-  // primitives read from heroImageDataUris.
+  // primitives read from heroImageDataUris. Path A customizations flow
+  // through to the registry wrapper which applies them.
   const html = tpl.render({
     listing: input.listing,
     heroImageDataUri: heroImageDataUris[0],
     heroImageDataUris,
+    customizations: input.customizations,
   });
 
   // Launch headless Chromium and screenshot.

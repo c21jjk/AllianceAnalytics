@@ -93,6 +93,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           custom_feature: string | null
+          customizations: Json
           downloaded_at: string | null
           format: string
           hashtags: string[] | null
@@ -127,6 +128,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           custom_feature?: string | null
+          customizations?: Json
           downloaded_at?: string | null
           format: string
           hashtags?: string[] | null
@@ -161,6 +163,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           custom_feature?: string | null
+          customizations?: Json
           downloaded_at?: string | null
           format?: string
           hashtags?: string[] | null

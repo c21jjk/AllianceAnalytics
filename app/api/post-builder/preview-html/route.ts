@@ -14,7 +14,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { getTemplate } from "@/lib/post-builder/templates/registry";
-import type { PostBuilderListing } from "@/lib/post-builder/types";
+import type { PostBuilderListing, PostCustomizations } from "@/lib/post-builder/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,6 +24,8 @@ interface RequestBody {
   listing?: PostBuilderListing;
   hero_image_url?: string;
   hero_image_urls?: string[];
+  /** Path A — apply user customizations to the preview HTML. */
+  customizations?: PostCustomizations;
 }
 
 export async function POST(request: Request) {
@@ -77,6 +79,7 @@ export async function POST(request: Request) {
     listing: body.listing,
     heroImageDataUri: sourceUrls[0],
     heroImageDataUris: sourceUrls,
+    customizations: body.customizations,
   });
 
   // Cache aggressively — the same (template_id, listing, photo_urls)

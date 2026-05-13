@@ -45,6 +45,9 @@ export async function saveGeneratedPostAction(
       caption: input.caption,
       hashtags: input.hashtags,
       mls_hashtag: input.mls_hashtag,
+      // Path A — store the user-applied customizations so we can rebuild
+      // an editor session from this row later. Empty object when defaults.
+      customizations: (input.customizations ?? {}) as Json,
       status: "downloaded",
       downloaded_at: new Date().toISOString(),
       created_by: profile.id,
