@@ -10,10 +10,14 @@ interface UpcomingOpenHousesRowProps {
   /** Window in days that the parent fetched against. Header copy. */
   windowDays?: number;
   officeShortCode?: string | null;
+  /** Count of OHs first seen in the last 24h. Drives the "new" badge. */
+  freshCount?: number;
   className?: string;
 }
 
-/** localStorage key for the collapsed-state preference. */
+/** localStorage key for the collapsed-state preference.
+ *  Default is COLLAPSED. Stored value "0" means the user explicitly
+ *  expanded the card and wants it to stay open across reloads. */
 const COLLAPSED_KEY = "open-houses-collapsed";
 
 /**
@@ -23,21 +27,23 @@ const COLLAPSED_KEY = "open-houses-collapsed";
  * Sorted chronologically (next OH first). Larissa hits this surface at 4pm
  * Thursdays to see what's running over the weekend and build promo posts.
  *
- * Collapsible — same pattern as the other milestone cards.
+ * Collapsed by default; freshCount drives a pulsing gold "X new" badge
+ * that alerts Larissa when there's news from the last 24 hours.
  */
 export default function UpcomingOpenHousesRow({
   openHouses,
   windowDays = 7,
   officeShortCode,
+  freshCount = 0,
   className,
 }: UpcomingOpenHousesRowProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(false);
+  const [collapsed, setCollapsed] = useState<boolean>(true);
   const [hydrated, setHydrated] = useState<boolean>(false);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(COLLAPSED_KEY);
-      if (stored === "1") setCollapsed(true);
+      if (stored === "0") setCollapsed(false);
     } catch {
       // localStorage unavailable
     }
@@ -72,13 +78,14 @@ export default function UpcomingOpenHousesRow({
         >
           <ChevronIcon collapsed={collapsed} />
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-neutral-900">
+            <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Open Houses
               <span className="text-neutral-400 font-normal">
-                {" "}· next {windowDays} days · {openHouses.length} {noun}{scope}
+                · next {windowDays} days · {openHouses.length} {noun}{scope}
               </span>
-              {collapsed ? (
-                <span className="ml-2 inline-flex items-center rounded-full bg-sky-200/70 ring-1 ring-sky-300 px-2 py-0.5 text-[11px] font-medium text-sky-800 tabular-nums">
+              {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
+              {collapsed && freshCount === 0 ? (
+                <span className="inline-flex items-center rounded-full bg-sky-200/70 ring-1 ring-sky-300 px-2 py-0.5 text-[11px] font-medium text-sky-800 tabular-nums">
                   {openHouses.length}
                 </span>
               ) : null}
@@ -265,6 +272,26 @@ function OpenHouseRow({
         <ArrowIcon />
       </div>
     </Link>
+  );
+}
+
+/**
+ * Pulsing gold badge shown when there are fresh items (added in the last
+ * 24h) in this card. Same visual treatment across all four dashboard
+ * milestone cards so Larissa learns to scan for the gold dot.
+ */
+function FreshBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-gold-100 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-semibold text-gold-800 tabular-nums"
+      aria-label={`${count} new in the last 24 hours`}
+    >
+      <span
+        aria-hidden="true"
+        className="inline-block w-1.5 h-1.5 rounded-full bg-gold-500 animate-pulse"
+      />
+      {count} new
+    </span>
   );
 }
 

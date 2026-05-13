@@ -270,5 +270,6 @@ export async function getOpenHousesForProperty(
         ? null
         : Number(property.list_price),
     office_short_code: officeShortCode,
+    first_seen_at: oh.created_at,
   }));
 }

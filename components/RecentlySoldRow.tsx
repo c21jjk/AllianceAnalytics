@@ -9,10 +9,13 @@ interface RecentlySoldRowProps {
   /** Window in days the parent fetched against. Surfaced in the header copy. */
   windowDays?: number;
   officeShortCode?: string | null;
+  /** Count of listings that transitioned to sold in the last 24h. */
+  freshCount?: number;
   className?: string;
 }
 
-/** localStorage key for the collapsed-state preference. */
+/** localStorage key for the collapsed-state preference.
+ *  Default is COLLAPSED. Stored value "0" = user explicitly expanded. */
 const COLLAPSED_KEY = "recently-sold-collapsed";
 
 /**
@@ -30,15 +33,16 @@ export default function RecentlySoldRow({
   listings,
   windowDays = 30,
   officeShortCode,
+  freshCount = 0,
   className,
 }: RecentlySoldRowProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(false);
+  const [collapsed, setCollapsed] = useState<boolean>(true);
   const [hydrated, setHydrated] = useState<boolean>(false);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(COLLAPSED_KEY);
-      if (stored === "1") setCollapsed(true);
+      if (stored === "0") setCollapsed(false);
     } catch {
       // localStorage unavailable (Safari private mode etc.)
     }
@@ -73,13 +77,14 @@ export default function RecentlySoldRow({
         >
           <ChevronIcon collapsed={collapsed} />
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-neutral-900">
+            <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Sold
               <span className="text-neutral-400 font-normal">
-                {" "}· last {windowDays} days · {listings.length} {noun}{scope}
+                · last {windowDays} days · {listings.length} {noun}{scope}
               </span>
-              {collapsed ? (
-                <span className="ml-2 inline-flex items-center rounded-full bg-emerald-200/70 ring-1 ring-emerald-300 px-2 py-0.5 text-[11px] font-medium text-emerald-800 tabular-nums">
+              {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
+              {collapsed && freshCount === 0 ? (
+                <span className="inline-flex items-center rounded-full bg-emerald-200/70 ring-1 ring-emerald-300 px-2 py-0.5 text-[11px] font-medium text-emerald-800 tabular-nums">
                   {listings.length}
                 </span>
               ) : null}
@@ -140,6 +145,21 @@ export default function RecentlySoldRow({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function FreshBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-gold-100 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-semibold text-gold-800 tabular-nums"
+      aria-label={`${count} new in the last 24 hours`}
+    >
+      <span
+        aria-hidden="true"
+        className="inline-block w-1.5 h-1.5 rounded-full bg-gold-500 animate-pulse"
+      />
+      {count} new
+    </span>
   );
 }
 

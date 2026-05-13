@@ -15,10 +15,13 @@ interface RecentlyListedRowProps {
    * highlighted. Defaults to "needs_only" when omitted.
    */
   statusFilter?: "needs_only" | "all";
+  /** Count of listings first seen in the last 24h. Drives the "X new" badge. */
+  freshCount?: number;
   className?: string;
 }
 
-/** localStorage key for the collapsed-state preference. */
+/** localStorage key for the collapsed-state preference.
+ *  Default is COLLAPSED. Stored value "0" = user explicitly expanded. */
 const COLLAPSED_KEY = "recent-listings-collapsed";
 
 /**
@@ -42,6 +45,7 @@ export default function RecentlyListedRow({
   listings,
   officeShortCode,
   statusFilter = "needs_only",
+  freshCount = 0,
   className,
 }: RecentlyListedRowProps) {
   // Hide entirely when there's nothing to show in "needs_only" view —
@@ -49,16 +53,15 @@ export default function RecentlyListedRow({
   // always render the chrome so the toggle stays accessible.
   const renderEarly = statusFilter === "needs_only" && listings.length === 0;
 
-  // Collapsed state — hydrated from localStorage on mount. Defaults to
-  // expanded so first-time users see the strip; once collapsed it stays
-  // collapsed across reloads until the user reopens it.
-  const [collapsed, setCollapsed] = useState<boolean>(false);
+  // Collapsed state — default to collapsed; localStorage "0" means the
+  // user explicitly wants this card kept expanded across reloads.
+  const [collapsed, setCollapsed] = useState<boolean>(true);
   const [hydrated, setHydrated] = useState<boolean>(false);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(COLLAPSED_KEY);
-      if (stored === "1") setCollapsed(true);
+      if (stored === "0") setCollapsed(false);
     } catch {
       // localStorage unavailable (Safari private mode etc.) — fall back to
       // session-only state, no persistence.

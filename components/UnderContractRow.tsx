@@ -7,10 +7,13 @@ import MilestoneListingRow from "./MilestoneListingRow";
 interface UnderContractRowProps {
   listings: ListingMilestone[];
   officeShortCode?: string | null;
+  /** Count of listings that transitioned to pending in the last 24h. */
+  freshCount?: number;
   className?: string;
 }
 
-/** localStorage key for the collapsed-state preference. */
+/** localStorage key for the collapsed-state preference.
+ *  Default is COLLAPSED. Stored value "0" = user explicitly expanded. */
 const COLLAPSED_KEY = "under-contract-collapsed";
 
 /**
@@ -30,15 +33,16 @@ const COLLAPSED_KEY = "under-contract-collapsed";
 export default function UnderContractRow({
   listings,
   officeShortCode,
+  freshCount = 0,
   className,
 }: UnderContractRowProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(false);
+  const [collapsed, setCollapsed] = useState<boolean>(true);
   const [hydrated, setHydrated] = useState<boolean>(false);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(COLLAPSED_KEY);
-      if (stored === "1") setCollapsed(true);
+      if (stored === "0") setCollapsed(false);
     } catch {
       // localStorage unavailable (Safari private mode etc.) — fall back to
       // session-only state, no persistence.
@@ -74,13 +78,14 @@ export default function UnderContractRow({
         >
           <ChevronIcon collapsed={collapsed} />
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-neutral-900">
+            <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Under Contract
               <span className="text-neutral-400 font-normal">
-                {" "}· {listings.length} {noun}{scope}
+                · {listings.length} {noun}{scope}
               </span>
-              {collapsed ? (
-                <span className="ml-2 inline-flex items-center rounded-full bg-amber-200/70 ring-1 ring-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-800 tabular-nums">
+              {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
+              {collapsed && freshCount === 0 ? (
+                <span className="inline-flex items-center rounded-full bg-amber-200/70 ring-1 ring-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-800 tabular-nums">
                   {listings.length}
                 </span>
               ) : null}
@@ -141,6 +146,21 @@ export default function UnderContractRow({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function FreshBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-gold-100 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-semibold text-gold-800 tabular-nums"
+      aria-label={`${count} new in the last 24 hours`}
+    >
+      <span
+        aria-hidden="true"
+        className="inline-block w-1.5 h-1.5 rounded-full bg-gold-500 animate-pulse"
+      />
+      {count} new
+    </span>
   );
 }
 

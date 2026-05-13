@@ -228,35 +228,64 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         {profile.role === "admin" ? <SyncNowButton /> : null}
       </div>
 
-      {/* Milestones grid — three cards.
-          Desktop layout: 2-column grid.
+      {/* Milestones grid — four collapsible cards.
+          Layout: 2-column grid on desktop, single column on mobile.
             Left  (50%): Recently Listed — needs coverage (full height)
-            Right (50%): Under Contract (top half) + Recently Sold (bottom half)
-          Mobile: single column, stacked top-to-bottom in the same order.
-          Both right-column cards respect the active office filter. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-        <RecentlyListedRow
-          listings={listingsNeedingPosts}
-          statusFilter={listingsFilter}
-          officeShortCode={officeFilter}
-        />
-        <div className="grid grid-cols-1 gap-4">
-          <UpcomingOpenHousesRow
-            openHouses={upcomingOpenHouses}
-            windowDays={7}
-            officeShortCode={officeFilter}
-          />
-          <UnderContractRow
-            listings={underContractListings}
-            officeShortCode={officeFilter}
-          />
-          <RecentlySoldRow
-            listings={recentlySoldListings}
-            windowDays={30}
-            officeShortCode={officeFilter}
-          />
-        </div>
-      </div>
+            Right (50%): Open Houses → Under Contract → Recently Sold
+          Each card collapses by default; freshCount drives the "X new"
+          badge that pulls Larissa into whichever card has news from the
+          last 24 hours. */}
+      {(() => {
+        // Compute fresh-in-last-24h counts for each card. Cheap — these are
+        // already-fetched lists; we just filter by first_seen_at.
+        const cutoffMs = Date.now() - 24 * 3600_000;
+        const isFresh = (iso: string): boolean => {
+          const t = Date.parse(iso);
+          return Number.isFinite(t) && t >= cutoffMs;
+        };
+        const listedFreshCount = listingsNeedingPosts.filter((x) =>
+          isFresh(x.first_seen_at),
+        ).length;
+        const openHousesFreshCount = upcomingOpenHouses.filter((x) =>
+          isFresh(x.first_seen_at),
+        ).length;
+        const underContractFreshCount = underContractListings.filter((x) =>
+          isFresh(x.first_seen_at),
+        ).length;
+        const recentlySoldFreshCount = recentlySoldListings.filter((x) =>
+          isFresh(x.first_seen_at),
+        ).length;
+
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+            <RecentlyListedRow
+              listings={listingsNeedingPosts}
+              statusFilter={listingsFilter}
+              officeShortCode={officeFilter}
+              freshCount={listedFreshCount}
+            />
+            <div className="grid grid-cols-1 gap-4">
+              <UpcomingOpenHousesRow
+                openHouses={upcomingOpenHouses}
+                windowDays={7}
+                officeShortCode={officeFilter}
+                freshCount={openHousesFreshCount}
+              />
+              <UnderContractRow
+                listings={underContractListings}
+                officeShortCode={officeFilter}
+                freshCount={underContractFreshCount}
+              />
+              <RecentlySoldRow
+                listings={recentlySoldListings}
+                windowDays={30}
+                officeShortCode={officeFilter}
+                freshCount={recentlySoldFreshCount}
+              />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Section break + sort tabs — visually separates the "Recent listings
           to action" zone above from the "Posts to review" zone below. The
