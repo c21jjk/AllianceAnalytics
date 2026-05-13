@@ -307,9 +307,6 @@ export default function PostBuilderClient({
           body: JSON.stringify({
             template_id: templateId,
             listing: selectedListing,
-            // Always send the array — works for both single-photo and
-            // multi-photo variants. The render API trims to template's
-            // photo_count.
             hero_image_urls: heroUrls,
           }),
         }),
@@ -323,42 +320,100 @@ export default function PostBuilderClient({
         }),
       ]);
 
-      if (renderRes.status === "fulfilled") {
-        const json = (await renderRes.value.json()) as
-          | RenderResponse
-          | RenderErrorResponse;
-        if (json.ok) {
-          setRenderResult({
-            image_url: json.image_url,
-            image_path: json.image_path,
-            template_id: json.template_id,
-            width: json.width,
-            height: json.height,
-            hero_image_source_url: heroUrls[0],
-          });
-        } else {
-          setError(`Render failed: ${json.error}`);
-        }
-      } else {
-        setError(`Render request failed: ${renderRes.reason}`);
-      }
+      // Render — defensively parse so a non-JSON response (Vercel HTML
+      // 504 / proxy error / etc) surfaces a useful error instead of
+      // silently swallowing the throw and leaving the UI in an empty state.
+      const renderError = await safelyHandleRender(renderRes, heroUrls, setRenderResult);
+      if (renderError) setError(renderError);
 
-      if (captionRes.status === "fulfilled") {
-        const json = (await captionRes.value.json()) as
-          | CaptionResponse
-          | CaptionErrorResponse;
-        if (json.ok) {
-          const cap: CaptionResult = {
-            caption: json.caption,
-            hashtags: json.hashtags,
-            mls_hashtag: json.mls_hashtag,
-          };
-          setCaptionResult(cap);
-          setEditedCaption(joinCaptionAndTags(cap.caption, cap.hashtags));
-        }
-      }
+      // Caption — same defensive treatment. Caption is best-effort; if it
+      // fails we don't block download but we DO surface the message so
+      // the user knows.
+      const captionError = await safelyHandleCaption(
+        captionRes,
+        setCaptionResult,
+        setEditedCaption,
+      );
+      if (captionError && !renderError) setError(captionError);
+    } catch (e) {
+      setError(`Generate threw: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setGenerating(false);
+    }
+  }
+
+  /**
+   * Parse a render response defensively. Returns an error string if
+   * anything went wrong, null on success (and side-effects setRenderResult).
+   */
+  async function safelyHandleRender(
+    settled: PromiseSettledResult<Response>,
+    heroUrls: string[],
+    onSuccess: (r: RenderResult) => void,
+  ): Promise<string | null> {
+    if (settled.status === "rejected") {
+      return `Render request failed (network): ${settled.reason}`;
+    }
+    const res = settled.value;
+    let json: RenderResponse | RenderErrorResponse | null = null;
+    let parseError: string | null = null;
+    try {
+      json = (await res.json()) as RenderResponse | RenderErrorResponse;
+    } catch (e) {
+      parseError = e instanceof Error ? e.message : String(e);
+    }
+    if (!json) {
+      const bodyPreview = await safelyReadText(res);
+      return `Render returned non-JSON (HTTP ${res.status}). ${parseError ?? ""} Body: ${bodyPreview.slice(0, 200)}`;
+    }
+    if (!res.ok || !json.ok) {
+      const errMsg = (json as RenderErrorResponse).error ?? `HTTP ${res.status}`;
+      return `Render failed: ${errMsg}`;
+    }
+    onSuccess({
+      image_url: json.image_url,
+      image_path: json.image_path,
+      template_id: json.template_id,
+      width: json.width,
+      height: json.height,
+      hero_image_source_url: heroUrls[0],
+    });
+    return null;
+  }
+
+  async function safelyHandleCaption(
+    settled: PromiseSettledResult<Response>,
+    onSuccess: (c: CaptionResult) => void,
+    onCaptionText: (s: string) => void,
+  ): Promise<string | null> {
+    if (settled.status === "rejected") {
+      return `Caption request failed (network): ${settled.reason}`;
+    }
+    const res = settled.value;
+    let json: CaptionResponse | CaptionErrorResponse | null = null;
+    try {
+      json = (await res.json()) as CaptionResponse | CaptionErrorResponse;
+    } catch {
+      return `Caption returned non-JSON (HTTP ${res.status})`;
+    }
+    if (!res.ok || !json.ok) {
+      return `Caption failed: ${(json as CaptionErrorResponse).error ?? `HTTP ${res.status}`}`;
+    }
+    const cap: CaptionResult = {
+      caption: json.caption,
+      hashtags: json.hashtags,
+      mls_hashtag: json.mls_hashtag,
+    };
+    onSuccess(cap);
+    onCaptionText(joinCaptionAndTags(cap.caption, cap.hashtags));
+    return null;
+  }
+
+  async function safelyReadText(res: Response): Promise<string> {
+    try {
+      return await res.text();
+    } catch {
+      return "(could not read response body)";
     }
   }
 

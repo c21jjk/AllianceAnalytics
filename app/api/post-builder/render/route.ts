@@ -16,7 +16,10 @@ import { renderTemplate } from "@/lib/post-builder/render";
 import type { PostBuilderListing } from "@/lib/post-builder/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// 90s gives the @sparticuz/chromium-min cold-start binary download headroom
+// (binary fetches from GitHub release on first invocation per function instance,
+// then cached in /tmp). Steady-state renders typically finish in 6–10s.
+export const maxDuration = 90;
 export const runtime = "nodejs";
 
 interface RenderRequestBody {
