@@ -211,12 +211,22 @@ async function screenshotHtml(args: {
   stage("imports done");
 
   const isVercel = !!process.env.VERCEL;
+  // CRITICAL: @sparticuz/chromium-min checks process.env.AWS_EXECUTION_ENV
+  // (or AWS_LAMBDA_JS_RUNTIME) to decide whether to extract the al2023.tar.br
+  // library tarball that contains libnss3.so, libfontconfig.so, etc. — the
+  // shared libs the chromium binary needs to launch. Vercel's Fluid Compute
+  // runtime doesn't set this var in the format the lib expects, so the
+  // extraction is skipped and chromium fails with "libnss3.so: cannot open
+  // shared object file". Force it ourselves before resolving executablePath.
+  if (isVercel && !process.env.AWS_EXECUTION_ENV) {
+    process.env.AWS_EXECUTION_ENV = "AWS_Lambda_nodejs20.x";
+  }
   const executablePath = isVercel
     ? await chromium.executablePath(CHROMIUM_PACK_URL)
     : process.env.PUPPETEER_EXECUTABLE_PATH ||
       // Common local dev paths
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  stage("executablePath resolved (binary downloaded if cold)");
+  stage("executablePath resolved (binary + libs downloaded if cold)");
 
   const browser = await puppeteer.launch({
     args: isVercel ? chromium.args : ["--no-sandbox", "--disable-setuid-sandbox"],

@@ -66,6 +66,7 @@ const POST_TYPES: { id: PostType; label: string; helper: string }[] = [
   { id: "just_sold", label: "Just Sold", helper: "Sold · recent" },
   { id: "under_contract", label: "Under Contract", helper: "Pending" },
   { id: "open_house", label: "Open House", helper: "Upcoming OH" },
+  { id: "price_reduction", label: "Price Reduced", helper: "Active · pick" },
 ];
 
 const FORMATS: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];

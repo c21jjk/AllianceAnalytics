@@ -34,7 +34,7 @@ export const POST_TYPE_THEMES: Record<PostType, PostTypeTheme> = {
     eyebrow: "Just Sold",
     accent: GOLD,
     accent_dark: GOLD_DARK,
-    badge: { text: "SOLD", style: "stamp" },
+    badge: { text: "SOLD", style: "stamp", color: "red" },
     price_mode: "close_price",
     price_label: "SOLD",
     footer_cta: "Thinking of selling?",
@@ -56,6 +56,17 @@ export const POST_TYPE_THEMES: Record<PostType, PostTypeTheme> = {
     price_mode: "list_price",
     show_open_house_datetime: true,
     footer_cta: "See you there",
+  },
+  price_reduction: {
+    post_type: "price_reduction",
+    eyebrow: "Price Reduced",
+    accent: GOLD,
+    accent_dark: GOLD_DARK,
+    // "↓ NEW PRICE" stamp in green — value-positive feel, distinct from
+    // the SOLD red. Reads as opportunity, not warning.
+    badge: { text: "↓ NEW PRICE", style: "stamp", color: "green" },
+    price_mode: "list_price",
+    footer_cta: "Better value now",
   },
 };
 

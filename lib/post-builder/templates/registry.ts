@@ -131,6 +131,7 @@ const POST_TYPE_META: Record<PostType, { display_name: string }> = {
   just_sold: { display_name: "Just Sold" },
   under_contract: { display_name: "Under Contract" },
   open_house: { display_name: "Open House" },
+  price_reduction: { display_name: "Price Reduced" },
 };
 
 const FORMAT_META: Record<

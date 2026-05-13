@@ -31,6 +31,8 @@ const POST_TYPE_TONE: Record<PostType, string> = {
     "momentum-forward. Quick, snappy. Note that it's under contract in days/weeks if known (we don't track that yet — keep generic). 1-2 sentences. End with a buyer-pipeline line like 'Have a similar dream property in mind? Let's find it.'",
   open_house:
     "warm invitation. Lead with the date and time prominently in the caption text (the image will also show it). Mention what's special about the property in one sentence. End with 'See you Saturday!' or similar.",
+  price_reduction:
+    "value-forward, not desperate. Lead with the property — what makes it worth a fresh look. Mention the price reduction matter-of-factly without pleading or hyping urgency ('the seller adjusted their price' beats 'PRICE SLASHED'). 2-3 sentences. End with a soft CTA like 'Same property, better number — DM to see it.'",
 };
 
 const POST_TYPE_HASHTAGS: Record<PostType, string[]> = {
@@ -38,6 +40,7 @@ const POST_TYPE_HASHTAGS: Record<PostType, string[]> = {
   just_sold: ["#JustSold", "#SOLD", "#Closed"],
   under_contract: ["#UnderContract", "#PendingSale"],
   open_house: ["#OpenHouse", "#OpenHouseWeekend"],
+  price_reduction: ["#PriceReduction", "#NewPrice", "#JustReduced"],
 };
 
 /**
@@ -191,6 +194,8 @@ function humanPostType(t: PostType): string {
       return "Under Contract";
     case "open_house":
       return "Open House";
+    case "price_reduction":
+      return "Price Reduction";
   }
 }
 
@@ -209,6 +214,8 @@ function deterministicFallbackCaption(
       return `Under contract: ${addr}${city}. Have something similar in mind? We'll help you find it.`;
     case "open_house":
       return `Open house at ${addr}${city} this weekend. Come walk through and see for yourself.`;
+    case "price_reduction":
+      return `Price just adjusted on ${addr}${city}. Same property, better number — DM if you'd like a closer look.`;
   }
 }
 

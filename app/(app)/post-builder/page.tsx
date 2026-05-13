@@ -16,7 +16,13 @@ import type {
 export const metadata = { title: "Post Builder — Alliance Social" };
 export const dynamic = "force-dynamic";
 
-const POST_TYPES: PostType[] = ["just_listed", "just_sold", "under_contract", "open_house"];
+const POST_TYPES: PostType[] = [
+  "just_listed",
+  "just_sold",
+  "under_contract",
+  "open_house",
+  "price_reduction",
+];
 
 /**
  * Post Builder — Phase 3.
@@ -33,11 +39,12 @@ const POST_TYPES: PostType[] = ["just_listed", "just_sold", "under_contract", "o
 export default async function PostBuilderPage() {
   await requireUser();
 
-  const [justListed, justSold, underContract, openHouse] = await Promise.all([
+  const [justListed, justSold, underContract, openHouse, priceReduction] = await Promise.all([
     fetchListingsForPostBuilder({ post_type: "just_listed" }),
     fetchListingsForPostBuilder({ post_type: "just_sold" }),
     fetchListingsForPostBuilder({ post_type: "under_contract" }),
     fetchListingsForPostBuilder({ post_type: "open_house" }),
+    fetchListingsForPostBuilder({ post_type: "price_reduction" }),
   ]);
 
   const listingsByPostType: Record<PostType, PostBuilderListing[]> = {
@@ -45,6 +52,7 @@ export default async function PostBuilderPage() {
     just_sold: justSold,
     under_contract: underContract,
     open_house: openHouse,
+    price_reduction: priceReduction,
   };
 
   // Variants are the same set per format across all post types — but we

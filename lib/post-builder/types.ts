@@ -7,7 +7,12 @@
  * the Listings DB for richer fields) without rewriting templates.
  */
 
-export type PostType = "just_listed" | "just_sold" | "under_contract" | "open_house";
+export type PostType =
+  | "just_listed"
+  | "just_sold"
+  | "under_contract"
+  | "open_house"
+  | "price_reduction";
 export type PostFormat = "square_1x1" | "portrait_4x5" | "story_9x16";
 /**
  * Variant identifier. Single-photo: v1 (Hero Editorial), v2 (Bold Stats),

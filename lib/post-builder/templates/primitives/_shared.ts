@@ -17,11 +17,17 @@ export interface PostTypeTheme {
   accent: string;
   /** Darker accent for gradients (gold-700 family). */
   accent_dark: string;
-  /** Optional corner overlay treatment — typically "SOLD". */
+  /** Optional corner overlay treatment — typically "SOLD" or "↓ NEW PRICE". */
   badge?: {
     text: string;
     /** Stamp = rotated outlined block. Banner = horizontal across photo. */
     style: "stamp" | "banner";
+    /**
+     * Optional fill color override for the badge. Defaults to the SOLD red
+     * if omitted. Use the listing-friendly green for things like price
+     * reductions where we don't want the visual to read as a warning.
+     */
+    color?: "red" | "gold" | "green";
   };
   /**
    * What to show in the price slot:
@@ -217,15 +223,17 @@ export const STORY_SAFE_ZONE = {
 
 /**
  * Renders the optional badge overlay (e.g. SOLD stamp). Returns empty string
- * when the theme has no badge configured.
+ * when the theme has no badge configured. Supports an optional color
+ * override class — `red` (default), `gold`, or `green`.
  */
 export function renderBadge(theme: PostTypeTheme): string {
   if (!theme.badge) return "";
+  const colorClass = `badge-color-${theme.badge.color ?? "red"}`;
   if (theme.badge.style === "stamp") {
-    return `<div class="badge-stamp"><span>${escapeHtml(theme.badge.text)}</span></div>`;
+    return `<div class="badge-stamp ${colorClass}"><span>${escapeHtml(theme.badge.text)}</span></div>`;
   }
   // banner
-  return `<div class="badge-banner"><span>${escapeHtml(theme.badge.text)}</span></div>`;
+  return `<div class="badge-banner ${colorClass}"><span>${escapeHtml(theme.badge.text)}</span></div>`;
 }
 
 /** CSS rules for the optional badge overlays. Included in every template. */
@@ -243,7 +251,6 @@ export const BADGE_CSS = `
     padding: 14px 32px;
     border: 5px solid #FCFCFB;
     border-radius: 8px;
-    background: rgba(184, 60, 60, 0.92);
     color: #FFFFFF;
     font-size: 38px;
     font-weight: 800;
@@ -251,6 +258,10 @@ export const BADGE_CSS = `
     text-shadow: 0 2px 8px rgba(0,0,0,0.25);
     box-shadow: 0 8px 24px rgba(0,0,0,0.35);
   }
+  /* Color variants — applied to .badge-stamp or .badge-banner span. */
+  .badge-color-red    span { background: rgba(184, 60, 60, 0.92); }
+  .badge-color-gold   span { background: rgba(201, 169, 97, 0.95); color: #18181B; text-shadow: 0 1px 2px rgba(255,255,255,0.25); }
+  .badge-color-green  span { background: rgba(47, 143, 92, 0.95); }
   .badge-banner {
     position: absolute;
     top: 130px;

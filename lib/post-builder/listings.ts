@@ -94,6 +94,13 @@ export async function fetchListingsForPostBuilder(
       q = q.eq("status", "active").order("listing_date", { ascending: false });
       break;
     }
+    case "price_reduction": {
+      // Path A: show all active listings, ordered by most recent first.
+      // We don't yet track price history, so the user picks which listings
+      // had reductions. Path B (auto-detect) lands later — see Phase 6 plan.
+      q = q.eq("status", "active").order("listing_date", { ascending: false });
+      break;
+    }
   }
 
   const { data, error } = await q;
