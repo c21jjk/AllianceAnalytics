@@ -99,13 +99,14 @@ export default function RecentlyListedRow({
         >
           <ChevronIcon collapsed={collapsed} />
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-neutral-900">
+            <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Listed
               <span className="text-neutral-400 font-normal">
-                {" "}· last 14 days · needs coverage{scope}
+                · last 14 days · needs coverage{scope}
               </span>
-              {collapsed ? (
-                <span className="ml-2 inline-flex items-center rounded-full bg-gold-200/70 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-medium text-gold-800 tabular-nums">
+              {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
+              {collapsed && freshCount === 0 ? (
+                <span className="inline-flex items-center rounded-full bg-gold-200/70 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-medium text-gold-800 tabular-nums">
                   {listings.length}
                 </span>
               ) : null}
@@ -173,6 +174,21 @@ export default function RecentlyListedRow({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function FreshBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-gold-100 ring-1 ring-gold-300 px-2 py-0.5 text-[11px] font-semibold text-gold-800 tabular-nums"
+      aria-label={`${count} new in the last 24 hours`}
+    >
+      <span
+        aria-hidden="true"
+        className="inline-block w-1.5 h-1.5 rounded-full bg-gold-500 animate-pulse"
+      />
+      {count} new
+    </span>
   );
 }
 
