@@ -102,6 +102,7 @@ export type Database = {
           image_path: string | null
           image_url: string | null
           last_post_error: string | null
+          layer_tree: Json | null
           mls_hashtag: string | null
           mls_number: string
           notes: string | null
@@ -137,6 +138,7 @@ export type Database = {
           image_path?: string | null
           image_url?: string | null
           last_post_error?: string | null
+          layer_tree?: Json | null
           mls_hashtag?: string | null
           mls_number: string
           notes?: string | null
@@ -172,6 +174,7 @@ export type Database = {
           image_path?: string | null
           image_url?: string | null
           last_post_error?: string | null
+          layer_tree?: Json | null
           mls_hashtag?: string | null
           mls_number?: string
           notes?: string | null
