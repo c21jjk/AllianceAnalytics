@@ -9,7 +9,12 @@
 
 export type PostType = "just_listed" | "just_sold" | "under_contract" | "open_house";
 export type PostFormat = "square_1x1" | "portrait_4x5" | "story_9x16";
-export type PostVariant = "v1" | "v2" | "v3";
+/**
+ * Variant identifier. Single-photo: v1 (Hero Editorial), v2 (Bold Stats),
+ * v3 (Side-by-Side). Multi-photo: v4 (Two-Photo Diptych — 2 photos),
+ * v5 (Three-Photo Grid — 3 photos).
+ */
+export type PostVariant = "v1" | "v2" | "v3" | "v4" | "v5";
 export type SourceMls = "cmc" | "sjsr" | "bright" | "manual" | null;
 
 export interface PostBuilderListing {
@@ -57,6 +62,8 @@ export interface TemplateMeta {
   display_name: string;
   description: string;
   dimensions: TemplateDimensions;
+  /** Number of hero photos this template expects. 1 for v1-v3, 2 for v4, 3 for v5. */
+  photo_count: number;
 }
 
 export interface RenderRequest {

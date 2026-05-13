@@ -26,7 +26,14 @@ const STORAGE_BUCKET = "post-builder-renders";
 export interface RenderTemplateInput {
   template_id: string;
   listing: PostBuilderListing;
-  hero_image_url: string;
+  /**
+   * Single-photo variants (v1/v2/v3) take just hero_image_url. Multi-photo
+   * variants (v4/v5) take hero_image_urls. Callers should send the right
+   * shape for the variant they're rendering; if both are present,
+   * hero_image_urls takes precedence.
+   */
+  hero_image_url?: string;
+  hero_image_urls?: string[];
 }
 
 export interface RenderTemplateOk {
@@ -52,19 +59,47 @@ export async function renderTemplate(
   const tpl = getTemplate(input.template_id);
   if (!tpl) return { ok: false, error: `Unknown template: ${input.template_id}` };
 
-  // Fetch the hero photo and inline it as a data URI.
-  let heroImageDataUri: string;
+  // Resolve the source URL list. hero_image_urls takes precedence; if the
+  // caller only sent hero_image_url, wrap it. Trim to the template's
+  // photo_count so we don't fetch unused photos. If the caller sent fewer
+  // photos than the template wants, the last URL is repeated to fill the
+  // slots — beats failing the render outright.
+  const requestedUrls: string[] = (input.hero_image_urls?.length
+    ? input.hero_image_urls
+    : input.hero_image_url
+      ? [input.hero_image_url]
+      : []
+  ).filter((u) => typeof u === "string" && u.length > 0);
+
+  if (requestedUrls.length === 0) {
+    return { ok: false, error: "no hero_image_url(s) provided" };
+  }
+
+  const wanted = tpl.meta.photo_count;
+  const sourceUrls: string[] = [];
+  for (let i = 0; i < wanted; i++) {
+    sourceUrls.push(requestedUrls[Math.min(i, requestedUrls.length - 1)]);
+  }
+
+  // Fetch all photos in parallel, inline as data URIs.
+  let heroImageDataUris: string[];
   try {
-    heroImageDataUri = await fetchAsDataUri(input.hero_image_url);
+    heroImageDataUris = await Promise.all(sourceUrls.map((u) => fetchAsDataUri(u)));
   } catch (e) {
     return {
       ok: false,
-      error: `Failed to fetch hero image: ${e instanceof Error ? e.message : String(e)}`,
+      error: `Failed to fetch hero image(s): ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 
-  // Render the template HTML.
-  const html = tpl.render({ listing: input.listing, heroImageDataUri });
+  // Render the template HTML. Backward-compat: primitives that expect a
+  // single heroImageDataUri keep getting the first one; multi-photo
+  // primitives read from heroImageDataUris.
+  const html = tpl.render({
+    listing: input.listing,
+    heroImageDataUri: heroImageDataUris[0],
+    heroImageDataUris,
+  });
 
   // Launch headless Chromium and screenshot.
   let pngBytes: Buffer;
