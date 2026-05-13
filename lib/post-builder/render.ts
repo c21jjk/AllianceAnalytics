@@ -205,22 +205,68 @@ async function screenshotHtml(args: {
   const stage = (label: string) =>
     console.log(`[render] ${label}: +${Date.now() - t0}ms`);
 
+  const isVercel = !!process.env.VERCEL;
+
+  // ──────────────────────────────────────────────────────────────────
+  // VERCEL FLUID COMPUTE FIX (three-part — all critical):
+  //
+  // @sparticuz/chromium-min decides whether to extract the al2023.tar.br
+  // library tarball (containing libnss3.so + other Chromium shared libs)
+  // based on process.env.AWS_EXECUTION_ENV. It does this check TWICE:
+  //   (a) at MODULE LOAD time → calls setupLambdaEnvironment which sets
+  //       LD_LIBRARY_PATH so the chromium binary can find its libs.
+  //   (b) at executablePath() call time → decides whether to inflate the
+  //       al2023.tar.br alongside chromium.br.
+  //
+  // Vercel Fluid Compute does NOT set AWS_EXECUTION_ENV in the format
+  // the library expects ("AWS_Lambda_nodejs20.x" or similar). So both
+  // checks fail and we end up with the binary but no libs (= libnss3.so
+  // not found). The env var MUST be set BEFORE the dynamic import of
+  // chromium-min for the module-load check (a) to fire.
+  //
+  // Additionally, on warm Fluid Compute instances /tmp persists across
+  // invocations. If a prior cold start left a corrupted state (binary
+  // present, libs missing), executablePath() short-circuits at
+  // `if (existsSync("/tmp/chromium"))` and returns the broken binary
+  // without re-extracting. We detect that state here and clean it up.
+  // ──────────────────────────────────────────────────────────────────
+  if (isVercel) {
+    // (1) Force the env var BEFORE the dynamic import.
+    if (!process.env.AWS_EXECUTION_ENV) {
+      process.env.AWS_EXECUTION_ENV = "AWS_Lambda_nodejs20.x";
+    }
+    // (2) Belt-and-suspenders: also set LD_LIBRARY_PATH ourselves so we
+    // don't rely on the module-load setup having run with the right env.
+    const libPath = "/tmp/al2023/lib";
+    if (!process.env.LD_LIBRARY_PATH?.includes(libPath)) {
+      process.env.LD_LIBRARY_PATH = process.env.LD_LIBRARY_PATH
+        ? `${libPath}:${process.env.LD_LIBRARY_PATH}`
+        : libPath;
+    }
+    process.env.FONTCONFIG_PATH ??= "/tmp/fonts";
+
+    // (3) Detect + clean a corrupted warm-instance cache.
+    try {
+      const fs = await import("node:fs");
+      const hasBinary = fs.existsSync("/tmp/chromium");
+      const hasLibs = fs.existsSync(`${libPath}/libnss3.so`);
+      if (hasBinary && !hasLibs) {
+        console.log("[render] corrupted cache detected (binary but no libs); cleaning");
+        try { fs.unlinkSync("/tmp/chromium"); } catch {}
+        try { fs.rmSync("/tmp/chromium-pack", { recursive: true, force: true }); } catch {}
+        try { fs.rmSync("/tmp/al2023", { recursive: true, force: true }); } catch {}
+      }
+    } catch (e) {
+      console.warn("[render] cache check failed:", (e as Error).message);
+    }
+  }
+  stage("vercel env prepared");
+
   // Dynamic imports — these libs are heavy, only load when actually rendering.
   const puppeteer = (await import("puppeteer-core")).default;
   const chromium = (await import("@sparticuz/chromium-min")).default;
   stage("imports done");
 
-  const isVercel = !!process.env.VERCEL;
-  // CRITICAL: @sparticuz/chromium-min checks process.env.AWS_EXECUTION_ENV
-  // (or AWS_LAMBDA_JS_RUNTIME) to decide whether to extract the al2023.tar.br
-  // library tarball that contains libnss3.so, libfontconfig.so, etc. — the
-  // shared libs the chromium binary needs to launch. Vercel's Fluid Compute
-  // runtime doesn't set this var in the format the lib expects, so the
-  // extraction is skipped and chromium fails with "libnss3.so: cannot open
-  // shared object file". Force it ourselves before resolving executablePath.
-  if (isVercel && !process.env.AWS_EXECUTION_ENV) {
-    process.env.AWS_EXECUTION_ENV = "AWS_Lambda_nodejs20.x";
-  }
   const executablePath = isVercel
     ? await chromium.executablePath(CHROMIUM_PACK_URL)
     : process.env.PUPPETEER_EXECUTABLE_PATH ||
