@@ -36,6 +36,7 @@ interface PostRow {
   platform: "facebook" | "instagram" | "tiktok";
   platform_post_id: string | null;
   thumbnail_url: string | null;
+  group_id: string | null;
 }
 
 interface CacheOutcome {
@@ -137,6 +138,32 @@ async function cacheOne(
   if (updErr) {
     return { postId: row.id, ok: false, reason: `update:${updErr.message.slice(0, 80)}` };
   }
+
+  // 4) Propagate to the parent group's representative_thumbnail when it
+  // still points at a rotated CDN URL. The dashboard's GroupCard renders
+  // off this column, so without this step the card stays broken even
+  // though the post's own thumbnail is now cached.
+  if (row.group_id) {
+    try {
+      await supabase
+        .from("post_groups")
+        .update({
+          representative_thumbnail: cachedUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.group_id)
+        .not(
+          "representative_thumbnail",
+          "like",
+          "https://%.supabase.co/storage/%",
+        );
+      // We don't fail the post-cache on group-update errors — the post
+      // row is the source of truth; the group is a cached snapshot.
+    } catch {
+      // best-effort
+    }
+  }
+
   return { postId: row.id, ok: true };
 }
 
@@ -187,7 +214,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: rows, error: readErr } = await supabase
     .from("posts")
-    .select("id, platform, platform_post_id, thumbnail_url")
+    .select("id, platform, platform_post_id, thumbnail_url, group_id")
     .is("thumbnail_cached_at", null)
     .not("thumbnail_url", "is", null)
     .order("posted_at", { ascending: false, nullsFirst: false })

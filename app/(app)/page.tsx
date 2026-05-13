@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import {
   getAccountHealth,
+  getMlsFeedHealth,
   getCompanyAnalytics,
   getFollowerSummary,
   getPosts,
@@ -131,6 +132,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     groups,
     posts,
     accountHealth,
+    mlsHealth,
     listingsNeedingPosts,
     underContractListings,
     recentlySoldListings,
@@ -160,6 +162,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           })
       : Promise.resolve([]),
     getAccountHealth(),
+    getMlsFeedHealth(),
     getListingsNeedingPosts({
       office_short_code: officeFilter,
       status_filter: listingsFilter,
@@ -224,7 +227,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       />
 
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <AccountSyncBar health={accountHealth} className="flex-1 min-w-0" />
+        <AccountSyncBar
+          health={accountHealth}
+          mlsHealth={mlsHealth}
+          className="flex-1 min-w-0"
+        />
         {profile.role === "admin" ? <SyncNowButton /> : null}
       </div>
 
