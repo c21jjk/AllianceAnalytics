@@ -47,11 +47,15 @@ export async function listListings(opts?: {
 }
 
 /**
- * Search active listings for the per-post Classify panel.
+ * Search listings for the per-post Classify panel.
  *
  * Matches MLS number prefix OR address/city substring (case-insensitive).
- * Limited to active+pending status by default — sold/expired listings are
- * usually not what a current post should be linked to.
+ * Returns active + pending listings (always), plus sold listings that
+ * closed within the last 14 days — so Larissa can tag a "Just Sold" post
+ * to the right listing without digging through historical inventory.
+ *
+ * Expired/withdrawn listings are intentionally excluded — those shouldn't
+ * be linkable to new posts.
  */
 export async function searchListings(
   query: string,
@@ -61,30 +65,64 @@ export async function searchListings(
   if (trimmed.length === 0) return [];
   const supabase = createListingsAdminClient();
 
-  // Build OR filter — Supabase PostgREST `or=` syntax.
-  // mls_number.ilike, address.ilike, city.ilike
   const escaped = trimmed.replace(/[%,]/g, (c) => `\\${c}`);
   const pattern = `%${escaped}%`;
-  const { data, error } = await supabase
-    .from("active_listings")
-    .select(
-      "id, mls_number, address, city, state, zip, list_price, status, hero_image_url, listing_date",
-    )
-    .in("status", ["active", "pending"])
-    .or(
-      [
-        `mls_number.ilike.${pattern}`,
-        `address.ilike.${pattern}`,
-        `city.ilike.${pattern}`,
-      ].join(","),
-    )
-    .order("synced_at", { ascending: false })
-    .limit(opts?.limit ?? 12);
-  if (error) {
-    console.error("searchListings:", error);
-    return [];
+  const limit = opts?.limit ?? 12;
+
+  // Sold-window cutoff: 14 days ago. Only sold listings closed since then
+  // are linkable; older closed inventory is excluded.
+  const soldCutoff = new Date(Date.now() - 14 * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  // Status filter: (status IN (active, pending)) OR (status = sold AND
+  // close_date >= soldCutoff). Run as two queries to keep the SQL simple
+  // and the result sets small — Supabase's PostgREST `or` syntax doesn't
+  // mix well with the existing text-match `or` filter.
+  const textFilter = [
+    `mls_number.ilike.${pattern}`,
+    `address.ilike.${pattern}`,
+    `city.ilike.${pattern}`,
+  ].join(",");
+
+  const [activeResp, soldResp] = await Promise.all([
+    supabase
+      .from("active_listings")
+      .select(
+        "id, mls_number, address, city, state, zip, list_price, status, hero_image_url, listing_date, close_date, close_price, synced_at",
+      )
+      .in("status", ["active", "pending"])
+      .or(textFilter)
+      .order("synced_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("active_listings")
+      .select(
+        "id, mls_number, address, city, state, zip, list_price, status, hero_image_url, listing_date, close_date, close_price, synced_at",
+      )
+      .eq("status", "sold")
+      .gte("close_date", soldCutoff)
+      .or(textFilter)
+      .order("close_date", { ascending: false })
+      .limit(limit),
+  ]);
+  if (activeResp.error) console.error("searchListings active:", activeResp.error);
+  if (soldResp.error) console.error("searchListings sold:", soldResp.error);
+
+  // Merge + dedup by mls_number (active+pending wins over sold for the same MLS).
+  const out: Listing[] = [];
+  const seen = new Set<string>();
+  for (const r of (activeResp.data ?? []) as Listing[]) {
+    if (seen.has(r.mls_number)) continue;
+    seen.add(r.mls_number);
+    out.push(r);
   }
-  return (data ?? []) as Listing[];
+  for (const r of (soldResp.data ?? []) as Listing[]) {
+    if (seen.has(r.mls_number)) continue;
+    seen.add(r.mls_number);
+    out.push(r);
+  }
+  return out.slice(0, limit);
 }
 
 export async function getListingByMls(

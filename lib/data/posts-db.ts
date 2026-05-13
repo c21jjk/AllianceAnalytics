@@ -423,14 +423,30 @@ function nextCronRunAt(platform: Platform, now: Date = new Date()): Date {
 // Company analytics — top-of-dashboard KPI strip.
 // ---------------------------------------------------------------------------
 
-export interface CompanyAnalyticsTopCampaign {
-  group_id: string | null;
-  /** Post id used as the click target (drawer opens /posts/[primary_post_id]). */
-  primary_post_id: string;
-  caption: string | null;
-  reach: number;
-  engagement: number;
-  platforms: Platform[];
+/**
+ * Per-platform breakdown of the company-wide aggregate KPIs. Drives the
+ * tiny mini-row under each tile on the dashboard so Larissa can see where
+ * the reach/engagement is concentrated without leaving the strip.
+ */
+export interface CompanyAnalyticsByPlatform {
+  facebook: {
+    reach: number;
+    engagement: number;
+    engagement_rate: number;
+    posts_published: number;
+  };
+  instagram: {
+    reach: number;
+    engagement: number;
+    engagement_rate: number;
+    posts_published: number;
+  };
+  tiktok: {
+    reach: number;
+    engagement: number;
+    engagement_rate: number;
+    posts_published: number;
+  };
 }
 
 export interface CompanyAnalytics {
@@ -446,9 +462,16 @@ export interface CompanyAnalytics {
   prev_posts_published: number;
   /** Day-by-day series across the current window for sparklines. */
   daily: Array<{ date: string; reach: number; engagement: number }>;
-  /** Highest-reach group/solo in the current window — null if no posts. */
-  top_campaign: CompanyAnalyticsTopCampaign | null;
+  /** Per-platform breakdown of the same metrics for the current window. */
+  by_platform: CompanyAnalyticsByPlatform;
 }
+
+const EMPTY_PLATFORM_STATS = {
+  reach: 0,
+  engagement: 0,
+  engagement_rate: 0,
+  posts_published: 0,
+};
 
 const EMPTY_ANALYTICS: CompanyAnalytics = {
   reach: 0,
@@ -460,7 +483,11 @@ const EMPTY_ANALYTICS: CompanyAnalytics = {
   prev_engagement_rate: 0,
   prev_posts_published: 0,
   daily: [],
-  top_campaign: null,
+  by_platform: {
+    facebook: { ...EMPTY_PLATFORM_STATS },
+    instagram: { ...EMPTY_PLATFORM_STATS },
+    tiktok: { ...EMPTY_PLATFORM_STATS },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -704,47 +731,51 @@ export async function fetchCompanyAnalytics(opts: {
       daily.push({ date: k, reach: v.reach, engagement: v.engagement });
     }
 
-    // Top campaign (highest-reach group or solo post in current window).
-    interface CampAcc {
-      group_id: string | null;
-      primary_post_id: string;
-      caption: string | null;
-      reach: number;
-      engagement: number;
-      platforms: Set<Platform>;
-    }
-    const campMap = new Map<string, CampAcc>();
+    // Per-platform breakdown — drives the inline mini-row under each
+    // tile on the dashboard KPI strip. Replaces the Top Campaign tile
+    // (which lived here in earlier versions).
+    const platformAcc: Record<Platform, { reach: number; eng: number; count: number }> = {
+      facebook: { reach: 0, eng: 0, count: 0 },
+      instagram: { reach: 0, eng: 0, count: 0 },
+      tiktok: { reach: 0, eng: 0, count: 0 },
+    };
     for (const p of currentPosts) {
-      const key = p.group_id ?? `solo-${p.id}`;
+      const plat = p.platform as Platform;
+      if (plat !== "facebook" && plat !== "instagram" && plat !== "tiktok") continue;
       const m = readMetrics(p.metrics);
-      const existing = campMap.get(key);
-      if (existing) {
-        existing.reach += m.reach;
-        existing.engagement += m.eng;
-        existing.platforms.add(p.platform as Platform);
-      } else {
-        campMap.set(key, {
-          group_id: p.group_id ?? null,
-          primary_post_id: p.id,
-          caption: p.caption ?? null,
-          reach: m.reach,
-          engagement: m.eng,
-          platforms: new Set<Platform>([p.platform as Platform]),
-        });
-      }
+      platformAcc[plat].reach += m.reach;
+      platformAcc[plat].eng += m.eng;
+      platformAcc[plat].count += 1;
     }
-    const sorted = Array.from(campMap.values()).sort((a, b) => b.reach - a.reach);
-    const top = sorted[0] ?? null;
-    const top_campaign: CompanyAnalyticsTopCampaign | null = top
-      ? {
-          group_id: top.group_id,
-          primary_post_id: top.primary_post_id,
-          caption: top.caption,
-          reach: top.reach,
-          engagement: top.engagement,
-          platforms: Array.from(top.platforms),
-        }
-      : null;
+    const by_platform: CompanyAnalyticsByPlatform = {
+      facebook: {
+        reach: platformAcc.facebook.reach,
+        engagement: platformAcc.facebook.eng,
+        engagement_rate:
+          platformAcc.facebook.reach > 0
+            ? platformAcc.facebook.eng / platformAcc.facebook.reach
+            : 0,
+        posts_published: platformAcc.facebook.count,
+      },
+      instagram: {
+        reach: platformAcc.instagram.reach,
+        engagement: platformAcc.instagram.eng,
+        engagement_rate:
+          platformAcc.instagram.reach > 0
+            ? platformAcc.instagram.eng / platformAcc.instagram.reach
+            : 0,
+        posts_published: platformAcc.instagram.count,
+      },
+      tiktok: {
+        reach: platformAcc.tiktok.reach,
+        engagement: platformAcc.tiktok.eng,
+        engagement_rate:
+          platformAcc.tiktok.reach > 0
+            ? platformAcc.tiktok.eng / platformAcc.tiktok.reach
+            : 0,
+        posts_published: platformAcc.tiktok.count,
+      },
+    };
 
     return {
       reach: cur.reach,
@@ -756,7 +787,7 @@ export async function fetchCompanyAnalytics(opts: {
       prev_engagement_rate: prv.reach > 0 ? prv.eng / prv.reach : 0,
       prev_posts_published: prv.count,
       daily,
-      top_campaign,
+      by_platform,
     };
   } catch (e) {
     console.error("fetchCompanyAnalytics error:", e);

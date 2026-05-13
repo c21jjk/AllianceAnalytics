@@ -1,12 +1,11 @@
-import Link from "next/link";
 import clsx from "clsx";
 import type {
   CompanyAnalytics,
+  CompanyAnalyticsByPlatform,
   FollowerSummary,
 } from "@/lib/data/posts-db";
 import type { Platform } from "@/lib/types/post";
 import { formatCompactNumber } from "@/lib/format";
-import PlatformBadge from "./PlatformBadge";
 
 interface CompanyAnalyticsStripProps {
   data: CompanyAnalytics;
@@ -20,12 +19,17 @@ interface CompanyAnalyticsStripProps {
 /**
  * Top-of-dashboard "at a glance" KPI strip.
  *
- * Six tiles, each a glance-able number with WoW delta + sparkline:
+ * Five tiles, each a glance-able number with WoW delta, sparkline, and a
+ * compact per-platform mini-row beneath:
  *   1. Reach            — sum of post.reach in window
  *   2. Engagement       — sum of likes + comments + shares + saves
  *   3. Engagement rate  — engagement / reach (filters viral spikes)
  *   4. Posts published  — count of distinct posts (activity gauge)
- *   5. Top campaign     — highest-reach merged group, click → drawer
+ *   5. Followers        — per-platform follower counts + delta
+ *
+ * (The Top Campaign tile was removed in Phase 10 — the per-platform
+ * mini-row gave us better information density, and Larissa was clicking
+ * through to the post detail anyway.)
  *
  * Designed for ADHD-friendly scan: big number, tiny label, no paragraphs.
  * Each tile honours the dashboard office filter + time range automatically
@@ -50,7 +54,7 @@ export default function CompanyAnalyticsStrip({
   return (
     <section
       className={clsx(
-        "grid grid-cols-2 lg:grid-cols-6 gap-2",
+        "grid grid-cols-2 lg:grid-cols-5 gap-2",
         className,
       )}
       aria-label={`Company analytics for the last ${days} days`}
@@ -61,6 +65,8 @@ export default function CompanyAnalyticsStrip({
         delta={reachDelta}
         deltaLabel="vs prior period"
         series={reachSeries}
+        platforms={data.by_platform}
+        kind="reach"
       />
       <Tile
         label="Engagement"
@@ -68,6 +74,8 @@ export default function CompanyAnalyticsStrip({
         delta={engagementDelta}
         deltaLabel="vs prior period"
         series={engagementSeries}
+        platforms={data.by_platform}
+        kind="engagement"
       />
       <Tile
         label="Engagement rate"
@@ -76,6 +84,8 @@ export default function CompanyAnalyticsStrip({
         deltaLabel="pp vs prior"
         deltaSuffix="pp"
         series={null}
+        platforms={data.by_platform}
+        kind="engagement_rate"
       />
       <Tile
         label="Posts published"
@@ -83,9 +93,10 @@ export default function CompanyAnalyticsStrip({
         delta={postsDelta}
         deltaLabel="vs prior period"
         series={null}
+        platforms={data.by_platform}
+        kind="posts_published"
       />
       <FollowersTile followers={followers} />
-      <TopCampaignTile top={data.top_campaign} />
     </section>
   );
 }
@@ -158,6 +169,8 @@ function FollowerCell({
   );
 }
 
+type TileKind = "reach" | "engagement" | "engagement_rate" | "posts_published";
+
 interface TileProps {
   label: string;
   value: string;
@@ -168,6 +181,10 @@ interface TileProps {
   deltaSuffix?: string;
   /** When non-null, renders an inline sparkline. Pass null to omit. */
   series: number[] | null;
+  /** Per-platform breakdown drives the bottom mini-row. */
+  platforms: CompanyAnalyticsByPlatform;
+  /** Which metric this tile shows — selects which platform field to read. */
+  kind: TileKind;
 }
 
 function Tile({
@@ -177,6 +194,8 @@ function Tile({
   deltaLabel,
   deltaSuffix = "%",
   series,
+  platforms,
+  kind,
 }: TileProps) {
   const arrow = delta == null ? "·" : delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
   const tone =
@@ -211,57 +230,68 @@ function Tile({
         <span className="font-medium">{deltaText}</span>{" "}
         <span className="text-neutral-400">{deltaLabel}</span>
       </div>
+      <PlatformMiniRow platforms={platforms} kind={kind} />
     </div>
   );
 }
 
-function TopCampaignTile({
-  top,
+/**
+ * Inline per-platform breakdown shown beneath each tile (Phase 10).
+ * Matches the visual treatment of the Followers tile's FB / IG / TT row.
+ */
+function PlatformMiniRow({
+  platforms,
+  kind,
 }: {
-  top: CompanyAnalytics["top_campaign"];
+  platforms: CompanyAnalyticsByPlatform;
+  kind: TileKind;
 }) {
-  if (!top) {
-    return (
-      <div className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-          Top campaign
-        </div>
-        <div className="text-sm text-neutral-400 mt-1">No posts in window</div>
-      </div>
-    );
-  }
-
-  const captionPreview = (top.caption ?? "Untitled post")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 60);
-
+  const fb = readPlatformValue(platforms.facebook, kind);
+  const ig = readPlatformValue(platforms.instagram, kind);
+  const tt = readPlatformValue(platforms.tiktok, kind);
   return (
-    <Link
-      href={`/posts/${top.primary_post_id}`}
-      className="rounded-xl border border-neutral-200 bg-white shadow-card px-3 py-2.5 hover:border-gold-300 hover:shadow-card-hover transition flex flex-col"
-      aria-label={`Open top campaign: ${captionPreview}`}
-    >
-      <div className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-        Top campaign
-      </div>
-      <div className="text-sm font-medium text-neutral-900 leading-snug line-clamp-2 mt-0.5">
-        {captionPreview}
-        {(top.caption?.length ?? 0) > 60 ? "…" : ""}
-      </div>
-      <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-neutral-500">
-        <span className="font-semibold text-neutral-800 tabular-nums">
-          {formatCompactNumber(top.reach)}
-        </span>
-        <span>reach</span>
-        <span className="text-neutral-300">·</span>
-        <div className="flex items-center gap-0.5">
-          {top.platforms.map((p) => (
-            <PlatformBadge key={p} platform={p} size="sm" />
-          ))}
-        </div>
-      </div>
-    </Link>
+    <div className="text-[10px] text-neutral-500 mt-1.5 flex items-center gap-1.5 tabular-nums">
+      <PlatformCell label="FB" value={fb} kind={kind} />
+      <span className="text-neutral-300">·</span>
+      <PlatformCell label="IG" value={ig} kind={kind} />
+      <span className="text-neutral-300">·</span>
+      <PlatformCell label="TT" value={tt} kind={kind} />
+    </div>
+  );
+}
+
+function readPlatformValue(
+  p: CompanyAnalyticsByPlatform[Platform],
+  kind: TileKind,
+): number {
+  if (kind === "reach") return p.reach;
+  if (kind === "engagement") return p.engagement;
+  if (kind === "engagement_rate") return p.engagement_rate;
+  return p.posts_published;
+}
+
+function PlatformCell({
+  label,
+  value,
+  kind,
+}: {
+  label: string;
+  value: number;
+  kind: TileKind;
+}) {
+  let formatted: string;
+  if (kind === "engagement_rate") {
+    formatted = `${(value * 100).toFixed(1)}%`;
+  } else if (kind === "posts_published") {
+    formatted = String(value);
+  } else {
+    formatted = formatCompactNumber(value);
+  }
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <span className="font-semibold text-neutral-700">{label}</span>{" "}
+      <span className="text-neutral-600">{value === 0 ? "—" : formatted}</span>
+    </span>
   );
 }
 

@@ -22,60 +22,99 @@ export type ListingsDatabase = {
       active_listings: {
         Row: {
           address: string
+          alliance_role: string
+          bathrooms_full: number | null
+          bathrooms_half: number | null
+          bedrooms: number | null
+          buyer_agent_name: string | null
+          buyer_office_name: string | null
           city: string | null
+          close_date: string | null
+          close_price: number | null
           created_at: string
+          dom_days: number | null
           hero_image_url: string | null
           id: string
           list_agent_email: string | null
           list_agent_name: string | null
           list_office_id: string | null
+          list_office_name: string | null
           list_price: number | null
           listing_date: string | null
           mls_number: string
+          property_type: string | null
+          public_remarks: string | null
           raw_payload: Json
           source_mls: ListingsDatabase["public"]["Enums"]["mls_source"]
           state: string | null
           status: ListingsDatabase["public"]["Enums"]["listing_status"]
+          status_changed_at: string
           synced_at: string
           updated_at: string
           zip: string | null
         }
         Insert: {
           address: string
+          alliance_role?: string
+          bathrooms_full?: number | null
+          bathrooms_half?: number | null
+          bedrooms?: number | null
+          buyer_agent_name?: string | null
+          buyer_office_name?: string | null
           city?: string | null
+          close_date?: string | null
+          close_price?: number | null
           created_at?: string
+          dom_days?: number | null
           hero_image_url?: string | null
           id?: string
           list_agent_email?: string | null
           list_agent_name?: string | null
           list_office_id?: string | null
+          list_office_name?: string | null
           list_price?: number | null
           listing_date?: string | null
           mls_number: string
+          property_type?: string | null
+          public_remarks?: string | null
           raw_payload?: Json
           source_mls?: ListingsDatabase["public"]["Enums"]["mls_source"]
           state?: string | null
           status?: ListingsDatabase["public"]["Enums"]["listing_status"]
+          status_changed_at?: string
           synced_at?: string
           updated_at?: string
           zip?: string | null
         }
         Update: {
           address?: string
+          alliance_role?: string
+          bathrooms_full?: number | null
+          bathrooms_half?: number | null
+          bedrooms?: number | null
+          buyer_agent_name?: string | null
+          buyer_office_name?: string | null
           city?: string | null
+          close_date?: string | null
+          close_price?: number | null
           created_at?: string
+          dom_days?: number | null
           hero_image_url?: string | null
           id?: string
           list_agent_email?: string | null
           list_agent_name?: string | null
           list_office_id?: string | null
+          list_office_name?: string | null
           list_price?: number | null
           listing_date?: string | null
           mls_number?: string
+          property_type?: string | null
+          public_remarks?: string | null
           raw_payload?: Json
           source_mls?: ListingsDatabase["public"]["Enums"]["mls_source"]
           state?: string | null
           status?: ListingsDatabase["public"]["Enums"]["listing_status"]
+          status_changed_at?: string
           synced_at?: string
           updated_at?: string
           zip?: string | null
