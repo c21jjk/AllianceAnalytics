@@ -293,7 +293,7 @@ export default function PostBuilderClient({
       setError(null);
 
       try {
-        // ---- 1. Upload edited PNG ----
+        // ---- 1. Upload edited image (JPEG q92 from Studio) ----
         const form = new FormData();
         form.append("file", result.file);
         form.append("template_id", result.schema.id);
@@ -302,15 +302,42 @@ export default function PostBuilderClient({
           method: "POST",
           body: form,
         });
-        const uploadJson = (await uploadRes.json()) as
+
+        // why: the response is normally JSON, but Vercel / Next.js can
+        // return an HTML page when the request hits an edge-level limit
+        // (body too large, function timeout, auth redirect, etc.). Read as
+        // text first, then try to JSON-parse — if that fails, surface the
+        // truncated HTML as a friendly error rather than letting JSON.parse
+        // throw "Unexpected token <" at the user.
+        const rawText = await uploadRes.text();
+        type SaveResponse =
           | { ok: true; image_url: string; image_path: string; saved_at: string }
           | { ok: false; error: string };
-        if (!uploadRes.ok || !uploadJson.ok) {
+        let parsed: SaveResponse | null = null;
+        try {
+          parsed = JSON.parse(rawText) as SaveResponse;
+        } catch {
+          parsed = null;
+        }
+        if (!parsed) {
+          // why: trim to ~140 chars so we don't dump an entire HTML page
+          // into the toast. Common case: "Request Entity Too Large" — we
+          // surface that so the user knows to use the Download button or
+          // contact us to bump the limit.
+          const snippet =
+            rawText.replace(/\s+/g, " ").trim().slice(0, 140) || "empty response";
+          setError(
+            `Studio save failed (HTTP ${uploadRes.status}): ${snippet}`,
+          );
+          return;
+        }
+        if (!uploadRes.ok || !parsed.ok) {
           const errMsg =
-            !uploadJson.ok ? uploadJson.error : `HTTP ${uploadRes.status}`;
+            !parsed.ok ? parsed.error : `HTTP ${uploadRes.status}`;
           setError(`Studio save failed: ${errMsg}`);
           return;
         }
+        const uploadJson = parsed;
 
         // ---- 2. If an existing generated_posts row exists, swap its image ----
         // why: persists the edit so the post stays edited across refreshes

@@ -1225,14 +1225,30 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       canvas.discardActiveObject();
       canvas.requestRenderAll();
 
-      // why: toDataURL with multiplier:2 produces a retina-quality PNG at
-      // double the canvas's display resolution (2160×2160 from a 1080×1080
-      // logical canvas). Social platforms re-compress on upload so this
-      // gives them maximum headroom.
+      // why: export as JPEG (quality 0.92) instead of PNG. A 2x retina PNG
+      // of a 1080×1080 listing photo is typically 4-8MB, which blows past
+      // Vercel's serverless body limit (~4.5MB) when we POST it to the save
+      // endpoint. JPEG at q92 drops the same image to ~600KB-1.5MB with no
+      // perceptible quality loss — and social platforms re-encode to JPEG
+      // anyway. Trade-off: JPEG has no alpha, so transparent pixels become
+      // the canvas's background color (we ensure that's something sensible
+      // by temporarily filling the canvas background white before export).
+      //
+      // why white BG: most templates explicitly set a backgroundColor in
+      // the schema (e.g. "#FFFFFF"), but some templates might use
+      // backgroundColor: "transparent" — without an explicit fill those
+      // pixels would come out black in JPEG. Forcing white before export
+      // matches what social posts typically expect.
+      const originalBackgroundColor = canvas.backgroundColor;
       let dataUrl: string;
       try {
+        if (!originalBackgroundColor || originalBackgroundColor === "transparent") {
+          canvas.backgroundColor = "#FFFFFF";
+          canvas.requestRenderAll();
+        }
         dataUrl = canvas.toDataURL({
-          format: "png",
+          format: "jpeg",
+          quality: 0.92,
           multiplier: EXPORT_RESOLUTION_MULTIPLIER,
           enableRetinaScaling: false, // why: we control retina via multiplier — don't double-up.
         });
@@ -1251,6 +1267,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             ? `Export blocked: a layer image is not CORS-safe and tainted the canvas. Re-upload through Supabase Storage or use a CORS-enabled proxy. (${message})`
             : `Export failed: ${message}`,
         );
+      } finally {
+        // why: restore the canvas background to whatever it was so the
+        // editor visuals don't change after a save. Only restored when we
+        // actually overwrote it.
+        if (canvas.backgroundColor === "#FFFFFF" && originalBackgroundColor !== "#FFFFFF") {
+          canvas.backgroundColor = originalBackgroundColor;
+          canvas.requestRenderAll();
+        }
       }
 
       // why: dataURL → Blob → File. We can't use the Canvas.toBlob() API
@@ -1258,8 +1282,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // converting via fetch(dataUrl).then(r=>r.blob()) is the cleanest path
       // that respects the multiplier we just applied.
       const blob = await (await fetch(dataUrl)).blob();
-      const filename = `${template.id}_${Date.now()}.png`;
-      const file = new File([blob], filename, { type: "image/png" });
+      const filename = `${template.id}_${Date.now()}.jpg`;
+      const file = new File([blob], filename, { type: "image/jpeg" });
 
       const exportResult: CanvasExportResult = {
         file,
@@ -1272,7 +1296,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         schema: template,
         width: template.width * EXPORT_RESOLUTION_MULTIPLIER,
         height: template.height * EXPORT_RESOLUTION_MULTIPLIER,
-        mimeType: "image/png",
+        mimeType: "image/jpeg",
       };
 
       // why: await the parent's onSave so we can surface upload failures.

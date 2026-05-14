@@ -537,8 +537,14 @@ export interface CanvasExportResult {
   /** Output dimensions (post retina multiplier). */
   width: number;
   height: number;
-  /** "image/png" — currently fixed; reserved for future JPG/WebP support. */
-  mimeType: "image/png";
+  /**
+   * Output content-type. The editor exports JPEG (quality ~0.92) by default
+   * for the save flow — the typical 1080×1080 retina-PNG of a real listing
+   * photo blows past Vercel's ~4.5MB body limit, and social platforms
+   * re-encode to JPEG anyway. PNG is kept as a valid value in the union for
+   * future use cases (transparent overlays, brand exports, etc.).
+   */
+  mimeType: "image/png" | "image/jpeg";
 }
 
 // ---------------------------------------------------------------------------

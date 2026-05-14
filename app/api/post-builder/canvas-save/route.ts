@@ -105,15 +105,23 @@ export async function POST(request: Request): Promise<Response> {
       { status: 413 },
     );
   }
-  if (file.type !== "image/png") {
+  // why: accept either PNG or JPEG. The canvas editor's save flow exports
+  // JPEG (q92) by default — much smaller payload that fits comfortably
+  // under Vercel's body-size cap. PNG is still valid for future use cases
+  // (transparent overlays, brand exports, etc.).
+  const isPng = file.type === "image/png";
+  const isJpeg = file.type === "image/jpeg" || file.type === "image/jpg";
+  if (!isPng && !isJpeg) {
     return NextResponse.json(
       {
         ok: false,
-        error: `unexpected content-type (${file.type || "missing"}) — expected image/png`,
+        error: `unexpected content-type (${file.type || "missing"}) — expected image/png or image/jpeg`,
       },
       { status: 400 },
     );
   }
+  const extension = isPng ? "png" : "jpg";
+  const storageContentType = isPng ? "image/png" : "image/jpeg";
 
   // why: convert Blob → ArrayBuffer → Buffer. Supabase's storage SDK accepts
   // any of (Buffer, Uint8Array, Blob, File, ArrayBuffer), but Buffer is the
@@ -121,17 +129,18 @@ export async function POST(request: Request): Promise<Response> {
   const arrayBuffer = await file.arrayBuffer();
   const pngBytes = Buffer.from(arrayBuffer);
 
-  // why: mirror the V1 path structure — {template_id}/{mls_number}/{timestamp}.png.
+  // why: mirror the V1 path structure — {template_id}/{mls_number}/{timestamp}.{ext}.
   // Same bucket, same convention, so a future listing-asset enumerator
-  // doesn't have to special-case Path C uploads.
+  // doesn't have to special-case Path C uploads. Extension matches the
+  // actual content-type (.png for PNG, .jpg for JPEG).
   const savedAt = new Date().toISOString();
-  const path = `${templateId}/${mlsNumber}/${Date.now()}.png`;
+  const path = `${templateId}/${mlsNumber}/${Date.now()}.${extension}`;
 
   const supabase = createAdminClient();
   const { error: uploadError } = await supabase.storage
     .from(STORAGE_BUCKET)
     .upload(path, pngBytes, {
-      contentType: "image/png",
+      contentType: storageContentType,
       upsert: false,
       // why: 1-year browser cache. Storage URLs are immutable (we always
       // generate a new path on save), so caching aggressively is safe.
