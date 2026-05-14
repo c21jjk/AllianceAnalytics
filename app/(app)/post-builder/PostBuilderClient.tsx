@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PostBuilderListing,
   PostCustomizations,
@@ -16,6 +16,18 @@ import type {
   FBBundleErrorResponse,
 } from "@/lib/post-builder/types";
 import { saveGeneratedPostAction } from "./actions";
+
+// === Canvas Editor (Path C) — Phase 1, Step 2 wiring ===
+// why: opt-in "Edit in Studio" path that opens the new Fabric.js editor in an
+// overlay. Lives BESIDE the V1 click→render flow above; V1 is untouched.
+import CanvasEditorOverlay from "@/lib/post-builder/canvas-editor/CanvasEditorOverlay";
+import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
+import type {
+  CanvasExportResult,
+  CanvasTemplateSchema,
+  MLSListingPayload,
+} from "@/lib/post-builder/canvas-editor/types";
 
 interface VariantOption {
   template_id: string;
@@ -145,6 +157,15 @@ export default function PostBuilderClient({
   const [availablePhotos, setAvailablePhotos] = useState<PhotoOption[]>([]);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(0);
   const [photosLoading, setPhotosLoading] = useState(false);
+  // === Canvas Editor (Path C) — overlay open + cached hydrated context ===
+  // why: studioContext is set at open-time so the overlay receives stable
+  // template + listing references rather than re-deriving them on every render
+  // (each re-derivation would force the editor to re-init the Fabric canvas).
+  const [studioOpen, setStudioOpen] = useState<boolean>(false);
+  const [studioContext, setStudioContext] = useState<{
+    template: CanvasTemplateSchema;
+    listing: MLSListingPayload;
+  } | null>(null);
   // Render + caption state
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
@@ -227,6 +248,67 @@ export default function PostBuilderClient({
     () => listings.find((l) => l.mls_number === selectedMls) ?? null,
     [listings, selectedMls],
   );
+
+  // === Canvas Editor (Path C) — template lookup + open/save/close handlers ===
+  // why: lookup is by (postType, variantId, format) tuple — if no canvas-editor
+  // template exists for the current selection, `studioTemplate` is null and the
+  // "Edit in Studio" button is disabled. Step 2 ships just_listed × v1 across
+  // all 3 formats; everything else returns null until later phases author them.
+  const studioTemplate = useMemo<CanvasTemplateSchema | null>(
+    () => findCanvasTemplate(postType, variantId, format),
+    [postType, variantId, format],
+  );
+
+  const openStudio = useCallback((): void => {
+    // why: bail if either listing or template is missing — the button SHOULD
+    // already be disabled in that case, but defending against a race where the
+    // user changes selection mid-click avoids opening the overlay with stale
+    // null inputs.
+    if (!selectedListing || !studioTemplate) return;
+    const payload = mapListingToPayload(selectedListing, {
+      photos: availablePhotos.map((p) => p.url),
+      // why: V1's listing carries listing_office_name on the row, but agent
+      // fields are sparse. Pass what we have; the editor renders empty for
+      // missing agent fields rather than erroring.
+      agentName: selectedListing.agent_name ?? null,
+      officeName: selectedListing.listing_office_name ?? null,
+    });
+    setStudioContext({ template: studioTemplate, listing: payload });
+    setStudioOpen(true);
+  }, [selectedListing, studioTemplate, availablePhotos]);
+
+  const handleStudioSave = useCallback(
+    async (result: CanvasExportResult): Promise<void> => {
+      // why: Step 2 only — download the rendered PNG locally so we can verify
+      // the export pipeline visually. Step 3 will replace this with a Supabase
+      // Storage upload + generated_posts row insert via a Server Action.
+      const url = URL.createObjectURL(result.file);
+      try {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = result.file.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        // why: revoke immediately after click — the browser has already
+        // initiated the download and no longer needs the blob URL.
+        URL.revokeObjectURL(url);
+      }
+      // why: log the schema so we can confirm bound-field hydration worked
+      // end-to-end without inspecting the actual PNG bytes.
+      console.log("[CanvasEditor Step 2 save]", {
+        templateId: result.schema.id,
+        dimensions: { width: result.width, height: result.height },
+        bytes: result.file.size,
+      });
+    },
+    [],
+  );
+
+  const handleStudioClose = useCallback((): void => {
+    setStudioOpen(false);
+  }, []);
 
   // The current set of photo URLs to send to the render API. For single-
   // photo variants this is a 1-element array; for v4 it's 2 elements
@@ -1292,76 +1374,116 @@ export default function PostBuilderClient({
                         : selectedListing?.hero_image_url
                           ? [selectedListing.hero_image_url]
                           : [];
+                      // why: "Edit in Studio" only renders under the active card
+                      // AND only when a canvas-editor template exists for the
+                      // current (postType, variant, format) tuple. Step 2 ships
+                      // just_listed × v1 across 3 formats; other combinations
+                      // hide the affordance until later phases add templates.
+                      const studioAvailable =
+                        active &&
+                        !disabled &&
+                        studioTemplate !== null &&
+                        v.variant === studioTemplate.variant &&
+                        !!selectedListing;
                       return (
-                        <button
-                          key={v.template_id}
-                          type="button"
-                          onClick={() => {
-                            if (disabled) return;
-                            changeVariant(v.variant as PostVariant);
-                          }}
-                          disabled={disabled}
-                          title={
-                            insufficient
-                              ? `Needs ${v.photo_count} photos — this listing only has ${photosAvailable}.`
-                              : v.description
-                          }
-                          className={[
-                            "text-left rounded-xl border p-2.5 transition relative flex flex-col",
-                            disabled
-                              ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
-                              : active
-                                ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm"
-                                : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
-                          ].join(" ")}
-                        >
-                          {/* Large preview on top */}
-                          <VariantPreviewThumb
-                            templateId={v.template_id}
-                            listing={selectedListing}
-                            heroUrls={previewHeroUrls}
-                            format={format}
+                        <div key={v.template_id} className="flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (disabled) return;
+                              changeVariant(v.variant as PostVariant);
+                            }}
                             disabled={disabled}
-                            size="large"
-                          />
-                          {/* Label row */}
-                          <div className="mt-2 flex items-center justify-between gap-1">
-                            <div
-                              className={[
-                                "text-sm font-semibold truncate",
-                                disabled
-                                  ? "text-neutral-500"
-                                  : active
-                                    ? "text-gold-800"
-                                    : "text-neutral-900",
-                              ].join(" ")}
-                            >
-                              {v.display_name}
-                            </div>
-                            <span
-                              className={[
-                                "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
-                                disabled
-                                  ? "bg-rose-100 text-rose-700"
-                                  : v.photo_count > 1
-                                    ? "bg-gold-100 text-gold-800"
-                                    : "bg-neutral-100 text-neutral-600",
-                              ].join(" ")}
-                            >
-                              {v.photo_count}📷
-                            </span>
-                          </div>
-                          <div
+                            title={
+                              insufficient
+                                ? `Needs ${v.photo_count} photos — this listing only has ${photosAvailable}.`
+                                : v.description
+                            }
                             className={[
-                              "text-[11px] mt-1 leading-snug line-clamp-2",
-                              disabled ? "text-rose-700" : "text-neutral-500",
+                              "text-left rounded-xl border p-2.5 transition relative flex flex-col",
+                              disabled
+                                ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
+                                : active
+                                  ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm"
+                                  : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
                             ].join(" ")}
                           >
-                            {insufficient
-                              ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
-                              : v.description}
-                          </div>
-                        </button>
+                            {/* Large preview on top */}
+                            <VariantPreviewThumb
+                              templateId={v.template_id}
+                              listing={selectedListing}
+                              heroUrls={previewHeroUrls}
+                              format={format}
+                              disabled={disabled}
+                              size="large"
+                            />
+                            {/* Label row */}
+                            <div className="mt-2 flex items-center justify-between gap-1">
+                              <div
+                                className={[
+                                  "text-sm font-semibold truncate",
+                                  disabled
+                                    ? "text-neutral-500"
+                                    : active
+                                      ? "text-gold-800"
+                                      : "text-neutral-900",
+                                ].join(" ")}
+                              >
+                                {v.display_name}
+                              </div>
+                              <span
+                                className={[
+                                  "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
+                                  disabled
+                                    ? "bg-rose-100 text-rose-700"
+                                    : v.photo_count > 1
+                                      ? "bg-gold-100 text-gold-800"
+                                      : "bg-neutral-100 text-neutral-600",
+                                ].join(" ")}
+                              >
+                                {v.photo_count}📷
+                              </span>
+                            </div>
+                            <div
+                              className={[
+                                "text-[11px] mt-1 leading-snug line-clamp-2",
+                                disabled ? "text-rose-700" : "text-neutral-500",
+                              ].join(" ")}
+                            >
+                              {insufficient
+                                ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
+                                : v.description}
+                            </div>
+                          </button>
+                          {/* === Canvas Editor (Path C) — Edit in Studio button === */}
+                          {/* why: only renders when the current variant card is active
+                              AND a canvas-editor template exists for this tuple. Full
+                              width per design spec. Gold styling matches brand. */}
+                          {studioAvailable ? (
+                            <button
+                              type="button"
+                              onClick={openStudio}
+                              className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gold-500 bg-white px-3 py-2 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                              title="Open this variant in the Studio editor for fine-tuning"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M11 2l3 3-9 9H2v-3l9-9z" />
+                                <path d="M9.5 3.5l3 3" />
+                              </svg>
+                              Edit in Studio
+                            </button>
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>
@@ -1825,6 +1947,19 @@ export default function PostBuilderClient({
           onConfirm={submitPostNow}
         />
       ) : null}
+      {/* === Canvas Editor (Path C) — overlay portal ===
+          why: rendered at the top level of the component's JSX so it covers
+          all underlying UI including the PostNowModal. Unmounts entirely when
+          closed (no idle Fabric memory cost). studioContext is hydrated at
+          open-time so the editor's useEffect doesn't refire on parent renders. */}
+      <CanvasEditorOverlay
+        open={studioOpen}
+        onClose={handleStudioClose}
+        template={studioContext?.template ?? null}
+        listing={studioContext?.listing ?? null}
+        onSave={handleStudioSave}
+        saveLabel="Download Post"
+      />
     </div>
   );
 }
