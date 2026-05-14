@@ -208,6 +208,54 @@ function applyCornerRadius(img: FabricImage, radius: number): void {
   });
 }
 
+/**
+ * Resize the image's bounding box to a perfect square using the shorter of
+ * the current target width/height. Recomputes scaleX/scaleY against the
+ * object-fit so the photo crops to the square cleanly. Returns the new
+ * side length in display px — callers pass this to applyCornerRadius to
+ * achieve a perfect circle (radius = side / 2).
+ */
+function resizeToSquare(img: FabricImage, fit: ImageState["objectFit"]): number {
+  const { naturalWidth, naturalHeight } = readNaturalSize(img);
+  const scaleX = img.scaleX ?? 1;
+  const scaleY = img.scaleY ?? 1;
+  const currentW = naturalWidth * scaleX;
+  const currentH = naturalHeight * scaleY;
+  const side = Math.min(currentW, currentH);
+  const { scaleX: nextScaleX, scaleY: nextScaleY } = computeFitScale(
+    fit,
+    side,
+    side,
+    naturalWidth,
+    naturalHeight,
+  );
+  img.set({ scaleX: nextScaleX, scaleY: nextScaleY });
+  return side;
+}
+
+/**
+ * One-shot "make it a circle" — squares the bounding box, then applies a
+ * half-dimension clipPath so the result is a perfect circle regardless of
+ * the source photo's aspect ratio.
+ */
+function applyCircleShape(img: FabricImage, fit: ImageState["objectFit"]): void {
+  const side = resizeToSquare(img, fit);
+  applyCornerRadius(img, side / 2);
+}
+
+/**
+ * Detect whether the image currently reads as a circle: bounding box is
+ * approximately square AND the corner radius is at least half the shorter
+ * side. We use a 2px tolerance on the square check because float scaling
+ * can drift the displayed box by a fraction of a pixel after several edits.
+ */
+function isCircleShape(state: ImageState): boolean {
+  const dim = Math.min(state.targetWidth, state.targetHeight);
+  const squareEnough = Math.abs(state.targetWidth - state.targetHeight) < 2;
+  const roundEnough = state.cornerRadius >= dim / 2 - 1;
+  return squareEnough && roundEnough && dim > 0;
+}
+
 export default function ImagePropertiesControls(
   props: ImagePropertiesControlsProps,
 ): JSX.Element {
@@ -317,6 +365,34 @@ export default function ImagePropertiesControls(
     },
     [canvas, onCanvasMutated, recordHistory, state],
   );
+
+  const handleShapeCircle = useCallback((): void => {
+    if (!canvas || !state) return;
+    const active = canvas.getActiveObject();
+    if (!active || !(active instanceof FabricImage)) return;
+    applyCircleShape(active, state.objectFit);
+    canvas.requestRenderAll();
+    onCanvasMutated?.();
+    recordHistory?.();
+    // why: re-read from canvas so targetWidth/Height + cornerRadius reflect
+    // the squared-up box. The "Circle" pill now shows as active.
+    setState(readImageState(canvas));
+  }, [canvas, onCanvasMutated, recordHistory, state]);
+
+  const handleShapeRect = useCallback((): void => {
+    if (!canvas || !state) return;
+    const active = canvas.getActiveObject();
+    if (!active || !(active instanceof FabricImage)) return;
+    // why: clear the clip but leave the bounding box where the user has it
+    // — if they squared it intentionally for a circular crop and then
+    // changed their mind, they probably still want a square. They can resize
+    // by handle if they want a different aspect ratio.
+    applyCornerRadius(active, 0);
+    canvas.requestRenderAll();
+    onCanvasMutated?.();
+    recordHistory?.();
+    setState({ ...state, cornerRadius: 0 });
+  }, [canvas, onCanvasMutated, recordHistory, state]);
 
   const handleCornerRadiusChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>): void => {
@@ -454,6 +530,42 @@ export default function ImagePropertiesControls(
         </div>
       </Section>
 
+      {/* ===== Shape (Rectangle / Circle) =====
+          why: one-click circle for agent headshots + co-brand marks. The
+          freeform Corner Radius slider below still works for soft-rounded
+          cards (e.g. 16-24px) — Shape is the preset for "perfect circle". */}
+      <Section title="Shape">
+        <div className="grid grid-cols-2 gap-1">
+          {(
+            [
+              { value: "rect", label: "Rectangle", onClick: handleShapeRect },
+              { value: "circle", label: "Circle", onClick: handleShapeCircle },
+            ] as const
+          ).map((opt) => {
+            const isCircle = isCircleShape(state);
+            const isActive =
+              (opt.value === "circle" && isCircle) ||
+              (opt.value === "rect" && !isCircle);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={opt.onClick}
+                aria-pressed={isActive}
+                className={`flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
+                  isActive
+                    ? "border-gold-500 bg-gold-50 text-gold-700"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                }`}
+              >
+                {opt.value === "circle" ? <CircleGlyph /> : <RectGlyph />}
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </Section>
+
       {/* ===== Corner radius ===== */}
       <Section title="Corner Radius">
         <div className="flex items-center gap-2">
@@ -527,5 +639,41 @@ function Section(props: SectionProps): JSX.Element {
       </div>
       {props.children}
     </div>
+  );
+}
+
+// ===========================================================================
+// Shape glyphs — small line-art icons for the segmented control buttons
+// ===========================================================================
+
+function RectGlyph(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+    </svg>
+  );
+}
+
+function CircleGlyph(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="5.5" />
+    </svg>
   );
 }

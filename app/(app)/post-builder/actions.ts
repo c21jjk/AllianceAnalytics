@@ -151,7 +151,7 @@ export async function updateGeneratedPostImageAction(
  * becomes the source of truth for:
  *
  *   • Per-listing "Created Posts" strip on the property detail page
- *   • Global /posts/created library page
+ *   • Global /saved-posts library page
  *   • Resume-editing (load layer_tree back into Studio later)
  *
  * Storage cleanup rule (Option B): when we're updating an existing row, we
@@ -293,7 +293,7 @@ export async function upsertGeneratedPostFromStudioAction(
     }
 
     revalidatePath("/post-builder");
-    revalidatePath("/posts/created");
+    revalidatePath("/saved-posts");
     return {
       ok: true,
       id: input.id,
@@ -341,7 +341,7 @@ export async function upsertGeneratedPostFromStudioAction(
   }
 
   revalidatePath("/post-builder");
-  revalidatePath("/posts/created");
+  revalidatePath("/saved-posts");
   return {
     ok: true,
     id: data.id,
@@ -372,7 +372,7 @@ export interface DeleteGeneratedPostErr {
 /**
  * Hard-delete a generated_posts row AND its Storage image. Used by:
  *   • Per-listing Created Posts strip (trash icon on hover)
- *   • Global /posts/created library (single + bulk delete)
+ *   • Global /saved-posts library (single + bulk delete)
  *
  * Auth-gated to the row's `created_by`. Admin client bypasses RLS so we
  * enforce ownership explicitly. Returns ok even if the Storage cleanup
@@ -436,7 +436,7 @@ export async function deleteGeneratedPostAction(
   }
 
   revalidatePath("/post-builder");
-  revalidatePath("/posts/created");
+  revalidatePath("/saved-posts");
   return { ok: true, storage_cleaned: storageCleaned };
 }
 

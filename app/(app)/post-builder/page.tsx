@@ -125,7 +125,7 @@ export default async function PostBuilderPage({
         phaseTag="Phase 3"
         actions={
           <Link
-            href="/posts/created"
+            href="/saved-posts"
             className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
           >
             <svg

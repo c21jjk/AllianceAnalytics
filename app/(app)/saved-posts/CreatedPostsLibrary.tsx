@@ -13,10 +13,10 @@ import type {
 import type { PostType, SourceMls } from "@/lib/post-builder/types";
 
 /**
- * Client surface for /posts/created — owns the filter form + bulk-select +
+ * Client surface for /saved-posts — owns the filter form + bulk-select +
  * single delete. The data itself was fetched server-side and handed in via
  * `initialResult`; filter changes round-trip through the URL so the server
- * page re-fetches with the new params (router.push to /posts/created?…).
+ * page re-fetches with the new params (router.push to /saved-posts?…).
  */
 
 const POST_TYPE_DISPLAY: Record<PostType, string> = {
@@ -86,7 +86,7 @@ export default function CreatedPostsLibrary({
     // page that no longer exists with the narrower result set.
     params.delete("page");
     startTransition(() => {
-      router.push(`/posts/created?${params.toString()}`);
+      router.push(`/saved-posts?${params.toString()}`);
     });
   }
 
@@ -103,7 +103,7 @@ export default function CreatedPostsLibrary({
     }
     params.delete("page");
     startTransition(() => {
-      router.push(`/posts/created?${params.toString()}`);
+      router.push(`/saved-posts?${params.toString()}`);
     });
   }
 
@@ -115,7 +115,7 @@ export default function CreatedPostsLibrary({
       params.set("page", String(p));
     }
     startTransition(() => {
-      router.push(`/posts/created?${params.toString()}`);
+      router.push(`/saved-posts?${params.toString()}`);
     });
   }
 
@@ -129,7 +129,7 @@ export default function CreatedPostsLibrary({
   function clearAllFilters() {
     startTransition(() => {
       setSearchValue("");
-      router.push(`/posts/created`);
+      router.push(`/saved-posts`);
     });
   }
 

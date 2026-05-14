@@ -9,9 +9,10 @@ import type { PostType, SourceMls } from "@/lib/post-builder/types";
 import CreatedPostsLibrary from "./CreatedPostsLibrary";
 
 /**
- * Global "Created Posts" library — every Studio save across every listing,
- * filterable + paginated. Lives under /posts/created so it slots into the
- * existing /posts namespace alongside the per-post detail page.
+ * Saved Posts library — every Studio save across every listing, filterable
+ * + paginated. Lives at /saved-posts (NOT under /posts/*) so it doesn't get
+ * intercepted by the parallel-route drawer at app/(app)/@modal/(.)posts/[id]
+ * — that intercept treats any segment under /posts as a single-post id.
  *
  * URL contract — every filter is a query param so the page is shareable +
  * back-button friendly:
@@ -71,10 +72,10 @@ interface PageProps {
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata() {
-  return { title: "Created Posts — Alliance Social" };
+  return { title: "Saved Posts — Alliance Social" };
 }
 
-export default async function CreatedPostsPage({ searchParams }: PageProps) {
+export default async function SavedPostsPage({ searchParams }: PageProps) {
   await requireUser();
   const sp = await searchParams;
 
@@ -109,12 +110,12 @@ export default async function CreatedPostsPage({ searchParams }: PageProps) {
           Dashboard
         </Link>
         <span aria-hidden="true">/</span>
-        <span className="text-neutral-700">Created posts</span>
+        <span className="text-neutral-700">Saved posts</span>
       </div>
 
       <header>
         <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-neutral-900">
-          Created posts
+          Saved posts
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
           Every post you&rsquo;ve saved in Studio, across every listing.

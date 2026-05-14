@@ -1314,20 +1314,69 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         const natW = img.width || 280;
         const natH = img.height || 280;
         const MAX_DIM = 280;
-        // why: scale the longest side to MAX_DIM. Preserves aspect ratio.
-        // User can resize further via the standard Fabric selection handles.
-        const scale = Math.min(MAX_DIM / natW, MAX_DIM / natH, 1);
+        // why: agent_headshots start as a perfect circle so the first-drop
+        // visual matches the sidebar thumbnail. We force the bounding box
+        // to a square (using the shorter source dim, scaled to MAX_DIM)
+        // and cover-fit the photo into that square. Logos + partner marks
+        // keep their natural aspect ratio so wordmarks aren't cropped.
+        const isAgentHeadshot = asset.kind === "agent_headshot";
+        let scaleX: number;
+        let scaleY: number;
+        let displayW: number;
+        let displayH: number;
+        if (isAgentHeadshot) {
+          // Square box sized to fit MAX_DIM on each side.
+          const shortNat = Math.min(natW, natH);
+          const target = Math.min(MAX_DIM, shortNat);
+          // cover-fit a non-square source into a target × target box.
+          const coverScale = Math.max(target / natW, target / natH);
+          scaleX = coverScale;
+          scaleY = coverScale;
+          // why: scaled natural dims may exceed `target` along the long
+          // side under cover-fit (that's the crop). The visible bounding
+          // box stays target×target because the clipPath is applied next.
+          displayW = target;
+          displayH = target;
+        } else {
+          // Preserve aspect ratio, scale longest side to MAX_DIM.
+          const fitScale = Math.min(MAX_DIM / natW, MAX_DIM / natH, 1);
+          scaleX = fitScale;
+          scaleY = fitScale;
+          displayW = natW * fitScale;
+          displayH = natH * fitScale;
+        }
         img.set({
-          left: (template.width - natW * scale) / 2,
-          top: (template.height - natH * scale) / 2,
-          scaleX: scale,
-          scaleY: scale,
+          left: (template.width - displayW) / 2,
+          top: (template.height - displayH) / 2,
+          scaleX,
+          scaleY,
           cornerStyle: "circle",
           cornerSize: 10,
           transparentCorners: false,
           borderColor: "#C9A961",
           cornerColor: "#C9A961",
         });
+        // why: apply the circular clipPath AFTER set() so the scale values
+        // are stable when we divide the half-dim radius into image-local
+        // space. side/2 in display px → (side/2) / scaleX in image-local.
+        if (isAgentHeadshot) {
+          const radiusLocalX = displayW / 2 / scaleX;
+          const radiusLocalY = displayH / 2 / scaleY;
+          img.clipPath = new Rect({
+            width: natW,
+            height: natH,
+            rx: radiusLocalX,
+            ry: radiusLocalY,
+            originX: "center",
+            originY: "center",
+            absolutePositioned: false,
+          });
+          // why: stamp objectFit='cover' on the data bag so the Image
+          // properties panel can pick up the right active state when the
+          // user re-selects the headshot.
+          const dataBag = img as unknown as { data?: Record<string, unknown> };
+          dataBag.data = { ...(dataBag.data ?? {}), objectFit: "cover" };
+        }
         // why: stamp our standard layer metadata so the layer panel + selection
         // panel can recognize this object the same way they handle hydrated
         // template layers. Brand assets are user-added "free" layers with no
