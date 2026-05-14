@@ -48,7 +48,7 @@ export default function AccountSyncBar({
 
         <span
           className="text-[11px] text-neutral-400 ml-1"
-          title="Auto-sync runs every 4 hours via pg_cron — IG :05, FB :15, TT :25 (UTC). MLS feeds run on the same 4h cadence + a dedicated Thursday 3pm EDT pull. Hover a pill to see specifics."
+          title="Auto-sync runs every 4 hours via pg_cron — IG :05, FB :15, TT :25, MLS-CMC :35, MLS-SJSR :45 (UTC). Hover a pill to see when each feed last completed."
         >
           · auto every 4h
         </span>

@@ -15,6 +15,22 @@ interface EdgeFunctionResult {
 }
 
 /**
+ * Result shape returned by mls-rets-sync per feed. Mirrors what the Edge
+ * Function emits so the dashboard can show per-class record counts.
+ */
+export interface MlsSyncResult {
+  feed_short_code: "cmc" | "sjsr";
+  feed_name: string;
+  ok: boolean;
+  duration_ms: number;
+  classes: { class: string; records_seen: number; records_upserted: number; error?: string }[];
+  errors: { message: string }[];
+  photos_uploaded?: number;
+  /** Convenience total — sum of records_upserted across all classes. */
+  total_upserted: number;
+}
+
+/**
  * Server actions that invoke the platform sync Edge Functions.
  *
  * Wired up to:
@@ -71,8 +87,69 @@ export async function syncOne(
   return result;
 }
 
+/**
+ * Invoke the mls-rets-sync Edge Function for one Paragon feed. Same auth
+ * pattern as the social syncs — service-role key, no cron involvement. The
+ * function takes ~10-15s per feed (Cape May ≈ 14s end-to-end including
+ * photos, SJSR ≈ 10s) so calling both sequentially after the three social
+ * syncs adds ~25s to a manual Sync All run.
+ */
+async function invokeMlsSync(
+  feedShortCode: "cmc" | "sjsr",
+): Promise<MlsSyncResult> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error(
+      "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars not set on Vercel",
+    );
+  }
+  const fnUrl = `${url}/functions/v1/mls-rets-sync`;
+  const res = await fetch(fnUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({ feed_short_code: feedShortCode }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `mls-rets-sync ${feedShortCode} HTTP ${res.status}: ${body.slice(0, 200)}`,
+    );
+  }
+  const raw = await res.json() as {
+    ok?: boolean;
+    feed_short_code?: string;
+    feed_name?: string;
+    duration_ms?: number;
+    classes?: { class: string; records_seen: number; records_upserted: number; error?: string }[];
+    errors?: { message: string }[];
+    photos_uploaded?: number;
+  };
+  const classes = raw.classes ?? [];
+  const total_upserted = classes.reduce(
+    (sum, c) => sum + (Number(c.records_upserted) || 0),
+    0,
+  );
+  return {
+    feed_short_code: feedShortCode,
+    feed_name: raw.feed_name ?? feedShortCode.toUpperCase(),
+    ok: Boolean(raw.ok),
+    duration_ms: Number(raw.duration_ms) || 0,
+    classes,
+    errors: raw.errors ?? [],
+    photos_uploaded: raw.photos_uploaded,
+    total_upserted,
+  };
+}
+
 export interface SyncAllResult {
   results: EdgeFunctionResult[];
+  /** Per-feed MLS sync results (CMC + SJSR). Empty array if neither was run. */
+  mls_results: MlsSyncResult[];
   grouper: { groups_created: number; posts_assigned: number } | null;
 }
 
@@ -91,6 +168,25 @@ export async function syncAll(): Promise<SyncAllResult> {
         updated: 0,
         errors: [{ message: (e as Error).message }],
         duration_ms: 0,
+      });
+    }
+  }
+
+  // MLS feeds — same sequential pattern. Each takes ~10-15s; failures here
+  // are isolated per-feed so a CMC issue doesn't block SJSR from running.
+  const mls_results: MlsSyncResult[] = [];
+  for (const feed of ["cmc", "sjsr"] as const) {
+    try {
+      mls_results.push(await invokeMlsSync(feed));
+    } catch (e) {
+      mls_results.push({
+        feed_short_code: feed,
+        feed_name: feed.toUpperCase(),
+        ok: false,
+        duration_ms: 0,
+        classes: [],
+        errors: [{ message: (e as Error).message }],
+        total_upserted: 0,
       });
     }
   }
@@ -115,7 +211,7 @@ export async function syncAll(): Promise<SyncAllResult> {
   }
 
   revalidatePath("/", "layout");
-  return { results, grouper };
+  return { results, mls_results, grouper };
 }
 
 /**

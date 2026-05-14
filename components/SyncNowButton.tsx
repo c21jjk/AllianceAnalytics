@@ -13,6 +13,16 @@ interface SyncResult {
   duration_ms: number;
 }
 
+interface MlsResult {
+  feed_short_code: "cmc" | "sjsr";
+  feed_name: string;
+  ok: boolean;
+  duration_ms: number;
+  total_upserted: number;
+  classes: { class: string; records_seen: number; records_upserted: number; error?: string }[];
+  errors: { message: string }[];
+}
+
 interface GrouperResult {
   groups_created: number;
   posts_assigned: number;
@@ -24,13 +34,14 @@ interface SyncNowButtonProps {
 
 /**
  * Admin-only "Sync now" button. Invokes the syncAll server action which
- * sequentially calls each platform's Edge Function.
+ * sequentially calls each platform's Edge Function, then the MLS RETS feeds
+ * (CMC + SJSR), then the cross-platform grouper.
  *
  * UI states:
- *   - idle      → "Sync now" button
- *   - syncing   → spinner + "Syncing FB / IG / TT…"
- *   - success   → "Synced N new, M updated · 12s ago"
- *   - error     → "Sync failed — see details" with expandable error list
+ *   - idle      → "Sync all platforms" button
+ *   - syncing   → spinner + "Syncing FB · IG · TT · MLS…"
+ *   - success   → per-platform new/updated counts + MLS upsert counts
+ *   - error     → red status line with truncated error message
  *
  * The button only renders for admin users; gating is enforced server-side
  * by `requireAdmin()` inside the server action, but we also hide the button
@@ -40,17 +51,20 @@ interface SyncNowButtonProps {
 export default function SyncNowButton({ className }: SyncNowButtonProps) {
   const [isPending, startTransition] = useTransition();
   const [results, setResults] = useState<SyncResult[] | null>(null);
+  const [mlsResults, setMlsResults] = useState<MlsResult[] | null>(null);
   const [grouper, setGrouper] = useState<GrouperResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function handleClick() {
     setError(null);
     setResults(null);
+    setMlsResults(null);
     setGrouper(null);
     startTransition(async () => {
       try {
         const r = await syncAll();
         setResults(r.results);
+        setMlsResults(r.mls_results);
         setGrouper(r.grouper);
       } catch (e) {
         setError((e as Error).message);
@@ -68,12 +82,12 @@ export default function SyncNowButton({ className }: SyncNowButtonProps) {
           "btn-secondary text-xs px-3 py-1.5",
           "inline-flex items-center gap-1.5",
         )}
-        title="Trigger an immediate sync of FB, IG, and TT, then run the cross-platform grouper"
+        title="Trigger an immediate sync of FB, IG, TT, plus the MLS listing feeds (CMC + SJSR), then run the cross-platform grouper"
       >
         {isPending ? (
           <>
             <Spinner />
-            Syncing FB · IG · TT…
+            Syncing FB · IG · TT · MLS…
           </>
         ) : (
           <>
@@ -100,6 +114,21 @@ export default function SyncNowButton({ className }: SyncNowButtonProps) {
               {r.ok ? `+${r.inserted} new, ${r.updated} updated` : "failed"}
             </div>
           ))}
+          {mlsResults && mlsResults.length > 0 ? (
+            <div className="pt-0.5 border-t border-neutral-100 space-y-0.5">
+              {mlsResults.map((m) => (
+                <div
+                  key={m.feed_short_code}
+                  className={m.ok ? "text-emerald-600" : "text-rose-600"}
+                >
+                  {m.feed_short_code}:{" "}
+                  {m.ok
+                    ? `${m.total_upserted} listing${m.total_upserted === 1 ? "" : "s"} synced`
+                    : "failed"}
+                </div>
+              ))}
+            </div>
+          ) : null}
           {grouper ? (
             <div className="text-neutral-400 pt-0.5 border-t border-neutral-100">
               merged: +{grouper.groups_created} groups,{" "}
