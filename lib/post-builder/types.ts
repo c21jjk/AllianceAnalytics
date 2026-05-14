@@ -71,8 +71,6 @@ export interface PostBuilderListing {
  * theme/primitive output (text overrides mutate the theme before primitive
  * render; visual overrides are injected as a CSS layer after).
  *
- * The shape is forward-compatible with Path B's layer-tree model — every
- * field here will map cleanly to a per-element override there.
  */
 export interface PostCustomizations {
   /**
@@ -218,26 +216,6 @@ export interface SaveGeneratedPostInput {
   mls_hashtag: string;
   /** Path A — user customizations applied to this render. Empty object = defaults. */
   customizations?: PostCustomizations;
-  /**
-   * Path B — full layer tree the editor produced. When present we persist
-   * it so the editor can reopen the post in the same state. Pass `null`
-   * for posts that never opened the editor (renderer baked the template
-   * defaults straight from registry render).
-   */
-  layer_tree?: unknown;
-}
-
-/**
- * Path B — input for `saveLayerTreeAction`. Persists a layer tree update
- * (and the resulting render) onto an EXISTING generated_posts row. Returned
- * by the editor's Save flow after `/api/post-builder/render-tree` produces a
- * fresh PNG.
- */
-export interface SaveLayerTreeInput {
-  generated_post_id: string;
-  layer_tree: unknown;
-  image_url: string;
-  image_path: string;
 }
 
 /**

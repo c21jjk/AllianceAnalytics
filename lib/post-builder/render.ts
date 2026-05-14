@@ -177,5 +177,6 @@ async function fetchAsDataUri(url: string): Promise<string> {
   }
 }
 
-// screenshotHtml lives in ./chromium so render.ts and render-tree.ts share
-// one Vercel/cold-start setup. See chromium.ts for the gory details.
+// screenshotHtml lives in ./chromium for the Vercel/cold-start setup. See
+// chromium.ts for the gory details. Whole module retires once Polotno cloud
+// render replaces it in Phase 1.

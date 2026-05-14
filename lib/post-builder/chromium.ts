@@ -1,13 +1,16 @@
 import "server-only";
 
 /**
- * Shared headless Chromium screenshot helper. Used by both the legacy
- * template render pipeline (render.ts) and the Path B layer-tree render
- * pipeline (render-tree.ts).
+ * Shared headless Chromium screenshot helper used by the template render
+ * pipeline (render.ts) to convert template HTML into a PNG.
  *
- * Pulled out of render.ts so we have ONE place that knows about the
- * @sparticuz/chromium-min Vercel quirks. Bumping chromium versions or
- * fixing cold-start issues happens here, no copy-paste.
+ * Pulled out of render.ts so the @sparticuz/chromium-min Vercel quirks
+ * (env-var detection, /tmp cache cleanup, Fluid Compute behavior) live in
+ * ONE place. Bumping chromium versions or fixing cold-start issues happens
+ * here, no copy-paste.
+ *
+ * Note: this whole module becomes deletable once we cut over to Polotno's
+ * cloud render API in Phase 1 of the Polotno integration.
  */
 
 // Hosted on Supabase Storage (same region as our Vercel functions) instead of
@@ -31,7 +34,7 @@ export async function screenshotHtml(args: {
   html: string;
   width: number;
   height: number;
-  /** Tag for log lines so we can tell render.ts vs render-tree.ts apart. */
+  /** Optional tag prefixed onto log lines (defaults to "render"). */
   log_label?: string;
 }): Promise<Buffer> {
   const t0 = Date.now();
