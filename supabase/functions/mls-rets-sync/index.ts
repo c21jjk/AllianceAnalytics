@@ -591,65 +591,41 @@ interface MappedOpenHouse {
 }
 
 /**
- * Parse a Paragon date+time pair into an ISO timestamptz string. Paragon
- * usually returns OH_StartDateTime in ISO-ish "YYYY-MM-DDTHH:MM:SS" form
- * (no timezone). We assume the feed's local TZ is America/New_York; the
- * Supabase column is timestamptz so the wall-time renders correctly when
- * the UI converts back to local.
+ * Parse a Paragon date+time string into an ISO timestamptz string.
+ *
+ * Paragon's COMPACT-DECODED format returns OH_StartDateTime / OH_EndDateTime
+ * etc. as "YYYY-MM-DDTHH:MM:SS" with NO timezone suffix — but the value is
+ * **already UTC**, not local wall-time. We verified this by cross-checking
+ * OH_StartDateTime against OH_StartTime (the separate "local wall-time"
+ * field) on multiple rows: e.g. MLS 253231 has OH_StartTime "12:00:00"
+ * (12pm EDT) and OH_StartDateTime "2026-04-18T16:00:00" (= 16:00 UTC).
+ * The OH_Comments on that row literally read "OPEN HOUSE 12PM - 3PM".
+ *
+ * Earlier versions of this function treated the input as Eastern wall-time
+ * and shifted by +4 to produce UTC, which double-shifted every OH by 4
+ * hours and made 10am EDT events display as 2pm EDT. The fix: just append
+ * "Z" so JS parses the string as UTC.
  */
 function readDateTime(raw: string | undefined): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  // Already ISO with tz?
+  // Already has a timezone suffix (Z or ±HH:MM) — pass through.
   if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
     const d = new Date(trimmed);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
-  // Treat as Eastern wall-time (Paragon's default for these feeds).
-  // "YYYY-MM-DDTHH:MM:SS" or "YYYY-MM-DD HH:MM:SS"
-  const m = trimmed.match(
-    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/,
-  );
-  if (!m) {
-    const d = new Date(trimmed);
+  // Tz-less ISO "YYYY-MM-DDTHH:MM:SS(.fractional)?". Treat as UTC.
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(trimmed)) {
+    // Replace space separator with T (RFC 3339 form) and append Z so JS
+    // parses the literal as UTC regardless of the runtime's local TZ.
+    const iso = trimmed.replace(" ", "T") + "Z";
+    const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
-  const [, y, mo, da, hh, mm, ss] = m;
-  // EST = UTC-5, EDT = UTC-4. Compute which one this date falls in by
-  // testing the standard US DST window. Most reliable cheap heuristic:
-  // ask the JS engine. We construct a date in the Eastern TZ via
-  // `toLocaleString` round-trip.
-  const localStr = `${y}-${mo}-${da}T${hh}:${mm}:${ss ?? "00"}`;
-  const asLocal = new Date(localStr);
-  // Compute Eastern offset on that date by formatting the date in
-  // America/New_York and reading the resulting wall-time.
-  const tzOffsetHours = easternOffsetHoursOn(asLocal);
-  const utcMs = Date.UTC(
-    Number(y),
-    Number(mo) - 1,
-    Number(da),
-    Number(hh) + tzOffsetHours,
-    Number(mm),
-    Number(ss ?? "0"),
-  );
-  return new Date(utcMs).toISOString();
-}
-
-/**
- * Returns +4 during EDT and +5 during EST (the additive shift needed to
- * convert Eastern wall-time → UTC). Trivial DST window check — works for
- * 2007+ rules (DST starts 2nd Sunday March, ends 1st Sunday November).
- */
-function easternOffsetHoursOn(d: Date): number {
-  // Use toLocaleString to ask the JS engine. The output difference
-  // between UTC and America/New_York gives us the offset.
-  const utc = d.getTime();
-  const ny = new Date(
-    d.toLocaleString("en-US", { timeZone: "America/New_York" }),
-  ).getTime();
-  const diffMin = Math.round((utc - ny) / 60000);
-  return Math.round(diffMin / 60); // 4 in EDT, 5 in EST
+  // Fallback: let JS attempt a parse. Will likely be NaN for malformed input.
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 /**
