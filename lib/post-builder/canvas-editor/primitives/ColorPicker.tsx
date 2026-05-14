@@ -41,6 +41,7 @@ import { createPortal } from "react-dom";
 
 import { ALLIANCE_COLORS } from "../templates/tokens";
 import { extractPhotoColors } from "./extractPhotoColors";
+import HsvPicker from "./HsvPicker";
 
 /**
  * Alliance brand-curated swatches, surfaced first. Order matters — gold is
@@ -418,6 +419,25 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
 
               {/* ===== Scrollable sections ===== */}
               <div className="flex-1 overflow-y-auto p-3">
+                {/* === Custom color (HSV visual picker) ===
+                    why: lets the user pick ANY color via a saturation/brightness
+                    pad + hue slider when the curated swatches below don't have
+                    what they need. Mirrors Canva's "+ custom" affordance.
+                    The hex echo doubles as a way to paste an arbitrary hex,
+                    and the eyedropper button (Chrome 95+) samples on-screen
+                    pixels. */}
+                <div className="mb-3">
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                    Custom
+                  </div>
+                  <HsvPicker
+                    value={
+                      value === "transparent" || value === "" ? "#C9A961" : value
+                    }
+                    onChange={commit}
+                  />
+                </div>
+
                 {/* === Colors in this design ===
                     why: shown FIRST below the search so the most relevant
                     swatches (already-in-use colors that fit the composition)

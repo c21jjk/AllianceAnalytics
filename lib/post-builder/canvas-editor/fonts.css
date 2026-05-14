@@ -53,3 +53,55 @@
  * app/layout.tsx — we don't re-import it here. Georgia and SF Mono are
  * system fonts; no @import needed.
  */
+
+/* ===========================================================================
+ * HsvPicker hue slider — styles the native <input type=range> with a full
+ * rainbow track and a white circular thumb. Lives here (not globals.css)
+ * because the rules are canvas-editor-specific and only loaded when the
+ * editor mounts.
+ * ===========================================================================
+ */
+
+.hsv-hue-slider {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(
+    to right,
+    #ff0000 0%,
+    #ffff00 17%,
+    #00ff00 33%,
+    #00ffff 50%,
+    #0000ff 67%,
+    #ff00ff 83%,
+    #ff0000 100%
+  );
+  outline: none;
+}
+
+.hsv-hue-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.2),
+    0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.hsv-hue-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.2),
+    0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
