@@ -15,7 +15,10 @@ import type {
   FBBundleResponse,
   FBBundleErrorResponse,
 } from "@/lib/post-builder/types";
-import { saveGeneratedPostAction } from "./actions";
+import type { LayerTree } from "@/lib/post-builder/layers/types";
+import { templateToLayerTree } from "@/lib/post-builder/templates/registry";
+import { saveGeneratedPostAction, saveLayerTreeAction } from "./actions";
+import PostEditor from "./PostEditor";
 
 interface VariantOption {
   template_id: string;
@@ -135,6 +138,12 @@ export default function PostBuilderClient({
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [customizations, setCustomizations] = useState<PostCustomizations>({});
   const [customizeRendering, setCustomizeRendering] = useState(false);
+  // Path B — Editor state. `editorTree` is the live tree the editor
+  // mutates; `existingLayerTree` is whatever was previously saved on the
+  // generated_posts row (so reopening the editor restores prior edits).
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorTree, setEditorTree] = useState<LayerTree | null>(null);
+  const [existingLayerTree, setExistingLayerTree] = useState<LayerTree | null>(null);
   const [postNowPlatforms, setPostNowPlatforms] = useState<Set<PostPlatform>>(
     new Set(["facebook", "instagram"]),
   );
@@ -724,6 +733,12 @@ export default function PostBuilderClient({
   useEffect(() => {
     setCustomizations({});
     setCustomizeOpen(false);
+    // Path B — also reset the editor whenever the user changes the underlying
+    // (listing × template). The editor seed depends on those, and we don't
+    // want stale cross-listing trees to leak into the next session.
+    setEditorOpen(false);
+    setEditorTree(null);
+    setExistingLayerTree(null);
   }, [selectedMls, postType, variantId, format, outputMode]);
 
   /**
@@ -773,6 +788,121 @@ export default function PostBuilderClient({
 
   function resetCustomizations() {
     setCustomizations({});
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Path B — Layer Editor open / save flow
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Build the layer tree to seed the editor. Prefers `existingLayerTree`
+   * (saved edits from a previous session) over `templateToLayerTree(...)`
+   * (vanilla template seed). Returns null if we can't build one — the
+   * button is gated on selectedListing + currentHeroUrls so this should
+   * only happen in degenerate states.
+   */
+  function buildSeedTree(): LayerTree | null {
+    if (existingLayerTree) return existingLayerTree;
+    if (!selectedListing) return null;
+    if (currentHeroUrls.length === 0) return null;
+    return templateToLayerTree({
+      template_id: templateId,
+      listing: selectedListing,
+      heroImageUrls: currentHeroUrls,
+      customizations,
+    });
+  }
+
+  function openEditor() {
+    const seed = buildSeedTree();
+    if (!seed) {
+      setError("Couldn't build the editor seed. Make sure a listing + photo are selected.");
+      return;
+    }
+    setEditorTree(seed);
+    setEditorOpen(true);
+  }
+
+  function closeEditor() {
+    setEditorOpen(false);
+    // Keep editorTree/existingLayerTree so re-opening returns to the same
+    // state. Reset on listing/template change happens via the reset effect.
+  }
+
+  /**
+   * Editor save callback. Persists layer_tree + image_url onto the
+   * generated_posts row (creating the row first if this is a brand-new
+   * post that's never been saved). Updates the parent's render preview
+   * with the editor's freshly-rendered PNG.
+   */
+  async function handleEditorSave(result: {
+    tree: LayerTree;
+    image_url: string;
+    image_path: string;
+  }) {
+    if (!selectedListing || !renderResult) {
+      setError("Can't save — listing or render is missing.");
+      return;
+    }
+    setExistingLayerTree(result.tree);
+    setEditorTree(result.tree);
+    // Update the local preview to the just-rendered image.
+    setRenderResult({
+      ...renderResult,
+      image_url: result.image_url,
+      image_path: result.image_path,
+    });
+    // Persist. If we already have a generated_posts row, update it in place;
+    // otherwise insert a new row carrying the layer tree from the start.
+    try {
+      let id = generatedPostId;
+      if (id) {
+        const save = await saveLayerTreeAction({
+          generated_post_id: id,
+          layer_tree: result.tree as unknown,
+          image_url: result.image_url,
+          image_path: result.image_path,
+        });
+        if (!save.ok) {
+          setError(`Editor save (update) failed: ${save.error}`);
+          return;
+        }
+      } else {
+        const save = await saveGeneratedPostAction({
+          mls_number: selectedListing.mls_number,
+          source_mls: selectedListing.source_mls,
+          property_id: selectedListing.id,
+          post_type: postType,
+          variant: variantId,
+          format,
+          template_id: renderResult.template_id,
+          image_url: result.image_url,
+          image_path: result.image_path,
+          hero_image_source_url: renderResult.hero_image_source_url,
+          template_props: {
+            listing: selectedListing,
+            photo_count: photoCount,
+            photo_urls: currentHeroUrls,
+          },
+          caption: captionResult?.caption ?? "",
+          hashtags: captionResult?.hashtags ?? [],
+          mls_hashtag: captionResult?.mls_hashtag ?? "",
+          customizations,
+          layer_tree: result.tree as unknown,
+        });
+        if (!save.ok) {
+          setError(`Editor save (insert) failed: ${save.error}`);
+          return;
+        }
+        id = save.id;
+        setGeneratedPostId(id);
+      }
+      // Close on success — mirrors the "one-decision-per-screen" ADHD
+      // principle. User can reopen to keep iterating.
+      closeEditor();
+    } catch (e) {
+      setError(`Editor save threw: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** True if user has any non-default customization applied. */
@@ -1718,6 +1848,19 @@ export default function PostBuilderClient({
                       >
                         {customizeOpen ? "✕ Close customize" : `✎ Customize${hasCustomizations ? " (edited)" : ""}`}
                       </button>
+                      <button
+                        type="button"
+                        onClick={openEditor}
+                        className={[
+                          "flex-1 min-w-[120px] rounded-lg px-4 py-2.5 text-sm font-semibold transition ring-1",
+                          existingLayerTree
+                            ? "bg-gold-100 text-gold-900 ring-gold-500"
+                            : "bg-white text-neutral-700 ring-neutral-300 hover:bg-neutral-50",
+                        ].join(" ")}
+                        title="Open the full layer editor (Canva-style) — drag, resize, restyle every element"
+                      >
+                        {`✎ Edit in Editor${existingLayerTree ? " (edited)" : ""}`}
+                      </button>
                       {isAdmin ? (
                         <button
                           type="button"
@@ -1823,6 +1966,16 @@ export default function PostBuilderClient({
           results={postNowResults}
           onCancel={closePostNow}
           onConfirm={submitPostNow}
+        />
+      ) : null}
+      {editorOpen && editorTree && selectedListing ? (
+        <PostEditor
+          initialTree={editorTree}
+          generatedPostId={generatedPostId}
+          availablePhotos={availablePhotos.map((p) => ({ url: p.url, sequence: p.sequence }))}
+          listing={selectedListing}
+          onClose={closeEditor}
+          onSave={handleEditorSave}
         />
       ) : null}
     </div>

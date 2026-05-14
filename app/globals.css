@@ -91,4 +91,14 @@ html, body {
   .gold-rule {
     @apply h-0.5 bg-gradient-to-r from-gold-500/0 via-gold-500/60 to-gold-500/0;
   }
+
+  /* Dark-themed input used inside the Path B PostEditor overlay. The editor
+     runs against a dark canvas to match Canva/Figma muscle memory; .input is
+     light-on-light and reads poorly there. Same focus + sizing semantics. */
+  .input-dark {
+    @apply block w-full rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1.5
+           text-xs text-white placeholder:text-neutral-500
+           focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40
+           disabled:bg-neutral-900 disabled:text-neutral-500;
+  }
 }
