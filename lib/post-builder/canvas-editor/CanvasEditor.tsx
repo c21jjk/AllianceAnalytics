@@ -667,6 +667,72 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const history = useUndoRedoHistory(fabricRef);
 
   // -------------------------------------------------------------------------
+  // Phase 2 — force-load Google Fonts so Fabric can actually use them
+  // -------------------------------------------------------------------------
+  // why: just importing fonts.css declares the @font-face rules but the
+  // browser only DOWNLOADS each woff2 file when something in the document
+  // references that family. Fabric writes the font name into the canvas's
+  // text-rendering call, but the canvas API doesn't trigger a font fetch —
+  // it silently falls back to the next font in the stack if the requested
+  // family isn't loaded yet. That's why "Playfair Display" looked like
+  // Georgia and "Bebas Neue" looked like Arial Narrow.
+  //
+  // Fix: ask document.fonts.load() to fetch each one explicitly, then
+  // re-render the canvas as each font resolves so already-drawn text picks
+  // up the right typeface.
+  useEffect(() => {
+    // why: these are the Google Fonts families from fonts.css. System
+    // fallbacks (Inter, Georgia, SF Mono) aren't here — Inter is preloaded
+    // by app/layout.tsx via next/font, Georgia + SF Mono are OS fonts.
+    const familiesToLoad: readonly string[] = [
+      "Montserrat",
+      "Poppins",
+      "Lato",
+      "Oswald",
+      "Bebas Neue",
+      "Playfair Display",
+      "Cormorant Garamond",
+      "Lora",
+      "Merriweather",
+      "Pacifico",
+    ];
+    // why: bail in environments without the FontFace API (older browsers,
+    // SSR safety — though "use client" should keep us off the server here).
+    if (typeof document === "undefined" || !document.fonts) return;
+
+    let cancelled = false;
+
+    familiesToLoad.forEach((family) => {
+      // why: load() expects a CSS font shorthand. Size doesn't matter — any
+      // size triggers a fetch. We request a generic weight so the regular
+      // file fires; Fabric will use the weight from the layer schema when
+      // it actually draws, and that triggers any additional weight fetches.
+      document.fonts
+        .load(`16px "${family}"`)
+        .then(() => {
+          if (cancelled) return;
+          // why: re-render the canvas now that THIS font is ready. We
+          // re-render on every individual resolve (not just at the end)
+          // so the user sees fonts pop in one-by-one rather than waiting
+          // for the slowest one.
+          fabricRef.current?.requestRenderAll();
+        })
+        .catch(() => {
+          // why: a single font failing shouldn't break the others. Most
+          // common cause: blocked third-party CDN. Silent — the dropdown
+          // still lists the font and the system fallback renders.
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // why: empty deps — fonts only need to load once per editor mount. The
+    // request is shared across all canvas re-inits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // -------------------------------------------------------------------------
   // Schema validation (memo — runs once per template change)
   // -------------------------------------------------------------------------
   // why: invariant check from types.ts — canvas dimensions MUST match the

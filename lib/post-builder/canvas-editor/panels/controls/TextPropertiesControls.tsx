@@ -38,6 +38,9 @@ import {
 } from "react";
 
 import ColorPicker from "../../primitives/ColorPicker";
+import FontPicker, {
+  type FontPickerOption,
+} from "../../primitives/FontPicker";
 import { ALLIANCE_FONTS } from "../../templates/tokens";
 
 interface TextPropertiesControlsProps {
@@ -87,25 +90,30 @@ interface TextState {
  * register (body sans → display sans → serif → script → mono) so Larissa can
  * scan from "safest body choice" down to "most ornamental."
  */
-const FONT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+// why: typed against FontPicker's option shape. The `category` field drives
+// the grouped sections inside the FontPicker popover (Sans / Display / Serif /
+// Script / Mono). Labels are the marketing names without the category suffix
+// — the FontPicker shows the category as a section header so "(Sans)" etc.
+// would be redundant noise.
+const FONT_OPTIONS: ReadonlyArray<FontPickerOption> = [
   // ----- Sans (body + UI) -----
-  { label: "Inter (Sans)", value: ALLIANCE_FONTS.bodySans },
-  { label: "Montserrat (Sans)", value: ALLIANCE_FONTS.montserrat },
-  { label: "Poppins (Sans)", value: ALLIANCE_FONTS.poppins },
-  { label: "Lato (Sans)", value: ALLIANCE_FONTS.lato },
-  // ----- Sans (display) -----
-  { label: "Oswald (Display)", value: ALLIANCE_FONTS.oswald },
-  { label: "Bebas Neue (Display)", value: ALLIANCE_FONTS.bebasNeue },
+  { label: "Inter", value: ALLIANCE_FONTS.bodySans, category: "Sans" },
+  { label: "Montserrat", value: ALLIANCE_FONTS.montserrat, category: "Sans" },
+  { label: "Poppins", value: ALLIANCE_FONTS.poppins, category: "Sans" },
+  { label: "Lato", value: ALLIANCE_FONTS.lato, category: "Sans" },
+  // ----- Display sans -----
+  { label: "Oswald", value: ALLIANCE_FONTS.oswald, category: "Display" },
+  { label: "Bebas Neue", value: ALLIANCE_FONTS.bebasNeue, category: "Display" },
   // ----- Serif -----
-  { label: "Georgia (Serif)", value: ALLIANCE_FONTS.displaySerif },
-  { label: "Playfair Display (Serif)", value: ALLIANCE_FONTS.playfair },
-  { label: "Cormorant Garamond (Serif)", value: ALLIANCE_FONTS.cormorant },
-  { label: "Lora (Serif)", value: ALLIANCE_FONTS.lora },
-  { label: "Merriweather (Serif)", value: ALLIANCE_FONTS.merriweather },
+  { label: "Georgia", value: ALLIANCE_FONTS.displaySerif, category: "Serif" },
+  { label: "Playfair Display", value: ALLIANCE_FONTS.playfair, category: "Serif" },
+  { label: "Cormorant Garamond", value: ALLIANCE_FONTS.cormorant, category: "Serif" },
+  { label: "Lora", value: ALLIANCE_FONTS.lora, category: "Serif" },
+  { label: "Merriweather", value: ALLIANCE_FONTS.merriweather, category: "Serif" },
   // ----- Script (accent) -----
-  { label: "Pacifico (Script)", value: ALLIANCE_FONTS.pacifico },
+  { label: "Pacifico", value: ALLIANCE_FONTS.pacifico, category: "Script" },
   // ----- Mono -----
-  { label: "SF Mono", value: ALLIANCE_FONTS.monoNum },
+  { label: "SF Mono", value: ALLIANCE_FONTS.monoNum, category: "Mono" },
 ];
 
 const WEIGHT_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
@@ -232,9 +240,11 @@ export default function TextPropertiesControls(
 
   // why: handlers split out for readability — each one is trivial but lifting
   // them above the JSX means the render block stays scannable.
+  // why: FontPicker emits the value string directly (no event). This is a
+  // value-only signature, simpler than the old ChangeEvent<HTMLSelectElement>.
   const handleFontFamilyChange = useCallback(
-    (e: ChangeEvent<HTMLSelectElement>) => {
-      applyMutation({ fontFamily: e.target.value }, true);
+    (next: string) => {
+      applyMutation({ fontFamily: next }, true);
     },
     [applyMutation],
   );
@@ -347,25 +357,16 @@ export default function TextPropertiesControls(
   return (
     <div className="flex flex-col gap-4 px-3 py-3">
       {/* ===== Font family ===== */}
+      {/* why: custom FontPicker primitive replaces the native <select> so
+          each option previews in its own typeface (the only way to do this
+          consistently across Chrome / Safari / Firefox — native <option>
+          doesn't honor font-family in Chrome). */}
       <Section title="Font">
-        <select
+        <FontPicker
           value={state.fontFamily}
           onChange={handleFontFamilyChange}
-          className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
-        >
-          {/* why: include the active font even if it's not in our presets so the
-              dropdown doesn't silently swap the user's font on first render. */}
-          {FONT_OPTIONS.find((o) => o.value === state.fontFamily) ? null : (
-            <option value={state.fontFamily}>
-              {state.fontFamily.split(",")[0]?.trim() ?? "Custom"} (custom)
-            </option>
-          )}
-          {FONT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+          options={FONT_OPTIONS}
+        />
       </Section>
 
       {/* ===== Size + weight ===== */}
