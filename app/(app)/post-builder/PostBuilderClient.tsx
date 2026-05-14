@@ -17,6 +17,7 @@ import type {
 import {
   saveGeneratedPostAction,
   updateGeneratedPostImageAction,
+  upsertGeneratedPostFromStudioAction,
 } from "./actions";
 
 // === Canvas Editor (Path C) — Phase 1, Step 2 wiring ===
@@ -30,6 +31,7 @@ import type {
   CanvasTemplateSchema,
   MLSListingPayload,
 } from "@/lib/post-builder/canvas-editor/types";
+import type { CreatedPostResumeRow } from "@/lib/data/created-posts-db";
 
 interface VariantOption {
   template_id: string;
@@ -51,6 +53,14 @@ interface Props {
   variantsByPostTypeAndFormat: Record<PostType, Record<PostFormat, VariantOption[]>>;
   formatMeta: Record<PostFormat, FormatMeta>;
   isAdmin: boolean;
+  /**
+   * Optional resume-edit row pre-fetched server-side from /post-builder?gp=<id>.
+   * When present, the client pre-selects post_type/variant/format/listing,
+   * stashes the row id in `generatedPostId`, and opens Studio with the
+   * saved layer_tree (falling back to the factory template if layer_tree
+   * is null on an older row).
+   */
+  initialResume?: CreatedPostResumeRow | null;
 }
 
 type PostPlatform = "facebook" | "instagram";
@@ -126,6 +136,7 @@ export default function PostBuilderClient({
   variantsByPostTypeAndFormat,
   formatMeta,
   isAdmin,
+  initialResume,
 }: Props) {
   const [outputMode, setOutputMode] = useState<OutputMode>("ig_single");
   const [postType, setPostType] = useState<PostType>("just_listed");
@@ -178,7 +189,31 @@ export default function PostBuilderClient({
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
   // Restore last-used preferences on mount.
+  // why: resume context (when present) wins over localStorage — the user
+  // explicitly clicked a saved post, so we honor that selection even if
+  // their last-used preferences point elsewhere.
   useEffect(() => {
+    if (initialResume) {
+      setPostType(initialResume.post_type);
+      setFormat(initialResume.format);
+      setVariantId(initialResume.variant);
+      setSelectedMls(initialResume.mls_number);
+      setGeneratedPostId(initialResume.id);
+      // why: also pre-fill renderResult so the preview pane shows the
+      // saved image as soon as Studio closes — the user sees the same
+      // thing they clicked in the strip, no "regenerate to see it" beat.
+      if (initialResume.image_url && initialResume.image_path) {
+        setRenderResult({
+          image_url: initialResume.image_url,
+          image_path: initialResume.image_path,
+          template_id: initialResume.template_id,
+          width: 0,
+          height: 0,
+          hero_image_source_url: initialResume.hero_image_source_url ?? "",
+        });
+      }
+      return;
+    }
     const savedMode = localStorage.getItem(STORAGE_KEY_OUTPUT_MODE) as OutputMode | null;
     if (savedMode === "ig_single" || savedMode === "fb_multi") {
       setOutputMode(savedMode);
@@ -195,7 +230,7 @@ export default function PostBuilderClient({
     if (savedV && (savedV === "v1" || savedV === "v2" || savedV === "v3")) {
       setVariantId(savedV);
     }
-  }, []);
+  }, [initialResume]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_OUTPUT_MODE, outputMode);
@@ -280,11 +315,12 @@ export default function PostBuilderClient({
 
   const handleStudioSave = useCallback(
     async (result: CanvasExportResult): Promise<void> => {
-      // why: real save flow now — upload the edited PNG to Storage via the
-      // new /api/post-builder/canvas-save endpoint, then (if there's an
-      // existing generated_posts row from the V1 render) update it to point
-      // at the new image. The preview pane gets the new image_url so the
-      // user sees their edit immediately when the overlay closes.
+      // why: every Studio save now produces exactly ONE persistent
+      // generated_posts row. First save in a session INSERTs (status='draft'),
+      // every subsequent save in the same session UPDATEs the same row and
+      // deletes the prior Storage image so we don't accumulate orphans.
+      // The id is stashed in `generatedPostId` so the Post Now flow can
+      // pick up the same row and flip it to status='posted' later.
       if (!selectedListing) {
         setError("Can't save — no listing selected.");
         return;
@@ -339,25 +375,37 @@ export default function PostBuilderClient({
         }
         const uploadJson = parsed;
 
-        // ---- 2. If an existing generated_posts row exists, swap its image ----
-        // why: persists the edit so the post stays edited across refreshes
-        // and shows up that way wherever generated_posts is consumed (listing
-        // detail, posts list, etc.). If there's no row yet (user opened
-        // Studio before clicking Generate Post), we just skip — the preview
-        // updates in-memory and a later Generate would clobber anyway.
-        if (generatedPostId) {
-          const updRes = await updateGeneratedPostImageAction({
-            id: generatedPostId,
-            image_url: uploadJson.image_url,
-            image_path: uploadJson.image_path,
-          });
-          if (!updRes.ok) {
-            // Non-fatal — we still have the image up. Show a warning but
-            // keep the in-memory preview update so the user sees their work.
-            setError(
-              `Image saved, but post row update failed: ${updRes.error}`,
-            );
-          }
+        // ---- 2. Upsert the generated_posts row ----
+        // why: single canonical path now — UPDATE if we already have an id
+        // for this Studio session, INSERT otherwise. On UPDATE the server
+        // also deletes the prior image_path from Storage (Option B cleanup).
+        const upsertRes = await upsertGeneratedPostFromStudioAction({
+          id: generatedPostId,
+          mls_number: selectedListing.mls_number,
+          source_mls: selectedListing.source_mls,
+          property_id: selectedListing.id ?? null,
+          post_type: postType,
+          variant: variantId,
+          format,
+          template_id: result.schema.id,
+          image_url: uploadJson.image_url,
+          image_path: uploadJson.image_path,
+          hero_image_source_url: selectedListing.hero_image_url ?? null,
+          // why: persisting the post-hydration schema enables "resume in
+          // Studio" later from the Created Posts strip / library.
+          layer_tree: result.schema as unknown as Parameters<
+            typeof upsertGeneratedPostFromStudioAction
+          >[0]["layer_tree"],
+        });
+        if (!upsertRes.ok) {
+          // Non-fatal for the in-memory preview — image is uploaded, the
+          // user sees their edit. Surface as a warning so they know the
+          // row didn't persist.
+          setError(`Image saved, but post row update failed: ${upsertRes.error}`);
+        } else if (upsertRes.inserted) {
+          // First save of this Studio session — stash the new id so the
+          // next save updates instead of inserting again.
+          setGeneratedPostId(upsertRes.id);
         }
 
         // ---- 3. Update the preview pane in-memory ----
@@ -374,7 +422,14 @@ export default function PostBuilderClient({
                 width: result.width,
                 height: result.height,
               }
-            : prev,
+            : {
+                image_url: uploadJson.image_url,
+                image_path: uploadJson.image_path,
+                template_id: result.schema.id,
+                width: result.width,
+                height: result.height,
+                hero_image_source_url: selectedListing.hero_image_url ?? "",
+              },
         );
 
         // ---- 4. Close the overlay ----
@@ -385,7 +440,7 @@ export default function PostBuilderClient({
         );
       }
     },
-    [selectedListing, generatedPostId],
+    [selectedListing, generatedPostId, postType, variantId, format],
   );
 
   const handleStudioClose = useCallback((): void => {
@@ -420,6 +475,54 @@ export default function PostBuilderClient({
         return "aspect-[9/16]";
     }
   }, [format]);
+
+  // why: track whether we've already auto-opened Studio for the resume
+  // context. The effect that does the open watches selectedListing + photos,
+  // both of which can re-fire (user navigates, photos refresh) — but we only
+  // want to auto-open ONCE, on the first time everything is ready. After
+  // the user closes Studio, navigating around shouldn't re-open it.
+  const resumeAutoOpenedRef = useRef(false);
+
+  // Auto-open Studio when the user arrived via /post-builder?gp=<id>.
+  // Waits for: (1) resume context present, (2) listing is selected/loaded,
+  // (3) photos finished loading. Uses the saved layer_tree from the row as
+  // the template — falls back to the factory template when layer_tree is
+  // null (older rows that pre-date the column being populated).
+  useEffect(() => {
+    if (!initialResume) return;
+    if (resumeAutoOpenedRef.current) return;
+    if (!selectedListing) return;
+    if (photosLoading) return;
+
+    // Resolve the template: saved layer_tree wins; factory template is the
+    // fallback so older rows still open in a usable state.
+    let template: CanvasTemplateSchema | null = null;
+    if (initialResume.layer_tree && typeof initialResume.layer_tree === "object") {
+      template = initialResume.layer_tree as unknown as CanvasTemplateSchema;
+    } else {
+      template = findCanvasTemplate(
+        initialResume.post_type,
+        initialResume.variant,
+        initialResume.format,
+      );
+    }
+    if (!template) {
+      setError(
+        "Couldn't load the saved design. The template format may have been removed.",
+      );
+      resumeAutoOpenedRef.current = true;
+      return;
+    }
+
+    const payload = mapListingToPayload(selectedListing, {
+      photos: availablePhotos.map((p) => p.url),
+      agentName: selectedListing.agent_name ?? null,
+      officeName: selectedListing.listing_office_name ?? null,
+    });
+    setStudioContext({ template, listing: payload });
+    setStudioOpen(true);
+    resumeAutoOpenedRef.current = true;
+  }, [initialResume, selectedListing, photosLoading, availablePhotos]);
 
   // Fetch photos when the selected listing changes.
   useEffect(() => {

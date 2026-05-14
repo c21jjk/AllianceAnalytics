@@ -5,6 +5,8 @@ import {
   listSupportedFormats,
   listVariantsForPostType,
 } from "@/lib/post-builder/templates/registry";
+import { fetchCreatedPostResume } from "@/lib/data/created-posts-db";
+import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import PostBuilderClient from "./PostBuilderClient";
 import type {
@@ -15,6 +17,10 @@ import type {
 
 export const metadata = { title: "Post Builder — Alliance Social" };
 export const dynamic = "force-dynamic";
+
+interface SearchParamsShape {
+  gp?: string | string[];
+}
 
 const POST_TYPES: PostType[] = [
   "just_listed",
@@ -36,9 +42,23 @@ const POST_TYPES: PostType[] = [
  * /posts auto-linker ties posts back to the listing once Larissa
  * publishes.
  */
-export default async function PostBuilderPage() {
+export default async function PostBuilderPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParamsShape>;
+}) {
   const profile = await requireUser();
   const isAdmin = profile.role === "admin";
+
+  // why: optional resume context — when the user clicked a saved post in
+  // the Created Posts strip or library, ?gp=<id> tells us which row to
+  // pre-load. Server-side fetch keeps the editor's first render trustworthy
+  // (no flash of "wrong" picker state) and gates the lookup by created_by.
+  const sp = await searchParams;
+  const gpParam = Array.isArray(sp.gp) ? sp.gp[0] : sp.gp;
+  const resume = gpParam
+    ? await fetchCreatedPostResume(gpParam, profile.id)
+    : null;
 
   const [justListed, justSold, underContract, openHouse, priceReduction] = await Promise.all([
     fetchListingsForPostBuilder({ post_type: "just_listed" }),
@@ -103,12 +123,35 @@ export default async function PostBuilderPage() {
         title="Post Builder"
         description="Pick a post type, listing, format, and variant. Square for IG / FB feed, Portrait for IG feed preferred, Story 9:16 for IG/FB Stories — each format renders brand-perfect with the MLS hashtag baked in for auto-attribution."
         phaseTag="Phase 3"
+        actions={
+          <Link
+            href="/posts/created"
+            className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
+              <path d="M5.5 6.5h5M5.5 9h3" />
+            </svg>
+            Saved posts
+          </Link>
+        }
       />
       <PostBuilderClient
         listingsByPostType={listingsByPostType}
         variantsByPostTypeAndFormat={variantsByPostTypeAndFormat}
         formatMeta={formatMeta}
         isAdmin={isAdmin}
+        initialResume={resume}
       />
     </div>
   );

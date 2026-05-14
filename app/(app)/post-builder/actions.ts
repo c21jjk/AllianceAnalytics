@@ -5,10 +5,19 @@ import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import type {
+  PostFormat,
+  PostType,
+  PostVariant,
   SaveGeneratedPostInput,
   SaveGeneratedPostResult,
   SaveGeneratedPostErrorResult,
+  SourceMls,
 } from "@/lib/post-builder/types";
+
+// Mirrors STORAGE_BUCKET in app/api/post-builder/canvas-save/route.ts +
+// lib/post-builder/render.ts — same bucket, same naming, so a single delete
+// path here covers both V1 renders and Path C saves.
+const POST_RENDER_STORAGE_BUCKET = "post-builder-renders";
 
 /**
  * Persists a generated post to the `generated_posts` table. Called from the
@@ -126,4 +135,307 @@ export async function updateGeneratedPostImageAction(
 
   revalidatePath("/post-builder");
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Studio save — single canonical insert-or-update path
+// ---------------------------------------------------------------------------
+
+/**
+ * `upsertGeneratedPostFromStudioAction` — the new single entry point for
+ * every Studio save (Path C canvas editor).
+ *
+ * Why this replaces the prior "insert on Generate Post, update on Studio save"
+ * split: every Studio save should produce exactly ONE persistent row,
+ * regardless of whether the user clicked "Generate Post" first. That row
+ * becomes the source of truth for:
+ *
+ *   • Per-listing "Created Posts" strip on the property detail page
+ *   • Global /posts/created library page
+ *   • Resume-editing (load layer_tree back into Studio later)
+ *
+ * Storage cleanup rule (Option B): when we're updating an existing row, we
+ * delete the OLD image_path from Storage *after* the row update succeeds.
+ * If the delete fails, the row already points at the new image — we just
+ * surface a non-fatal warning instead of orphaning the row.
+ */
+
+export interface UpsertStudioPostInput {
+  /** When provided, UPDATE that row. When null/undefined, INSERT a new row. */
+  id: string | null;
+  mls_number: string;
+  source_mls: SourceMls;
+  property_id: string | null;
+  post_type: PostType;
+  variant: PostVariant;
+  format: PostFormat;
+  template_id: string;
+  /** Fresh image URL from canvas-save endpoint. */
+  image_url: string;
+  /** Fresh image storage path from canvas-save endpoint. */
+  image_path: string;
+  /** Listing's hero photo URL — for diagnostics + future "reset to source". */
+  hero_image_source_url: string | null;
+  /**
+   * Serialized post-hydration template schema. Persisting this enables
+   * "resume editing" later — the editor rehydrates from this JSON instead
+   * of re-running the listing → template mapper.
+   */
+  layer_tree: Json | null;
+}
+
+export interface UpsertStudioPostOk {
+  ok: true;
+  id: string;
+  /**
+   * Whether we inserted a new row (true) or updated an existing one (false).
+   * The client uses this to know whether to stash the id in component state.
+   */
+  inserted: boolean;
+  /**
+   * Whether the old image_path was cleaned up from Storage. False is
+   * non-fatal — the row is correct, but a stale file lingers.
+   */
+  prior_storage_cleaned: boolean;
+}
+
+export interface UpsertStudioPostErr {
+  ok: false;
+  error: string;
+}
+
+export async function upsertGeneratedPostFromStudioAction(
+  input: UpsertStudioPostInput,
+): Promise<UpsertStudioPostOk | UpsertStudioPostErr> {
+  const profile = await requireUser();
+
+  if (
+    !input.mls_number ||
+    !input.template_id ||
+    !input.image_url ||
+    !input.image_path
+  ) {
+    return { ok: false, error: "missing required fields" };
+  }
+
+  const supabase = createAdminClient();
+  const nowIso = new Date().toISOString();
+
+  // ---- UPDATE path: row exists, swap image + clean Storage ----
+  if (input.id) {
+    // why: fetch the old image_path BEFORE the update so we know what to
+    // delete from Storage after. Doing the fetch first also gives us a
+    // 404-equivalent (row not found / belongs to another user) before any
+    // mutation runs.
+    const { data: existing, error: fetchError } = await supabase
+      .from("generated_posts")
+      .select("id, image_path, created_by")
+      .eq("id", input.id)
+      .maybeSingle();
+
+    if (fetchError) {
+      return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+    }
+    if (!existing) {
+      return { ok: false, error: "row not found" };
+    }
+    // why: created_by check matches updateGeneratedPostImageAction — admin
+    // client bypasses RLS, so we gate intent here. Larissa shouldn't see /
+    // delete John's drafts and vice versa.
+    if (existing.created_by !== profile.id) {
+      return { ok: false, error: "not owner" };
+    }
+
+    const priorImagePath = existing.image_path;
+
+    const { error: updError } = await supabase
+      .from("generated_posts")
+      .update({
+        image_url: input.image_url,
+        image_path: input.image_path,
+        // Re-stamp the structural fields too in case the user changed
+        // variant/format mid-edit (e.g., switched from portrait → story).
+        template_id: input.template_id,
+        post_type: input.post_type,
+        variant: input.variant,
+        format: input.format,
+        layer_tree: input.layer_tree ?? null,
+        updated_at: nowIso,
+      })
+      .eq("id", input.id)
+      .eq("created_by", profile.id);
+
+    if (updError) {
+      return { ok: false, error: `update_failed: ${updError.message}` };
+    }
+
+    // why: delete the old file from Storage only when the path actually
+    // changed. canvas-save uses a timestamp in the path, so this is
+    // typically true on every save — but a same-path update is possible
+    // in future flows (e.g., re-saving the same image after a metadata
+    // edit) and we shouldn't delete the file we just pointed at.
+    let priorStorageCleaned = false;
+    if (priorImagePath && priorImagePath !== input.image_path) {
+      const { error: delError } = await supabase.storage
+        .from(POST_RENDER_STORAGE_BUCKET)
+        .remove([priorImagePath]);
+      // why: non-fatal — the row is correct, the user's edit is saved.
+      // We just leave a Storage orphan that a future cleanup sweep can
+      // collect. Logging keeps the orphan rate visible in prod.
+      if (delError) {
+        console.warn(
+          "[upsertGeneratedPostFromStudioAction] storage cleanup failed:",
+          delError.message,
+        );
+      } else {
+        priorStorageCleaned = true;
+      }
+    }
+
+    revalidatePath("/post-builder");
+    revalidatePath("/posts/created");
+    return {
+      ok: true,
+      id: input.id,
+      inserted: false,
+      prior_storage_cleaned: priorStorageCleaned,
+    };
+  }
+
+  // ---- INSERT path: no id yet, create a draft row ----
+  const { data, error: insError } = await supabase
+    .from("generated_posts")
+    .insert({
+      mls_number: input.mls_number,
+      source_mls: input.source_mls,
+      property_id: input.property_id,
+      post_type: input.post_type,
+      variant: input.variant,
+      format: input.format,
+      template_id: input.template_id,
+      image_url: input.image_url,
+      image_path: input.image_path,
+      hero_image_source_url: input.hero_image_source_url,
+      // why: empty template_props + customizations on a fresh Studio draft
+      // — the canvas editor doesn't use Path A customizations. The Generate
+      // flow fills these in when the user runs caption generation.
+      template_props: {} as Json,
+      customizations: {} as Json,
+      caption: null,
+      hashtags: null,
+      mls_hashtag: null,
+      layer_tree: input.layer_tree ?? null,
+      // status='draft' so the user knows it hasn't been posted yet. The
+      // existing Post Now flow can flip this to 'posted' or 'scheduled'.
+      status: "draft",
+      created_by: profile.id,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (insError) {
+    return { ok: false, error: `insert_failed: ${insError.message}` };
+  }
+  if (!data || typeof data.id !== "string") {
+    return { ok: false, error: "insert returned no row" };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/posts/created");
+  return {
+    ok: true,
+    id: data.id,
+    inserted: true,
+    prior_storage_cleaned: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Delete a saved Studio post — row + Storage file
+// ---------------------------------------------------------------------------
+
+export interface DeleteGeneratedPostInput {
+  id: string;
+}
+
+export interface DeleteGeneratedPostOk {
+  ok: true;
+  /** True when the Storage file was also cleaned up. False = row gone, file orphaned. */
+  storage_cleaned: boolean;
+}
+
+export interface DeleteGeneratedPostErr {
+  ok: false;
+  error: string;
+}
+
+/**
+ * Hard-delete a generated_posts row AND its Storage image. Used by:
+ *   • Per-listing Created Posts strip (trash icon on hover)
+ *   • Global /posts/created library (single + bulk delete)
+ *
+ * Auth-gated to the row's `created_by`. Admin client bypasses RLS so we
+ * enforce ownership explicitly. Returns ok even if the Storage cleanup
+ * fails, since the row is the canonical record — a stale Storage file
+ * without a referring row is just disk usage.
+ */
+export async function deleteGeneratedPostAction(
+  input: DeleteGeneratedPostInput,
+): Promise<DeleteGeneratedPostOk | DeleteGeneratedPostErr> {
+  const profile = await requireUser();
+  if (!input.id) {
+    return { ok: false, error: "id required" };
+  }
+
+  const supabase = createAdminClient();
+
+  // why: pull the row's image_path + created_by first. We need the path to
+  // queue the Storage delete, and the ownership check has to happen before
+  // we hit Storage (otherwise we could delete someone else's file even if
+  // the row delete is later blocked).
+  const { data: existing, error: fetchError } = await supabase
+    .from("generated_posts")
+    .select("id, image_path, created_by")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (fetchError) {
+    return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+  }
+  if (!existing) {
+    // why: idempotent — deleting an already-gone row should not error,
+    // matches REST semantics + lets the UI fire-and-forget without a
+    // pre-check.
+    return { ok: true, storage_cleaned: false };
+  }
+  if (existing.created_by !== profile.id) {
+    return { ok: false, error: "not owner" };
+  }
+
+  const { error: delError } = await supabase
+    .from("generated_posts")
+    .delete()
+    .eq("id", input.id)
+    .eq("created_by", profile.id);
+  if (delError) {
+    return { ok: false, error: `delete_failed: ${delError.message}` };
+  }
+
+  let storageCleaned = false;
+  if (existing.image_path) {
+    const { error: storageError } = await supabase.storage
+      .from(POST_RENDER_STORAGE_BUCKET)
+      .remove([existing.image_path]);
+    if (storageError) {
+      console.warn(
+        "[deleteGeneratedPostAction] storage cleanup failed:",
+        storageError.message,
+      );
+    } else {
+      storageCleaned = true;
+    }
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/posts/created");
+  return { ok: true, storage_cleaned: storageCleaned };
 }

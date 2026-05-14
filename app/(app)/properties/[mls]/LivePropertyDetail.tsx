@@ -9,11 +9,13 @@ import GenerateReportButton from "@/components/GenerateReportButton";
 import SendToAgentButton from "@/components/SendToAgentButton";
 import ReportActionBar from "@/components/ReportActionBar";
 import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel";
+import CreatedPostsStrip from "@/components/CreatedPostsStrip";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 import {
   getOpenHousesForProperty,
   type UpcomingOpenHouse,
 } from "@/lib/data/open-houses";
+import { fetchCreatedPostsByMls } from "@/lib/data/created-posts-db";
 
 interface LivePropertyDetailProps {
   property: PropertyDetail;
@@ -54,6 +56,10 @@ export default async function LivePropertyDetail({
 
   const existingReport = await fetchExistingOwnerReportForProperty(property.id);
   const openHouses = await getOpenHousesForProperty(property.id);
+  // why: per-listing Created Posts strip — pulls every generated_posts row
+  // saved for this MLS, drafts + posted alike, so Larissa can resume editing
+  // anything she started without leaving the property detail page.
+  const createdPosts = await fetchCreatedPostsByMls(property.mls_number);
 
   return (
     <div className="space-y-6">
@@ -172,6 +178,13 @@ export default async function LivePropertyDetail({
       {/* Open Houses for this listing — render only when scheduled. */}
       {openHouses.length > 0 ? (
         <PropertyOpenHousesSection openHouses={openHouses} />
+      ) : null}
+
+      {/* Created Posts for this listing (drafts + already-posted Studio saves).
+          Renders only when there's at least one — the empty state lives
+          inline in the strip itself so we don't double up the prompt. */}
+      {createdPosts.length > 0 ? (
+        <CreatedPostsStrip initialPosts={createdPosts} hideWhenEmpty />
       ) : null}
 
       {/* Quick stats — only meaningful when there are posts */}
