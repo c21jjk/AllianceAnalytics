@@ -3545,6 +3545,10 @@ function CanvasArea(props: CanvasAreaProps) {
               // Selection-set change (different ids) is the right invalidation trigger.
               key={`mv-multi-${selectedLayers.map((l) => l.id).join(",")}`}
               target={moveableTargetRef.current}
+              // Same dragArea fix as the single-select Moveable — without it,
+              // multi-select drag had no body-drag overlay (target was a virtual
+              // bbox div with pointer-events: none). See note in single-select.
+              dragArea
               draggable
               resizable={false}
               rotatable={false}
@@ -3624,6 +3628,13 @@ function CanvasArea(props: CanvasAreaProps) {
               draggable
               resizable
               rotatable
+              // dragArea injects a transparent .moveable-area overlay over the
+              // target so body-drag works even when the target itself has
+              // pointer-events: none (which ours does, so SVG clicks beneath
+              // can still bubble to handleCanvasClick for layer-select). Without
+              // this, only corner-handle resize fired; the layer body was dead.
+              // See https://github.com/daybrush/moveable/wiki/dragArea
+              dragArea
               keepRatio={false}
               throttleDrag={0}
               throttleResize={0}
