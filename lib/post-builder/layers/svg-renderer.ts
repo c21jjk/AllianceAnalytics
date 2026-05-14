@@ -151,16 +151,44 @@ function renderImage(l: ImageLayer, indent: string): string {
     fit === "fill" ? "none" : fit === "contain" ? "xMidYMid meet" : "xMidYMid slice";
   const radius = l.radius && l.radius > 0 ? l.radius : 0;
 
-  // For rounded corners, we use a clipPath on the wrapping <g>.
-  const clipId = radius > 0 ? `clip_${l.id}` : null;
+  // ── Crop handling ─────────────────────────────────────────────────
+  // When `crop` is set with normalized 0..1 coordinates, we render the
+  // selected sub-region of the source image into the layer's box. Strategy:
+  // wrap the <image> in a clipPath sized to (l.x..l.x+l.w, l.y..l.y+l.h)
+  // and STRETCH the underlying image so the cropped region maps exactly
+  // into that box. Stretched-width = l.w / crop.w, stretched-height = l.h
+  // / crop.h. The image is then offset by -crop.x*scaledW so the cropped
+  // origin lands at the box's top-left.
+  //
+  // Without crop, the existing fit/preserveAspectRatio handles things.
+  const crop = l.crop;
+  const hasValidCrop =
+    crop &&
+    crop.w > 0 &&
+    crop.h > 0 &&
+    !(crop.x === 0 && crop.y === 0 && crop.w === 1 && crop.h === 1);
+
+  // For rounded corners OR cropping, we use a clipPath on the wrapping <g>.
+  // Crop always needs a clip rect to hide the overflow.
+  const needsClip = radius > 0 || hasValidCrop;
+  const clipId = needsClip ? `clip_${l.id}` : null;
   const clipDef = clipId
     ? `<defs><clipPath id="${clipId}"><rect x="${l.x}" y="${l.y}" width="${l.w}" height="${l.h}" rx="${radius}" ry="${radius}" /></clipPath></defs>`
     : "";
   const clipAttr = clipId ? ` clip-path="url(#${clipId})"` : "";
 
-  // Crop window: implemented via a viewBox inside an <svg> sub-document.
-  // For simplicity in v1 we ignore crop (default = full image).
-  // Crop support can be added in a follow-up.
+  if (hasValidCrop && crop) {
+    // Stretch-and-shift approach. We bypass preserveAspectRatio by using
+    // "none" for the cropped path — fit modes only matter for un-cropped
+    // images. The crop window IS the new framing.
+    const scaledW = l.w / crop.w;
+    const scaledH = l.h / crop.h;
+    const ix = l.x - crop.x * scaledW;
+    const iy = l.y - crop.y * scaledH;
+    return `${indent}${clipDef}<g${transform}${opacity}${clipAttr}>
+${indent}  <image href="${escapeAttr(l.src)}" x="${ix}" y="${iy}" width="${scaledW}" height="${scaledH}" preserveAspectRatio="none" />
+${indent}</g>`;
+  }
 
   return `${indent}${clipDef}<g${transform}${opacity}${clipAttr}>
 ${indent}  <image href="${escapeAttr(l.src)}" x="${l.x}" y="${l.y}" width="${l.w}" height="${l.h}" preserveAspectRatio="${aspect}" />

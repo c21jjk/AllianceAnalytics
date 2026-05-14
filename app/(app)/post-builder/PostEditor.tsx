@@ -427,6 +427,13 @@ interface PostEditorProps {
    * the layer tree, not the listing.
    */
   listing: { mls_number: string; address: string | null } & Partial<PostBuilderListing>;
+  /**
+   * B-6 — when the editor is opened on a single card from an OH-multi
+   * (FB Open House gallery) bundle, this carries the "card N of M" context
+   * so the editor can show a banner reminding the user that Save updates
+   * just this listing's card, not the entire bundle.
+   */
+  ohMultiContext?: { current: number; total: number; address: string } | null;
   onClose: () => void;
   /**
    * Called after successful Save — provides the new image URL so the
@@ -448,6 +455,7 @@ export default function PostEditor({
   generatedPostId: _generatedPostId,
   availablePhotos,
   listing,
+  ohMultiContext,
   onClose,
   onSave,
 }: PostEditorProps) {
@@ -456,6 +464,35 @@ export default function PostEditor({
   const [history, setHistory] = useState<LayerTree[]>([initialTree]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [dirty, setDirty] = useState<boolean>(false);
+
+  // ── Font loading (B-6) ─────────────────────────────────────────────
+  // The SVG renderer @imports the Google Fonts for the rendered output,
+  // but the editor UI itself (font picker preview, property labels) needs
+  // the fonts loaded into the document head too. Inject one stylesheet
+  // <link> per family on mount; clean up on unmount.
+  useEffect(() => {
+    const links: HTMLLinkElement[] = [];
+    for (const f of FONT_FAMILIES) {
+      const href = `https://fonts.googleapis.com/css2?family=${f.google_url}&display=swap`;
+      // De-dup: skip if a stylesheet with this href already exists.
+      const existing = document.head.querySelector(
+        `link[rel="stylesheet"][href="${href}"]`,
+      );
+      if (existing) continue;
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      link.dataset.postEditorFont = f.id;
+      document.head.appendChild(link);
+      links.push(link);
+    }
+    return () => {
+      // Only remove the ones we added — leave any pre-existing alone.
+      for (const link of links) {
+        if (link.parentNode) link.parentNode.removeChild(link);
+      }
+    };
+  }, []);
 
   // ── Selection ──────────────────────────────────────────────────────
   // Multi-selection. An empty array means nothing is selected. The first
@@ -1286,6 +1323,20 @@ export default function PostEditor({
         </div>
       </div>
 
+      {/* ── B-6: OH-multi context banner ────────────────────────── */}
+      {ohMultiContext ? (
+        <div className="flex items-center gap-2 h-9 px-4 bg-emerald-900/40 text-emerald-100 border-b border-emerald-800 text-[12px] flex-shrink-0">
+          <span aria-hidden="true">🗓</span>
+          <span className="font-semibold">
+            Editing card {ohMultiContext.current} of {ohMultiContext.total}
+          </span>
+          <span className="text-emerald-200/80">— {ohMultiContext.address}</span>
+          <span className="text-emerald-300/80 ml-auto">
+            Save updates this listing&apos;s card. Re-open editor for the others.
+          </span>
+        </div>
+      ) : null}
+
       {/* ── MAIN SPLIT ─────────────────────────────────────────── */}
       <div className="flex-1 flex min-h-0">
         {/* ── LAYER PANEL (left) ────────────────────────────── */}
@@ -1836,17 +1887,10 @@ function TextSection({
         />
       </Field>
       <Field label="Font">
-        <select
+        <FontPicker
           value={layer.font ?? FONT_FAMILIES[0].family}
-          onChange={(e) => update({ font: e.target.value })}
-          className="input-dark"
-        >
-          {FONT_FAMILIES.map((f) => (
-            <option key={f.id} value={f.family} style={{ fontFamily: f.family }}>
-              {f.label} · {f.category}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => update({ font: v })}
+        />
       </Field>
       <div className="grid grid-cols-2 gap-2">
         <Field label={`Size (${layer.size ?? 32}px)`}>
@@ -1948,6 +1992,16 @@ function ImageSection({
   // Detect whether the current src matches one of the available photos so
   // the dropdown shows the right "selected" state.
   const matchedPhoto = availablePhotos.find((p) => p.url === layer.src);
+  const [cropOpen, setCropOpen] = useState(false);
+  // Close the crop panel if the underlying src changes (otherwise the
+  // user would be cropping the wrong image).
+  useEffect(() => {
+    setCropOpen(false);
+  }, [layer.src]);
+  const hasCrop = !!(
+    layer.crop &&
+    !(layer.crop.x === 0 && layer.crop.y === 0 && layer.crop.w === 1 && layer.crop.h === 1)
+  );
   return (
     <FieldGroup label="Image">
       <Field label="Source">
@@ -1999,6 +2053,48 @@ function ImageSection({
           onChange={(v) => update({ radius: v })}
         />
       </Field>
+      {/* B-6: Crop tool — opens an in-place crop UI below the fields. */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCropOpen((v) => !v)}
+          className={[
+            "flex-1 px-3 py-1.5 rounded-md text-[11px] font-medium transition",
+            cropOpen
+              ? "bg-gold-500/20 text-gold-200 ring-1 ring-gold-500/60"
+              : "bg-neutral-800 hover:bg-neutral-700 text-neutral-100",
+          ].join(" ")}
+          title="Crop the source image to a sub-region"
+        >
+          {cropOpen ? "Close crop" : `✂ Crop${hasCrop ? " (active)" : ""}`}
+        </button>
+        {hasCrop ? (
+          <button
+            type="button"
+            onClick={() => {
+              // Reset crop in a single mutation so undo restores in one step.
+              const { crop: _drop, ...rest } = layer;
+              void _drop;
+              onChange(rest as ImageLayer);
+            }}
+            className="px-3 py-1.5 rounded-md bg-neutral-800 hover:bg-rose-900/40 text-[11px] text-rose-300 transition"
+            title="Remove crop window"
+          >
+            Reset
+          </button>
+        ) : null}
+      </div>
+      {cropOpen ? (
+        <CropTool
+          src={layer.src}
+          initial={layer.crop}
+          onApply={(crop) => {
+            update({ crop });
+            setCropOpen(false);
+          }}
+          onCancel={() => setCropOpen(false)}
+        />
+      ) : null}
     </FieldGroup>
   );
 }
@@ -2347,6 +2443,14 @@ function ColorPicker({
   useEffect(() => setHex(value), [value]);
   const isValidHex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(hex)
     || hex === "transparent";
+  // B-6: surface a small "off-brand" hint when the current value isn't in
+  // the brand palette. The user is free to use it — this is informational
+  // so they know they're stepping outside the system.
+  const matchedBrand = BRAND_PALETTE.find(
+    (c) => c.value.toLowerCase() === value.toLowerCase(),
+  );
+  const isOffBrand =
+    isValidHex && !!value && !matchedBrand && value !== "transparent";
   return (
     <div className={compact ? "flex items-center gap-1" : "space-y-2"}>
       <div className={compact ? "" : "grid grid-cols-5 gap-1"}>
@@ -2414,7 +2518,447 @@ function ColorPicker({
           !isValidHex ? "ring-1 ring-rose-500" : "",
         ].join(" ")}
       />
+      {!compact && isOffBrand ? (
+        <div className="flex items-center gap-1.5 text-[10px] text-amber-300/80">
+          <span aria-hidden="true">✓</span>
+          <span>Off-brand color — fine, just noting.</span>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+// ─── B-6: Font picker (visual popover) ───────────────────────────────
+
+/**
+ * Font picker that shows each family rendered IN ITS OWN font, grouped
+ * by category. Click the trigger button to open a popover panel; click
+ * a family to select + close. Closes on outside click + Escape.
+ *
+ * The trigger button itself shows the currently-selected family in that
+ * family's font, so the user gets feedback without opening the picker.
+ */
+function FontPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Close on outside click + Esc.
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Resolve the current family entry (fallback to first if unknown).
+  const current =
+    FONT_FAMILIES.find((f) => f.family === value || f.id === value) ??
+    FONT_FAMILIES[0];
+
+  // Group families by category — section headers in the popover.
+  const groups = useMemo(() => {
+    const byCat = new Map<string, typeof FONT_FAMILIES[number][]>();
+    for (const f of FONT_FAMILIES) {
+      const list = byCat.get(f.category) ?? [];
+      list.push(f);
+      byCat.set(f.category, list);
+    }
+    // Stable display order: sans → serif → display → mono.
+    const labels: Record<string, string> = {
+      sans: "Sans-serif",
+      serif: "Serif",
+      display: "Display",
+      mono: "Monospace",
+    };
+    const order = ["sans", "serif", "display", "mono"];
+    return order
+      .filter((c) => byCat.has(c))
+      .map((c) => ({
+        category: c,
+        label: labels[c] ?? c,
+        families: byCat.get(c)!,
+      }));
+  }, []);
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="input-dark w-full flex items-center justify-between gap-2 cursor-pointer text-left"
+        style={{ fontFamily: `'${current.family}', sans-serif` }}
+        title={`${current.label} · ${current.category}`}
+      >
+        <span className="truncate">{current.label}</span>
+        <span className="text-neutral-500 text-xs flex-shrink-0">▾</span>
+      </button>
+      {open ? (
+        <div
+          className="absolute left-0 right-0 top-[calc(100%+4px)] z-30 max-h-80 overflow-y-auto rounded-md bg-neutral-800 border border-neutral-700 shadow-xl py-1"
+          role="listbox"
+          aria-label="Choose a font"
+        >
+          {groups.map((g) => (
+            <div key={g.category}>
+              <div className="px-3 pt-2 pb-1 text-[9px] uppercase tracking-widest text-neutral-500 font-semibold">
+                {g.label}
+              </div>
+              {g.families.map((f) => {
+                const active = f.family === current.family;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => {
+                      onChange(f.family);
+                      setOpen(false);
+                    }}
+                    className={[
+                      "w-full text-left px-3 py-2 flex items-center justify-between gap-3 transition",
+                      active
+                        ? "bg-gold-500/15 text-gold-200"
+                        : "text-neutral-100 hover:bg-neutral-700",
+                    ].join(" ")}
+                    style={{ fontFamily: `'${f.family}', sans-serif` }}
+                  >
+                    <span className="text-sm truncate">{f.label}</span>
+                    <span className="text-base text-neutral-300 flex-shrink-0">
+                      Aa
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── B-6: Image crop tool (in-place panel UI) ────────────────────────
+
+/**
+ * Inline crop UI — renders a small preview of the image with a draggable
+ * crop rectangle on top. User can drag the crop box body to move, or one
+ * of 8 handles to resize. Apply commits a normalized {x,y,w,h} crop window
+ * to the layer; Cancel reverts.
+ *
+ * Lives inside ImageSection — opened by the "Crop" button. Roughly 280px
+ * tall, scales the image to fit while keeping aspect ratio.
+ */
+function CropTool({
+  src,
+  initial,
+  onApply,
+  onCancel,
+}: {
+  src: string;
+  initial: { x: number; y: number; w: number; h: number } | undefined;
+  onApply: (crop: { x: number; y: number; w: number; h: number }) => void;
+  onCancel: () => void;
+}) {
+  // Crop box is in normalized 0..1 coordinates.
+  const [crop, setCrop] = useState<{ x: number; y: number; w: number; h: number }>(
+    () =>
+      initial && initial.w > 0 && initial.h > 0
+        ? initial
+        : { x: 0, y: 0, w: 1, h: 1 },
+  );
+  // Track the loaded image's natural aspect so the preview box matches.
+  const [imgAspect, setImgAspect] = useState<number | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+
+  // Track active drag (which handle, plus pointer offset).
+  type DragMode = "move" | "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+  const dragRef = useRef<{
+    mode: DragMode;
+    startCrop: { x: number; y: number; w: number; h: number };
+    startClientX: number;
+    startClientY: number;
+    rect: DOMRect;
+  } | null>(null);
+
+  // Helper: clamp a number to [min, max].
+  const clamp = (n: number, lo: number, hi: number) =>
+    Math.max(lo, Math.min(hi, n));
+
+  // Pointer move handler — installed on window during drag.
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      const d = dragRef.current;
+      if (!d) return;
+      const dx = (e.clientX - d.startClientX) / d.rect.width;
+      const dy = (e.clientY - d.startClientY) / d.rect.height;
+      const s = d.startCrop;
+      let nx = s.x;
+      let ny = s.y;
+      let nw = s.w;
+      let nh = s.h;
+      const MIN = 0.05; // never let crop shrink below 5% of source
+      switch (d.mode) {
+        case "move":
+          nx = clamp(s.x + dx, 0, 1 - s.w);
+          ny = clamp(s.y + dy, 0, 1 - s.h);
+          break;
+        case "e":
+          nw = clamp(s.w + dx, MIN, 1 - s.x);
+          break;
+        case "w": {
+          const newX = clamp(s.x + dx, 0, s.x + s.w - MIN);
+          nw = s.w - (newX - s.x);
+          nx = newX;
+          break;
+        }
+        case "s":
+          nh = clamp(s.h + dy, MIN, 1 - s.y);
+          break;
+        case "n": {
+          const newY = clamp(s.y + dy, 0, s.y + s.h - MIN);
+          nh = s.h - (newY - s.y);
+          ny = newY;
+          break;
+        }
+        case "ne":
+          nw = clamp(s.w + dx, MIN, 1 - s.x);
+          {
+            const newY = clamp(s.y + dy, 0, s.y + s.h - MIN);
+            nh = s.h - (newY - s.y);
+            ny = newY;
+          }
+          break;
+        case "nw": {
+          const newX = clamp(s.x + dx, 0, s.x + s.w - MIN);
+          nw = s.w - (newX - s.x);
+          nx = newX;
+          const newY = clamp(s.y + dy, 0, s.y + s.h - MIN);
+          nh = s.h - (newY - s.y);
+          ny = newY;
+          break;
+        }
+        case "se":
+          nw = clamp(s.w + dx, MIN, 1 - s.x);
+          nh = clamp(s.h + dy, MIN, 1 - s.y);
+          break;
+        case "sw": {
+          const newX = clamp(s.x + dx, 0, s.x + s.w - MIN);
+          nw = s.w - (newX - s.x);
+          nx = newX;
+          nh = clamp(s.h + dy, MIN, 1 - s.y);
+          break;
+        }
+      }
+      setCrop({ x: nx, y: ny, w: nw, h: nh });
+    }
+    function onUp() {
+      dragRef.current = null;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
+  function startDrag(mode: DragMode, e: React.PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!previewRef.current) return;
+    dragRef.current = {
+      mode,
+      startCrop: crop,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      rect: previewRef.current.getBoundingClientRect(),
+    };
+  }
+
+  // Determine preview aspect: prefer the image's natural aspect when known.
+  // Cap height ~280px and width ~280px so the panel stays compact.
+  const PREVIEW_MAX = 280;
+  const previewW = imgAspect && imgAspect > 1
+    ? PREVIEW_MAX
+    : imgAspect
+      ? Math.round(PREVIEW_MAX * imgAspect)
+      : PREVIEW_MAX;
+  const previewH = imgAspect && imgAspect > 1
+    ? Math.round(PREVIEW_MAX / imgAspect)
+    : imgAspect
+      ? PREVIEW_MAX
+      : PREVIEW_MAX;
+
+  return (
+    <div className="mt-3 space-y-3 rounded-md border border-neutral-700 bg-neutral-950/40 p-3">
+      <div className="text-[10px] uppercase tracking-widest text-gold-400">
+        Crop image
+      </div>
+      <div className="flex justify-center">
+        <div
+          ref={previewRef}
+          className="relative overflow-hidden rounded bg-neutral-800 select-none"
+          style={{ width: previewW, height: previewH }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt=""
+            draggable={false}
+            onLoad={(e) => {
+              const img = e.currentTarget;
+              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                setImgAspect(img.naturalWidth / img.naturalHeight);
+              }
+            }}
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          />
+          {/* Dim overlay outside the crop window. Drawn as 4 dim rects. */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: "transparent" }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                right: 0,
+                height: `${crop.y * 100}%`,
+                background: "rgba(0,0,0,0.55)",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: `${(crop.y + crop.h) * 100}%`,
+                right: 0,
+                bottom: 0,
+                background: "rgba(0,0,0,0.55)",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: `${crop.y * 100}%`,
+                width: `${crop.x * 100}%`,
+                height: `${crop.h * 100}%`,
+                background: "rgba(0,0,0,0.55)",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                left: `${(crop.x + crop.w) * 100}%`,
+                top: `${crop.y * 100}%`,
+                right: 0,
+                height: `${crop.h * 100}%`,
+                background: "rgba(0,0,0,0.55)",
+              }}
+            />
+          </div>
+          {/* The crop window — draggable body + 8 handles. */}
+          <div
+            role="presentation"
+            onPointerDown={(e) => startDrag("move", e)}
+            style={{
+              position: "absolute",
+              left: `${crop.x * 100}%`,
+              top: `${crop.y * 100}%`,
+              width: `${crop.w * 100}%`,
+              height: `${crop.h * 100}%`,
+              boxSizing: "border-box",
+              border: "1.5px solid #C9A84C",
+              cursor: "move",
+            }}
+          >
+            {/* 8 handles — corners + edges. */}
+            <CropHandle pos="nw" onPointerDown={(e) => startDrag("nw", e)} />
+            <CropHandle pos="n" onPointerDown={(e) => startDrag("n", e)} />
+            <CropHandle pos="ne" onPointerDown={(e) => startDrag("ne", e)} />
+            <CropHandle pos="e" onPointerDown={(e) => startDrag("e", e)} />
+            <CropHandle pos="se" onPointerDown={(e) => startDrag("se", e)} />
+            <CropHandle pos="s" onPointerDown={(e) => startDrag("s", e)} />
+            <CropHandle pos="sw" onPointerDown={(e) => startDrag("sw", e)} />
+            <CropHandle pos="w" onPointerDown={(e) => startDrag("w", e)} />
+          </div>
+        </div>
+      </div>
+      <div className="text-[10px] text-neutral-500 text-center font-mono">
+        {`x:${crop.x.toFixed(2)} y:${crop.y.toFixed(2)} w:${crop.w.toFixed(2)} h:${crop.h.toFixed(2)}`}
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 px-3 py-1.5 rounded-md bg-neutral-800 hover:bg-neutral-700 text-[11px] text-neutral-100 transition"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => onApply(crop)}
+          className="flex-1 px-3 py-1.5 rounded-md bg-gold-500 hover:bg-gold-400 text-neutral-900 text-[11px] font-semibold transition"
+        >
+          Apply crop
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CropHandle({
+  pos,
+  onPointerDown,
+}: {
+  pos: "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  // Map position → CSS offsets + cursor.
+  const styleMap: Record<typeof pos, React.CSSProperties> = {
+    nw: { left: -5, top: -5, cursor: "nwse-resize" },
+    n: { left: "50%", top: -5, marginLeft: -5, cursor: "ns-resize" },
+    ne: { right: -5, top: -5, cursor: "nesw-resize" },
+    e: { right: -5, top: "50%", marginTop: -5, cursor: "ew-resize" },
+    se: { right: -5, bottom: -5, cursor: "nwse-resize" },
+    s: { left: "50%", bottom: -5, marginLeft: -5, cursor: "ns-resize" },
+    sw: { left: -5, bottom: -5, cursor: "nesw-resize" },
+    w: { left: -5, top: "50%", marginTop: -5, cursor: "ew-resize" },
+  };
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      style={{
+        position: "absolute",
+        width: 10,
+        height: 10,
+        background: "#C9A84C",
+        border: "1px solid #1a1a1a",
+        borderRadius: 2,
+        ...styleMap[pos],
+      }}
+    />
   );
 }
 

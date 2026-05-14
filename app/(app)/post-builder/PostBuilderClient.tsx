@@ -800,9 +800,36 @@ export default function PostBuilderClient({
    * (vanilla template seed). Returns null if we can't build one — the
    * button is gated on selectedListing + currentHeroUrls so this should
    * only happen in degenerate states.
+   *
+   * Migration shim (B-6):
+   *   - For brand-new in-session posts (no `existingLayerTree`), we re-seed
+   *     from (template_id + listing + photos + customizations).
+   *   - For posts that were saved BEFORE Path B existed, the row's
+   *     `layer_tree` will be null. When we later wire up a "load from
+   *     /posts row" entry point, the caller should call this same path:
+   *     pass the row's stored template_id + listing + customizations and
+   *     `templateToLayerTree(...)` will rebuild a tree on the fly.
+   *
+   * TODO(future): when /posts integration lands, accept an optional
+   * `existingPostRow` arg here so saved layer_trees on persisted rows are
+   * preferred over the seed. For now the in-session shim covers all
+   * editor opens.
    */
-  function buildSeedTree(): LayerTree | null {
+  function buildSeedTree(opts?: { ohMultiListingMls?: string }): LayerTree | null {
     if (existingLayerTree) return existingLayerTree;
+    // OH-multi editor entry: editor only edits ONE card at a time. Default
+    // to the first selected listing if no specific MLS was provided.
+    if (opts?.ohMultiListingMls) {
+      const target = listings.find((l) => l.mls_number === opts.ohMultiListingMls);
+      if (!target) return null;
+      const heroUrls = target.hero_image_url ? [target.hero_image_url] : [];
+      if (heroUrls.length === 0) return null;
+      return templateToLayerTree({
+        template_id: "fb_open_house_v1",
+        listing: target,
+        heroImageUrls: heroUrls,
+      });
+    }
     if (!selectedListing) return null;
     if (currentHeroUrls.length === 0) return null;
     return templateToLayerTree({
@@ -817,6 +844,27 @@ export default function PostBuilderClient({
     const seed = buildSeedTree();
     if (!seed) {
       setError("Couldn't build the editor seed. Make sure a listing + photo are selected.");
+      return;
+    }
+    setEditorTree(seed);
+    setEditorOpen(true);
+  }
+
+  /**
+   * OH-multi editor entry point. v1 scope: the editor only edits ONE card
+   * at a time. We seed from the first OH listing's hero card; the user can
+   * Save to update that listing's card, then re-open for any other card
+   * via the per-listing edit affordance (future).
+   */
+  function openEditorForOhMulti() {
+    const firstMls = ohMultiSelected.values().next().value as string | undefined;
+    if (!firstMls) {
+      setError("Select at least one open house listing first.");
+      return;
+    }
+    const seed = buildSeedTree({ ohMultiListingMls: firstMls });
+    if (!seed) {
+      setError("Couldn't build the editor seed for the first OH listing.");
       return;
     }
     setEditorTree(seed);
@@ -1360,6 +1408,8 @@ export default function PostBuilderClient({
               copyState={copyState}
               isAdmin={isAdmin}
               onPostNow={isAdmin ? openPostNow : undefined}
+              onOpenEditor={ohMultiSelected.size > 0 ? openEditorForOhMulti : undefined}
+              existingLayerTree={!!existingLayerTree}
             />
           ) : !selectedListing ? (
             <EmptyPreview />
@@ -1968,16 +2018,47 @@ export default function PostBuilderClient({
           onConfirm={submitPostNow}
         />
       ) : null}
-      {editorOpen && editorTree && selectedListing ? (
-        <PostEditor
-          initialTree={editorTree}
-          generatedPostId={generatedPostId}
-          availablePhotos={availablePhotos.map((p) => ({ url: p.url, sequence: p.sequence }))}
-          listing={selectedListing}
-          onClose={closeEditor}
-          onSave={handleEditorSave}
-        />
-      ) : null}
+      {editorOpen && editorTree ? (() => {
+        // Resolve the active listing for the editor. In OH-multi mode the
+        // selected list is the OH set, not `selectedListing` — pick the
+        // first OH listing as the editing target. Outside OH-multi the
+        // normal `selectedListing` applies.
+        let editorListing: PostBuilderListing | null = selectedListing;
+        let ohContext: { current: number; total: number; address: string } | null = null;
+        if (isOhMultiMode) {
+          const firstMls = ohMultiSelected.values().next().value as string | undefined;
+          const target = firstMls
+            ? listings.find((l) => l.mls_number === firstMls) ?? null
+            : null;
+          if (target) {
+            editorListing = target;
+            ohContext = {
+              current: 1,
+              total: ohMultiSelected.size,
+              address: target.address ?? target.mls_number,
+            };
+          }
+        }
+        if (!editorListing) return null;
+        // Photos for the picker — for OH-multi this is just the listing's
+        // own hero (cards only ever use the hero photo).
+        const editorPhotos = isOhMultiMode
+          ? (editorListing.hero_image_url
+              ? [{ url: editorListing.hero_image_url, sequence: 0 }]
+              : [])
+          : availablePhotos.map((p) => ({ url: p.url, sequence: p.sequence }));
+        return (
+          <PostEditor
+            initialTree={editorTree}
+            generatedPostId={generatedPostId}
+            availablePhotos={editorPhotos}
+            listing={editorListing}
+            ohMultiContext={ohContext}
+            onClose={closeEditor}
+            onSave={handleEditorSave}
+          />
+        );
+      })() : null}
     </div>
   );
 }
@@ -2294,6 +2375,13 @@ interface OhMultiPanelProps {
   copyState: "idle" | "copied";
   isAdmin: boolean;
   onPostNow?: () => void;
+  /**
+   * B-6 — open the layer editor on the FIRST selected OH listing's card.
+   * Editor only ever edits one card at a time; for v1 we don't have a
+   * per-listing edit picker (future) so we always seed from the first.
+   */
+  onOpenEditor?: () => void;
+  existingLayerTree: boolean;
 }
 
 function OhMultiPanel(props: OhMultiPanelProps) {
@@ -2433,6 +2521,23 @@ function OhMultiPanel(props: OhMultiPanelProps) {
                 </button>
               ) : null}
             </div>
+          ) : null}
+          {/* B-6: Edit-in-Editor for OH-multi. Editor opens on the FIRST OH
+              listing's card. v1 scope: editor edits one card at a time. */}
+          {props.onOpenEditor ? (
+            <button
+              type="button"
+              onClick={props.onOpenEditor}
+              className={[
+                "mt-2 w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition ring-1",
+                props.existingLayerTree
+                  ? "bg-gold-100 text-gold-900 ring-gold-500"
+                  : "bg-white text-neutral-700 ring-neutral-300 hover:bg-neutral-50",
+              ].join(" ")}
+              title="Open the layer editor on the first OH listing's card"
+            >
+              {`✎ Edit first card in Editor${props.existingLayerTree ? " (edited)" : ""}`}
+            </button>
           ) : null}
         </div>
 
