@@ -3534,7 +3534,9 @@ function CanvasArea(props: CanvasAreaProps) {
               aria-hidden="true"
             />
             <Moveable
-              key={`mv-multi-${selectedLayers.map((l) => l.id).join(",")}-${moveableTick}`}
+              // KEY excludes moveableTick — including it caused mid-drag remounts.
+              // Selection-set change (different ids) is the right invalidation trigger.
+              key={`mv-multi-${selectedLayers.map((l) => l.id).join(",")}`}
               target={moveableTargetRef.current}
               draggable
               resizable={false}
@@ -3606,7 +3608,11 @@ function CanvasArea(props: CanvasAreaProps) {
               aria-hidden="true"
             />
             <Moveable
-              key={`mv-${selectedLayer.id}-${moveableTick}`}
+              // KEY MUST NOT include any drag-changing state (x/y/w/h/rotation).
+              // If the key changes mid-drag, Moveable unmounts + remounts and
+              // loses pointer capture — drag/resize silently fail. The id alone
+              // is the right invalidation trigger (only changes on selection swap).
+              key={`mv-${selectedLayer.id}`}
               target={moveableTargetRef.current}
               draggable
               resizable
