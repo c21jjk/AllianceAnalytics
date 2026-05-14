@@ -336,16 +336,37 @@ function ArrowIcon() {
  * Format the open-house time window for the row eyebrow.
  *   "Saturday May 17 · 1–3 PM"
  *   "Sun May 18 · 2:30–4:00 PM"
+ *
+ * Always renders in America/New_York. Without an explicit timeZone option
+ * the runtime defaults are used — and Next.js renders this Client Component
+ * via SSR first, where Vercel's server runs in UTC. The result is that an
+ * OH at 14:00 UTC (10am EDT) renders as "2 PM" on first paint. Forcing the
+ * Eastern timezone keeps SSR + hydration identical and matches Alliance's
+ * physical office locations.
  */
+const ALLIANCE_TZ = "America/New_York";
+
 function formatOpenHouseTimeLabel(
   startIso: string,
   endIso: string | null,
 ): string {
   const start = new Date(startIso);
   if (Number.isNaN(start.getTime())) return "—";
-  const weekday = start.toLocaleDateString("en-US", { weekday: "short" });
-  const month = start.toLocaleDateString("en-US", { month: "short" });
-  const day = start.getDate();
+  const weekday = start.toLocaleDateString("en-US", {
+    weekday: "short",
+    timeZone: ALLIANCE_TZ,
+  });
+  const month = start.toLocaleDateString("en-US", {
+    month: "short",
+    timeZone: ALLIANCE_TZ,
+  });
+  // Use `day: "numeric"` rather than getDate() — getDate() returns the date
+  // in the runtime's TZ, which on Vercel SSR is UTC and can roll back/forward
+  // a day for late-night/early-morning Eastern timestamps.
+  const day = start.toLocaleDateString("en-US", {
+    day: "numeric",
+    timeZone: ALLIANCE_TZ,
+  });
   const startTime = formatTimeOfDay(start);
   if (!endIso) return `${weekday} ${month} ${day} · ${startTime}`;
   const end = new Date(endIso);
@@ -364,11 +385,12 @@ function formatOpenHouseTimeLabel(
 }
 
 function formatTimeOfDay(d: Date): string {
-  // Render in user's local time. Strip leading zero on hour.
+  // Render in Alliance's Eastern timezone. Strip leading zero on hour.
   let s = d.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: ALLIANCE_TZ,
   });
   // ":00" → drop minutes for whole hours.
   s = s.replace(/:00 /, " ");

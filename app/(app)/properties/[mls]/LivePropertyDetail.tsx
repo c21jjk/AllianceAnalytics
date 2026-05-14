@@ -429,13 +429,21 @@ function PropertyOpenHousesSection({
           const start = new Date(oh.start_at);
           const end = oh.end_at ? new Date(oh.end_at) : null;
           const validStart = !Number.isNaN(start.getTime());
+          // Always render in Alliance's Eastern TZ — without explicit
+          // timeZone, Next.js SSR (UTC) and client (local) produce different
+          // strings, and the SSR'd UTC version sticks for the user.
+          const ALLIANCE_TZ = "America/New_York";
           const weekday = validStart
-            ? start.toLocaleDateString("en-US", { weekday: "long" })
+            ? start.toLocaleDateString("en-US", {
+                weekday: "long",
+                timeZone: ALLIANCE_TZ,
+              })
             : "—";
           const dateLine = validStart
             ? start.toLocaleDateString("en-US", {
                 month: "long",
                 day: "numeric",
+                timeZone: ALLIANCE_TZ,
               })
             : "—";
           const startTime = validStart
@@ -444,6 +452,7 @@ function PropertyOpenHousesSection({
                   hour: "numeric",
                   minute: "2-digit",
                   hour12: true,
+                  timeZone: ALLIANCE_TZ,
                 })
                 .replace(/:00 /, " ")
             : "—";
@@ -454,6 +463,7 @@ function PropertyOpenHousesSection({
                     hour: "numeric",
                     minute: "2-digit",
                     hour12: true,
+                    timeZone: ALLIANCE_TZ,
                   })
                   .replace(/:00 /, " ")
               : null;

@@ -155,43 +155,58 @@ export interface SyncAllResult {
 
 export async function syncAll(): Promise<SyncAllResult> {
   await requireAdmin();
-  // Sequential to spread API quota burn — also helps with debugging
-  const results: EdgeFunctionResult[] = [];
-  for (const p of ["instagram", "facebook", "tiktok"] as Platform[]) {
-    try {
-      results.push(await invokeSync(p));
-    } catch (e) {
-      results.push({
-        platform: p,
-        ok: false,
-        inserted: 0,
-        updated: 0,
-        errors: [{ message: (e as Error).message }],
-        duration_ms: 0,
-      });
-    }
-  }
+  // Parallel: each platform's sync hits a different upstream API (Meta
+  // Graph for FB/IG, TikTok, Paragon RETS for CMC/SJSR) with independent
+  // sessions, so there's no shared-resource contention to throttle for.
+  // Sequential adds ~110s (FB 30 + IG 30 + TT 30 + CMC 15 + SJSR 10),
+  // which used to blow past Vercel's 60s function timeout and surface as
+  // "Sync failed: An unexpected response was received from the server."
+  // Parallel completes in ~max(durations) ≈ 30s. Promise.allSettled so a
+  // single bad platform doesn't cancel the rest.
+  const socialPromises = (["instagram", "facebook", "tiktok"] as Platform[]).map(
+    async (p): Promise<EdgeFunctionResult> => {
+      try {
+        return await invokeSync(p);
+      } catch (e) {
+        return {
+          platform: p,
+          ok: false,
+          inserted: 0,
+          updated: 0,
+          errors: [{ message: (e as Error).message }],
+          duration_ms: 0,
+        };
+      }
+    },
+  );
 
-  // MLS feeds — same sequential pattern. Each takes ~10-15s; failures here
-  // are isolated per-feed so a CMC issue doesn't block SJSR from running.
-  const mls_results: MlsSyncResult[] = [];
-  for (const feed of ["cmc", "sjsr"] as const) {
-    try {
-      mls_results.push(await invokeMlsSync(feed));
-    } catch (e) {
-      mls_results.push({
-        feed_short_code: feed,
-        feed_name: feed.toUpperCase(),
-        ok: false,
-        duration_ms: 0,
-        classes: [],
-        errors: [{ message: (e as Error).message }],
-        total_upserted: 0,
-      });
-    }
-  }
+  const mlsPromises = (["cmc", "sjsr"] as const).map(
+    async (feed): Promise<MlsSyncResult> => {
+      try {
+        return await invokeMlsSync(feed);
+      } catch (e) {
+        return {
+          feed_short_code: feed,
+          feed_name: feed.toUpperCase(),
+          ok: false,
+          duration_ms: 0,
+          classes: [],
+          errors: [{ message: (e as Error).message }],
+          total_upserted: 0,
+        };
+      }
+    },
+  );
 
-  // After all three syncs, fire the cross-platform grouper so late
+  const [socialSettled, mlsSettled] = await Promise.all([
+    Promise.all(socialPromises),
+    Promise.all(mlsPromises),
+  ]);
+
+  const results: EdgeFunctionResult[] = socialSettled;
+  const mls_results: MlsSyncResult[] = mlsSettled;
+
+  // After all syncs complete, fire the cross-platform grouper so late
   // arrivals from this run get folded into existing groups (the patched
   // run_post_grouper has a "merge into existing groups" pass plus the
   // original new-group creation pass).

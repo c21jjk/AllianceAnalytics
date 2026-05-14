@@ -344,24 +344,43 @@ async function runSync(): Promise<SyncReport> {
   };
 
   // ---- Config ----
+  // why: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are auto-injected at
+  // runtime. Everything else (service account JSON + Drive folder IDs) is
+  // pulled from the api_credentials table — same pattern the FB/IG/TT
+  // syncs use. This avoids depending on Edge Function secrets management
+  // which the MCP doesn't expose.
   // @ts-expect-error - Deno global
   const supabaseUrl = Deno.env.get("SUPABASE_URL") as string;
   // @ts-expect-error - Deno global
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") as string;
-  // @ts-expect-error - Deno global
-  const saJson = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON") as string;
-  // @ts-expect-error - Deno global
-  const logosFolderId = Deno.env.get("BRAND_LOGOS_FOLDER_ID") as string;
-  // @ts-expect-error - Deno global
-  const agentsFolderId = Deno.env.get("BRAND_AGENTS_FOLDER_ID") as string;
-
-  if (!saJson) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not set");
-  if (!logosFolderId) throw new Error("BRAND_LOGOS_FOLDER_ID not set");
-  if (!agentsFolderId) throw new Error("BRAND_AGENTS_FOLDER_ID not set");
-
-  const sa = JSON.parse(saJson) as ServiceAccountKey;
-  const accessToken = await getAccessToken(sa);
   const supabase = createClient(supabaseUrl, supabaseKey);
+
+  const { data: credRow, error: credErr } = await supabase
+    .from("api_credentials")
+    .select("credentials")
+    .eq("platform", "google_drive")
+    .eq("is_active", true)
+    .maybeSingle();
+  if (credErr) throw new Error(`credential load failed: ${credErr.message}`);
+  if (!credRow) {
+    throw new Error(
+      "No active google_drive credentials in api_credentials table. " +
+      "Insert a row with the service-account JSON + folder IDs first.",
+    );
+  }
+  const creds = credRow.credentials as {
+    service_account_json: ServiceAccountKey;
+    logos_folder_id: string;
+    agents_folder_id: string;
+  };
+  if (!creds.service_account_json) throw new Error("service_account_json missing in credentials");
+  if (!creds.logos_folder_id) throw new Error("logos_folder_id missing in credentials");
+  if (!creds.agents_folder_id) throw new Error("agents_folder_id missing in credentials");
+
+  const sa = creds.service_account_json;
+  const logosFolderId = creds.logos_folder_id;
+  const agentsFolderId = creds.agents_folder_id;
+  const accessToken = await getAccessToken(sa);
 
   // ---- Load office mapping ----
   // why: cached locally so each agent-folder walk does an O(1) lookup
