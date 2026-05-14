@@ -27,12 +27,16 @@ Always start by reading the schema source-of-truth so you reference real type na
 
 1. `lib/post-builder/canvas-editor/types.ts` — `CanvasTemplateSchema`, `CanvasLayer`, `TextLayer`, `ImageLayer`, `ShapeLayer`, `BoundField`, `PLATFORM_DIMENSIONS`
 2. `lib/post-builder/canvas-editor/templates/tokens.ts` — `ALLIANCE_COLORS`, `ALLIANCE_FONTS`
-3. At least one existing template as a working reference:
-   - `lib/post-builder/canvas-editor/templates/just-listed-hero-square.ts` (1080×1080)
-   - `lib/post-builder/canvas-editor/templates/just-listed-hero-portrait.ts` (1080×1350)
-   - `lib/post-builder/canvas-editor/templates/just-listed-hero-story.ts` (1080×1920)
+3. The hero-editorial template factory — the canonical reference for v1 layouts across all 5 post types × 3 formats:
+   - `lib/post-builder/canvas-editor/templates/hero-editorial-factory.ts` — single source of truth for the v1 schema, parameterized by `(postType, format)`. Contains the per-format layout numbers (1080×1080 / 1080×1350 / 1080×1920) AND the per-post-type theming config (eyebrow text, price mode, optional badge stamp, optional open-house line).
 
 Skip this step at your peril — type names, exact enum values, and tokens change as the project evolves, and templates that reference stale names won't compile.
+
+## Pattern: factory vs. hand-authored
+
+For variants where the visual language is constant across post types and formats (like v1 Hero Editorial), prefer the **factory pattern**: one function that takes `(postType, format)` and returns the schema. The registry calls `buildAllHeroEditorialTemplates()` at module-load time to produce all 15 combos. Adding a 6th post type is a single config entry in `POST_TYPE_CONFIGS` — no new files.
+
+For variants with genuinely different layouts per post type (rare — usually a sign the variants should be separate), fall back to hand-authored files following the original `just-listed-hero-*.ts` shape (those files were deleted on 2026-05-14 when the factory shipped; recover from git history if needed).
 
 ## Authoring procedure
 
