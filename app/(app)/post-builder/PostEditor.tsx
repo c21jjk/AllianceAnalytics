@@ -87,6 +87,329 @@ const NEW_RECT_DEFAULT = { w: 400, h: 240 };
 const NEW_IMAGE_DEFAULT = { w: 500, h: 500 };
 const NEW_GRADIENT_DEFAULT = { w: 600, h: 400 };
 
+/** Snap threshold in template-space pixels. */
+const SNAP_THRESHOLD_PX = 8;
+/** Pixel offset applied to copy/paste/duplicate to make the new layer visible. */
+const PASTE_SHIFT_PX = 20;
+
+// ─── Tree-mutation helpers (B-5) ─────────────────────────────────────
+//
+// These helpers operate on top-level layers only — group children are not
+// addressable from the layer-panel UI in v1. Each helper returns a NEW tree
+// so `pushHistory(...)` can be applied as a single undo step.
+
+/** Axis-aligned bounding box of a single layer. Rotation ignored. */
+interface LayerBounds {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function getLayerBounds(layer: Layer): LayerBounds {
+  return { x: layer.x, y: layer.y, w: layer.w, h: layer.h };
+}
+
+/** Bounding box of multiple layers (union). Returns null if list is empty. */
+function getMultiBounds(layers: Layer[]): LayerBounds | null {
+  if (layers.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const l of layers) {
+    minX = Math.min(minX, l.x);
+    minY = Math.min(minY, l.y);
+    maxX = Math.max(maxX, l.x + l.w);
+    maxY = Math.max(maxY, l.y + l.h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/**
+ * Group a list of TOP-LEVEL layer ids into a new GroupLayer. The group is
+ * positioned at the union bbox; child coordinates are translated to be
+ * relative to the group origin. Returns the new tree + new group id.
+ *
+ * If any of the ids isn't found at the top level (e.g. it's already nested
+ * in a group), it is silently skipped. Need at least 2 valid ids — otherwise
+ * returns the tree unchanged.
+ */
+function groupLayers(
+  tree: LayerTree,
+  ids: string[],
+): { tree: LayerTree; newGroupId: string | null } {
+  const idSet = new Set(ids);
+  const selected: Layer[] = [];
+  const others: Layer[] = [];
+  // Capture insertion order from the source tree so the group renders
+  // correctly relative to the un-grouped layers.
+  let firstSelectedIdx = -1;
+  tree.layers.forEach((l, i) => {
+    if (idSet.has(l.id)) {
+      if (firstSelectedIdx === -1) firstSelectedIdx = i;
+      selected.push(l);
+    } else {
+      others.push(l);
+    }
+  });
+  if (selected.length < 2) return { tree, newGroupId: null };
+  const bounds = getMultiBounds(selected);
+  if (!bounds) return { tree, newGroupId: null };
+  // Translate children to be relative to group origin.
+  const children: Layer[] = selected.map((l) => ({
+    ...l,
+    x: l.x - bounds.x,
+    y: l.y - bounds.y,
+  }));
+  const newGroupId = newLayerId("group");
+  const group: GroupLayer = {
+    id: newGroupId,
+    type: "group",
+    x: bounds.x,
+    y: bounds.y,
+    w: bounds.w,
+    h: bounds.h,
+    children,
+    name: "Group",
+  };
+  // Insert the group where the first selected layer was, so z-order is
+  // preserved as much as possible. Since we removed the selected entries
+  // from `others`, we need to insert at the original index minus the count
+  // of selected entries that came before that index — but `firstSelectedIdx`
+  // is the original position; subtract preceding selected count to land in
+  // the correct slot in `others`.
+  let precedingSelected = 0;
+  for (let i = 0; i < firstSelectedIdx; i += 1) {
+    if (idSet.has(tree.layers[i].id)) precedingSelected += 1;
+  }
+  const insertAt = firstSelectedIdx - precedingSelected;
+  const nextLayers = [...others.slice(0, insertAt), group, ...others.slice(insertAt)];
+  return { tree: { ...tree, layers: nextLayers }, newGroupId };
+}
+
+/**
+ * Inverse of groupLayers: hoist a group's children back to top-level,
+ * converting their relative coordinates back to absolute (group.x + child.x).
+ * If id doesn't refer to a top-level group, returns tree unchanged.
+ */
+function ungroupLayer(
+  tree: LayerTree,
+  groupId: string,
+): { tree: LayerTree; childIds: string[] } {
+  const idx = tree.layers.findIndex((l) => l.id === groupId && l.type === "group");
+  if (idx < 0) return { tree, childIds: [] };
+  const group = tree.layers[idx] as GroupLayer;
+  const children: Layer[] = group.children.map((c) => ({
+    ...c,
+    x: c.x + group.x,
+    y: c.y + group.y,
+  }));
+  const next = [
+    ...tree.layers.slice(0, idx),
+    ...children,
+    ...tree.layers.slice(idx + 1),
+  ];
+  return {
+    tree: { ...tree, layers: next },
+    childIds: children.map((c) => c.id),
+  };
+}
+
+/**
+ * Recursively re-id a layer (and any descendants if it's a group) so the
+ * clone doesn't collide with the original. Returns the cloned layer.
+ */
+function cloneLayerWithFreshIds(layer: Layer): Layer {
+  const baseId = newLayerId(layer.type);
+  if (layer.type === "group") {
+    const g = layer as GroupLayer;
+    const cloned: GroupLayer = {
+      ...g,
+      id: baseId,
+      children: g.children.map((c) => cloneLayerWithFreshIds(c)),
+    };
+    return cloned;
+  }
+  return { ...layer, id: baseId } as Layer;
+}
+
+/**
+ * Duplicate a list of TOP-LEVEL layers. Each clone is shifted by `dx,dy`
+ * (template-space px). Returns new tree + the cloned layer ids (so the
+ * caller can update selection).
+ */
+function duplicateLayers(
+  tree: LayerTree,
+  ids: string[],
+  dx: number,
+  dy: number,
+): { tree: LayerTree; newIds: string[] } {
+  const idSet = new Set(ids);
+  const newIds: string[] = [];
+  const additions: Layer[] = [];
+  for (const l of tree.layers) {
+    if (!idSet.has(l.id)) continue;
+    const clone = cloneLayerWithFreshIds(l);
+    clone.x = l.x + dx;
+    clone.y = l.y + dy;
+    if (l.name) clone.name = `${l.name} copy`;
+    additions.push(clone);
+    newIds.push(clone.id);
+  }
+  if (additions.length === 0) return { tree, newIds: [] };
+  return {
+    tree: { ...tree, layers: [...tree.layers, ...additions] },
+    newIds,
+  };
+}
+
+type ReorderDirection = "forward" | "back" | "front" | "back_full";
+
+/**
+ * Reorder a single TOP-LEVEL layer in `tree.layers`. Supports the four
+ * standard moves. Layers nested in groups aren't reorderable in v1
+ * (matches the layer panel — only top-level rows are exposed).
+ */
+function reorderLayer(
+  tree: LayerTree,
+  id: string,
+  direction: ReorderDirection,
+): LayerTree {
+  const idx = tree.layers.findIndex((l) => l.id === id);
+  if (idx === -1) return tree;
+  const next = [...tree.layers];
+  const [layer] = next.splice(idx, 1);
+  let target: number;
+  switch (direction) {
+    case "forward":
+      target = Math.min(next.length, idx + 1);
+      break;
+    case "back":
+      target = Math.max(0, idx - 1);
+      break;
+    case "front":
+      target = next.length;
+      break;
+    case "back_full":
+      target = 0;
+      break;
+  }
+  next.splice(target, 0, layer);
+  return { ...tree, layers: next };
+}
+
+/**
+ * Move a single TOP-LEVEL layer to an explicit index in `tree.layers`.
+ * Used by the layer-panel drag-reorder. The index is in the SAME array
+ * as `tree.layers` (front = end of array; the layer-panel UI reverses
+ * this for display).
+ */
+function moveLayerToIndex(tree: LayerTree, id: string, targetIdx: number): LayerTree {
+  const fromIdx = tree.layers.findIndex((l) => l.id === id);
+  if (fromIdx === -1) return tree;
+  const next = [...tree.layers];
+  const [layer] = next.splice(fromIdx, 1);
+  // Adjust target if we removed an entry before it.
+  const adjusted = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+  const clamped = Math.max(0, Math.min(next.length, adjusted));
+  next.splice(clamped, 0, layer);
+  return { ...tree, layers: next };
+}
+
+/** A line we draw across the canvas during snap. */
+interface SnapLine {
+  /** Axis: "x" → vertical line at template-x; "y" → horizontal line at template-y. */
+  axis: "x" | "y";
+  /** Position in template-space pixels. */
+  pos: number;
+}
+
+/** Source candidate edge/center used during snap. */
+interface SnapCandidate {
+  axis: "x" | "y";
+  pos: number;
+}
+
+/**
+ * Build the list of snap candidates for the current tree. Includes:
+ *   - Canvas edges (0, w, h) and centers (w/2, h/2)
+ *   - Each non-excluded TOP-LEVEL layer's left/right/top/bottom + centers
+ */
+function computeSnapCandidates(tree: LayerTree, excludeIds: Set<string>): SnapCandidate[] {
+  const out: SnapCandidate[] = [
+    { axis: "x", pos: 0 },
+    { axis: "x", pos: tree.width },
+    { axis: "x", pos: tree.width / 2 },
+    { axis: "y", pos: 0 },
+    { axis: "y", pos: tree.height },
+    { axis: "y", pos: tree.height / 2 },
+  ];
+  for (const l of tree.layers) {
+    if (excludeIds.has(l.id)) continue;
+    if (l.hidden) continue;
+    out.push({ axis: "x", pos: l.x });
+    out.push({ axis: "x", pos: l.x + l.w });
+    out.push({ axis: "x", pos: l.x + l.w / 2 });
+    out.push({ axis: "y", pos: l.y });
+    out.push({ axis: "y", pos: l.y + l.h });
+    out.push({ axis: "y", pos: l.y + l.h / 2 });
+  }
+  return out;
+}
+
+/**
+ * Snap a moving box's edges/centers to the nearest candidates. Returns the
+ * adjusted (x, y) plus the snap lines that fired (for visual feedback).
+ *
+ * Box is axis-aligned (x, y, w, h). For each axis we pick the snap with
+ * the smallest absolute distance under threshold.
+ */
+function applySnap(
+  box: LayerBounds,
+  candidates: SnapCandidate[],
+  threshold: number,
+): { x: number; y: number; lines: SnapLine[] } {
+  // Edges/centers of the moving box for each axis.
+  const xPoints = [box.x, box.x + box.w / 2, box.x + box.w];
+  const yPoints = [box.y, box.y + box.h / 2, box.y + box.h];
+  let bestX: { delta: number; line: SnapLine } | null = null;
+  let bestY: { delta: number; line: SnapLine } | null = null;
+  for (const c of candidates) {
+    if (c.axis === "x") {
+      for (const p of xPoints) {
+        const d = c.pos - p;
+        if (Math.abs(d) <= threshold) {
+          if (!bestX || Math.abs(d) < Math.abs(bestX.delta)) {
+            bestX = { delta: d, line: { axis: "x", pos: c.pos } };
+          }
+        }
+      }
+    } else {
+      for (const p of yPoints) {
+        const d = c.pos - p;
+        if (Math.abs(d) <= threshold) {
+          if (!bestY || Math.abs(d) < Math.abs(bestY.delta)) {
+            bestY = { delta: d, line: { axis: "y", pos: c.pos } };
+          }
+        }
+      }
+    }
+  }
+  const lines: SnapLine[] = [];
+  let nx = box.x;
+  let ny = box.y;
+  if (bestX) {
+    nx += bestX.delta;
+    lines.push(bestX.line);
+  }
+  if (bestY) {
+    ny += bestY.delta;
+    lines.push(bestY.line);
+  }
+  return { x: nx, y: ny, lines };
+}
+
 // ─── Types ───────────────────────────────────────────────────────────
 
 interface PostEditorProps {
@@ -135,7 +458,15 @@ export default function PostEditor({
   const [dirty, setDirty] = useState<boolean>(false);
 
   // ── Selection ──────────────────────────────────────────────────────
-  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  // Multi-selection. An empty array means nothing is selected. The first
+  // entry is treated as the "primary" selection for the property panel.
+  const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
+
+  // Convenience setter for single-layer selection (replaces the old
+  // setSelectedLayerId).
+  const selectOnly = useCallback((id: string | null) => {
+    setSelectedLayerIds(id ? [id] : []);
+  }, []);
 
   // ── Canvas / viewport ──────────────────────────────────────────────
   const [zoom, setZoom] = useState<number>(1);
@@ -143,6 +474,29 @@ export default function PostEditor({
   const canvasInnerRef = useRef<HTMLDivElement | null>(null);
   const moveableTargetRef = useRef<HTMLDivElement | null>(null);
   const [moveableTick, setMoveableTick] = useState<number>(0);
+
+  // ── B-5: Snap, clipboard, marquee ──────────────────────────────────
+  /** Snap-to-grid toggle (default ON). Cmd-drag temporarily bypasses. */
+  const [snapEnabled, setSnapEnabled] = useState<boolean>(true);
+  /** Snap lines to draw during the current drag. Cleared on drag end. */
+  const [snapLines, setSnapLines] = useState<SnapLine[]>([]);
+  /** In-component clipboard. Cleared with the editor. */
+  const [clipboard, setClipboard] = useState<Layer[]>([]);
+  /** Last cursor position over the canvas (template-space). Used for paste. */
+  const cursorTemplatePosRef = useRef<{ x: number; y: number } | null>(null);
+  /** Marquee drag-select state. */
+  const [marquee, setMarquee] = useState<{
+    /** Anchor point in template-space. */
+    startX: number;
+    startY: number;
+    /** Current point in template-space. */
+    curX: number;
+    curY: number;
+    /** Were we additive (shift held)? */
+    additive: boolean;
+  } | null>(null);
+  /** Whether the modifier key was held when the current drag started — disables snapping. */
+  const dragModifierBypassRef = useRef<boolean>(false);
 
   // ── Save flow ──────────────────────────────────────────────────────
   const [saving, setSaving] = useState<boolean>(false);
@@ -205,16 +559,45 @@ export default function PostEditor({
     setDirty(true);
   }, [history, historyIndex]);
 
-  // ── Selected layer + safe accessor ─────────────────────────────────
-  const selectedLayer: Layer | null = useMemo(() => {
-    if (!selectedLayerId) return null;
-    return findLayer(tree, selectedLayerId);
-  }, [tree, selectedLayerId]);
+  // ── Selected layer + safe accessors ────────────────────────────────
+  /** All currently-selected layers (resolved from ids). */
+  const selectedLayers: Layer[] = useMemo(() => {
+    if (selectedLayerIds.length === 0) return [];
+    const out: Layer[] = [];
+    for (const id of selectedLayerIds) {
+      const l = findLayer(tree, id);
+      if (l) out.push(l);
+    }
+    return out;
+  }, [tree, selectedLayerIds]);
 
-  // Re-position Moveable when the selected layer's box changes (drag/edit).
+  /** "Primary" selected layer — used by the Moveable single-target path,
+   * the property panel header, and keyboard nudge. */
+  const selectedLayer: Layer | null = selectedLayers[0] ?? null;
+  /** True when 2+ layers are selected — switches Moveable into virtual-bbox mode. */
+  const hasMultiSelect = selectedLayers.length >= 2;
+  /** Bounding box covering all selected layers (multi-select Moveable target). */
+  const multiBounds: LayerBounds | null = useMemo(() => {
+    if (!hasMultiSelect) return null;
+    return getMultiBounds(selectedLayers);
+  }, [hasMultiSelect, selectedLayers]);
+
+  // Re-position Moveable when the selected layer's box changes (drag/edit),
+  // or when the multi-select bbox shifts.
   useEffect(() => {
     setMoveableTick((t) => t + 1);
-  }, [selectedLayer?.x, selectedLayer?.y, selectedLayer?.w, selectedLayer?.h, selectedLayer?.rotation, zoom]);
+  }, [
+    selectedLayer?.x,
+    selectedLayer?.y,
+    selectedLayer?.w,
+    selectedLayer?.h,
+    selectedLayer?.rotation,
+    multiBounds?.x,
+    multiBounds?.y,
+    multiBounds?.w,
+    multiBounds?.h,
+    zoom,
+  ]);
 
   // ── Tree mutation helpers ──────────────────────────────────────────
 
@@ -228,76 +611,164 @@ export default function PostEditor({
     [tree, pushHistory],
   );
 
-  const updateSelectedLayer = useCallback(
+  /**
+   * Apply a mutator to every selected layer in a single history entry.
+   * Used by the property panel when 1+ layers share the universal section.
+   */
+  const updateSelectedLayers = useCallback(
     (mutator: (l: Layer) => Layer) => {
-      if (!selectedLayerId) return;
-      updateLayer(selectedLayerId, mutator);
+      if (selectedLayerIds.length === 0) return;
+      let next = tree;
+      for (const id of selectedLayerIds) {
+        const target = findLayer(next, id);
+        if (!target) continue;
+        next = replaceLayer(next, id, mutator(target));
+      }
+      if (next !== tree) pushHistory(next);
     },
-    [selectedLayerId, updateLayer],
+    [tree, selectedLayerIds, pushHistory],
   );
+
+  const deleteSelectedLayers = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    let next = tree;
+    for (const id of selectedLayerIds) {
+      next = removeLayer(next, id);
+    }
+    if (next !== tree) {
+      pushHistory(next);
+      setSelectedLayerIds([]);
+    }
+  }, [tree, selectedLayerIds, pushHistory]);
 
   const deleteLayer = useCallback(
     (id: string) => {
       pushHistory(removeLayer(tree, id));
-      if (selectedLayerId === id) setSelectedLayerId(null);
+      setSelectedLayerIds((prev) => prev.filter((sid) => sid !== id));
     },
-    [tree, pushHistory, selectedLayerId],
+    [tree, pushHistory],
   );
 
   const duplicateLayer = useCallback(
     (id: string) => {
-      const orig = findLayer(tree, id);
-      if (!orig) return;
-      // Deep clone; offset a bit so it doesn't perfectly overlap.
-      const cloned: Layer = {
-        ...orig,
-        id: newLayerId(orig.type),
-        x: orig.x + 24,
-        y: orig.y + 24,
-        name: orig.name ? `${orig.name} copy` : undefined,
-      } as Layer;
-      // Copy is shallow on top-level, but groups need their children re-id'd
-      // so future edits don't double-mutate. For v1 we just shallow-clone the
-      // top layer — group duplication keeps original child ids (acceptable
-      // tradeoff; users rarely duplicate groups in v1).
-      pushHistory({ ...tree, layers: [...tree.layers, cloned] });
-      setSelectedLayerId(cloned.id);
+      const { tree: nextTree, newIds } = duplicateLayers(
+        tree,
+        [id],
+        PASTE_SHIFT_PX,
+        PASTE_SHIFT_PX,
+      );
+      if (newIds.length === 0) return;
+      pushHistory(nextTree);
+      setSelectedLayerIds(newIds);
     },
     [tree, pushHistory],
   );
 
+  /** Duplicate the current selection in place (with a small shift). */
+  const duplicateSelection = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    const { tree: nextTree, newIds } = duplicateLayers(
+      tree,
+      selectedLayerIds,
+      PASTE_SHIFT_PX,
+      PASTE_SHIFT_PX,
+    );
+    if (newIds.length === 0) return;
+    pushHistory(nextTree);
+    setSelectedLayerIds(newIds);
+  }, [tree, selectedLayerIds, pushHistory]);
+
   /**
-   * Move a top-level layer up (toward the front of the canvas) or down
-   * (toward the back). Layers nested in groups are not reorderable in v1
-   * — that requires path-aware indexing. ADHD-friendly: ignore the action
-   * silently rather than half-do it.
+   * Reorder the active selection. For multi-select we apply the reorder to
+   * each selected id in the right order so the relative order is preserved
+   * within the moved block.
    */
-  const reorderLayer = useCallback(
-    (id: string, direction: "forward" | "backward" | "front" | "back") => {
-      const idx = tree.layers.findIndex((l) => l.id === id);
-      if (idx === -1) return; // nested in a group — ignore
-      const next = [...tree.layers];
-      const [layer] = next.splice(idx, 1);
-      let target: number;
-      switch (direction) {
-        case "forward":
-          target = Math.min(next.length, idx + 1);
-          break;
-        case "backward":
-          target = Math.max(0, idx - 1);
-          break;
-        case "front":
-          target = next.length;
-          break;
-        case "back":
-          target = 0;
-          break;
+  const reorderSelection = useCallback(
+    (direction: ReorderDirection) => {
+      if (selectedLayerIds.length === 0) return;
+      // Sort the ids by their current index in tree.layers to preserve the
+      // relative ordering after the move. For "forward" / "front" we move
+      // back-to-front; for "back" / "back_full" we move front-to-back, so
+      // the leftmost stays leftmost.
+      const indexed: Array<{ id: string; idx: number }> = [];
+      selectedLayerIds.forEach((id) => {
+        const idx = tree.layers.findIndex((l) => l.id === id);
+        if (idx >= 0) indexed.push({ id, idx });
+      });
+      indexed.sort((a, b) =>
+        direction === "forward" || direction === "front"
+          ? b.idx - a.idx
+          : a.idx - b.idx,
+      );
+      let next = tree;
+      for (const { id } of indexed) {
+        next = reorderLayer(next, id, direction);
       }
-      next.splice(target, 0, layer);
-      pushHistory({ ...tree, layers: next });
+      if (next !== tree) pushHistory(next);
     },
-    [tree, pushHistory],
+    [tree, selectedLayerIds, pushHistory],
   );
+
+  // ── Group / ungroup ────────────────────────────────────────────────
+  const groupSelection = useCallback(() => {
+    if (selectedLayerIds.length < 2) return;
+    const { tree: nextTree, newGroupId } = groupLayers(tree, selectedLayerIds);
+    if (!newGroupId) return;
+    pushHistory(nextTree);
+    setSelectedLayerIds([newGroupId]);
+  }, [tree, selectedLayerIds, pushHistory]);
+
+  const ungroupSelection = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    let next = tree;
+    let outIds: string[] = [];
+    for (const id of selectedLayerIds) {
+      const r = ungroupLayer(next, id);
+      next = r.tree;
+      if (r.childIds.length > 0) outIds = outIds.concat(r.childIds);
+    }
+    if (next !== tree) {
+      pushHistory(next);
+      if (outIds.length > 0) setSelectedLayerIds(outIds);
+    }
+  }, [tree, selectedLayerIds, pushHistory]);
+
+  // ── Clipboard (copy / paste) ───────────────────────────────────────
+  const copySelection = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    const idSet = new Set(selectedLayerIds);
+    const out: Layer[] = [];
+    for (const l of tree.layers) {
+      if (idSet.has(l.id)) out.push(l);
+    }
+    if (out.length > 0) {
+      // Deep-snapshot via JSON so later edits don't mutate the clipboard.
+      setClipboard(JSON.parse(JSON.stringify(out)) as Layer[]);
+    }
+  }, [tree.layers, selectedLayerIds]);
+
+  const pasteClipboard = useCallback(() => {
+    if (clipboard.length === 0) return;
+    // Compute the bbox of the clipboard so we can position it sensibly.
+    const bounds = getMultiBounds(clipboard);
+    if (!bounds) return;
+    let dx = PASTE_SHIFT_PX;
+    let dy = PASTE_SHIFT_PX;
+    const cursor = cursorTemplatePosRef.current;
+    if (cursor) {
+      // Anchor the clipboard's center on the cursor for a natural feel.
+      dx = Math.round(cursor.x - (bounds.x + bounds.w / 2));
+      dy = Math.round(cursor.y - (bounds.y + bounds.h / 2));
+    }
+    const additions: Layer[] = clipboard.map((l) => {
+      const c = cloneLayerWithFreshIds(l);
+      c.x = l.x + dx;
+      c.y = l.y + dy;
+      return c;
+    });
+    pushHistory({ ...tree, layers: [...tree.layers, ...additions] });
+    setSelectedLayerIds(additions.map((c) => c.id));
+  }, [clipboard, tree, pushHistory]);
 
   // ── Add-layer factories ────────────────────────────────────────────
 
@@ -393,9 +864,9 @@ export default function PostEditor({
         }
       }
       pushHistory({ ...tree, layers: [...tree.layers, layer] });
-      setSelectedLayerId(layer.id);
+      selectOnly(layer.id);
     },
-    [tree, availablePhotos, pushHistory],
+    [tree, availablePhotos, pushHistory, selectOnly],
   );
 
   // ── Save flow ──────────────────────────────────────────────────────
@@ -474,6 +945,8 @@ export default function PostEditor({
         return;
       }
       const cmd = e.metaKey || e.ctrlKey;
+      const hasSelection = selectedLayerIds.length > 0;
+      // ── Undo / redo ───────────────────────────────────────────────
       if (cmd && (e.key === "z" || e.key === "Z") && !e.shiftKey) {
         e.preventDefault();
         undo();
@@ -484,20 +957,72 @@ export default function PostEditor({
         redo();
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedLayerId) {
+      // ── Group / ungroup ───────────────────────────────────────────
+      if (cmd && (e.key === "g" || e.key === "G")) {
         e.preventDefault();
-        deleteLayer(selectedLayerId);
+        if (e.shiftKey) {
+          ungroupSelection();
+        } else {
+          groupSelection();
+        }
         return;
       }
+      // ── Z-order: Cmd+] forward, Cmd+[ back, +Shift = front/back ──
+      if (cmd && e.key === "]") {
+        e.preventDefault();
+        reorderSelection(e.shiftKey ? "front" : "forward");
+        return;
+      }
+      if (cmd && e.key === "[") {
+        e.preventDefault();
+        reorderSelection(e.shiftKey ? "back_full" : "back");
+        return;
+      }
+      // ── Copy / paste / duplicate ──────────────────────────────────
+      if (cmd && (e.key === "c" || e.key === "C")) {
+        if (hasSelection) {
+          e.preventDefault();
+          copySelection();
+        }
+        return;
+      }
+      if (cmd && (e.key === "v" || e.key === "V")) {
+        if (clipboard.length > 0) {
+          e.preventDefault();
+          pasteClipboard();
+        }
+        return;
+      }
+      if (cmd && (e.key === "d" || e.key === "D")) {
+        if (hasSelection) {
+          e.preventDefault();
+          duplicateSelection();
+        }
+        return;
+      }
+      // ── Select-all (top-level layers) ─────────────────────────────
+      if (cmd && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        setSelectedLayerIds(tree.layers.map((l) => l.id));
+        return;
+      }
+      // ── Delete / backspace ────────────────────────────────────────
+      if ((e.key === "Delete" || e.key === "Backspace") && hasSelection) {
+        e.preventDefault();
+        deleteSelectedLayers();
+        return;
+      }
+      // ── Escape: clear selection or close editor ───────────────────
       if (e.key === "Escape") {
-        if (selectedLayerId) {
-          setSelectedLayerId(null);
+        if (hasSelection) {
+          setSelectedLayerIds([]);
         } else {
           handleClose();
         }
         return;
       }
-      if (selectedLayerId) {
+      // ── Arrow-key nudge ───────────────────────────────────────────
+      if (hasSelection) {
         const step = e.shiftKey ? 10 : 1;
         let dx = 0;
         let dy = 0;
@@ -507,13 +1032,28 @@ export default function PostEditor({
         else if (e.key === "ArrowDown") dy = step;
         if (dx !== 0 || dy !== 0) {
           e.preventDefault();
-          updateSelectedLayer((l) => ({ ...l, x: l.x + dx, y: l.y + dy }));
+          updateSelectedLayers((l) => ({ ...l, x: l.x + dx, y: l.y + dy }));
         }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, deleteLayer, selectedLayerId, updateSelectedLayer, handleClose]);
+  }, [
+    undo,
+    redo,
+    deleteSelectedLayers,
+    selectedLayerIds,
+    updateSelectedLayers,
+    handleClose,
+    groupSelection,
+    ungroupSelection,
+    reorderSelection,
+    copySelection,
+    pasteClipboard,
+    duplicateSelection,
+    clipboard,
+    tree.layers,
+  ]);
 
   // ── SVG render of the tree (live) ──────────────────────────────────
   const svgMarkup = useMemo(() => layerTreeToSvg(tree), [tree]);
@@ -543,7 +1083,7 @@ export default function PostEditor({
   // ── Title for header ───────────────────────────────────────────────
   const title = listing.address ?? listing.mls_number ?? "Untitled post";
 
-  // ── Click on canvas to select / deselect ───────────────────────────
+  // ── Click on canvas to select / deselect (shift = additive) ────────
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       // Look up the closest element with data-layer-id; if none, deselect.
@@ -551,14 +1091,24 @@ export default function PostEditor({
       while (el && el !== canvasInnerRef.current) {
         const id = el.getAttribute("data-layer-id");
         if (id) {
-          setSelectedLayerId(id);
+          if (e.shiftKey) {
+            setSelectedLayerIds((prev) =>
+              prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
+            );
+          } else {
+            selectOnly(id);
+          }
           return;
         }
         el = el.parentElement;
       }
-      setSelectedLayerId(null);
+      // Click on empty canvas — only deselect if not shift-modified (a marquee
+      // drag will handle empty-area shift-clicks). On a plain click that
+      // doesn't hit a layer, the marquee handler's mouseup decides whether to
+      // clear; we leave the existing behavior unchanged here.
+      if (!e.shiftKey) selectOnly(null);
     },
-    [],
+    [selectOnly],
   );
 
   // ── Compute Moveable target rect (in the moveable-overlay div coords) ──
@@ -633,6 +1183,94 @@ export default function PostEditor({
             Fit
           </ToolbarButton>
         </div>
+        {/* ── B-5: Z-order + group/ungroup + snap toggle ──────────── */}
+        <div className="ml-6 flex items-center gap-1">
+          <ToolbarButton
+            onClick={() => reorderSelection("back_full")}
+            disabled={selectedLayerIds.length === 0}
+            title="Send to back (Cmd+Shift+[)"
+          >
+            <svg viewBox="0 0 20 20" className="w-4 h-4" fill="none">
+              <rect x="6" y="6" width="8" height="8" stroke="currentColor" strokeWidth="1.6" />
+              <rect x="2" y="10" width="8" height="8" fill="currentColor" opacity="0.4" />
+              <rect x="10" y="2" width="8" height="8" fill="currentColor" opacity="0.4" />
+            </svg>
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => reorderSelection("back")}
+            disabled={selectedLayerIds.length === 0}
+            title="Send back (Cmd+[)"
+          >
+            <svg viewBox="0 0 20 20" className="w-4 h-4" fill="none">
+              <rect x="3" y="3" width="10" height="10" fill="currentColor" opacity="0.4" />
+              <rect x="7" y="7" width="10" height="10" stroke="currentColor" strokeWidth="1.6" fill="#1a1a1a" />
+            </svg>
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => reorderSelection("forward")}
+            disabled={selectedLayerIds.length === 0}
+            title="Bring forward (Cmd+])"
+          >
+            <svg viewBox="0 0 20 20" className="w-4 h-4" fill="none">
+              <rect x="7" y="7" width="10" height="10" fill="currentColor" opacity="0.4" />
+              <rect x="3" y="3" width="10" height="10" stroke="currentColor" strokeWidth="1.6" fill="#1a1a1a" />
+            </svg>
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => reorderSelection("front")}
+            disabled={selectedLayerIds.length === 0}
+            title="Bring to front (Cmd+Shift+])"
+          >
+            <svg viewBox="0 0 20 20" className="w-4 h-4" fill="none">
+              <rect x="2" y="10" width="8" height="8" fill="currentColor" opacity="0.4" />
+              <rect x="10" y="2" width="8" height="8" fill="currentColor" opacity="0.4" />
+              <rect x="6" y="6" width="8" height="8" stroke="currentColor" strokeWidth="1.6" fill="#1a1a1a" />
+            </svg>
+          </ToolbarButton>
+        </div>
+        <div className="ml-3 flex items-center gap-1">
+          <ToolbarButton
+            onClick={groupSelection}
+            disabled={selectedLayerIds.length < 2}
+            title="Group selection (Cmd+G)"
+          >
+            <svg viewBox="0 0 20 20" className="w-4 h-4" fill="none">
+              <rect x="2" y="2" width="6" height="6" stroke="currentColor" strokeWidth="1.4" />
+              <rect x="12" y="2" width="6" height="6" stroke="currentColor" strokeWidth="1.4" />
+              <rect x="2" y="12" width="6" height="6" stroke="currentColor" strokeWidth="1.4" />
+              <rect x="12" y="12" width="6" height="6" stroke="currentColor" strokeWidth="1.4" />
+              <rect x="0.5" y="0.5" width="19" height="19" stroke="currentColor" strokeWidth="0.8" strokeDasharray="2 2" />
+            </svg>
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={ungroupSelection}
+            disabled={!selectedLayers.some((l) => l.type === "group")}
+            title="Ungroup (Cmd+Shift+G)"
+          >
+            <svg viewBox="0 0 20 20" className="w-4 h-4" fill="none">
+              <rect x="2" y="2" width="6" height="6" stroke="currentColor" strokeWidth="1.4" />
+              <rect x="12" y="12" width="6" height="6" stroke="currentColor" strokeWidth="1.4" />
+            </svg>
+          </ToolbarButton>
+        </div>
+        <div className="ml-3">
+          <button
+            type="button"
+            onClick={() => setSnapEnabled((v) => !v)}
+            title={snapEnabled ? "Snap on (click to disable). Hold Cmd while dragging to bypass." : "Snap off (click to enable)"}
+            className={[
+              "px-2.5 h-8 rounded-md text-[11px] font-medium transition flex items-center gap-1.5",
+              snapEnabled
+                ? "bg-gold-500/20 text-gold-200 hover:bg-gold-500/30"
+                : "text-neutral-300 hover:bg-neutral-800",
+            ].join(" ")}
+          >
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none">
+              <path d="M2 5h12M2 8h12M2 11h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+            Snap
+          </button>
+        </div>
         <div className="ml-auto flex items-center gap-2">
           {dirty ? (
             <span className="text-[11px] text-neutral-400">Unsaved changes</span>
@@ -656,31 +1294,32 @@ export default function PostEditor({
             <div className="text-[10px] uppercase tracking-widest text-neutral-400">Layers</div>
             <div className="text-[10px] text-neutral-500">{totalLayerCount}</div>
           </div>
-          <div className="flex-1 overflow-y-auto px-1.5 pb-3">
-            {layerListItems.length === 0 ? (
-              <div className="text-xs text-neutral-500 italic px-2 py-3">No layers yet.</div>
-            ) : (
-              layerListItems.map(({ layer }) => (
-                <LayerRow
-                  key={layer.id}
-                  layer={layer}
-                  selected={layer.id === selectedLayerId}
-                  onSelect={() => setSelectedLayerId(layer.id)}
-                  onRename={(name) => updateLayer(layer.id, (l) => ({ ...l, name }))}
-                  onToggleHidden={() =>
-                    updateLayer(layer.id, (l) => ({ ...l, hidden: !l.hidden }))
-                  }
-                  onToggleLocked={() =>
-                    updateLayer(layer.id, (l) => ({ ...l, locked: !l.locked }))
-                  }
-                  onDelete={() => deleteLayer(layer.id)}
-                  onDuplicate={() => duplicateLayer(layer.id)}
-                  onForward={() => reorderLayer(layer.id, "forward")}
-                  onBackward={() => reorderLayer(layer.id, "backward")}
-                />
-              ))
-            )}
-          </div>
+          <LayerPanelList
+            items={layerListItems}
+            selectedIds={selectedLayerIds}
+            onSelect={(id, additive) => {
+              if (additive) {
+                setSelectedLayerIds((prev) =>
+                  prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
+                );
+              } else {
+                selectOnly(id);
+              }
+            }}
+            onRename={(id, name) => updateLayer(id, (l) => ({ ...l, name }))}
+            onToggleHidden={(id) =>
+              updateLayer(id, (l) => ({ ...l, hidden: !l.hidden }))
+            }
+            onToggleLocked={(id) =>
+              updateLayer(id, (l) => ({ ...l, locked: !l.locked }))
+            }
+            onDelete={(id) => deleteLayer(id)}
+            onDuplicate={(id) => duplicateLayer(id)}
+            onForward={(id) => pushHistory(reorderLayer(tree, id, "forward"))}
+            onBackward={(id) => pushHistory(reorderLayer(tree, id, "back"))}
+            onReorder={(fromId, toIdx) => pushHistory(moveLayerToIndex(tree, fromId, toIdx))}
+            totalLayerCount={tree.layers.length}
+          />
         </aside>
 
         {/* ── CANVAS (center) ──────────────────────────────── */}
@@ -707,112 +1346,30 @@ export default function PostEditor({
               {tree.width} × {tree.height}px
             </div>
           </div>
-          <div
-            ref={canvasViewportRef}
-            className="flex-1 overflow-hidden relative"
-            onMouseDown={(e) => {
-              // Click on the gray viewport (not the canvas itself) deselects.
-              if (e.target === canvasViewportRef.current) {
-                setSelectedLayerId(null);
-              }
-            }}
+          <CanvasArea
+            tree={tree}
+            zoom={zoom}
+            svgMarkup={svgMarkup}
+            selectedLayer={selectedLayer}
+            selectedLayers={selectedLayers}
+            multiBounds={multiBounds}
+            hasMultiSelect={hasMultiSelect}
+            moveableTick={moveableTick}
+            snapEnabled={snapEnabled}
+            snapLines={snapLines}
+            setSnapLines={setSnapLines}
+            dragModifierBypassRef={dragModifierBypassRef}
+            cursorTemplatePosRef={cursorTemplatePosRef}
+            marquee={marquee}
+            setMarquee={setMarquee}
+            canvasViewportRef={canvasViewportRef}
+            canvasInnerRef={canvasInnerRef}
+            moveableTargetRef={moveableTargetRef}
+            handleCanvasClick={handleCanvasClick}
+            updateSelectedLayers={updateSelectedLayers}
+            setSelectedLayerIds={setSelectedLayerIds}
+            selectOnly={selectOnly}
           >
-            <CheckerBackground />
-            <div
-              className="absolute top-1/2 left-1/2 origin-center"
-              style={{
-                transform: `translate(-50%, -50%) scale(${zoom})`,
-                width: tree.width,
-                height: tree.height,
-              }}
-            >
-              <div
-                ref={canvasInnerRef}
-                className="relative bg-white shadow-2xl"
-                style={{ width: tree.width, height: tree.height }}
-                onClick={handleCanvasClick}
-                // The SVG is rendered inline. We use dangerouslySetInnerHTML
-                // since the renderer returns a self-contained <svg> string.
-                // On every tree change React re-creates the inner HTML — for
-                // the asset volumes here (a few hundred layers max) this is
-                // imperceptibly fast.
-                dangerouslySetInnerHTML={{ __html: enhanceSvgWithLayerIds(svgMarkup, tree) }}
-              />
-              {/* Moveable target overlay — invisible div positioned over the
-                  selected layer in template-space. */}
-              {selectedLayer && !selectedLayer.locked && !selectedLayer.hidden ? (
-                <>
-                  <div
-                    ref={moveableTargetRef}
-                    style={{
-                      position: "absolute",
-                      left: selectedLayer.x,
-                      top: selectedLayer.y,
-                      width: selectedLayer.w,
-                      height: selectedLayer.h,
-                      transform: selectedLayer.rotation
-                        ? `rotate(${selectedLayer.rotation}deg)`
-                        : undefined,
-                      transformOrigin: "center center",
-                      pointerEvents: "none",
-                    }}
-                    aria-hidden="true"
-                  />
-                  <Moveable
-                    key={`mv-${selectedLayer.id}-${moveableTick}`}
-                    target={moveableTargetRef.current}
-                    draggable
-                    resizable
-                    rotatable
-                    keepRatio={false}
-                    throttleDrag={0}
-                    throttleResize={0}
-                    throttleRotate={0}
-                    origin={false}
-                    edge={false}
-                    zoom={1}
-                    onDrag={({ beforeDelta }) => {
-                      // beforeDelta is in screen pixels; divide by zoom to
-                      // get template-space delta.
-                      const dx = beforeDelta[0] / zoom;
-                      const dy = beforeDelta[1] / zoom;
-                      updateSelectedLayer((l) => ({
-                        ...l,
-                        x: Math.round(l.x + dx),
-                        y: Math.round(l.y + dy),
-                      }));
-                    }}
-                    onResize={({ width, height, drag }) => {
-                      const newW = Math.max(8, Math.round(width / zoom));
-                      const newH = Math.max(8, Math.round(height / zoom));
-                      const dx = drag.beforeTranslate[0] / zoom;
-                      const dy = drag.beforeTranslate[1] / zoom;
-                      updateSelectedLayer((l) => ({
-                        ...l,
-                        x: Math.round(l.x + dx),
-                        y: Math.round(l.y + dy),
-                        w: newW,
-                        h: newH,
-                      }));
-                    }}
-                    onRotate={({ beforeRotate }) => {
-                      // beforeRotate is the absolute rotation as Moveable
-                      // tracks its own delta from the original. Since we
-                      // re-mount Moveable each frame via key+tick, we use it
-                      // additively against the layer's current rotation —
-                      // but to avoid double-application, we instead set the
-                      // layer rotation to `current + beforeRotate` only on
-                      // rotateEnd. For continuous feedback, rely on the
-                      // rotation state Moveable shows on its own handle.
-                      updateSelectedLayer((l) => ({
-                        ...l,
-                        rotation: Math.round(((l.rotation ?? 0) + beforeRotate) % 360),
-                      }));
-                    }}
-                  />
-                </>
-              ) : null}
-            </div>
             {toast ? (
               <div
                 className={[
@@ -825,24 +1382,38 @@ export default function PostEditor({
                 {toast.text}
               </div>
             ) : null}
-          </div>
+          </CanvasArea>
         </section>
 
         {/* ── PROPERTY PANEL (right) ───────────────────────── */}
         <aside className="w-[320px] flex-shrink-0 bg-neutral-900 text-white border-l border-neutral-800 overflow-y-auto">
-          {selectedLayer ? (
+          {hasMultiSelect ? (
+            <MultiSelectPropertyPanel
+              layers={selectedLayers}
+              onUpdateAll={(mutator) => updateSelectedLayers(mutator)}
+              onDelete={deleteSelectedLayers}
+              onGroup={groupSelection}
+            />
+          ) : selectedLayer ? (
             <PropertyPanel
               layer={selectedLayer}
               tree={tree}
               availablePhotos={availablePhotos}
               onChange={(next) => updateLayer(selectedLayer.id, () => next)}
               onDelete={() => deleteLayer(selectedLayer.id)}
+              onUngroup={
+                selectedLayer.type === "group"
+                  ? () => ungroupSelection()
+                  : undefined
+              }
             />
           ) : (
             <div className="px-4 py-8 text-center text-sm text-neutral-400">
               Select a layer to edit its properties.
               <div className="mt-2 text-[11px] text-neutral-500">
                 Click a layer in the canvas or the layers list.
+                <br />
+                Shift+click to select multiple layers.
               </div>
             </div>
           )}
@@ -908,7 +1479,12 @@ function AddLayerButton({
 interface LayerRowProps {
   layer: Layer;
   selected: boolean;
-  onSelect: () => void;
+  /** True when this row is the drag-over drop target. */
+  dropAbove?: boolean;
+  dropBelow?: boolean;
+  /** True if a row is currently being dragged anywhere in the panel. */
+  dragInProgress?: boolean;
+  onSelect: (additive: boolean) => void;
   onRename: (name: string) => void;
   onToggleHidden: () => void;
   onToggleLocked: () => void;
@@ -916,10 +1492,16 @@ interface LayerRowProps {
   onDuplicate: () => void;
   onForward: () => void;
   onBackward: () => void;
+  /** HTML5 drag-and-drop wiring from LayerPanelList. */
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
 function LayerRow(props: LayerRowProps) {
-  const { layer, selected } = props;
+  const { layer, selected, dropAbove, dropBelow } = props;
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(layer.name ?? defaultLayerName(layer));
   const [menuOpen, setMenuOpen] = useState(false);
@@ -944,12 +1526,20 @@ function LayerRow(props: LayerRowProps) {
 
   return (
     <div
-      onClick={props.onSelect}
+      draggable
+      onDragStart={props.onDragStart}
+      onDragOver={props.onDragOver}
+      onDragLeave={props.onDragLeave}
+      onDrop={props.onDrop}
+      onDragEnd={props.onDragEnd}
+      onClick={(e) => props.onSelect(e.shiftKey)}
       className={[
-        "flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition border",
+        "relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition border",
         selected
           ? "bg-gold-500/10 border-gold-500/60 ring-1 ring-gold-500/40"
           : "border-transparent hover:bg-neutral-800",
+        dropAbove ? "shadow-[inset_0_2px_0_0_rgba(201,168,76,1)]" : "",
+        dropBelow ? "shadow-[inset_0_-2px_0_0_rgba(201,168,76,1)]" : "",
       ].join(" ")}
     >
       <span className="w-4 text-center text-[11px] text-neutral-400 font-mono">
@@ -1098,9 +1688,11 @@ interface PropertyPanelProps {
   availablePhotos: Array<{ url: string; sequence: number }>;
   onChange: (next: Layer) => void;
   onDelete: () => void;
+  /** Provided when the selected layer is a Group — unwraps it. */
+  onUngroup?: () => void;
 }
 
-function PropertyPanel({ layer, availablePhotos, onChange, onDelete }: PropertyPanelProps) {
+function PropertyPanel({ layer, availablePhotos, onChange, onDelete, onUngroup }: PropertyPanelProps) {
   return (
     <div className="p-4 space-y-5">
       <div className="flex items-center justify-between">
@@ -1137,9 +1729,18 @@ function PropertyPanel({ layer, availablePhotos, onChange, onDelete }: PropertyP
       {layer.type === "group" ? (
         <FieldGroup label="Group">
           <p className="text-[11px] text-neutral-400">
-            Group layers contain {(layer as GroupLayer).children.length} child layers. To
-            edit children, ungroup or use a future B-5 build.
+            Group layer contains {(layer as GroupLayer).children.length} child layers.
+            Ungroup to edit children individually.
           </p>
+          {onUngroup ? (
+            <button
+              type="button"
+              onClick={onUngroup}
+              className="mt-2 w-full px-3 py-1.5 rounded-md bg-neutral-800 hover:bg-neutral-700 text-[11px] text-neutral-100 transition"
+            >
+              Ungroup (Cmd+Shift+G)
+            </button>
+          ) : null}
         </FieldGroup>
       ) : null}
     </div>
@@ -1813,6 +2414,757 @@ function ColorPicker({
           !isValidHex ? "ring-1 ring-rose-500" : "",
         ].join(" ")}
       />
+    </div>
+  );
+}
+
+// ─── B-5: Layer-panel list with drag-reorder ─────────────────────────
+
+interface LayerPanelListProps {
+  /** Layer list items; first entry = top of canvas (front). */
+  items: Array<{ layer: Layer; depth: number }>;
+  selectedIds: string[];
+  totalLayerCount: number;
+  onSelect: (id: string, additive: boolean) => void;
+  onRename: (id: string, name: string) => void;
+  onToggleHidden: (id: string) => void;
+  onToggleLocked: (id: string) => void;
+  onDelete: (id: string) => void;
+  onDuplicate: (id: string) => void;
+  onForward: (id: string) => void;
+  onBackward: (id: string) => void;
+  /** Drop the dragged layer at the given index in the source `tree.layers`
+   * array (NOT the reversed display order). */
+  onReorder: (fromId: string, toIndex: number) => void;
+}
+
+function LayerPanelList({
+  items,
+  selectedIds,
+  totalLayerCount,
+  onSelect,
+  onRename,
+  onToggleHidden,
+  onToggleLocked,
+  onDelete,
+  onDuplicate,
+  onForward,
+  onBackward,
+  onReorder,
+}: LayerPanelListProps) {
+  // Drag state — which row is being dragged, and the row currently being
+  // hovered as a drop target (with above/below positioning).
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    id: string;
+    above: boolean;
+  } | null>(null);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  // The display order is reversed (top-of-canvas first). To convert a
+  // dropped row index into a `tree.layers` index, we map back.
+  // items[0] corresponds to tree.layers[N-1]; items[N-1] to tree.layers[0].
+  const N = items.length;
+
+  return (
+    <div className="flex-1 overflow-y-auto px-1.5 pb-3">
+      {items.length === 0 ? (
+        <div className="text-xs text-neutral-500 italic px-2 py-3">No layers yet.</div>
+      ) : (
+        items.map((entry, displayIdx) => {
+          const { layer } = entry;
+          const isDragging = draggingId === layer.id;
+          const isDropTarget = dropTarget?.id === layer.id;
+          return (
+            <LayerRow
+              key={layer.id}
+              layer={layer}
+              selected={selectedSet.has(layer.id)}
+              dragInProgress={!!draggingId}
+              dropAbove={isDropTarget && dropTarget?.above === true}
+              dropBelow={isDropTarget && dropTarget?.above === false}
+              onSelect={(additive) => onSelect(layer.id, additive)}
+              onRename={(name) => onRename(layer.id, name)}
+              onToggleHidden={() => onToggleHidden(layer.id)}
+              onToggleLocked={() => onToggleLocked(layer.id)}
+              onDelete={() => onDelete(layer.id)}
+              onDuplicate={() => onDuplicate(layer.id)}
+              onForward={() => onForward(layer.id)}
+              onBackward={() => onBackward(layer.id)}
+              onDragStart={(e) => {
+                setDraggingId(layer.id);
+                if (e.dataTransfer) {
+                  e.dataTransfer.effectAllowed = "move";
+                  // Some browsers require setData to allow the drag at all.
+                  try {
+                    e.dataTransfer.setData("text/plain", layer.id);
+                  } catch {
+                    /* setData on DnD can throw in some sandboxes — safe to ignore. */
+                  }
+                }
+              }}
+              onDragOver={(e) => {
+                if (!draggingId || draggingId === layer.id) return;
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+                const target = e.currentTarget as HTMLElement;
+                const rect = target.getBoundingClientRect();
+                const above = e.clientY - rect.top < rect.height / 2;
+                if (
+                  !dropTarget ||
+                  dropTarget.id !== layer.id ||
+                  dropTarget.above !== above
+                ) {
+                  setDropTarget({ id: layer.id, above });
+                }
+              }}
+              onDragLeave={() => {
+                if (dropTarget?.id === layer.id) setDropTarget(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (!draggingId || !dropTarget) {
+                  setDraggingId(null);
+                  setDropTarget(null);
+                  return;
+                }
+                // Convert displayIdx + above/below to a tree.layers index.
+                // items[displayIdx] === tree.layers[N - 1 - displayIdx].
+                // "Above this row in display" = "after this row in tree".
+                const rowSourceIdx = N - 1 - displayIdx;
+                const insertIdx = dropTarget.above ? rowSourceIdx + 1 : rowSourceIdx;
+                onReorder(draggingId, insertIdx);
+                setDraggingId(null);
+                setDropTarget(null);
+              }}
+              onDragEnd={() => {
+                setDraggingId(null);
+                setDropTarget(null);
+              }}
+            />
+          );
+        })
+      )}
+      {/* Reserve a footer hint that shows total layers when there are many. */}
+      {totalLayerCount > 0 ? (
+        <div className="px-2 pt-2 text-[10px] text-neutral-600">
+          {totalLayerCount} top-level layer{totalLayerCount === 1 ? "" : "s"}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── B-5: Multi-select property panel ────────────────────────────────
+
+interface MultiSelectPropertyPanelProps {
+  layers: Layer[];
+  /** Apply the same delta-based mutator to every selected layer (one history step). */
+  onUpdateAll: (mutator: (l: Layer) => Layer) => void;
+  onDelete: () => void;
+  onGroup: () => void;
+}
+
+function MultiSelectPropertyPanel({
+  layers,
+  onUpdateAll,
+  onDelete,
+  onGroup,
+}: MultiSelectPropertyPanelProps) {
+  // The "primary" layer is the first one — its values seed the inputs.
+  const primary = layers[0];
+  if (!primary) return null;
+  return (
+    <div className="p-4 space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-widest text-neutral-400">
+          {layers.length} layers selected
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="text-[11px] text-rose-300 hover:text-rose-200"
+          title="Delete all selected"
+        >
+          Delete all
+        </button>
+      </div>
+
+      <div className="rounded-md bg-neutral-800/60 border border-neutral-700 px-3 py-2 text-[11px] text-neutral-300">
+        Editing the universal properties below applies the change as a delta to
+        every selected layer.
+      </div>
+
+      <FieldGroup label="Position & size">
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="X (primary)">
+            <NumberInput
+              value={primary.x}
+              onChange={(v) => {
+                const dx = v - primary.x;
+                onUpdateAll((l) => ({ ...l, x: l.x + dx }));
+              }}
+            />
+          </Field>
+          <Field label="Y (primary)">
+            <NumberInput
+              value={primary.y}
+              onChange={(v) => {
+                const dy = v - primary.y;
+                onUpdateAll((l) => ({ ...l, y: l.y + dy }));
+              }}
+            />
+          </Field>
+          <Field label="Width (primary)">
+            <NumberInput
+              value={primary.w}
+              min={1}
+              onChange={(v) => {
+                const dw = v - primary.w;
+                onUpdateAll((l) => ({ ...l, w: Math.max(1, l.w + dw) }));
+              }}
+            />
+          </Field>
+          <Field label="Height (primary)">
+            <NumberInput
+              value={primary.h}
+              min={1}
+              onChange={(v) => {
+                const dh = v - primary.h;
+                onUpdateAll((l) => ({ ...l, h: Math.max(1, l.h + dh) }));
+              }}
+            />
+          </Field>
+        </div>
+        <Field label={`Rotation (${Math.round(primary.rotation ?? 0)}°)`}>
+          <SliderWithNumber
+            value={primary.rotation ?? 0}
+            min={0}
+            max={360}
+            step={1}
+            onChange={(v) => {
+              const dr = v - (primary.rotation ?? 0);
+              onUpdateAll((l) => ({
+                ...l,
+                rotation: ((l.rotation ?? 0) + dr) % 360,
+              }));
+            }}
+          />
+        </Field>
+        <Field label={`Opacity (${Math.round((primary.opacity ?? 1) * 100)}%)`}>
+          <SliderWithNumber
+            value={Math.round((primary.opacity ?? 1) * 100)}
+            min={0}
+            max={100}
+            step={1}
+            onChange={(v) => {
+              const target = v / 100;
+              const dOpacity = target - (primary.opacity ?? 1);
+              onUpdateAll((l) => {
+                const next = Math.max(0, Math.min(1, (l.opacity ?? 1) + dOpacity));
+                return { ...l, opacity: next };
+              });
+            }}
+          />
+        </Field>
+      </FieldGroup>
+
+      <button
+        type="button"
+        onClick={onGroup}
+        disabled={layers.length < 2}
+        className="w-full px-3 py-2 rounded-md bg-gold-500/20 hover:bg-gold-500/30 text-gold-200 text-[11px] font-semibold transition disabled:opacity-30"
+      >
+        Group selected (Cmd+G)
+      </button>
+    </div>
+  );
+}
+
+// ─── B-5: Canvas area (marquee, snap, multi-Moveable) ────────────────
+
+interface CanvasAreaProps {
+  tree: LayerTree;
+  zoom: number;
+  svgMarkup: string;
+  selectedLayer: Layer | null;
+  selectedLayers: Layer[];
+  multiBounds: LayerBounds | null;
+  hasMultiSelect: boolean;
+  moveableTick: number;
+  snapEnabled: boolean;
+  snapLines: SnapLine[];
+  setSnapLines: React.Dispatch<React.SetStateAction<SnapLine[]>>;
+  dragModifierBypassRef: React.MutableRefObject<boolean>;
+  cursorTemplatePosRef: React.MutableRefObject<{ x: number; y: number } | null>;
+  marquee: {
+    startX: number;
+    startY: number;
+    curX: number;
+    curY: number;
+    additive: boolean;
+  } | null;
+  setMarquee: React.Dispatch<
+    React.SetStateAction<{
+      startX: number;
+      startY: number;
+      curX: number;
+      curY: number;
+      additive: boolean;
+    } | null>
+  >;
+  canvasViewportRef: React.MutableRefObject<HTMLDivElement | null>;
+  canvasInnerRef: React.MutableRefObject<HTMLDivElement | null>;
+  moveableTargetRef: React.MutableRefObject<HTMLDivElement | null>;
+  handleCanvasClick: (e: React.MouseEvent<HTMLDivElement>) => void;
+  updateSelectedLayers: (mutator: (l: Layer) => Layer) => void;
+  setSelectedLayerIds: React.Dispatch<React.SetStateAction<string[]>>;
+  selectOnly: (id: string | null) => void;
+  children?: React.ReactNode;
+}
+
+function CanvasArea(props: CanvasAreaProps) {
+  const {
+    tree,
+    zoom,
+    svgMarkup,
+    selectedLayer,
+    selectedLayers,
+    multiBounds,
+    hasMultiSelect,
+    moveableTick,
+    snapEnabled,
+    snapLines,
+    setSnapLines,
+    dragModifierBypassRef,
+    cursorTemplatePosRef,
+    marquee,
+    setMarquee,
+    canvasViewportRef,
+    canvasInnerRef,
+    moveableTargetRef,
+    handleCanvasClick,
+    updateSelectedLayers,
+    setSelectedLayerIds,
+    selectOnly,
+    children,
+  } = props;
+
+  /**
+   * Convert a clientX/clientY pair into template-space coordinates,
+   * accounting for the current canvas-inner element's bounding rect AND
+   * the parent's `transform: scale(zoom)`. Returns null if the canvas
+   * isn't mounted yet.
+   */
+  const clientToTemplate = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const inner = canvasInnerRef.current;
+      if (!inner) return null;
+      const rect = inner.getBoundingClientRect();
+      // rect already reflects the CSS scale, so we just normalize.
+      const x = (clientX - rect.left) / zoom;
+      const y = (clientY - rect.top) / zoom;
+      return { x, y };
+    },
+    [canvasInnerRef, zoom],
+  );
+
+  /** Track cursor over the canvas for paste-at-cursor. */
+  const handleViewportMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const pos = clientToTemplate(e.clientX, e.clientY);
+      if (pos) cursorTemplatePosRef.current = pos;
+      // Update marquee in flight.
+      if (marquee) {
+        const tp = pos;
+        if (tp) {
+          setMarquee((prev) => (prev ? { ...prev, curX: tp.x, curY: tp.y } : prev));
+        }
+      }
+    },
+    [clientToTemplate, marquee, setMarquee, cursorTemplatePosRef],
+  );
+
+  /**
+   * Marquee drag-select. Triggered when the user mousedowns on the canvas
+   * BACKGROUND (not on any layer). We start a rectangle and on mouseup we
+   * select all layers whose AABB intersects the rectangle.
+   */
+  const handleViewportMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      // Only left-click; right-clicks and middles are reserved.
+      if (e.button !== 0) return;
+      // If the click landed on a layer's <g data-layer-id>, let the canvas
+      // click handler deal with it.
+      let el: HTMLElement | null = e.target as HTMLElement;
+      while (el && el !== canvasViewportRef.current) {
+        if (el.getAttribute("data-layer-id")) return;
+        // Don't start a marquee on the Moveable controls either.
+        if (el.classList.contains("moveable-control") || el.classList.contains("moveable-line")) return;
+        el = el.parentElement;
+      }
+      const tp = clientToTemplate(e.clientX, e.clientY);
+      if (!tp) return;
+      // Start a marquee. If the click is OUTSIDE the canvas (in the gray
+      // viewport), we still allow marquee — it just clamps to the canvas
+      // bounds visually.
+      setMarquee({
+        startX: tp.x,
+        startY: tp.y,
+        curX: tp.x,
+        curY: tp.y,
+        additive: e.shiftKey,
+      });
+    },
+    [canvasViewportRef, clientToTemplate, setMarquee],
+  );
+
+  /** Finalize marquee on mouseup anywhere. */
+  useEffect(() => {
+    if (!marquee) return;
+    function onUp() {
+      setMarquee((cur) => {
+        if (!cur) return null;
+        const x1 = Math.min(cur.startX, cur.curX);
+        const y1 = Math.min(cur.startY, cur.curY);
+        const x2 = Math.max(cur.startX, cur.curX);
+        const y2 = Math.max(cur.startY, cur.curY);
+        // Treat tiny marquees (< 3px in either axis) as deselect-clicks.
+        const tinyMarquee = x2 - x1 < 3 && y2 - y1 < 3;
+        if (tinyMarquee) {
+          if (!cur.additive) selectOnly(null);
+          return null;
+        }
+        const hits: string[] = [];
+        for (const l of tree.layers) {
+          if (l.hidden) continue;
+          const lx2 = l.x + l.w;
+          const ly2 = l.y + l.h;
+          if (l.x < x2 && lx2 > x1 && l.y < y2 && ly2 > y1) {
+            hits.push(l.id);
+          }
+        }
+        if (cur.additive) {
+          setSelectedLayerIds((prev) => {
+            const set = new Set(prev);
+            for (const id of hits) set.add(id);
+            return Array.from(set);
+          });
+        } else {
+          setSelectedLayerIds(hits);
+        }
+        return null;
+      });
+    }
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, [marquee, tree.layers, selectOnly, setSelectedLayerIds, setMarquee]);
+
+  // Marquee rectangle in template-space → render style.
+  const marqueeRect = useMemo(() => {
+    if (!marquee) return null;
+    const x = Math.min(marquee.startX, marquee.curX);
+    const y = Math.min(marquee.startY, marquee.curY);
+    const w = Math.abs(marquee.curX - marquee.startX);
+    const h = Math.abs(marquee.curY - marquee.startY);
+    if (w < 1 && h < 1) return null;
+    return { x, y, w, h };
+  }, [marquee]);
+
+  // Snap candidate cache — exclude the currently-dragging layer(s).
+  const snapCandidatesForSelection = useMemo(() => {
+    const exclude = new Set(selectedLayers.map((l) => l.id));
+    return computeSnapCandidates(tree, exclude);
+  }, [tree, selectedLayers]);
+
+  // Reset bypass flag when the selection changes (covers edge cases where
+  // a drag ends on a different element than it started).
+  useEffect(() => {
+    dragModifierBypassRef.current = false;
+  }, [selectedLayers, dragModifierBypassRef]);
+
+  // Build a stable Moveable target prop. For multi-select, we use the
+  // virtual-bbox div the same way the single-select path does.
+  const showSingleMoveable =
+    !!selectedLayer &&
+    !selectedLayer.locked &&
+    !selectedLayer.hidden &&
+    !hasMultiSelect;
+  const showMultiMoveable = hasMultiSelect && multiBounds !== null;
+
+  return (
+    <div
+      ref={canvasViewportRef}
+      className="flex-1 overflow-hidden relative"
+      onMouseDown={handleViewportMouseDown}
+      onMouseMove={handleViewportMouseMove}
+    >
+      <CheckerBackground />
+      <div
+        className="absolute top-1/2 left-1/2 origin-center"
+        style={{
+          transform: `translate(-50%, -50%) scale(${zoom})`,
+          width: tree.width,
+          height: tree.height,
+        }}
+      >
+        <div
+          ref={canvasInnerRef}
+          className="relative bg-white shadow-2xl"
+          style={{ width: tree.width, height: tree.height }}
+          onClick={handleCanvasClick}
+          // The SVG is rendered inline. We use dangerouslySetInnerHTML
+          // since the renderer returns a self-contained <svg> string.
+          dangerouslySetInnerHTML={{ __html: enhanceSvgWithLayerIds(svgMarkup, tree) }}
+        />
+
+        {/* ── Snap lines (gold, drawn during drag) ───────────── */}
+        {snapLines.length > 0 ? (
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 pointer-events-none"
+            style={{ width: tree.width, height: tree.height }}
+          >
+            {snapLines.map((ln, i) =>
+              ln.axis === "x" ? (
+                <div
+                  key={`sl-${i}`}
+                  style={{
+                    position: "absolute",
+                    left: ln.pos - 0.5,
+                    top: 0,
+                    width: 1,
+                    height: tree.height,
+                    background: "#C9A84C",
+                  }}
+                />
+              ) : (
+                <div
+                  key={`sl-${i}`}
+                  style={{
+                    position: "absolute",
+                    top: ln.pos - 0.5,
+                    left: 0,
+                    height: 1,
+                    width: tree.width,
+                    background: "#C9A84C",
+                  }}
+                />
+              ),
+            )}
+          </div>
+        ) : null}
+
+        {/* ── Marquee rectangle (gold, dashed) ───────────────── */}
+        {marqueeRect ? (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: marqueeRect.x,
+              top: marqueeRect.y,
+              width: marqueeRect.w,
+              height: marqueeRect.h,
+              border: "1px dashed #C9A84C",
+              background: "rgba(201, 168, 76, 0.10)",
+              pointerEvents: "none",
+            }}
+          />
+        ) : null}
+
+        {/* ── Multi-select bounding box (visual only — Moveable
+              draws its own controls below) ──────────────────── */}
+        {showMultiMoveable && multiBounds ? (
+          <>
+            <div
+              ref={moveableTargetRef}
+              style={{
+                position: "absolute",
+                left: multiBounds.x,
+                top: multiBounds.y,
+                width: multiBounds.w,
+                height: multiBounds.h,
+                pointerEvents: "none",
+                outline: "1px dashed #C9A84C",
+                outlineOffset: -1,
+              }}
+              aria-hidden="true"
+            />
+            <Moveable
+              key={`mv-multi-${selectedLayers.map((l) => l.id).join(",")}-${moveableTick}`}
+              target={moveableTargetRef.current}
+              draggable
+              resizable={false}
+              rotatable={false}
+              throttleDrag={0}
+              origin={false}
+              edge={false}
+              zoom={1}
+              onDragStart={(e) => {
+                dragModifierBypassRef.current =
+                  !!e.inputEvent && (e.inputEvent.metaKey || e.inputEvent.ctrlKey);
+              }}
+              onDrag={({ beforeDelta }) => {
+                let dx = beforeDelta[0] / zoom;
+                let dy = beforeDelta[1] / zoom;
+                if (snapEnabled && !dragModifierBypassRef.current && multiBounds) {
+                  // Snap the union bbox.
+                  const proposed: LayerBounds = {
+                    x: multiBounds.x + dx,
+                    y: multiBounds.y + dy,
+                    w: multiBounds.w,
+                    h: multiBounds.h,
+                  };
+                  const snap = applySnap(
+                    proposed,
+                    snapCandidatesForSelection,
+                    SNAP_THRESHOLD_PX,
+                  );
+                  dx = snap.x - multiBounds.x;
+                  dy = snap.y - multiBounds.y;
+                  setSnapLines(snap.lines);
+                } else {
+                  setSnapLines([]);
+                }
+                const dxi = Math.round(dx);
+                const dyi = Math.round(dy);
+                if (dxi === 0 && dyi === 0) return;
+                updateSelectedLayers((l) => ({
+                  ...l,
+                  x: l.x + dxi,
+                  y: l.y + dyi,
+                }));
+              }}
+              onDragEnd={() => {
+                setSnapLines([]);
+                dragModifierBypassRef.current = false;
+              }}
+            />
+          </>
+        ) : null}
+
+        {/* ── Single-select Moveable target overlay ──────────── */}
+        {showSingleMoveable && selectedLayer ? (
+          <>
+            <div
+              ref={moveableTargetRef}
+              style={{
+                position: "absolute",
+                left: selectedLayer.x,
+                top: selectedLayer.y,
+                width: selectedLayer.w,
+                height: selectedLayer.h,
+                transform: selectedLayer.rotation
+                  ? `rotate(${selectedLayer.rotation}deg)`
+                  : undefined,
+                transformOrigin: "center center",
+                pointerEvents: "none",
+              }}
+              aria-hidden="true"
+            />
+            <Moveable
+              key={`mv-${selectedLayer.id}-${moveableTick}`}
+              target={moveableTargetRef.current}
+              draggable
+              resizable
+              rotatable
+              keepRatio={false}
+              throttleDrag={0}
+              throttleResize={0}
+              throttleRotate={0}
+              origin={false}
+              edge={false}
+              zoom={1}
+              onDragStart={(e) => {
+                dragModifierBypassRef.current =
+                  !!e.inputEvent && (e.inputEvent.metaKey || e.inputEvent.ctrlKey);
+              }}
+              onDrag={({ beforeDelta }) => {
+                if (!selectedLayer) return;
+                let dx = beforeDelta[0] / zoom;
+                let dy = beforeDelta[1] / zoom;
+                if (snapEnabled && !dragModifierBypassRef.current) {
+                  const proposed: LayerBounds = {
+                    x: selectedLayer.x + dx,
+                    y: selectedLayer.y + dy,
+                    w: selectedLayer.w,
+                    h: selectedLayer.h,
+                  };
+                  const snap = applySnap(
+                    proposed,
+                    snapCandidatesForSelection,
+                    SNAP_THRESHOLD_PX,
+                  );
+                  dx = snap.x - selectedLayer.x;
+                  dy = snap.y - selectedLayer.y;
+                  setSnapLines(snap.lines);
+                } else {
+                  setSnapLines([]);
+                }
+                const dxi = Math.round(dx);
+                const dyi = Math.round(dy);
+                if (dxi === 0 && dyi === 0) return;
+                updateSelectedLayers((l) => ({
+                  ...l,
+                  x: l.x + dxi,
+                  y: l.y + dyi,
+                }));
+              }}
+              onDragEnd={() => {
+                setSnapLines([]);
+                dragModifierBypassRef.current = false;
+              }}
+              onResize={({ width, height, drag }) => {
+                if (!selectedLayer) return;
+                let newW = Math.max(8, Math.round(width / zoom));
+                let newH = Math.max(8, Math.round(height / zoom));
+                let dx = drag.beforeTranslate[0] / zoom;
+                let dy = drag.beforeTranslate[1] / zoom;
+                if (snapEnabled && !dragModifierBypassRef.current) {
+                  const proposed: LayerBounds = {
+                    x: selectedLayer.x + dx,
+                    y: selectedLayer.y + dy,
+                    w: newW,
+                    h: newH,
+                  };
+                  const snap = applySnap(
+                    proposed,
+                    snapCandidatesForSelection,
+                    SNAP_THRESHOLD_PX,
+                  );
+                  // For resize we only snap position; resizing edges to
+                  // candidate edges would require knowing which handle is
+                  // being dragged (Moveable doesn't expose that cleanly).
+                  // Snapping (x, y) covers the common case: dragging the
+                  // top-left handle.
+                  dx = snap.x - selectedLayer.x;
+                  dy = snap.y - selectedLayer.y;
+                  setSnapLines(snap.lines);
+                } else {
+                  setSnapLines([]);
+                }
+                updateSelectedLayers((l) => ({
+                  ...l,
+                  x: Math.round(l.x + dx),
+                  y: Math.round(l.y + dy),
+                  w: newW,
+                  h: newH,
+                }));
+              }}
+              onResizeEnd={() => {
+                setSnapLines([]);
+                dragModifierBypassRef.current = false;
+              }}
+              onRotate={({ beforeRotate }) => {
+                updateSelectedLayers((l) => ({
+                  ...l,
+                  rotation: Math.round(((l.rotation ?? 0) + beforeRotate) % 360),
+                }));
+              }}
+            />
+          </>
+        ) : null}
+      </div>
+      {children}
     </div>
   );
 }
