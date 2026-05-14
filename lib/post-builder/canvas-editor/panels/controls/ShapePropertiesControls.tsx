@@ -228,6 +228,7 @@ export default function ShapePropertiesControls(
               value={state.fill || "transparent"}
               onChange={handleFillChange}
               allowTransparent
+              canvas={canvas}
             />
             <span className="font-mono text-xs uppercase text-neutral-500">
               {state.fill || "transparent"}
@@ -244,6 +245,7 @@ export default function ShapePropertiesControls(
             value={state.stroke || "transparent"}
             onChange={handleStrokeChange}
             allowTransparent
+            canvas={canvas}
           />
           <span className="font-mono text-xs uppercase text-neutral-500">
             {state.stroke || "transparent"}

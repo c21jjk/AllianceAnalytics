@@ -28,10 +28,19 @@
  *     isn't important enough to ship a schema for.
  */
 
-import { type JSX, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { FabricImage, type Canvas, type FabricObject, Textbox } from "fabric";
+import {
+  type JSX,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { ALLIANCE_COLORS } from "../templates/tokens";
+import { extractPhotoColors } from "./extractPhotoColors";
 
 /**
  * Alliance brand-curated swatches, surfaced first. Order matters — gold is
@@ -76,6 +85,22 @@ export interface ColorPickerProps {
   disabled?: boolean;
   /** Compact mode shrinks the trigger to 20px instead of 28px. */
   compact?: boolean;
+  /**
+   * Optional Fabric canvas. When passed, the picker scans the canvas for two
+   * additional swatch sections:
+   *
+   *   • "Colors in this design" — every distinct fill / stroke / Textbox
+   *     backgroundColor across all current layers.
+   *   • "Photo colors" — dominant colors extracted from FabricImage layers
+   *     via median-cut quantization. Computed lazily on the first popover
+   *     open per canvas instance (cached by-reference until the canvas
+   *     changes).
+   *
+   * Both sections are hidden when canvas is null / undefined, so the picker
+   * still works as a standalone primitive (e.g., in future template-author
+   * UIs that don't have a canvas yet).
+   */
+  canvas?: Canvas | null;
 }
 
 /**
@@ -115,6 +140,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
     allowTransparent = false,
     disabled = false,
     compact = false,
+    canvas = null,
   } = props;
 
   const [open, setOpen] = useState<boolean>(false);
@@ -149,7 +175,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
       setPopoverPos(null);
       return;
     }
-    const POPOVER_WIDTH = 256;
+    const POPOVER_WIDTH = 340;
     const GAP = 8;
     const rect = triggerRef.current.getBoundingClientRect();
     const top = rect.bottom + GAP;
@@ -170,7 +196,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
     if (!open) return;
     const reposition = (): void => {
       if (!triggerRef.current) return;
-      const POPOVER_WIDTH = 256;
+      const POPOVER_WIDTH = 340;
       const GAP = 8;
       const rect = triggerRef.current.getBoundingClientRect();
       const top = rect.bottom + GAP;
@@ -227,6 +253,78 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
     commit(normalized);
   };
 
+  // why: "Colors in this design" — scan the canvas's current layers for
+  // distinct fill / stroke / Textbox.backgroundColor values. Cheap enough
+  // to recompute on every render when the popover is open (typically <50
+  // objects). We gate on `open` so a closed picker isn't iterating.
+  const designColors = useMemo<readonly string[]>(() => {
+    if (!open || !canvas) return [];
+    const seen = new Set<string>();
+    const addIfHex = (raw: unknown): void => {
+      if (typeof raw !== "string") return;
+      const lower = raw.trim();
+      if (!lower) return;
+      // why: only collect literal hex / rgb values — Fabric supports
+      // gradient and pattern fills (TFiller), but they're not pickable as
+      // single swatches. Skip them rather than showing "[object Object]".
+      if (lower.startsWith("#") || lower.startsWith("rgb")) {
+        seen.add(lower.toUpperCase());
+      }
+    };
+    const walk = (obj: FabricObject): void => {
+      addIfHex(obj.fill);
+      addIfHex(obj.stroke);
+      if (obj instanceof Textbox) {
+        addIfHex(obj.backgroundColor);
+      }
+    };
+    canvas.getObjects().forEach(walk);
+    // why: cap at 12 — beyond that the row gets noisy and the user is
+    // better served by the search/custom hex input.
+    return Array.from(seen).slice(0, 12);
+  }, [canvas, open]);
+
+  // why: "Photo colors" — extract dominant palette from every FabricImage
+  // on the canvas. Computed lazily on first open AND memoized so a quick
+  // re-open is instant. Recomputes when the canvas reference changes
+  // (template reload) — accepts staleness when an image is SWAPPED mid-
+  // session; user can close-and-reopen to refresh.
+  const [photoColors, setPhotoColors] = useState<readonly string[]>([]);
+  const [photoColorsExtractedFor, setPhotoColorsExtractedFor] =
+    useState<Canvas | null>(null);
+  useEffect(() => {
+    if (!open || !canvas) return;
+    // why: skip re-extraction if we already extracted for THIS canvas.
+    if (photoColorsExtractedFor === canvas) return;
+    const imageObjs = canvas
+      .getObjects()
+      .filter((o): o is FabricImage => o instanceof FabricImage);
+    if (imageObjs.length === 0) {
+      setPhotoColors([]);
+      setPhotoColorsExtractedFor(canvas);
+      return;
+    }
+    // why: combine palettes from all images, then dedupe. Per-image gives
+    // ~4 colors; combining 1-3 images gives 6-12 unique colors after
+    // dedupe, which fits the picker grid nicely.
+    const COLORS_PER_IMAGE = 4;
+    const combined: string[] = [];
+    for (const img of imageObjs) {
+      const el = img.getElement();
+      if (
+        el instanceof HTMLImageElement ||
+        el instanceof HTMLCanvasElement
+      ) {
+        combined.push(...extractPhotoColors(el, COLORS_PER_IMAGE));
+      }
+    }
+    // why: dedupe across images using exact match (the extractor already
+    // dedupes perceptually within a single image).
+    const deduped = Array.from(new Set(combined)).slice(0, 12);
+    setPhotoColors(deduped);
+    setPhotoColorsExtractedFor(canvas);
+  }, [canvas, open, photoColorsExtractedFor]);
+
   const isTransparent = value === "transparent" || value === "";
   const triggerSize = compact ? "h-5 w-5" : "h-7 w-7";
 
@@ -261,73 +359,128 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                 position: "fixed",
                 top: popoverPos.top,
                 left: popoverPos.left,
-                width: 256,
+                width: 340,
+                maxHeight: "min(640px, calc(100vh - 80px))",
               }}
-              className="z-[100] rounded-xl border border-neutral-200 bg-white p-3 shadow-elevated animate-fade-in-up"
+              className="z-[100] flex flex-col rounded-xl border border-neutral-200 bg-white shadow-elevated animate-fade-in-up"
               role="dialog"
               aria-label="Color picker"
             >
-          {/* === Alliance brand swatches === */}
-          <SwatchRow
-            title="Alliance brand"
-            swatches={ALLIANCE_SWATCHES}
-            current={value}
-            onPick={commit}
-          />
+              {/* ===== Header — search + hex input ===== */}
+              {/* why: top placement mirrors Canva's pattern — the picker's
+                  most powerful affordance (type anything) is at the top
+                  where the eye lands first. Hex / 3-digit hex / "transparent"
+                  all accepted. */}
+              <div className="border-b border-neutral-100 p-3">
+                <div className="flex items-center gap-2 rounded-md border border-neutral-300 bg-white px-2 py-1.5 focus-within:border-gold-500 focus-within:ring-1 focus-within:ring-gold-500/40">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    className="flex-shrink-0 text-neutral-400"
+                    aria-hidden="true"
+                  >
+                    <circle cx="7" cy="7" r="4.5" />
+                    <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={hexInput}
+                    onChange={(e) => setHexInput(e.target.value)}
+                    onBlur={handleHexCommit}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleHexCommit();
+                      }
+                    }}
+                    placeholder={
+                      allowTransparent
+                        ? '"transparent" or "#C9A961"'
+                        : '"#C9A961"'
+                    }
+                    className="flex-1 bg-transparent text-sm font-mono uppercase text-neutral-800 placeholder:text-neutral-400 placeholder:font-sans placeholder:normal-case focus:outline-none"
+                    maxLength={12}
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleHexCommit}
+                    className="flex-shrink-0 rounded bg-gold-500 px-2 py-0.5 text-xs font-semibold text-white hover:bg-gold-600"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
 
-          {/* === Neutral ramp + transparent === */}
-          <SwatchRow
-            title="Neutrals"
-            swatches={
-              allowTransparent
-                ? NEUTRAL_RAMP
-                : NEUTRAL_RAMP.filter((s) => s.value !== "transparent")
-            }
-            current={value}
-            onPick={commit}
-          />
+              {/* ===== Scrollable sections ===== */}
+              <div className="flex-1 overflow-y-auto p-3">
+                {/* === Colors in this design ===
+                    why: shown FIRST below the search so the most relevant
+                    swatches (already-in-use colors that fit the composition)
+                    are the most prominent. Hidden when there's nothing to
+                    show — no empty-section noise. */}
+                {designColors.length > 0 ? (
+                  <SwatchRow
+                    title="Colors in this design"
+                    swatches={designColors.map((c) => ({
+                      value: c,
+                      label: c,
+                    }))}
+                    current={value}
+                    onPick={commit}
+                  />
+                ) : null}
 
-          {/* === Recent colors === */}
-          {recents.length > 0 ? (
-            <SwatchRow
-              title="Recent"
-              swatches={recents.map((c) => ({ value: c, label: c }))}
-              current={value}
-              onPick={commit}
-            />
-          ) : null}
+                {/* === Photo colors ===
+                    why: dominant palette from the canvas's images. Pulled
+                    via median-cut on first open (then cached). Lets Larissa
+                    pick a fill that matches the listing's actual photo. */}
+                {photoColors.length > 0 ? (
+                  <SwatchRow
+                    title="Photo colors"
+                    swatches={photoColors.map((c) => ({
+                      value: c,
+                      label: c,
+                    }))}
+                    current={value}
+                    onPick={commit}
+                  />
+                ) : null}
 
-          {/* === Custom hex input === */}
-          <div className="mt-3 border-t border-neutral-100 pt-3">
-            <label className="mb-1 block text-xs font-medium text-neutral-600">
-              Custom hex
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={hexInput}
-                onChange={(e) => setHexInput(e.target.value)}
-                onBlur={handleHexCommit}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleHexCommit();
+                {/* === Alliance brand swatches === */}
+                <SwatchRow
+                  title="Alliance brand"
+                  swatches={ALLIANCE_SWATCHES}
+                  current={value}
+                  onPick={commit}
+                />
+
+                {/* === Neutral ramp + transparent === */}
+                <SwatchRow
+                  title="Neutrals"
+                  swatches={
+                    allowTransparent
+                      ? NEUTRAL_RAMP
+                      : NEUTRAL_RAMP.filter((s) => s.value !== "transparent")
                   }
-                }}
-                placeholder="#C9A961"
-                className="flex-1 rounded-md border border-neutral-300 px-2 py-1 text-sm font-mono uppercase text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
-                maxLength={9}
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                onClick={handleHexCommit}
-                className="rounded-md bg-gold-500 px-3 py-1 text-xs font-semibold text-white hover:bg-gold-600"
-              >
-                Apply
-              </button>
-            </div>
-          </div>
+                  current={value}
+                  onPick={commit}
+                />
+
+                {/* === Recent colors === */}
+                {recents.length > 0 ? (
+                  <SwatchRow
+                    title="Recent"
+                    swatches={recents.map((c) => ({ value: c, label: c }))}
+                    current={value}
+                    onPick={commit}
+                  />
+                ) : null}
+              </div>
             </div>,
             document.body,
           )

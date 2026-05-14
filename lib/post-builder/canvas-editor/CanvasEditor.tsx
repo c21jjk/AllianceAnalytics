@@ -45,10 +45,12 @@ import {
   type JSX,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   type CanvasEditorProps,
@@ -1386,6 +1388,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               onDuplicate={() => void handleDuplicateSelection()}
               layerName={selectedEntry.name}
               layerKind={selectedEntry.kind}
+              canvas={fabricRef.current}
+              selectionVersion={layerVersion}
+              onOpacityCommit={history.record}
+              onCanvasMutated={() => setLayerVersion((v) => v + 1)}
             />
           ) : null}
 
@@ -1481,6 +1487,14 @@ interface SelectionToolbarProps {
   onDuplicate: () => void;
   layerName: string;
   layerKind: CanvasLayer["kind"];
+  /** Canvas instance — used by the Transparency popover to read/write opacity. */
+  canvas: Canvas | null;
+  /** Forces the transparency popover to re-read opacity when the parent's selection state changes. */
+  selectionVersion: number;
+  /** Called once after the user releases the opacity slider so the undo stack captures one entry instead of dozens. */
+  onOpacityCommit?: () => void;
+  /** Called whenever opacity mutates so the layer panel / version counter refresh. */
+  onCanvasMutated?: () => void;
 }
 
 function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
@@ -1500,6 +1514,15 @@ function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
       <IconButton label="Duplicate" onClick={props.onDuplicate}>
         <DuplicateIcon />
       </IconButton>
+      {/* === Transparency — opens a portaled popover with an opacity slider.
+          why: matches Canva's selection-toolbar pattern; quick access without
+          having to navigate into the right-side properties panel. */}
+      <TransparencyButton
+        canvas={props.canvas}
+        selectionVersion={props.selectionVersion}
+        onCanvasMutated={props.onCanvasMutated}
+        onCommit={props.onOpacityCommit}
+      />
       <IconButton label="Lock" onClick={props.onToggleLock}>
         <LockIcon />
       </IconButton>
@@ -1508,6 +1531,202 @@ function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
         <TrashIcon />
       </IconButton>
     </div>
+  );
+}
+
+// ===========================================================================
+// TransparencyButton — toolbar trigger + portaled popover with opacity slider
+// ===========================================================================
+//
+// Why a separate subcomponent rather than inline:
+//   • Owns the open/close state + the popover's getBoundingClientRect math
+//     locally; SelectionToolbar stays presentational.
+//   • Uses the same Portal + position:fixed pattern as the ColorPicker —
+//     escapes the canvas's transform-stacking context so the popover paints
+//     above the canvas instead of behind it.
+//
+// Fabric's opacity is a 0..1 float. The UI works in 0..100 (percent) because
+// that's how Canva does it and how the user thinks about it.
+
+interface TransparencyButtonProps {
+  canvas: Canvas | null;
+  selectionVersion: number;
+  onCanvasMutated?: () => void;
+  onCommit?: () => void;
+}
+
+function TransparencyButton(
+  props: TransparencyButtonProps,
+): JSX.Element {
+  const { canvas, selectionVersion, onCanvasMutated, onCommit } = props;
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState<boolean>(false);
+  const [popoverPos, setPopoverPos] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+
+  // why: read the active object's opacity each time the selection or version
+  // changes. If the user changes selection while the popover is open, the
+  // slider snaps to the new layer's value instead of stale state.
+  const initialOpacity = useMemo<number>(() => {
+    if (!canvas) return 100;
+    const active = canvas.getActiveObject();
+    if (!active) return 100;
+    const raw = active.opacity;
+    if (typeof raw !== "number") return 100;
+    return Math.round(raw * 100);
+  }, [canvas, selectionVersion, open]);
+
+  const [opacityPct, setOpacityPct] = useState<number>(initialOpacity);
+  useEffect(() => {
+    setOpacityPct(initialOpacity);
+  }, [initialOpacity]);
+
+  // Position popover under the trigger button — viewport-clamped.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) {
+      setPopoverPos(null);
+      return;
+    }
+    const POPOVER_WIDTH = 240;
+    const GAP = 8;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const top = rect.bottom + GAP;
+    // Center the popover horizontally on the trigger button.
+    let left =
+      rect.left + rect.width / 2 - POPOVER_WIDTH / 2;
+    if (left < GAP) left = GAP;
+    const maxLeft = window.innerWidth - POPOVER_WIDTH - GAP;
+    if (left > maxLeft) left = maxLeft;
+    setPopoverPos({ top, left });
+  }, [open]);
+
+  // Outside-click close.
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent): void => {
+      const target = e.target as Node;
+      if (popoverRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [open]);
+
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const pct = Number(e.target.value);
+    if (!Number.isFinite(pct)) return;
+    setOpacityPct(pct);
+    const active = canvas?.getActiveObject();
+    if (!active) return;
+    // why: write through directly on every tick for live preview. The
+    // history snapshot fires onMouseUp via onCommit — keeps undo stack
+    // clean (one entry per gesture, not 100 per slider drag).
+    active.set({ opacity: pct / 100 });
+    canvas?.requestRenderAll();
+    onCanvasMutated?.();
+  };
+
+  const handleSliderCommit = (): void => {
+    onCommit?.();
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Transparency"
+        title="Transparency"
+        className={`rounded-md p-1.5 transition-colors ${
+          open
+            ? "bg-gold-50 text-gold-700"
+            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+        }`}
+      >
+        <TransparencyIcon />
+      </button>
+      {open && popoverPos
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              style={{
+                position: "fixed",
+                top: popoverPos.top,
+                left: popoverPos.left,
+                width: 240,
+              }}
+              className="z-[100] rounded-xl border border-neutral-200 bg-white p-3 shadow-elevated animate-fade-in-up"
+              role="dialog"
+              aria-label="Transparency"
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                  Transparency
+                </span>
+                <span className="font-mono text-xs text-neutral-700">
+                  {opacityPct}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={opacityPct}
+                onChange={handleSliderChange}
+                onMouseUp={handleSliderCommit}
+                onTouchEnd={handleSliderCommit}
+                onKeyUp={handleSliderCommit}
+                className="w-full accent-gold-500"
+                aria-label="Opacity 0 to 100 percent"
+              />
+              <div className="mt-1 flex justify-between text-[10px] text-neutral-400">
+                <span>0</span>
+                <span>50</span>
+                <span>100</span>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
+function TransparencyIcon(): JSX.Element {
+  // why: classic checkerboard pattern signifying "transparency" — same
+  // visual language as Canva, Figma, Photoshop's transparency indicator.
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect
+        x="1.5"
+        y="1.5"
+        width="13"
+        height="13"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <rect x="3" y="3" width="2.5" height="2.5" fill="currentColor" />
+      <rect x="8" y="3" width="2.5" height="2.5" fill="currentColor" />
+      <rect x="5.5" y="5.5" width="2.5" height="2.5" fill="currentColor" />
+      <rect x="10.5" y="5.5" width="2.5" height="2.5" fill="currentColor" />
+      <rect x="3" y="8" width="2.5" height="2.5" fill="currentColor" />
+      <rect x="8" y="8" width="2.5" height="2.5" fill="currentColor" />
+      <rect x="5.5" y="10.5" width="2.5" height="2.5" fill="currentColor" />
+      <rect x="10.5" y="10.5" width="2.5" height="2.5" fill="currentColor" />
+    </svg>
   );
 }
 

@@ -473,6 +473,7 @@ export default function TextPropertiesControls(
               value={state.fill}
               onChange={handleFillChange}
               allowTransparent={false}
+              canvas={canvas}
             />
             <span className="font-mono text-xs uppercase text-neutral-500">
               Text · {state.fill}
@@ -488,6 +489,7 @@ export default function TextPropertiesControls(
               value={state.backgroundColor || "transparent"}
               onChange={handleBackgroundChange}
               allowTransparent={true}
+              canvas={canvas}
             />
             <span className="font-mono text-xs uppercase text-neutral-500">
               Highlight ·{" "}
