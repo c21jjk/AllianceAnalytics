@@ -73,12 +73,15 @@ import {
 // why: imported here at the orchestrator so the integration surface is
 // reviewable in one place. Each agent's component is consumed by name; the
 // contracts.ts file is the shared interface they were all written against.
-import type { SelectionMode } from "./contracts";
+import type { BrandAsset, OfficeOption, SelectionMode } from "./contracts";
 import { handlePhase2KeyDown } from "./history/keyboard-shortcuts";
 import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AddLayerToolbar from "./panels/AddLayerToolbar";
+import AgentPanel from "./panels/AgentPanel";
+import BrandPanel from "./panels/BrandPanel";
 import LayerListPanel from "./panels/LayerListPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
+import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // why: fonts.css contains Google Fonts @import statements for the 9 fonts
 // that aren't already loaded at the app level. Importing the CSS here (not
@@ -667,6 +670,59 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const history = useUndoRedoHistory(fabricRef);
 
   // -------------------------------------------------------------------------
+  // Phase 3 — Brand + Agent sidebar state
+  // -------------------------------------------------------------------------
+  // why: the left sidebar shows two panels (Brand logos + Agent headshots),
+  // both reading from the new brand_assets Supabase table. Loaded once per
+  // editor mount; cached locally. Empty/loading states render until the
+  // first fetch resolves, so the panels never flash placeholder noise.
+  const [sidebarTab, setSidebarTab] = useState<"brand" | "agents">("brand");
+  const [brandAssets, setBrandAssets] = useState<readonly BrandAsset[]>([]);
+  const [officesForFilter, setOfficesForFilter] = useState<readonly OfficeOption[]>([]);
+  const [brandAssetsLoading, setBrandAssetsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    // why: load brand assets + offices from Supabase on mount. Both tables
+    // are small (<200 rows total), cheap to fetch in one shot. We use the
+    // browser client; RLS lets any authenticated user read `status=active`
+    // rows so we don't need the admin client.
+    let cancelled = false;
+    const supabase = createSupabaseBrowserClient();
+    (async () => {
+      try {
+        const [assetsRes, officesRes] = await Promise.all([
+          supabase
+            .from("brand_assets")
+            .select("*")
+            .eq("status", "active")
+            .order("label", { ascending: true }),
+          supabase
+            .from("offices")
+            .select("id, name")
+            .eq("is_active", true)
+            .order("name", { ascending: true }),
+        ]);
+        if (cancelled) return;
+        if (assetsRes.error) {
+          console.error("[CanvasEditor] brand_assets fetch error:", assetsRes.error);
+        }
+        if (officesRes.error) {
+          console.error("[CanvasEditor] offices fetch error:", officesRes.error);
+        }
+        setBrandAssets(assetsRes.data ?? []);
+        setOfficesForFilter(officesRes.data ?? []);
+      } catch (err) {
+        console.error("[CanvasEditor] brand assets load threw:", err);
+      } finally {
+        if (!cancelled) setBrandAssetsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // -------------------------------------------------------------------------
   // Phase 2 — force-load Google Fonts so Fabric can actually use them
   // -------------------------------------------------------------------------
   // why: just importing fonts.css declares the @font-face rules but the
@@ -1206,6 +1262,62 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     setSelection({ layerId: null, isMulti: false });
   }, []);
 
+  // why: when the user clicks a thumbnail in BrandPanel or AgentPanel, we
+  // create a new Fabric image at canvas center and select it. Dimensions
+  // are capped so a huge source image doesn't dominate the canvas — we
+  // scale to fit within 280px on the long edge while preserving aspect.
+  // crossOrigin: "anonymous" is required so the canvas stays exportable.
+  const handleSidebarAssetPicked = useCallback(
+    async (asset: BrandAsset): Promise<void> => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      try {
+        const img = await FabricImage.fromURL(asset.public_url, {
+          crossOrigin: "anonymous",
+        });
+        const natW = img.width || 280;
+        const natH = img.height || 280;
+        const MAX_DIM = 280;
+        // why: scale the longest side to MAX_DIM. Preserves aspect ratio.
+        // User can resize further via the standard Fabric selection handles.
+        const scale = Math.min(MAX_DIM / natW, MAX_DIM / natH, 1);
+        img.set({
+          left: (template.width - natW * scale) / 2,
+          top: (template.height - natH * scale) / 2,
+          scaleX: scale,
+          scaleY: scale,
+          cornerStyle: "circle",
+          cornerSize: 10,
+          transparentCorners: false,
+          borderColor: "#C9A961",
+          cornerColor: "#C9A961",
+        });
+        // why: stamp our standard layer metadata so the layer panel + selection
+        // panel can recognize this object the same way they handle hydrated
+        // template layers. Brand assets are user-added "free" layers with no
+        // boundField — literal images, not data-bound.
+        setLayerData(img, {
+          layerId: `brand_${asset.id}_${Date.now()}`,
+          layerKind: "image",
+          displayName: asset.label,
+        });
+        canvas.add(img);
+        canvas.setActiveObject(img);
+        canvas.requestRenderAll();
+        setLayerVersion((v) => v + 1);
+        history.record();
+      } catch (err) {
+        setEditorError({
+          kind: "image_load",
+          message: `Couldn't load brand asset: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+      }
+    },
+    [template.width, template.height, history],
+  );
+
   // -------------------------------------------------------------------------
   // Export handler — the whole point of Phase 1
   // -------------------------------------------------------------------------
@@ -1455,6 +1567,61 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
       {/* ----- Body ----- */}
       <div className="flex min-h-0 flex-1">
+        {/* === Phase 3 — Left sidebar (Brand + Agent panels) ===
+            why: pinned-open in this iteration. A future "collapse to icon
+            rail" mode is straightforward to add (state + className width
+            toggle) but isn't necessary for the v1 of Phase 3 — the editor
+            already has plenty of vertical space and the panels are the
+            primary creation affordances. */}
+        <aside className="flex w-72 flex-col border-r border-neutral-200 bg-white">
+          {/* Tab switcher */}
+          <div className="flex border-b border-neutral-200">
+            <button
+              type="button"
+              onClick={() => setSidebarTab("brand")}
+              className={`flex flex-1 items-center justify-center gap-2 px-3 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                sidebarTab === "brand"
+                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
+                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
+              }`}
+            >
+              <BrandTabIcon />
+              Brand
+            </button>
+            <button
+              type="button"
+              onClick={() => setSidebarTab("agents")}
+              className={`flex flex-1 items-center justify-center gap-2 px-3 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                sidebarTab === "agents"
+                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
+                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
+              }`}
+            >
+              <AgentTabIcon />
+              Agents
+            </button>
+          </div>
+          {/* Active panel — Brand or Agents. why: render only the active
+              one so we don't pay the load+render cost for both at once. */}
+          {sidebarTab === "brand" ? (
+            <BrandPanel
+              assets={brandAssets.filter(
+                (a) => a.kind === "logo" || a.kind === "partner_logo",
+              )}
+              isLoading={brandAssetsLoading}
+              onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
+            />
+          ) : (
+            <AgentPanel
+              assets={brandAssets.filter((a) => a.kind === "agent_headshot")}
+              offices={officesForFilter}
+              defaultOfficeId={null}
+              isLoading={brandAssetsLoading}
+              onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
+            />
+          )}
+        </aside>
+
         {/* Canvas area */}
         <div className="relative flex flex-1 flex-col items-center justify-center overflow-auto bg-neutral-100 p-6">
           {/* Phase 2 — Add Layer Toolbar (always visible, top of canvas area).
@@ -2156,6 +2323,46 @@ function GroupIcon(): JSX.Element {
     >
       <rect x="2" y="2" width="8" height="8" rx="1" />
       <rect x="6" y="6" width="8" height="8" rx="1" />
+    </svg>
+  );
+}
+
+// why: Phase 3 — brand-tab icon. Abstract "building / brand mark" glyph.
+function BrandTabIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2 14h12" />
+      <path d="M3 14V6l5-3 5 3v8" />
+      <path d="M6 14v-4h4v4" />
+    </svg>
+  );
+}
+
+// why: Phase 3 — agents-tab icon. Person / user silhouette.
+function AgentTabIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="5.5" r="2.5" />
+      <path d="M3 14c0-2.5 2-4.5 5-4.5s5 2 5 4.5" />
     </svg>
   );
 }

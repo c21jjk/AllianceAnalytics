@@ -20,7 +20,65 @@
 
 import type { Canvas, FabricObject } from "fabric";
 
+import type { Database } from "@/lib/supabase/types";
+
 import type { CanvasLayer, MLSListingPayload } from "./types";
+
+// ===========================================================================
+// Phase 3 — Brand assets sidebar (Brand + Agents panels)
+// ===========================================================================
+
+/**
+ * Row shape from the brand_assets table. Mirrors the Supabase-generated type
+ * so panels can pass through query results without re-mapping.
+ */
+export type BrandAsset = Database["public"]["Tables"]["brand_assets"]["Row"];
+export type BrandAssetKind = Database["public"]["Enums"]["brand_asset_kind"];
+
+/**
+ * An office option as it appears in the AgentPanel's filter chips.
+ */
+export interface OfficeOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * BrandPanel — grid of C21 logos + co-brand partner logos.
+ *
+ * Renders inside the editor's left sidebar when the user clicks the Brand
+ * tab. Reads from brand_assets where kind IN ('logo','partner_logo').
+ * Click a thumbnail → orchestrator drops a new ImageLayer at canvas center.
+ */
+export interface BrandPanelProps {
+  /** All logo + partner_logo rows. Loaded by the parent (CanvasEditor.tsx). */
+  assets: readonly BrandAsset[];
+  /** True while the parent is initially fetching. */
+  isLoading: boolean;
+  /** Called when the user clicks a thumbnail. Orchestrator creates the Fabric image. */
+  onAssetPicked: (asset: BrandAsset) => void;
+}
+
+/**
+ * AgentPanel — grid of agent headshots filtered by office.
+ *
+ * Default filter = the office of the listing currently being edited (if any).
+ * User can switch via filter chips at the top. Reads from brand_assets where
+ * kind = 'agent_headshot'.
+ */
+export interface AgentPanelProps {
+  /** All agent_headshot rows. */
+  assets: readonly BrandAsset[];
+  /** All offices for the filter chips. Order = display order. */
+  offices: readonly OfficeOption[];
+  /**
+   * Office to filter to by default. Typically the office of the active
+   * listing. Null = show all offices.
+   */
+  defaultOfficeId: string | null;
+  isLoading: boolean;
+  onAssetPicked: (asset: BrandAsset) => void;
+}
 
 // ===========================================================================
 // Layer panel entry — shared across SelectionPropertiesPanel and LayerListPanel
