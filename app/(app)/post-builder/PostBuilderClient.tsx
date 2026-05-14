@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PostBuilderListing,
-  PostCustomizations,
   PostFormat,
   PostType,
   PostVariant,
@@ -143,10 +142,9 @@ export default function PostBuilderClient({
   // Phase 5A — Post Now state
   const [generatedPostId, setGeneratedPostId] = useState<string | null>(null);
   const [postNowOpen, setPostNowOpen] = useState(false);
-  // Path A — Customize state
-  const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [customizations, setCustomizations] = useState<PostCustomizations>({});
-  const [customizeRendering, setCustomizeRendering] = useState(false);
+  // Path A Customize state was removed on 2026-05-14 — replaced by the Path C
+  // canvas editor ("Edit in Studio"). The render pipeline still accepts an
+  // optional customizations payload for backward compat; we just never send one.
   const [postNowPlatforms, setPostNowPlatforms] = useState<Set<PostPlatform>>(
     new Set(["facebook", "instagram"]),
   );
@@ -794,74 +792,10 @@ export default function PostBuilderClient({
     // Keep results so user can see what just happened until they close.
   }
 
-  // ─────────────────────────────────────────────────────────────────
-  // Path A — Customizations
-  // ─────────────────────────────────────────────────────────────────
-
-  /**
-   * Reset customizations whenever the user changes listing, post type,
-   * variant, format, or output mode. Customizations are tied to a specific
-   * (listing × template) pair — moving to a different one starts fresh.
-   */
-  useEffect(() => {
-    setCustomizations({});
-    setCustomizeOpen(false);
-  }, [selectedMls, postType, variantId, format, outputMode]);
-
-  /**
-   * Re-render the PNG with the current customizations baked in. Triggers
-   * the same /api/post-builder/render endpoint as initial generate, just
-   * with the customizations payload added. Updates renderResult so the
-   * static PNG view shows the customized post.
-   */
-  async function applyCustomizations() {
-    if (!selectedListing || !renderResult) return;
-    setCustomizeRendering(true);
-    setError(null);
-    try {
-      const heroUrls = currentHeroUrls;
-      const res = await fetch("/api/post-builder/render", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          template_id: templateId,
-          listing: selectedListing,
-          hero_image_urls: heroUrls,
-          customizations,
-        }),
-      });
-      const json = (await res.json()) as RenderResponse | RenderErrorResponse;
-      if (!res.ok || !json.ok) {
-        const errMsg = (json as RenderErrorResponse).error ?? `HTTP ${res.status}`;
-        setError(`Re-render failed: ${errMsg}`);
-        return;
-      }
-      setRenderResult({
-        image_url: json.image_url,
-        image_path: json.image_path,
-        template_id: json.template_id,
-        width: json.width,
-        height: json.height,
-        hero_image_source_url: heroUrls[0] ?? renderResult.hero_image_source_url,
-      });
-      // Reset the saved post id since the rendered asset just changed.
-      setGeneratedPostId(null);
-    } catch (e) {
-      setError(`Re-render threw: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setCustomizeRendering(false);
-    }
-  }
-
-  function resetCustomizations() {
-    setCustomizations({});
-  }
-
-  /** True if user has any non-default customization applied. */
-  const hasCustomizations = useMemo(() => {
-    return Object.keys(customizations).length > 0
-      && JSON.stringify(customizations) !== "{}";
-  }, [customizations]);
+  // Path A "Customize" was removed on 2026-05-14 — replaced by Path C
+  // "Edit in Studio" (canvas editor). The render API still accepts an
+  // optional `customizations` field for backward-compat with historical
+  // generated_posts rows; we just stop sending it from this client.
 
   function pickPhoto(index: number) {
     if (index < 0 || index >= availablePhotos.length) return;
@@ -1070,7 +1004,7 @@ export default function PostBuilderClient({
         caption: captionResult?.caption ?? "",
         hashtags: captionResult?.hashtags ?? [],
         mls_hashtag: captionResult?.mls_hashtag ?? "",
-        customizations,
+        // why: customizations omitted intentionally — Path A is deprecated.
       });
       if (!save.ok) {
         setError(`Saved-to-table failed: ${save.error}`);
@@ -1776,17 +1710,6 @@ export default function PostBuilderClient({
                   >
                     {generating ? (
                       <PreviewSkeleton />
-                    ) : renderResult && customizeOpen ? (
-                      // Live iframe preview while customizing — re-renders
-                      // instantly on every customization change. The static
-                      // PNG returns once the user clicks "Apply changes".
-                      <LiveCustomizationPreview
-                        templateId={templateId}
-                        listing={selectedListing}
-                        heroUrls={currentHeroUrls}
-                        format={format}
-                        customizations={customizations}
-                      />
                     ) : renderResult ? (
                       /* eslint-disable-next-line @next/next/no-img-element */
                       <img
@@ -1810,11 +1733,6 @@ export default function PostBuilderClient({
                         Next photo →
                       </button>
                     ) : null}
-                    {customizeOpen ? (
-                      <div className="absolute bottom-2 left-2 rounded-full bg-gold-500/90 text-neutral-900 text-xs font-bold px-3 py-1 shadow-md backdrop-blur-sm">
-                        ✎ LIVE PREVIEW
-                      </div>
-                    ) : null}
                   </div>
                   )}
                   {outputMode === "ig_single" && renderResult ? (
@@ -1827,19 +1745,34 @@ export default function PostBuilderClient({
                       >
                         {downloadSaving ? "Saving…" : "Download PNG"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setCustomizeOpen((v) => !v)}
-                        className={[
-                          "flex-1 min-w-[120px] rounded-lg px-4 py-2.5 text-sm font-semibold transition ring-1",
-                          customizeOpen
-                            ? "bg-gold-100 text-gold-900 ring-gold-500"
-                            : "bg-white text-neutral-700 ring-neutral-300 hover:bg-neutral-50",
-                        ].join(" ")}
-                        title="Customize colors, text, badge, and visibility"
-                      >
-                        {customizeOpen ? "✕ Close customize" : `✎ Customize${hasCustomizations ? " (edited)" : ""}`}
-                      </button>
+                      {/* === Canvas Editor (Path C) — Edit in Studio on the preview screen ===
+                          why: replaces the old V1 Customize button that lived here. Only shows
+                          when a canvas template exists for the current (postType, variantId,
+                          format) tuple AND a listing is selected. */}
+                      {studioTemplate && selectedListing ? (
+                        <button
+                          type="button"
+                          onClick={openStudio}
+                          className="flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-lg border border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                          title="Open this post in the Studio editor for fine-tuning"
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M11 2l3 3-9 9H2v-3l9-9z" />
+                            <path d="M9.5 3.5l3 3" />
+                          </svg>
+                          Edit in Studio
+                        </button>
+                      ) : null}
                       {isAdmin ? (
                         <button
                           type="button"
@@ -1851,16 +1784,6 @@ export default function PostBuilderClient({
                         </button>
                       ) : null}
                     </div>
-                  ) : null}
-                  {outputMode === "ig_single" && renderResult && customizeOpen ? (
-                    <CustomizePanel
-                      customizations={customizations}
-                      onChange={setCustomizations}
-                      onReset={resetCustomizations}
-                      onApply={applyCustomizations}
-                      hasCustomizations={hasCustomizations}
-                      rendering={customizeRendering}
-                    />
                   ) : null}
                 </div>
 
@@ -2623,532 +2546,6 @@ function dimensionsLabel(format: PostFormat): string {
     case "story_9x16":
       return "1080×1920";
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Path A — CustomizePanel + LiveCustomizationPreview
-// ─────────────────────────────────────────────────────────────────────
-
-/**
- * Brand-safe color palette mirrored from BRAND_PALETTE in the server-side
- * shared module. Kept as a literal here so the client doesn't have to
- * import a server-only file. Stays in sync via tsc when either side changes.
- */
-const CLIENT_BRAND_PALETTE: ReadonlyArray<{
-  id: string;
-  label: string;
-  accent: string;
-  accent_dark: string;
-  on_brand: boolean;
-}> = [
-  { id: "alliance_gold", label: "Alliance Gold", accent: "#C9A84C", accent_dark: "#8B7530", on_brand: true },
-  { id: "obsessed_grey", label: "Obsessed Grey", accent: "#3F3F45", accent_dark: "#252526", on_brand: true },
-  { id: "deep_navy", label: "Deep Navy", accent: "#1E3A5F", accent_dark: "#0F2347", on_brand: false },
-  { id: "emerald", label: "Emerald", accent: "#2F8F5C", accent_dark: "#1F6840", on_brand: false },
-  { id: "burgundy", label: "Burgundy", accent: "#8B2C3C", accent_dark: "#5F1B27", on_brand: false },
-  { id: "rosewood", label: "Rosewood", accent: "#C0584F", accent_dark: "#883830", on_brand: false },
-];
-
-/**
- * Live preview iframe — renders the current customizations against the
- * preview-html endpoint and auto-refreshes whenever they change. Debounced
- * so a rapid succession of edits doesn't spam the server.
- */
-function LiveCustomizationPreview({
-  templateId,
-  listing,
-  heroUrls,
-  format,
-  customizations,
-}: {
-  templateId: string;
-  listing: PostBuilderListing;
-  heroUrls: string[];
-  format: PostFormat;
-  customizations: PostCustomizations;
-}) {
-  const [html, setHtml] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    // Tiny debounce so dragging a slider or rapidly toggling checkboxes
-    // doesn't send 20 requests in a row.
-    const timer = setTimeout(() => {
-      fetch("/api/post-builder/preview-html", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          template_id: templateId,
-          listing,
-          hero_image_urls: heroUrls,
-          customizations,
-        }),
-      })
-        .then(async (r) => (r.ok ? r.text() : null))
-        .then((text) => {
-          if (cancelled) return;
-          setHtml(text);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setHtml(null);
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-    }, 120);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [templateId, listing.mls_number, heroUrls.join("|"), JSON.stringify(customizations)]);
-
-  // Native template dimensions for the active format.
-  const native =
-    format === "square_1x1"
-      ? { w: 1080, h: 1080 }
-      : format === "portrait_4x5"
-        ? { w: 1080, h: 1350 }
-        : { w: 1080, h: 1920 };
-
-  // The wrapper is the existing aspect-locked container. We size the iframe
-  // to the native template dimensions and scale via transform to fit 100%
-  // of the wrapper. ResizeObserver isn't strictly needed here since the
-  // wrapper aspect-locks the parent — we can scale by aspect.
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const [scale, setScale] = useState(0.4);
-  useEffect(() => {
-    if (!wrapperRef.current) return;
-    const el = wrapperRef.current;
-    const update = () => {
-      if (el.clientWidth > 0) setScale(el.clientWidth / native.w);
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [native.w]);
-
-  return (
-    <div ref={wrapperRef} className="absolute inset-0 bg-neutral-100 overflow-hidden">
-      {html ? (
-        <iframe
-          title="Customization preview"
-          srcDoc={html}
-          sandbox="allow-same-origin"
-          aria-hidden="true"
-          style={{
-            border: 0,
-            width: native.w,
-            height: native.h,
-            transform: `scale(${scale})`,
-            transformOrigin: "0 0",
-            pointerEvents: "none",
-          }}
-        />
-      ) : (
-        <div className="absolute inset-0 flex items-center justify-center">
-          {loading ? (
-            <div className="w-8 h-8 rounded-full border-2 border-gold-500 border-t-transparent animate-spin" />
-          ) : (
-            <div className="text-xs text-neutral-400">preview unavailable</div>
-          )}
-        </div>
-      )}
-      {loading && html ? (
-        <div className="absolute top-2 left-2 text-[10px] text-neutral-500 bg-white/80 rounded-full px-2 py-0.5">
-          updating…
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-interface CustomizePanelProps {
-  customizations: PostCustomizations;
-  onChange: (next: PostCustomizations) => void;
-  onReset: () => void;
-  onApply: () => void;
-  hasCustomizations: boolean;
-  rendering: boolean;
-}
-
-/**
- * Path A customization panel — surfaces the curated set of knobs (colors,
- * badge sizing/position, text overrides, visibility toggles) as a side
- * panel below the preview. Live preview updates immediately on change;
- * "Apply changes" re-renders the PNG so Download/Post Now uses the
- * customized version.
- */
-function CustomizePanel(props: CustomizePanelProps) {
-  const { customizations, onChange, onReset, onApply, hasCustomizations, rendering } = props;
-  const [section, setSection] = useState<"colors" | "labels" | "text" | "visibility">("colors");
-
-  function patch(next: Partial<PostCustomizations>) {
-    onChange({ ...customizations, ...next });
-  }
-  function patchHide(key: keyof NonNullable<PostCustomizations["hide"]>, value: boolean) {
-    const nextHide = { ...(customizations.hide ?? {}), [key]: value || undefined };
-    // Strip undefineds so the object stays clean (and "no customizations" stays {}).
-    const cleaned: NonNullable<PostCustomizations["hide"]> = {};
-    for (const [k, v] of Object.entries(nextHide)) {
-      if (v) cleaned[k as keyof NonNullable<PostCustomizations["hide"]>] = true;
-    }
-    if (Object.keys(cleaned).length === 0) {
-      const { hide, ...rest } = customizations;
-      void hide;
-      onChange(rest);
-    } else {
-      patch({ hide: cleaned });
-    }
-  }
-  function patchText(key: keyof NonNullable<PostCustomizations["text"]>, value: string) {
-    const nextText = { ...(customizations.text ?? {}), [key]: value };
-    const cleaned: NonNullable<PostCustomizations["text"]> = {};
-    for (const [k, v] of Object.entries(nextText)) {
-      if (typeof v === "string" && v.length > 0) {
-        cleaned[k as keyof NonNullable<PostCustomizations["text"]>] = v;
-      }
-    }
-    if (Object.keys(cleaned).length === 0) {
-      const { text, ...rest } = customizations;
-      void text;
-      onChange(rest);
-    } else {
-      patch({ text: cleaned });
-    }
-  }
-
-  return (
-    <div className="mt-4 rounded-xl border border-gold-300 bg-gold-50/40 ring-1 ring-gold-500/20 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gold-200 bg-gold-100/60">
-        <div className="flex items-center gap-2">
-          <div className="text-xs font-bold uppercase tracking-wider text-gold-900">
-            ✎ Customize
-          </div>
-          {hasCustomizations ? (
-            <span className="text-[10px] font-semibold rounded-full px-1.5 py-px bg-gold-500 text-neutral-900">
-              EDITED
-            </span>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-2">
-          {hasCustomizations ? (
-            <button
-              type="button"
-              onClick={onReset}
-              className="text-xs text-neutral-700 hover:text-neutral-900 font-medium"
-            >
-              ↺ Reset
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onApply}
-            disabled={!hasCustomizations || rendering}
-            className={[
-              "text-xs font-semibold rounded-md px-3 py-1.5 transition",
-              hasCustomizations && !rendering
-                ? "bg-neutral-900 text-white hover:bg-neutral-800"
-                : "bg-neutral-200 text-neutral-500 cursor-not-allowed",
-            ].join(" ")}
-            title="Re-render the PNG with these customizations baked in"
-          >
-            {rendering ? "Re-rendering…" : "Apply changes"}
-          </button>
-        </div>
-      </div>
-
-      {/* Section tabs */}
-      <div className="flex gap-1 px-2 pt-2 border-b border-gold-200">
-        {(["colors", "labels", "text", "visibility"] as const).map((s) => {
-          const active = s === section;
-          return (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setSection(s)}
-              className={[
-                "px-3 py-1.5 text-xs font-semibold rounded-t-md transition capitalize",
-                active
-                  ? "bg-white text-neutral-900 border-x border-t border-gold-200"
-                  : "text-neutral-600 hover:text-neutral-900 hover:bg-gold-100/60",
-              ].join(" ")}
-            >
-              {s}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="p-4 bg-white">
-        {section === "colors" ? (
-          <div>
-            <div className="text-xs font-semibold text-neutral-700 mb-2">Accent color</div>
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-              {CLIENT_BRAND_PALETTE.map((p) => {
-                const active = customizations.colors?.accent === p.accent;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() =>
-                      patch({
-                        colors: { accent: p.accent, accent_dark: p.accent_dark },
-                      })
-                    }
-                    className={[
-                      "flex flex-col items-center gap-1 p-2 rounded-lg ring-1 transition",
-                      active
-                        ? "ring-2 ring-neutral-900 bg-neutral-50"
-                        : "ring-neutral-200 bg-white hover:ring-neutral-400",
-                    ].join(" ")}
-                    title={p.on_brand ? `${p.label} (Alliance brand)` : `${p.label} (off-brand)`}
-                  >
-                    <div
-                      className="w-full h-6 rounded"
-                      style={{
-                        background: `linear-gradient(135deg, ${p.accent} 0%, ${p.accent_dark} 100%)`,
-                      }}
-                    />
-                    <div className="text-[10px] text-neutral-700 text-center leading-tight">
-                      {p.label}
-                      {!p.on_brand ? <div className="text-[9px] text-amber-700 mt-0.5">off-brand</div> : null}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            {customizations.colors?.accent ? (
-              <button
-                type="button"
-                onClick={() => {
-                  const { colors, ...rest } = customizations;
-                  void colors;
-                  onChange(rest);
-                }}
-                className="mt-3 text-xs text-neutral-600 hover:text-neutral-900 underline"
-              >
-                Use template default color
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {section === "labels" ? (
-          <div className="space-y-5">
-            {/* ── Eyebrow ────────────────────────────────────────── */}
-            <div>
-              <div className="flex items-baseline justify-between mb-1">
-                <div className="text-xs font-semibold text-neutral-700">Eyebrow label</div>
-                <div className="text-[10px] text-neutral-500">"JUST LISTED" tag at the corner</div>
-              </div>
-              <div className="text-xs font-semibold text-neutral-600 mt-2 mb-1.5">Size</div>
-              <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
-                {(["sm", "md", "lg", "xl"] as const).map((s) => {
-                  const active = customizations.eyebrow_size === s;
-                  return (
-                    <button
-                      key={`eb-${s}`}
-                      type="button"
-                      onClick={() => patch({ eyebrow_size: s })}
-                      className={[
-                        "px-4 py-2 text-xs font-semibold uppercase border-r border-neutral-200 last:border-r-0 transition",
-                        active ? "bg-gold-100 text-gold-900" : "text-neutral-600 hover:bg-neutral-50",
-                      ].join(" ")}
-                    >
-                      {s}
-                    </button>
-                  );
-                })}
-                {customizations.eyebrow_size ? (
-                  <button
-                    type="button"
-                    onClick={() => patch({ eyebrow_size: undefined })}
-                    className="px-3 py-2 text-xs font-semibold text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50 transition border-l border-neutral-200"
-                    title="Use template default size"
-                  >
-                    ↺
-                  </button>
-                ) : null}
-              </div>
-              <div className="text-xs font-semibold text-neutral-600 mt-3 mb-1.5">Position</div>
-              <div className="grid grid-cols-2 gap-1.5 max-w-[220px]">
-                {(
-                  [
-                    { id: "top_left", label: "↖ Top-Left" },
-                    { id: "top_right", label: "Top-Right ↗" },
-                    { id: "bottom_left", label: "↙ Bot-Left" },
-                    { id: "bottom_right", label: "Bot-Right ↘" },
-                  ] as const
-                ).map((p) => {
-                  const active = (customizations.eyebrow_position ?? "top_left") === p.id;
-                  return (
-                    <button
-                      key={`eb-${p.id}`}
-                      type="button"
-                      onClick={() => patch({ eyebrow_position: p.id === "top_left" ? undefined : p.id })}
-                      className={[
-                        "px-3 py-2 text-[11px] font-semibold rounded transition",
-                        active
-                          ? "bg-gold-100 text-gold-900 ring-1 ring-gold-500"
-                          : "bg-white text-neutral-700 ring-1 ring-neutral-200 hover:bg-neutral-50",
-                      ].join(" ")}
-                    >
-                      {p.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Divider */}
-            <div className="h-px bg-neutral-200" />
-
-            {/* ── Badge stamp ────────────────────────────────────── */}
-            <div>
-              <div className="flex items-baseline justify-between mb-1">
-                <div className="text-xs font-semibold text-neutral-700">Badge stamp</div>
-                <div className="text-[10px] text-neutral-500">Rotated overlay (SOLD / ↓ NEW PRICE)</div>
-              </div>
-              <div className="text-[11px] text-amber-700 bg-amber-50 ring-1 ring-amber-200 rounded px-2 py-1.5 mb-2 leading-snug">
-                ⓘ Only Just Sold and Price Reduced posts have a badge stamp by default. These controls do nothing on Just Listed / Under Contract / Open House.
-              </div>
-              <div className="text-xs font-semibold text-neutral-600 mb-1.5">Size</div>
-              <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
-                {(["sm", "md", "lg", "xl"] as const).map((s) => {
-                  const active = (customizations.badge_size ?? "md") === s;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => patch({ badge_size: s === "md" ? undefined : s })}
-                      className={[
-                        "px-4 py-2 text-xs font-semibold uppercase border-r border-neutral-200 last:border-r-0 transition",
-                        active ? "bg-gold-100 text-gold-900" : "text-neutral-600 hover:bg-neutral-50",
-                      ].join(" ")}
-                    >
-                      {s}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="text-xs font-semibold text-neutral-600 mt-3 mb-1.5">Position</div>
-              <div className="grid grid-cols-2 gap-1.5 max-w-[220px]">
-                {(
-                  [
-                    { id: "top_left", label: "↖ Top-Left" },
-                    { id: "top_right", label: "Top-Right ↗" },
-                    { id: "bottom_left", label: "↙ Bot-Left" },
-                    { id: "bottom_right", label: "Bot-Right ↘" },
-                  ] as const
-                ).map((p) => {
-                  const active = (customizations.badge_position ?? "top_right") === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => patch({ badge_position: p.id === "top_right" ? undefined : p.id })}
-                      className={[
-                        "px-3 py-2 text-[11px] font-semibold rounded transition",
-                        active
-                          ? "bg-gold-100 text-gold-900 ring-1 ring-gold-500"
-                          : "bg-white text-neutral-700 ring-1 ring-neutral-200 hover:bg-neutral-50",
-                      ].join(" ")}
-                    >
-                      {p.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {section === "text" ? (
-          <div className="space-y-3">
-            <TextOverrideField
-              label="Eyebrow label"
-              placeholder="(template default — JUST LISTED / JUST SOLD / etc)"
-              value={customizations.text?.eyebrow ?? ""}
-              onChange={(v) => patchText("eyebrow", v)}
-            />
-            <TextOverrideField
-              label="Badge text"
-              placeholder="(template default — SOLD, ↓ NEW PRICE, etc)"
-              value={customizations.text?.badge_text ?? ""}
-              onChange={(v) => patchText("badge_text", v)}
-            />
-            <TextOverrideField
-              label="Footer CTA"
-              placeholder="(template default — Tour link in bio)"
-              value={customizations.text?.cta ?? ""}
-              onChange={(v) => patchText("cta", v)}
-            />
-            <div className="text-[11px] text-neutral-500 leading-relaxed">
-              Leave blank to use the template default. Overrides apply only to this post.
-            </div>
-          </div>
-        ) : null}
-
-        {section === "visibility" ? (
-          <div className="space-y-2">
-            <div className="text-xs text-neutral-600 mb-1">Hide elements from this post:</div>
-            {(
-              [
-                { key: "eyebrow", label: "Eyebrow label" },
-                { key: "badge", label: "Badge / banner overlay" },
-                { key: "price", label: "Price line" },
-                { key: "stats_row", label: "Bed/Bath/Type chips" },
-                { key: "footer", label: "Brand + MLS footer" },
-                { key: "agent_name", label: "Agent name (when shown)" },
-              ] as const
-            ).map((item) => (
-              <label
-                key={item.key}
-                className="flex items-center gap-2 px-3 py-2 rounded-md ring-1 ring-neutral-200 hover:bg-neutral-50 cursor-pointer text-sm"
-              >
-                <input
-                  type="checkbox"
-                  checked={!!customizations.hide?.[item.key]}
-                  onChange={(e) => patchHide(item.key, e.target.checked)}
-                />
-                <span className="text-neutral-800">{item.label}</span>
-              </label>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function TextOverrideField({
-  label,
-  placeholder,
-  value,
-  onChange,
-}: {
-  label: string;
-  placeholder: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div>
-      <label className="text-xs font-semibold text-neutral-700 mb-1 block">{label}</label>
-      <input
-        type="text"
-        className="input"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        maxLength={80}
-      />
-    </div>
-  );
 }
 
 /**
