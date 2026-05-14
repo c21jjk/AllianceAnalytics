@@ -10,7 +10,7 @@ import type { PostFormat, PostType, PostVariant, SourceMls } from "@/lib/post-bu
  * the canvas editor. Used by:
  *
  *   • Per-listing "Created Posts" strip on /properties/[mls]
- *   • Global /posts/created library
+ *   • Global /saved-posts library
  *
  * Sort order is most-recently-edited first (updated_at desc) — matches how
  * a user thinks about "what did I work on last?". Falls back to created_at
@@ -51,7 +51,7 @@ export interface CreatedPostRow {
  * Used by the per-listing strip on /properties/[mls]. Returns at most 50
  * rows — the strip is a horizontal scroll, not a search surface, so a
  * generous cap is plenty. If a listing somehow accumulates 100+ saved
- * variants, the global /posts/created page is the right surface to use.
+ * variants, the global /saved-posts page is the right surface to use.
  */
 export async function fetchCreatedPostsByMls(
   mlsNumber: string,
