@@ -21,6 +21,7 @@
         "@types/archiver": "^7.0.0",
         "archiver": "^8.0.0",
         "clsx": "^2.1.1",
+        "fabric": "^6.9.1",
         "next": "^15.5.4",
         "puppeteer-core": "^23.10.0",
         "react": "^19.0.0",
