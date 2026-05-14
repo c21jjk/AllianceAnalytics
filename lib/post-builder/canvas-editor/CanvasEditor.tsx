@@ -67,6 +67,17 @@ import {
   type TextLayer,
 } from "./types";
 
+// === Phase 2 panel integrations ===
+// why: imported here at the orchestrator so the integration surface is
+// reviewable in one place. Each agent's component is consumed by name; the
+// contracts.ts file is the shared interface they were all written against.
+import type { SelectionMode } from "./contracts";
+import { handlePhase2KeyDown } from "./history/keyboard-shortcuts";
+import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
+import AddLayerToolbar from "./panels/AddLayerToolbar";
+import LayerListPanel from "./panels/LayerListPanel";
+import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
+
 // ===========================================================================
 // SECTION 1 — Bound-field formatters
 // ===========================================================================
@@ -637,6 +648,16 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [isLocalSaving, setIsLocalSaving] = useState<boolean>(false);
 
   // -------------------------------------------------------------------------
+  // Phase 2 — undo/redo history hook
+  // -------------------------------------------------------------------------
+  // why: installed at top-level so the hook sees the same fabricRef the
+  // canvas init effect populates. The hook auto-attaches Fabric event
+  // listeners but stays inert until `history.start()` is called (see init
+  // effect below) — that prevents the burst of object:added events during
+  // initial template hydration from creating spurious undo entries.
+  const history = useUndoRedoHistory(fabricRef);
+
+  // -------------------------------------------------------------------------
   // Schema validation (memo — runs once per template change)
   // -------------------------------------------------------------------------
   // why: invariant check from types.ts — canvas dimensions MUST match the
@@ -853,6 +874,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       fabricRef.current.requestRenderAll();
       // why: prime the layer panel with the freshly added objects.
       setLayerVersion((v) => v + 1);
+      // why: Phase 2 — activate the undo/redo auto-snapshot now that the
+      // canvas holds its hydrated baseline. Before this call, the history
+      // hook ignores Fabric events; after this call, every debounced
+      // mutation becomes a real undo step. Idempotent — extra calls no-op.
+      history.start();
     };
 
     void loadBackground();
@@ -1054,6 +1080,58 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   );
 
   // -------------------------------------------------------------------------
+  // Phase 2 — handlers for the new panels (LayerListPanel, AddLayerToolbar,
+  // SelectionPropertiesPanel)
+  // -------------------------------------------------------------------------
+
+  // why: receives the new top-of-stack-first ID order from LayerListPanel and
+  // applies it to Fabric by moving each object to its target stacking index.
+  // We reverse first because Fabric's stacking is bottom-first whereas the
+  // panel reports top-first (Photoshop convention). moveObjectTo is the v6
+  // API for absolute repositioning.
+  const handleReorderLayers = useCallback(
+    (topFirstIds: string[]): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const bottomFirst = [...topFirstIds].reverse();
+      bottomFirst.forEach((id, targetIndex) => {
+        const obj = canvas
+          .getObjects()
+          .find((o) => getLayerData(o)?.layerId === id);
+        if (obj) canvas.moveObjectTo(obj, targetIndex);
+      });
+      canvas.requestRenderAll();
+      setLayerVersion((v) => v + 1);
+      history.record();
+    },
+    [history],
+  );
+
+  // why: AddLayerToolbar fires this after it adds a new object. We bump the
+  // layer panel and select the new layer so the user lands directly in
+  // "edit this fresh layer" mode.
+  const handleLayerAdded = useCallback(
+    (newObj: FabricObject): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      canvas.setActiveObject(newObj);
+      canvas.requestRenderAll();
+      setLayerVersion((v) => v + 1);
+    },
+    [],
+  );
+
+  // why: SelectionPropertiesPanel's "Back to layers" button calls this so the
+  // orchestrator can swap the right-side panel back to LayerListPanel.
+  const handleClearSelection = useCallback((): void => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    setSelection({ layerId: null, isMulti: false });
+  }, []);
+
+  // -------------------------------------------------------------------------
   // Export handler — the whole point of Phase 1
   // -------------------------------------------------------------------------
   const handleExport = useCallback(async (): Promise<void> => {
@@ -1190,11 +1268,20 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           e.preventDefault();
           void handleDuplicateSelection();
         }
+      } else {
+        // why: Phase 2 — delegate Cmd+Z/Cmd+Shift+Z (undo/redo) and arrow-key
+        // nudging to Agent B's handler. It returns true if it consumed the
+        // event (the helper internally calls e.preventDefault when needed).
+        handlePhase2KeyDown(e, {
+          canvas,
+          history,
+          onCanvasMutated: () => setLayerVersion((v) => v + 1),
+        });
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleDeleteSelection, handleDuplicateSelection]);
+  }, [handleDeleteSelection, handleDuplicateSelection, history]);
 
   // -------------------------------------------------------------------------
   // Selected-layer-derived computed values for the toolbar
@@ -1203,6 +1290,19 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     if (!selection.layerId) return null;
     return layerEntries.find((l) => l.id === selection.layerId) ?? null;
   }, [layerEntries, selection.layerId]);
+
+  // why: Phase 2 — derive SelectionMode from selection + entry kind. Drives
+  // which panel renders on the right side: "none" → LayerListPanel,
+  // "text"/"image"/"shape" → SelectionPropertiesPanel with that mode,
+  // "multi" → SelectionPropertiesPanel with multi stub.
+  const selectionMode = useMemo<SelectionMode>(() => {
+    if (selection.isMulti) return "multi";
+    if (!selectedEntry) return "none";
+    if (selectedEntry.kind === "text") return "text";
+    if (selectedEntry.kind === "image") return "image";
+    if (selectedEntry.kind === "shape") return "shape";
+    return "none";
+  }, [selection.isMulti, selectedEntry]);
 
   // -------------------------------------------------------------------------
   // Render
@@ -1258,6 +1358,17 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       <div className="flex min-h-0 flex-1">
         {/* Canvas area */}
         <div className="relative flex flex-1 flex-col items-center justify-center overflow-auto bg-neutral-100 p-6">
+          {/* Phase 2 — Add Layer Toolbar (always visible, top of canvas area).
+              why: primary creation affordance — adding text/shape layers is
+              one of the top-3 things Larissa will do once Phase 2 ships. */}
+          <div className="mb-4 flex w-full justify-center">
+            <AddLayerToolbar
+              canvas={fabricRef.current}
+              listing={listing}
+              onLayerAdded={handleLayerAdded}
+              recordHistory={history.record}
+            />
+          </div>
           {/* Selection toolbar — floats above the canvas when something is selected */}
           {selectedEntry && !selectedEntry.locked ? (
             <SelectionToolbar
@@ -1322,14 +1433,30 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           </div>
         </div>
 
-        {/* Layer panel */}
-        <LayerPanel
-          entries={layerEntries}
-          selectedLayerId={selection.layerId}
-          onSelect={handleSelectLayer}
-          onToggleVisibility={handleToggleLayerVisibility}
-          onDelete={handleDeleteLayer}
-        />
+        {/* Right-side panel — mode-switches between selection properties and
+            the layer list. Phase 2 split: when something is selected, show
+            Agent A's SelectionPropertiesPanel; otherwise show Agent C's
+            drag-reorderable LayerListPanel. */}
+        {selectionMode === "none" ? (
+          <LayerListPanel
+            entries={layerEntries}
+            selectedLayerId={selection.layerId}
+            onSelect={handleSelectLayer}
+            onToggleVisibility={handleToggleLayerVisibility}
+            onDelete={handleDeleteLayer}
+            onReorder={handleReorderLayers}
+          />
+        ) : (
+          <SelectionPropertiesPanel
+            mode={selectionMode}
+            canvas={fabricRef.current}
+            listing={listing}
+            selectionVersion={layerVersion}
+            onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+            onClearSelection={handleClearSelection}
+            recordHistory={history.record}
+          />
+        )}
       </div>
     </div>
   );
@@ -1377,84 +1504,9 @@ function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
   );
 }
 
-interface LayerPanelProps {
-  entries: LayerEntry[];
-  selectedLayerId: string | null;
-  onSelect: (layerId: string) => void;
-  onToggleVisibility: (layerId: string) => void;
-  onDelete: (layerId: string) => void;
-}
-
-function LayerPanel(props: LayerPanelProps): JSX.Element {
-  return (
-    <aside className="flex w-72 flex-col border-l border-neutral-200 bg-white">
-      <header className="border-b border-neutral-200 px-4 py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-          Layers
-        </h2>
-      </header>
-      <ul className="flex-1 overflow-y-auto px-2 py-2">
-        {props.entries.length === 0 ? (
-          <li className="px-2 py-6 text-center text-sm text-neutral-400">
-            No layers yet
-          </li>
-        ) : (
-          props.entries.map((entry) => {
-            const isSelected = entry.id === props.selectedLayerId;
-            return (
-              <li
-                key={entry.id}
-                className={`group mb-1 flex items-center gap-2 rounded-lg px-2 py-2 transition-colors ${
-                  isSelected
-                    ? "bg-gold-50 ring-1 ring-gold-200"
-                    : "hover:bg-neutral-50"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => props.onSelect(entry.id)}
-                  className="flex flex-1 items-center gap-2 text-left"
-                >
-                  <LayerKindIcon kind={entry.kind} />
-                  <span
-                    className={`truncate text-sm ${
-                      entry.visible
-                        ? "text-neutral-800"
-                        : "text-neutral-400 line-through"
-                    }`}
-                  >
-                    {entry.name}
-                  </span>
-                  {entry.locked ? (
-                    <span className="text-neutral-400">
-                      <LockIcon />
-                    </span>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => props.onToggleVisibility(entry.id)}
-                  aria-label={entry.visible ? "Hide layer" : "Show layer"}
-                  className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
-                >
-                  {entry.visible ? <EyeIcon /> : <EyeOffIcon />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => props.onDelete(entry.id)}
-                  aria-label="Delete layer"
-                  className="rounded p-1 text-neutral-300 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
-                >
-                  <TrashIcon />
-                </button>
-              </li>
-            );
-          })
-        )}
-      </ul>
-    </aside>
-  );
-}
+// why: the inline LayerPanel was removed in Phase 2 — replaced by
+// ./panels/LayerListPanel.tsx (Agent C) which adds drag-to-reorder via
+// @dnd-kit/sortable while preserving all the original row interactions.
 
 interface IconButtonProps {
   label: string;

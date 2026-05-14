@@ -1,0 +1,531 @@
+"use client";
+
+/**
+ * ImagePropertiesControls — Phase 2, Agent A
+ * --------------------------------------------
+ *
+ * Properties panel for an active Fabric Image. Provides:
+ *   • A "Swap photo" thumbnail grid wired to listing.photos[] (up to 5)
+ *   • An object-fit toggle (cover / contain / stretch)
+ *   • Corner radius slider
+ *   • Opacity slider
+ *
+ * Photo swapping uses `img.setSrc(url, { crossOrigin: "anonymous" })` per the
+ * Fabric v6 API. After load, we re-apply the object-fit scaling against the
+ * new natural dimensions so the user doesn't see a sudden zoom/crop change.
+ *
+ * Corner radius is implemented via a Rect clipPath on the image — matching
+ * the approach used in CanvasEditor.tsx's createFabricImage factory. We
+ * REPLACE the clipPath on each change rather than mutating an existing one
+ * because the clip dimensions depend on the image's natural width/height.
+ */
+
+import { FabricImage, Rect } from "fabric";
+import type { Canvas } from "fabric";
+import {
+  type ChangeEvent,
+  type JSX,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+
+import type { MLSListingPayload } from "../../types";
+
+interface ImagePropertiesControlsProps {
+  canvas: Canvas | null;
+  listing: MLSListingPayload | null;
+  selectionVersion: number;
+  onCanvasMutated?: () => void;
+  recordHistory?: () => void;
+}
+
+/**
+ * Local mirror of the active Image's editable state.
+ */
+interface ImageState {
+  /** Current src URL — used to highlight the active thumbnail in the swap grid. */
+  src: string;
+  /** Derived object-fit setting. We persist this as image meta on a custom prop. */
+  objectFit: "cover" | "contain" | "stretch";
+  /** Corner radius in display px. */
+  cornerRadius: number;
+  /** 0..1 opacity from Fabric. */
+  opacity: number;
+  /** The image's logical width × height inside the canvas (target box). */
+  targetWidth: number;
+  targetHeight: number;
+  /** Natural image dimensions — used when computing the new scale on fit change. */
+  naturalWidth: number;
+  naturalHeight: number;
+}
+
+const FIT_OPTIONS: ReadonlyArray<{
+  value: ImageState["objectFit"];
+  label: string;
+}> = [
+  { value: "cover", label: "Cover" },
+  { value: "contain", label: "Contain" },
+  { value: "stretch", label: "Stretch" },
+];
+
+/**
+ * Read the image's natural dimensions out of its underlying HTMLImageElement.
+ * Fabric exposes the element via `.getElement()`. When the element is a video
+ * or canvas (Fabric.Image accepts both), we fall back to `width`/`height` on
+ * the FabricImage itself.
+ */
+function readNaturalSize(img: FabricImage): {
+  naturalWidth: number;
+  naturalHeight: number;
+} {
+  // why: getElement() can return an HTMLImageElement | HTMLVideoElement |
+  // HTMLCanvasElement. Only HTMLImageElement carries naturalWidth/Height.
+  const el = img.getElement?.();
+  if (el && el instanceof HTMLImageElement) {
+    return {
+      naturalWidth: el.naturalWidth || img.width || 1,
+      naturalHeight: el.naturalHeight || img.height || 1,
+    };
+  }
+  return {
+    naturalWidth: img.width || 1,
+    naturalHeight: img.height || 1,
+  };
+}
+
+/**
+ * Read our custom `objectFit` metadata off the image. We stamp this on the
+ * Fabric object's `data` bag at swap-time so the panel can recover the user's
+ * intent on re-select (Fabric doesn't natively persist object-fit — it only
+ * tracks the resulting scaleX/scaleY).
+ */
+function readObjectFit(img: FabricImage): ImageState["objectFit"] {
+  const data = (img as unknown as { data?: { objectFit?: string } }).data;
+  const fit = data?.objectFit;
+  if (fit === "contain" || fit === "stretch") return fit;
+  return "cover";
+}
+
+function writeObjectFit(img: FabricImage, fit: ImageState["objectFit"]): void {
+  // why: preserve existing data fields (layerId, layerKind, displayName).
+  // Without this we'd nuke the metadata that the layer panel relies on.
+  const obj = img as unknown as { data?: Record<string, unknown> };
+  obj.data = { ...(obj.data ?? {}), objectFit: fit };
+}
+
+/**
+ * Read the corner radius back from the image's clipPath, if one exists.
+ * Returns 0 when the image has no clipPath (i.e., square corners).
+ */
+function readCornerRadius(img: FabricImage): number {
+  const clip = img.clipPath;
+  if (!clip || !(clip instanceof Rect)) return 0;
+  // why: the clipPath rx is stored in the image's local space, then divided
+  // by scaleX when first applied. Multiply back by current scaleX to get the
+  // display px value the user originally requested.
+  const scaleX = img.scaleX ?? 1;
+  return Math.round((clip.rx ?? 0) * scaleX);
+}
+
+/**
+ * Read the current image state out of the canvas. Returns null when there's
+ * no active object or the active object isn't a FabricImage.
+ */
+function readImageState(canvas: Canvas | null): ImageState | null {
+  if (!canvas) return null;
+  const active = canvas.getActiveObject();
+  if (!active || !(active instanceof FabricImage)) return null;
+  const { naturalWidth, naturalHeight } = readNaturalSize(active);
+  const scaleX = active.scaleX ?? 1;
+  const scaleY = active.scaleY ?? 1;
+  return {
+    src: active.getSrc?.() ?? "",
+    objectFit: readObjectFit(active),
+    cornerRadius: readCornerRadius(active),
+    opacity: typeof active.opacity === "number" ? active.opacity : 1,
+    targetWidth: naturalWidth * scaleX,
+    targetHeight: naturalHeight * scaleY,
+    naturalWidth,
+    naturalHeight,
+  };
+}
+
+/**
+ * Compute the scaleX/scaleY pair that satisfies the requested object-fit
+ * against the current target box. Mirrors the math in CanvasEditor's
+ * createFabricImage factory.
+ */
+function computeFitScale(
+  fit: ImageState["objectFit"],
+  targetWidth: number,
+  targetHeight: number,
+  naturalWidth: number,
+  naturalHeight: number,
+): { scaleX: number; scaleY: number } {
+  const cover = Math.max(
+    targetWidth / naturalWidth,
+    targetHeight / naturalHeight,
+  );
+  const contain = Math.min(
+    targetWidth / naturalWidth,
+    targetHeight / naturalHeight,
+  );
+  if (fit === "stretch") {
+    return {
+      scaleX: targetWidth / naturalWidth,
+      scaleY: targetHeight / naturalHeight,
+    };
+  }
+  if (fit === "contain") {
+    return { scaleX: contain, scaleY: contain };
+  }
+  return { scaleX: cover, scaleY: cover };
+}
+
+/**
+ * Apply (or remove) a rounded-corner clipPath on the image. Pass radius=0 to
+ * clear the clipPath entirely (square corners).
+ */
+function applyCornerRadius(img: FabricImage, radius: number): void {
+  if (radius <= 0) {
+    img.clipPath = undefined;
+    return;
+  }
+  const { naturalWidth, naturalHeight } = readNaturalSize(img);
+  const scaleX = img.scaleX ?? 1;
+  const scaleY = img.scaleY ?? 1;
+  // why: clip is in image-local space, so divide by scale so a 30px radius
+  // looks 30px in display units regardless of the image's scale factor.
+  img.clipPath = new Rect({
+    width: naturalWidth,
+    height: naturalHeight,
+    rx: radius / scaleX,
+    ry: radius / scaleY,
+    originX: "center",
+    originY: "center",
+    absolutePositioned: false,
+  });
+}
+
+export default function ImagePropertiesControls(
+  props: ImagePropertiesControlsProps,
+): JSX.Element {
+  const {
+    canvas,
+    listing,
+    selectionVersion,
+    onCanvasMutated,
+    recordHistory,
+  } = props;
+  const [state, setState] = useState<ImageState | null>(() =>
+    readImageState(canvas),
+  );
+  /** Tracks an in-flight swap so the user can't double-click two thumbs and race FabricImage.fromURL. */
+  const [isSwapping, setIsSwapping] = useState<boolean>(false);
+
+  useEffect(() => {
+    setState(readImageState(canvas));
+  }, [canvas, selectionVersion]);
+
+  /**
+   * Swap the active image's underlying source to a new listing photo URL.
+   * Uses Fabric v6's `setSrc` — replaces the image's underlying element
+   * in place, preserving position/angle/zIndex/clipPath structure. After
+   * load we recompute the scale to honor the current objectFit.
+   */
+  const handleSwapPhoto = useCallback(
+    async (nextUrl: string): Promise<void> => {
+      if (!canvas || isSwapping) return;
+      const active = canvas.getActiveObject();
+      if (!active || !(active instanceof FabricImage)) return;
+      if (nextUrl === state?.src) return;
+
+      setIsSwapping(true);
+      try {
+        // why: crossOrigin: "anonymous" is mandatory — without it the new
+        // image taints the canvas and toDataURL throws SecurityError on
+        // export. See ImageLayer typedoc + CanvasEditor.tsx createFabricImage.
+        await active.setSrc(nextUrl, { crossOrigin: "anonymous" });
+
+        // why: setSrc gives us a new underlying element with new natural
+        // dimensions — re-apply object-fit so the visual size doesn't
+        // suddenly jump.
+        const currentFit = readObjectFit(active);
+        const targetWidth = state?.targetWidth ?? active.width ?? 1;
+        const targetHeight = state?.targetHeight ?? active.height ?? 1;
+        const { naturalWidth, naturalHeight } = readNaturalSize(active);
+        const { scaleX, scaleY } = computeFitScale(
+          currentFit,
+          targetWidth,
+          targetHeight,
+          naturalWidth,
+          naturalHeight,
+        );
+        active.set({ scaleX, scaleY });
+
+        // why: corner radius is naturalDim-relative, so re-apply with the new
+        // natural dimensions. Keep the same display-radius the user already
+        // chose.
+        if (state?.cornerRadius && state.cornerRadius > 0) {
+          applyCornerRadius(active, state.cornerRadius);
+        }
+
+        canvas.requestRenderAll();
+        onCanvasMutated?.();
+        recordHistory?.();
+        setState(readImageState(canvas));
+      } catch (err) {
+        // why: failed swap is non-fatal — log and bail. The user sees the
+        // existing image and can try another thumbnail. A toast system would
+        // belong in the orchestrator, not in a leaf control.
+        console.error("Image swap failed:", err);
+      } finally {
+        setIsSwapping(false);
+      }
+    },
+    [canvas, isSwapping, onCanvasMutated, recordHistory, state],
+  );
+
+  /**
+   * Change the object-fit. Recomputes the scale and writes the new fit into
+   * the image's `data` bag so it survives re-select.
+   */
+  const handleFitChange = useCallback(
+    (next: ImageState["objectFit"]): void => {
+      if (!canvas || !state) return;
+      const active = canvas.getActiveObject();
+      if (!active || !(active instanceof FabricImage)) return;
+      const { scaleX, scaleY } = computeFitScale(
+        next,
+        state.targetWidth,
+        state.targetHeight,
+        state.naturalWidth,
+        state.naturalHeight,
+      );
+      active.set({ scaleX, scaleY });
+      writeObjectFit(active, next);
+      // why: corner radius depends on scale — re-apply so the visual radius
+      // stays the same in display px.
+      if (state.cornerRadius > 0) {
+        applyCornerRadius(active, state.cornerRadius);
+      }
+      canvas.requestRenderAll();
+      onCanvasMutated?.();
+      recordHistory?.();
+      setState({ ...state, objectFit: next });
+    },
+    [canvas, onCanvasMutated, recordHistory, state],
+  );
+
+  const handleCornerRadiusChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>): void => {
+      if (!canvas || !state) return;
+      const active = canvas.getActiveObject();
+      if (!active || !(active instanceof FabricImage)) return;
+      const next = Number(e.target.value);
+      if (!Number.isFinite(next)) return;
+      applyCornerRadius(active, next);
+      canvas.requestRenderAll();
+      onCanvasMutated?.();
+      setState({ ...state, cornerRadius: next });
+      // why: continuous slider — defer recordHistory to mouseup commit.
+    },
+    [canvas, onCanvasMutated, state],
+  );
+
+  const handleCornerRadiusCommit = useCallback(() => {
+    recordHistory?.();
+  }, [recordHistory]);
+
+  const handleOpacityChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>): void => {
+      if (!canvas || !state) return;
+      const active = canvas.getActiveObject();
+      if (!active || !(active instanceof FabricImage)) return;
+      // why: panel shows 0..100, Fabric uses 0..1. Convert at the boundary.
+      const pct = Number(e.target.value);
+      if (!Number.isFinite(pct)) return;
+      const next = pct / 100;
+      active.set({ opacity: next });
+      canvas.requestRenderAll();
+      onCanvasMutated?.();
+      setState({ ...state, opacity: next });
+    },
+    [canvas, onCanvasMutated, state],
+  );
+
+  const handleOpacityCommit = useCallback(() => {
+    recordHistory?.();
+  }, [recordHistory]);
+
+  if (!state) {
+    return (
+      <div className="px-4 py-6 text-sm text-neutral-400">
+        Select an image layer to edit its properties.
+      </div>
+    );
+  }
+
+  // why: listing.photos is the source of truth for the swap grid. We cap at 5
+  // because the canvas-editor schema only binds hero_photo + photo_2..5.
+  const photoOptions = listing?.photos?.slice(0, 5) ?? [];
+  const hasListing = listing !== null;
+
+  return (
+    <div className="flex flex-col gap-4 px-3 py-3">
+      {/* ===== Swap photo ===== */}
+      <Section title="Swap Photo">
+        {!hasListing ? (
+          <p className="text-xs text-neutral-400">
+            No listing attached — photo swap unavailable.
+          </p>
+        ) : photoOptions.length === 0 ? (
+          <p className="text-xs text-neutral-400">
+            This listing has no photos.
+          </p>
+        ) : (
+          <div className="grid grid-cols-5 gap-1.5">
+            {photoOptions.map((url, idx) => {
+              const isCurrent = url === state.src;
+              return (
+                <button
+                  key={`${url}_${idx}`}
+                  type="button"
+                  onClick={() => void handleSwapPhoto(url)}
+                  disabled={isSwapping}
+                  aria-label={`Use photo ${idx + 1}`}
+                  title={`Photo ${idx + 1}`}
+                  className={`group relative aspect-square overflow-hidden rounded-md border transition-all disabled:opacity-50 ${
+                    isCurrent
+                      ? "border-gold-500 ring-2 ring-gold-500/40"
+                      : "border-neutral-300 hover:border-neutral-400"
+                  }`}
+                >
+                  {/*
+                    why: native <img>, not next/image. The Fabric layer also
+                    uses raw browser images, so any CDN quirks (CORS headers,
+                    redirects) surface here AT THUMB-TIME instead of after the
+                    user clicks. Cheaper debugging cost.
+                  */}
+                  <img
+                    src={url}
+                    alt={`Photo ${idx + 1}`}
+                    crossOrigin="anonymous"
+                    className="h-full w-full object-cover"
+                  />
+                  {isCurrent ? (
+                    <span className="absolute inset-x-0 bottom-0 bg-gold-500 py-0.5 text-center text-[8px] font-bold uppercase text-white">
+                      Current
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {isSwapping ? (
+          <p className="mt-2 text-[10px] text-neutral-400">
+            Swapping photo…
+          </p>
+        ) : null}
+      </Section>
+
+      {/* ===== Object fit ===== */}
+      <Section title="Fit">
+        <div className="grid grid-cols-3 gap-1">
+          {FIT_OPTIONS.map((opt) => {
+            const isActive = state.objectFit === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => handleFitChange(opt.value)}
+                className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
+                  isActive
+                    ? "border-gold-500 bg-gold-50 text-gold-600"
+                    : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </Section>
+
+      {/* ===== Corner radius ===== */}
+      <Section title="Corner Radius">
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            value={state.cornerRadius}
+            min={0}
+            max={200}
+            onChange={handleCornerRadiusChange}
+            onBlur={handleCornerRadiusCommit}
+            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+          />
+          <input
+            type="range"
+            min={0}
+            max={200}
+            value={state.cornerRadius}
+            onChange={handleCornerRadiusChange}
+            onMouseUp={handleCornerRadiusCommit}
+            onTouchEnd={handleCornerRadiusCommit}
+            className="flex-1 accent-gold-500"
+          />
+        </div>
+      </Section>
+
+      {/* ===== Opacity ===== */}
+      <Section title="Opacity">
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            value={Math.round(state.opacity * 100)}
+            min={0}
+            max={100}
+            onChange={handleOpacityChange}
+            onBlur={handleOpacityCommit}
+            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+          />
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(state.opacity * 100)}
+            onChange={handleOpacityChange}
+            onMouseUp={handleOpacityCommit}
+            onTouchEnd={handleOpacityCommit}
+            className="flex-1 accent-gold-500"
+          />
+          <span className="w-8 text-right text-xs text-neutral-500">
+            {Math.round(state.opacity * 100)}%
+          </span>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+// ===========================================================================
+// Section subcomponent
+// ===========================================================================
+
+interface SectionProps {
+  title: string;
+  children: React.ReactNode;
+}
+
+function Section(props: SectionProps): JSX.Element {
+  return (
+    <div>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+        {props.title}
+      </div>
+      {props.children}
+    </div>
+  );
+}
