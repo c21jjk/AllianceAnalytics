@@ -14,7 +14,10 @@ import type {
   FBBundleResponse,
   FBBundleErrorResponse,
 } from "@/lib/post-builder/types";
-import { saveGeneratedPostAction } from "./actions";
+import {
+  saveGeneratedPostAction,
+  updateGeneratedPostImageAction,
+} from "./actions";
 
 // === Canvas Editor (Path C) — Phase 1, Step 2 wiring ===
 // why: opt-in "Edit in Studio" path that opens the new Fabric.js editor in an
@@ -277,31 +280,85 @@ export default function PostBuilderClient({
 
   const handleStudioSave = useCallback(
     async (result: CanvasExportResult): Promise<void> => {
-      // why: Step 2 only — download the rendered PNG locally so we can verify
-      // the export pipeline visually. Step 3 will replace this with a Supabase
-      // Storage upload + generated_posts row insert via a Server Action.
-      const url = URL.createObjectURL(result.file);
-      try {
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = result.file.name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } finally {
-        // why: revoke immediately after click — the browser has already
-        // initiated the download and no longer needs the blob URL.
-        URL.revokeObjectURL(url);
+      // why: real save flow now — upload the edited PNG to Storage via the
+      // new /api/post-builder/canvas-save endpoint, then (if there's an
+      // existing generated_posts row from the V1 render) update it to point
+      // at the new image. The preview pane gets the new image_url so the
+      // user sees their edit immediately when the overlay closes.
+      if (!selectedListing) {
+        setError("Can't save — no listing selected.");
+        return;
       }
-      // why: log the schema so we can confirm bound-field hydration worked
-      // end-to-end without inspecting the actual PNG bytes.
-      console.log("[CanvasEditor Step 2 save]", {
-        templateId: result.schema.id,
-        dimensions: { width: result.width, height: result.height },
-        bytes: result.file.size,
-      });
+
+      setError(null);
+
+      try {
+        // ---- 1. Upload edited PNG ----
+        const form = new FormData();
+        form.append("file", result.file);
+        form.append("template_id", result.schema.id);
+        form.append("mls_number", selectedListing.mls_number);
+        const uploadRes = await fetch("/api/post-builder/canvas-save", {
+          method: "POST",
+          body: form,
+        });
+        const uploadJson = (await uploadRes.json()) as
+          | { ok: true; image_url: string; image_path: string; saved_at: string }
+          | { ok: false; error: string };
+        if (!uploadRes.ok || !uploadJson.ok) {
+          const errMsg =
+            !uploadJson.ok ? uploadJson.error : `HTTP ${uploadRes.status}`;
+          setError(`Studio save failed: ${errMsg}`);
+          return;
+        }
+
+        // ---- 2. If an existing generated_posts row exists, swap its image ----
+        // why: persists the edit so the post stays edited across refreshes
+        // and shows up that way wherever generated_posts is consumed (listing
+        // detail, posts list, etc.). If there's no row yet (user opened
+        // Studio before clicking Generate Post), we just skip — the preview
+        // updates in-memory and a later Generate would clobber anyway.
+        if (generatedPostId) {
+          const updRes = await updateGeneratedPostImageAction({
+            id: generatedPostId,
+            image_url: uploadJson.image_url,
+            image_path: uploadJson.image_path,
+          });
+          if (!updRes.ok) {
+            // Non-fatal — we still have the image up. Show a warning but
+            // keep the in-memory preview update so the user sees their work.
+            setError(
+              `Image saved, but post row update failed: ${updRes.error}`,
+            );
+          }
+        }
+
+        // ---- 3. Update the preview pane in-memory ----
+        // why: reuse the existing renderResult shape so the rest of the UI
+        // (download button, post-now flow, caption pane) keeps working
+        // without knowing whether the image came from V1 render or Studio.
+        setRenderResult((prev) =>
+          prev
+            ? {
+                ...prev,
+                image_url: uploadJson.image_url,
+                image_path: uploadJson.image_path,
+                template_id: result.schema.id,
+                width: result.width,
+                height: result.height,
+              }
+            : prev,
+        );
+
+        // ---- 4. Close the overlay ----
+        setStudioOpen(false);
+      } catch (e) {
+        setError(
+          `Studio save threw: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     },
-    [],
+    [selectedListing, generatedPostId],
   );
 
   const handleStudioClose = useCallback((): void => {
@@ -1881,7 +1938,7 @@ export default function PostBuilderClient({
         template={studioContext?.template ?? null}
         listing={studioContext?.listing ?? null}
         onSave={handleStudioSave}
-        saveLabel="Download Post"
+        saveLabel="Save Post"
       />
     </div>
   );

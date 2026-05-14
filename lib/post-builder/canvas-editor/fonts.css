@@ -1,0 +1,55 @@
+/**
+ * Canvas Editor font catalog — Google Fonts loaded ON-DEMAND.
+ * ------------------------------------------------------------
+ *
+ * This file is imported ONLY by CanvasEditor.tsx (the client component that
+ * renders the Fabric canvas). Because the editor is dynamically mounted by
+ * the overlay, these fonts are NOT fetched on the dashboard, the listings
+ * page, or any other route — they pay a network cost only when Larissa
+ * actually opens the editor.
+ *
+ * Font choices mirror lib/post-builder/canvas-editor/templates/tokens.ts.
+ * Keep that file's ALLIANCE_FONTS object and this @import list synchronized:
+ *   • Adding a font?    Add @import here + token in tokens.ts + label in
+ *                       TextPropertiesControls.tsx FONT_OPTIONS array.
+ *   • Removing a font?  Reverse all three.
+ *
+ * Why a single @import per family rather than one combined Google URL:
+ *   The combined URL works but is harder to diff and edit. Per-family imports
+ *   make additions trivial. Network impact is identical — Google de-dupes.
+ *
+ * Why `display=swap` on every family:
+ *   FOIT (Flash of Invisible Text) makes the canvas look broken while fonts
+ *   load. `swap` falls back to the system font in the family stack first,
+ *   then re-renders when the real font arrives. The editor's
+ *   `document.fonts.ready` await catches the swap, so the first canvas paint
+ *   is correct.
+ *
+ * Subset notes:
+ *   We pull `latin` subset only (US real estate). If we ever expand to non-
+ *   Latin markets, add &subset=… to the relevant @import.
+ */
+
+/* ----- Sans (body + UI) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap");
+
+/* ----- Sans (display / headlines) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap");
+
+/* ----- Serif (editorial / luxury) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700;900&display=swap");
+
+/* ----- Script (accent) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Pacifico&display=swap");
+
+/*
+ * Inter is already loaded at the app level via next/font/google in
+ * app/layout.tsx — we don't re-import it here. Georgia and SF Mono are
+ * system fonts; no @import needed.
+ */

@@ -78,6 +78,13 @@ import AddLayerToolbar from "./panels/AddLayerToolbar";
 import LayerListPanel from "./panels/LayerListPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
 
+// why: fonts.css contains Google Fonts @import statements for the 9 fonts
+// that aren't already loaded at the app level. Importing the CSS here (not
+// in app/globals.css) scopes the network cost to ONLY when the editor
+// actually mounts — no font fetch on the dashboard, listings page, etc.
+// Next.js's CSS chunking handles the per-route loading automatically.
+import "./fonts.css";
+
 // ===========================================================================
 // SECTION 1 — Bound-field formatters
 // ===========================================================================

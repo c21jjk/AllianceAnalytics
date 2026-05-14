@@ -44,20 +44,54 @@ export const ALLIANCE_COLORS = {
 } as const;
 
 /**
- * Font stack. We standardize on the project's main font (Inter, per
- * tailwind.config.ts) for body type, plus a display alternate ("Georgia") for
- * editorial headlines. Templates referenced these by string literal — when we
- * add custom fonts in Phase 4 (Brand panel), the strings here drive the font
- * picker's default options.
+ * Font stack catalog — 12 entries curated for real-estate social posts.
  *
- * IMPORTANT: any custom font referenced here MUST be loaded via @font-face in
- * `app/globals.css` BEFORE the canvas editor draws — otherwise Fabric falls
- * back to a system serif/sans. The editor awaits `document.fonts.ready` before
- * hydration, which catches anything declared in CSS.
+ * Categories (and why each is in the list):
+ *   • Body sans     — Inter, Montserrat, Poppins, Lato (5 total incl. system)
+ *                      Default text choice; legible at any size, all weights.
+ *   • Display sans  — Oswald, Bebas Neue
+ *                      Tall narrow caps work great for "JUST LISTED" type labels.
+ *   • Serif         — Georgia, Playfair Display, Cormorant Garamond, Lora,
+ *                      Merriweather
+ *                      Editorial / luxury vibe — Playfair is the de-facto
+ *                      luxury real-estate headline font.
+ *   • Script        — Pacifico
+ *                      Casual accent (e.g., "Open House" overlay scripts).
+ *   • Mono          — SF Mono
+ *                      MLS numbers + technical metadata.
+ *
+ * IMPORTANT: every non-system font referenced here MUST be loaded via the
+ * `lib/post-builder/canvas-editor/fonts.css` file (Google Fonts @import).
+ * The editor awaits `document.fonts.ready` before hydration so unloaded fonts
+ * fall back to system serif/sans cleanly, but the user-facing dropdown will
+ * still list the unavailable font — keep the catalog and the CSS file in sync.
+ *
+ * If you add a new font: (1) add the @import to fonts.css, (2) add the token
+ * here, (3) add an entry to FONT_OPTIONS in TextPropertiesControls.tsx.
  */
 export const ALLIANCE_FONTS = {
+  // ----- Sans (body + UI) -----
   bodySans: "Inter, ui-sans-serif, system-ui, sans-serif",
+  montserrat: '"Montserrat", "Helvetica Neue", Arial, sans-serif',
+  poppins: '"Poppins", "Helvetica Neue", Arial, sans-serif',
+  lato: '"Lato", "Helvetica Neue", Arial, sans-serif',
+
+  // ----- Sans (display / headlines) -----
+  oswald: '"Oswald", "Arial Narrow", sans-serif',
+  bebasNeue: '"Bebas Neue", Impact, "Arial Narrow Bold", sans-serif',
+
+  // ----- Serif -----
   displaySerif:
     'Georgia, "Times New Roman", ui-serif, serif',
+  playfair: '"Playfair Display", Georgia, "Times New Roman", serif',
+  cormorant:
+    '"Cormorant Garamond", "EB Garamond", Garamond, Georgia, serif',
+  lora: '"Lora", Georgia, "Times New Roman", serif',
+  merriweather: '"Merriweather", Georgia, "Times New Roman", serif',
+
+  // ----- Script (accent) -----
+  pacifico: '"Pacifico", "Brush Script MT", cursive',
+
+  // ----- Mono (numbers, MLS codes) -----
   monoNum: '"SF Mono", Menlo, Consolas, monospace',
 } as const;

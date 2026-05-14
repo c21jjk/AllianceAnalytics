@@ -28,7 +28,8 @@
  *     isn't important enough to ship a schema for.
  */
 
-import { type JSX, useEffect, useRef, useState } from "react";
+import { type JSX, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { ALLIANCE_COLORS } from "../templates/tokens";
 
@@ -121,12 +122,71 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
   const [recents, setRecents] = useState<readonly string[]>([]);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  // why: popover is portaled to document.body to escape the canvas editor's
+  // nested stacking contexts (the canvas wrapper uses `transform: scale()`,
+  // which creates a new context that was painting over our absolute popover
+  // even at z-50). With a portal + position:fixed, the popover lives on the
+  // <body> stacking context where nothing else competes.
+  const [popoverPos, setPopoverPos] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
 
   // why: sync the hex input when the parent's value changes externally
   // (e.g., user clicked a different layer with a different fill).
   useEffect(() => {
     setHexInput(value);
   }, [value]);
+
+  // why: compute popover position whenever it opens. useLayoutEffect rather
+  // than useEffect so the position is set BEFORE the first paint — avoids a
+  // single frame where the popover renders at (0, 0) then jumps.
+  // The popover is 256px wide; we right-align it to the trigger so it doesn't
+  // spill off the right edge of a side panel. If that would put it off the
+  // LEFT edge of the viewport, clamp.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) {
+      setPopoverPos(null);
+      return;
+    }
+    const POPOVER_WIDTH = 256;
+    const GAP = 8;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const top = rect.bottom + GAP;
+    // Default: right-align popover's right edge to trigger's right edge.
+    let left = rect.right - POPOVER_WIDTH;
+    // Clamp to viewport — never spill off the left edge.
+    if (left < GAP) left = GAP;
+    // Clamp right — if the popover would overflow, push it left.
+    const maxLeft = window.innerWidth - POPOVER_WIDTH - GAP;
+    if (left > maxLeft) left = maxLeft;
+    setPopoverPos({ top, left });
+  }, [open]);
+
+  // why: reposition on scroll/resize so the popover stays anchored to the
+  // trigger even when the user scrolls the panel underneath. Cheap listener;
+  // we only attach it while the popover is open.
+  useEffect(() => {
+    if (!open) return;
+    const reposition = (): void => {
+      if (!triggerRef.current) return;
+      const POPOVER_WIDTH = 256;
+      const GAP = 8;
+      const rect = triggerRef.current.getBoundingClientRect();
+      const top = rect.bottom + GAP;
+      let left = rect.right - POPOVER_WIDTH;
+      if (left < GAP) left = GAP;
+      const maxLeft = window.innerWidth - POPOVER_WIDTH - GAP;
+      if (left > maxLeft) left = maxLeft;
+      setPopoverPos({ top, left });
+    };
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open]);
 
   // why: close the popover on outside click. We listen to mousedown rather
   // than click so we close BEFORE a downstream click handler runs — feels
@@ -193,13 +253,20 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
         aria-label={label ? `${label} color picker` : "Color picker"}
         title={isTransparent ? "Transparent" : value}
       />
-      {open && !disabled ? (
-        <div
-          ref={popoverRef}
-          className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-neutral-200 bg-white p-3 shadow-elevated animate-fade-in-up"
-          role="dialog"
-          aria-label="Color picker"
-        >
+      {open && !disabled && popoverPos
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              style={{
+                position: "fixed",
+                top: popoverPos.top,
+                left: popoverPos.left,
+                width: 256,
+              }}
+              className="z-[100] rounded-xl border border-neutral-200 bg-white p-3 shadow-elevated animate-fade-in-up"
+              role="dialog"
+              aria-label="Color picker"
+            >
           {/* === Alliance brand swatches === */}
           <SwatchRow
             title="Alliance brand"
@@ -261,8 +328,10 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

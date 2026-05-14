@@ -66,6 +66,11 @@ interface TextState {
   fontWeight: number;
   fontStyle: "normal" | "italic";
   fill: string;
+  // why: backgroundColor is a Fabric Textbox property that paints a rect
+  // behind the text bounded by the textbox's width × height. Empty string
+  // = no background (Fabric treats falsy as transparent). We standardize
+  // on "" so the ColorPicker's "transparent" swatch round-trips cleanly.
+  backgroundColor: string;
   textAlign: "left" | "center" | "right" | "justify";
   lineHeight: number;
   charSpacing: number;
@@ -77,10 +82,29 @@ interface TextState {
  * Font family options. Pulled from ALLIANCE_FONTS so the picker stays in sync
  * with the project's font system. Each option carries the literal stack we
  * pass to Fabric AND a short display label so the dropdown reads cleanly.
+ *
+ * Order matters — the dropdown displays in this sequence. Grouped by visual
+ * register (body sans → display sans → serif → script → mono) so Larissa can
+ * scan from "safest body choice" down to "most ornamental."
  */
 const FONT_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
+  // ----- Sans (body + UI) -----
   { label: "Inter (Sans)", value: ALLIANCE_FONTS.bodySans },
+  { label: "Montserrat (Sans)", value: ALLIANCE_FONTS.montserrat },
+  { label: "Poppins (Sans)", value: ALLIANCE_FONTS.poppins },
+  { label: "Lato (Sans)", value: ALLIANCE_FONTS.lato },
+  // ----- Sans (display) -----
+  { label: "Oswald (Display)", value: ALLIANCE_FONTS.oswald },
+  { label: "Bebas Neue (Display)", value: ALLIANCE_FONTS.bebasNeue },
+  // ----- Serif -----
   { label: "Georgia (Serif)", value: ALLIANCE_FONTS.displaySerif },
+  { label: "Playfair Display (Serif)", value: ALLIANCE_FONTS.playfair },
+  { label: "Cormorant Garamond (Serif)", value: ALLIANCE_FONTS.cormorant },
+  { label: "Lora (Serif)", value: ALLIANCE_FONTS.lora },
+  { label: "Merriweather (Serif)", value: ALLIANCE_FONTS.merriweather },
+  // ----- Script (accent) -----
+  { label: "Pacifico (Script)", value: ALLIANCE_FONTS.pacifico },
+  // ----- Mono -----
   { label: "SF Mono", value: ALLIANCE_FONTS.monoNum },
 ];
 
@@ -148,6 +172,8 @@ function readTextState(canvas: Canvas | null): TextState | null {
     fontWeight: coerceFontWeight(active.fontWeight),
     fontStyle: style,
     fill: typeof active.fill === "string" ? active.fill : "#000000",
+    backgroundColor:
+      typeof active.backgroundColor === "string" ? active.backgroundColor : "",
     textAlign: align,
     lineHeight:
       typeof active.lineHeight === "number" ? active.lineHeight : 1.16,
@@ -247,6 +273,18 @@ export default function TextPropertiesControls(
   const handleFillChange = useCallback(
     (next: string) => {
       applyMutation({ fill: next }, true);
+    },
+    [applyMutation],
+  );
+
+  // why: handleBackgroundChange writes Fabric's Textbox.backgroundColor. The
+  // ColorPicker passes "transparent" or "" when the user picks the clear
+  // swatch; Fabric treats falsy as no fill — we normalize to "" so the
+  // serialized template JSON stays clean (no "transparent" literal stored).
+  const handleBackgroundChange = useCallback(
+    (next: string) => {
+      const normalized = next === "transparent" ? "" : next;
+      applyMutation({ backgroundColor: normalized }, true);
     },
     [applyMutation],
   );
@@ -427,16 +465,35 @@ export default function TextPropertiesControls(
 
       {/* ===== Color ===== */}
       <Section title="Color">
-        <div className="flex items-center gap-2">
-          <ColorPicker
-            label=""
-            value={state.fill}
-            onChange={handleFillChange}
-            allowTransparent={false}
-          />
-          <span className="font-mono text-xs uppercase text-neutral-500">
-            {state.fill}
-          </span>
+        <div className="space-y-2">
+          {/* Foreground — the text glyph color */}
+          <div className="flex items-center gap-2">
+            <ColorPicker
+              label=""
+              value={state.fill}
+              onChange={handleFillChange}
+              allowTransparent={false}
+            />
+            <span className="font-mono text-xs uppercase text-neutral-500">
+              Text · {state.fill}
+            </span>
+          </div>
+          {/* Background — Fabric's Textbox.backgroundColor. Paints a rect
+              behind the text, bounded by the textbox width × height. Use
+              for callout boxes / highlights that offset type from a busy
+              photo background. */}
+          <div className="flex items-center gap-2">
+            <ColorPicker
+              label=""
+              value={state.backgroundColor || "transparent"}
+              onChange={handleBackgroundChange}
+              allowTransparent={true}
+            />
+            <span className="font-mono text-xs uppercase text-neutral-500">
+              Highlight ·{" "}
+              {state.backgroundColor ? state.backgroundColor : "none"}
+            </span>
+          </div>
         </div>
       </Section>
 
