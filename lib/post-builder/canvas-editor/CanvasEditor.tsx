@@ -73,7 +73,13 @@ import {
 // why: imported here at the orchestrator so the integration surface is
 // reviewable in one place. Each agent's component is consumed by name; the
 // contracts.ts file is the shared interface they were all written against.
-import type { BrandAsset, OfficeOption, SelectionMode } from "./contracts";
+import type {
+  BrandAsset,
+  BrandSyncOutcome,
+  OfficeOption,
+  SelectionMode,
+} from "./contracts";
+import { syncBrandAssetsAction } from "@/app/(app)/post-builder/actions";
 import { handlePhase2KeyDown } from "./history/keyboard-shortcuts";
 import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AddLayerToolbar from "./panels/AddLayerToolbar";
@@ -681,46 +687,76 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [officesForFilter, setOfficesForFilter] = useState<readonly OfficeOption[]>([]);
   const [brandAssetsLoading, setBrandAssetsLoading] = useState<boolean>(true);
 
+  // why: extracted into a useCallback so both the initial-mount load AND the
+  // manual Sync button can call it. The Sync handler awaits this after the
+  // Edge Function completes so the UI shows the freshly-synced rows.
+  const loadBrandAssets = useCallback(async (): Promise<void> => {
+    const supabase = createSupabaseBrowserClient();
+    try {
+      const [assetsRes, officesRes] = await Promise.all([
+        supabase
+          .from("brand_assets")
+          .select("*")
+          .eq("status", "active")
+          .order("label", { ascending: true }),
+        supabase
+          .from("offices")
+          .select("id, name")
+          .eq("is_active", true)
+          .order("name", { ascending: true }),
+      ]);
+      if (assetsRes.error) {
+        console.error("[CanvasEditor] brand_assets fetch error:", assetsRes.error);
+      }
+      if (officesRes.error) {
+        console.error("[CanvasEditor] offices fetch error:", officesRes.error);
+      }
+      setBrandAssets(assetsRes.data ?? []);
+      setOfficesForFilter(officesRes.data ?? []);
+    } catch (err) {
+      console.error("[CanvasEditor] brand assets load threw:", err);
+    }
+  }, []);
+
   useEffect(() => {
     // why: load brand assets + offices from Supabase on mount. Both tables
     // are small (<200 rows total), cheap to fetch in one shot. We use the
     // browser client; RLS lets any authenticated user read `status=active`
     // rows so we don't need the admin client.
     let cancelled = false;
-    const supabase = createSupabaseBrowserClient();
     (async () => {
-      try {
-        const [assetsRes, officesRes] = await Promise.all([
-          supabase
-            .from("brand_assets")
-            .select("*")
-            .eq("status", "active")
-            .order("label", { ascending: true }),
-          supabase
-            .from("offices")
-            .select("id, name")
-            .eq("is_active", true)
-            .order("name", { ascending: true }),
-        ]);
-        if (cancelled) return;
-        if (assetsRes.error) {
-          console.error("[CanvasEditor] brand_assets fetch error:", assetsRes.error);
-        }
-        if (officesRes.error) {
-          console.error("[CanvasEditor] offices fetch error:", officesRes.error);
-        }
-        setBrandAssets(assetsRes.data ?? []);
-        setOfficesForFilter(officesRes.data ?? []);
-      } catch (err) {
-        console.error("[CanvasEditor] brand assets load threw:", err);
-      } finally {
-        if (!cancelled) setBrandAssetsLoading(false);
-      }
+      await loadBrandAssets();
+      if (!cancelled) setBrandAssetsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadBrandAssets]);
+
+  // Manual sync handler — fired from BrandPanel or AgentPanel's Sync button.
+  // Calls the server action that invokes the sync-brand-assets Edge Function,
+  // then re-fetches the assets list so the new/updated rows appear. The
+  // returned BrandSyncOutcome shape is what the panel toast renders.
+  const handleSyncBrandAssets = useCallback(async (): Promise<BrandSyncOutcome> => {
+    const res = await syncBrandAssetsAction();
+    if (!res.ok) {
+      return { ok: false, summary: `Sync failed: ${res.error}` };
+    }
+    // why: re-query brand_assets so the freshly-synced rows render without
+    // a manual refresh. Offices rarely change between syncs but we re-query
+    // both in one shot anyway — keeps the parallel query pattern intact.
+    await loadBrandAssets();
+    const { added, updated, unchanged, errors } = res.report;
+    const errCount = Array.isArray(errors) ? errors.length : 0;
+    const seconds = Math.round(res.report.durationMs / 100) / 10;
+    const summary =
+      added + updated > 0
+        ? `Synced in ${seconds}s — ${added} added, ${updated} updated, ${unchanged} unchanged${
+            errCount > 0 ? `, ${errCount} errors` : ""
+          }`
+        : `Already up to date (${unchanged} unchanged in ${seconds}s)`;
+    return { ok: true, summary };
+  }, [loadBrandAssets]);
 
   // -------------------------------------------------------------------------
   // Phase 2 — force-load Google Fonts so Fabric can actually use them
@@ -1610,6 +1646,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               )}
               isLoading={brandAssetsLoading}
               onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
+              onSync={handleSyncBrandAssets}
             />
           ) : (
             <AgentPanel
@@ -1618,6 +1655,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               defaultOfficeId={null}
               isLoading={brandAssetsLoading}
               onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
+              onSync={handleSyncBrandAssets}
             />
           )}
         </aside>

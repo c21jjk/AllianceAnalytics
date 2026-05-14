@@ -439,3 +439,104 @@ export async function deleteGeneratedPostAction(
   revalidatePath("/posts/created");
   return { ok: true, storage_cleaned: storageCleaned };
 }
+
+// ---------------------------------------------------------------------------
+// Manual brand-asset sync — fires the same Edge Function the nightly cron uses
+// ---------------------------------------------------------------------------
+
+/**
+ * Report shape returned by the `sync-brand-assets` Edge Function. Mirrors the
+ * SyncReport interface in supabase/functions/sync-brand-assets/index.ts;
+ * widened to `unknown` on the errors field because we don't need the
+ * structured per-file error type on the client — surfacing the count is
+ * enough for the panel's success/error toast.
+ */
+export interface BrandSyncReport {
+  ok: boolean;
+  durationMs: number;
+  scanned: number;
+  added: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+  errors: unknown[];
+}
+
+export interface SyncBrandAssetsOk {
+  ok: true;
+  report: BrandSyncReport;
+}
+
+export interface SyncBrandAssetsErr {
+  ok: false;
+  error: string;
+}
+
+/**
+ * Manually trigger the `sync-brand-assets` Edge Function — Larissa hits the
+ * Sync button in the Brand or Agents sidebar when she's just dropped a new
+ * logo / headshot into the Drive folder and doesn't want to wait for the
+ * nightly cron at 3 AM ET to pick it up.
+ *
+ * Auth-gated to any signed-in Alliance user — the Edge Function is the same
+ * one the cron uses, so it's safe to expose to non-admins. The work is
+ * idempotent (unchanged files return `unchanged` and skip the download), so
+ * accidental double-clicks are cheap.
+ *
+ * We use `supabase.functions.invoke` on the admin client, which signs the
+ * request with the service role key — same auth the Edge Function expects.
+ *
+ * Timing: a real sync usually finishes in 20–60s. The Edge Function has a
+ * 150s ceiling on Supabase's Free + Pro tiers, so we trust that ceiling
+ * rather than imposing our own timeout here.
+ */
+export async function syncBrandAssetsAction(): Promise<
+  SyncBrandAssetsOk | SyncBrandAssetsErr
+> {
+  await requireUser();
+
+  const supabase = createAdminClient();
+
+  try {
+    // why: empty body — the function reads its config from api_credentials
+    // (platform=google_drive) and walks the configured Drive folders. No
+    // per-invocation input is needed.
+    const { data, error } = await supabase.functions.invoke<BrandSyncReport>(
+      "sync-brand-assets",
+      { body: {} },
+    );
+    if (error) {
+      return {
+        ok: false,
+        error: `invoke_failed: ${error.message ?? String(error)}`,
+      };
+    }
+    if (!data) {
+      return { ok: false, error: "empty response from sync function" };
+    }
+    // why: the Edge Function returns `{ ok: false, errors: [...] }` on
+    // partial failure. Treat any !ok response as an error so the UI can
+    // surface it — even if some files synced, the user wants to know
+    // something went wrong.
+    if (!data.ok) {
+      const errCount = Array.isArray(data.errors) ? data.errors.length : 0;
+      return {
+        ok: false,
+        error: `sync reported failure (${errCount} per-file errors)`,
+      };
+    }
+
+    // why: refresh any page that reads brand_assets so the new rows show
+    // up without a hard reload. /post-builder is the immediate caller; the
+    // dashboard surfaces brand counts too.
+    revalidatePath("/post-builder");
+    revalidatePath("/");
+
+    return { ok: true, report: data };
+  } catch (e) {
+    return {
+      ok: false,
+      error: `threw: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}

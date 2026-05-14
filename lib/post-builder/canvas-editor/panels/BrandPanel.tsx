@@ -50,9 +50,9 @@
  *     LayerListPanel.
  */
 
-import { type JSX, useMemo } from "react";
+import { type JSX, useEffect, useMemo, useRef, useState } from "react";
 
-import type { BrandAsset, BrandPanelProps } from "../contracts";
+import type { BrandAsset, BrandPanelProps, BrandSyncOutcome } from "../contracts";
 
 // ===========================================================================
 // Constants
@@ -131,17 +131,20 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
     !props.isLoading && totalLogos === 0 && totalPartners === 0;
 
   return (
-    <aside className="flex w-72 flex-col border-l border-neutral-200 bg-white">
+    <aside className="flex h-full min-h-0 w-72 flex-col border-l border-neutral-200 bg-white">
       <header className="border-b border-neutral-200 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-            Brand
-          </h2>
-          {!props.isLoading && !isEmpty ? (
-            <span className="text-xs text-neutral-400">
-              ({totalLogos + totalPartners})
-            </span>
-          ) : null}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+              Brand
+            </h2>
+            {!props.isLoading && !isEmpty ? (
+              <span className="text-xs text-neutral-400">
+                ({totalLogos + totalPartners})
+              </span>
+            ) : null}
+          </div>
+          {props.onSync ? <SyncButton onSync={props.onSync} /> : null}
         </div>
       </header>
 
@@ -338,6 +341,96 @@ function EmptyState(): JSX.Element {
 // ===========================================================================
 // Inline SVG icon (same convention as LayerListPanel — no icon library)
 // ===========================================================================
+
+// ===========================================================================
+// Sync button — manual Drive→Supabase refresh
+// ===========================================================================
+
+interface SyncButtonProps {
+  onSync: () => Promise<BrandSyncOutcome>;
+}
+
+function SyncButton({ onSync }: SyncButtonProps): JSX.Element {
+  // why: three-state machine — idle, syncing (spinner + disabled), result
+  // (transient toast). The toast dismisses itself after 4s so Larissa
+  // doesn't have to click it away mid-edit.
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<BrandSyncOutcome | null>(null);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!result) return;
+    if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+    dismissTimerRef.current = setTimeout(() => setResult(null), 4000);
+    return () => {
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+    };
+  }, [result]);
+
+  async function handleClick(): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const outcome = await onSync();
+      setResult(outcome);
+    } catch (e) {
+      setResult({
+        ok: false,
+        summary: `Sync threw: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => void handleClick()}
+        disabled={busy}
+        title={busy ? "Syncing from Google Drive…" : "Sync from Google Drive now"}
+        aria-label={busy ? "Syncing brand assets" : "Sync brand assets from Google Drive"}
+        className="inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800 disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        <RefreshIcon spinning={busy} />
+      </button>
+      {result ? (
+        <div
+          role="status"
+          className={`absolute right-0 top-full z-20 mt-1 w-60 rounded-md border px-2.5 py-1.5 text-[11px] leading-snug shadow-md ${
+            result.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-rose-200 bg-rose-50 text-rose-900"
+          }`}
+        >
+          {result.summary}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RefreshIcon({ spinning }: { spinning: boolean }): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={spinning ? "animate-spin" : undefined}
+    >
+      <path d="M13.5 4.5A6 6 0 102 8" />
+      <path d="M13.5 1.5v3h-3" />
+    </svg>
+  );
+}
 
 function LogoPlaceholderIcon(): JSX.Element {
   // why: generic image-frame glyph that reads as "media missing" without

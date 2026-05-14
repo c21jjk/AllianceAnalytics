@@ -44,6 +44,17 @@ export interface OfficeOption {
 }
 
 /**
+ * Result shape passed to the panel's onSync callback. Mirrors the response
+ * from syncBrandAssetsAction so the panel can render a short result toast
+ * (e.g. "Synced — 3 added, 2 updated") without knowing the action signature.
+ */
+export interface BrandSyncOutcome {
+  ok: boolean;
+  /** Already-formatted summary line, e.g. "3 added, 2 updated, 0 errors" or "Sync failed: invoke_failed: …" */
+  summary: string;
+}
+
+/**
  * BrandPanel — grid of C21 logos + co-brand partner logos.
  *
  * Renders inside the editor's left sidebar when the user clicks the Brand
@@ -57,6 +68,12 @@ export interface BrandPanelProps {
   isLoading: boolean;
   /** Called when the user clicks a thumbnail. Orchestrator creates the Fabric image. */
   onAssetPicked: (asset: BrandAsset) => void;
+  /**
+   * Optional manual sync — fires the Drive→Supabase sync Edge Function and
+   * re-fetches the assets list. When set, the panel renders a Sync button in
+   * its header. Returns a brief outcome the panel surfaces as a toast.
+   */
+  onSync?: () => Promise<BrandSyncOutcome>;
 }
 
 /**
@@ -78,6 +95,12 @@ export interface AgentPanelProps {
   defaultOfficeId: string | null;
   isLoading: boolean;
   onAssetPicked: (asset: BrandAsset) => void;
+  /**
+   * Optional manual sync — same shape and semantics as BrandPanel's onSync.
+   * Triggering from either panel runs the same Edge Function (the sync walks
+   * BOTH the logos folder and the agents folder in one pass).
+   */
+  onSync?: () => Promise<BrandSyncOutcome>;
 }
 
 // ===========================================================================
