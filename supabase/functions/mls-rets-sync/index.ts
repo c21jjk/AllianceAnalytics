@@ -1485,6 +1485,18 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     console.error("run_auto_linker post-sync:", (e as Error).message);
   }
 
+  // Resolve properties.office_id from city/zip → offices.short_code. Without
+  // this step, every freshly-upserted property has office_id = NULL, which
+  // breaks office-scoped dashboard views (OfficeFilterChips, OpenHouses on
+  // any tab other than All offices, audience-scope filtering). Idempotent —
+  // only updates rows whose office_id is currently NULL, so manual office
+  // assignments survive.
+  try {
+    await analytics.rpc("link_property_offices");
+  } catch (e) {
+    console.error("link_property_offices post-sync:", (e as Error).message);
+  }
+
   result.ok = totalUpserted > 0 || (totalSeen === 0 && !anyClassFailed);
   await updateFeedTimestamps(analytics, feed.id, result.ok);
 
