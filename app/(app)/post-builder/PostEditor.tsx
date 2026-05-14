@@ -3342,8 +3342,15 @@ function CanvasArea(props: CanvasAreaProps) {
       let el: HTMLElement | null = e.target as HTMLElement;
       while (el && el !== canvasViewportRef.current) {
         if (el.getAttribute("data-layer-id")) return;
-        // Don't start a marquee on the Moveable controls either.
-        if (el.classList.contains("moveable-control") || el.classList.contains("moveable-line")) return;
+        // Don't start a marquee on ANY Moveable control element. Moveable v0.56
+        // emits multiple class prefixes — `.moveable-control-box`, `.moveable-area`
+        // (the central body-drag region), `.moveable-line`, `.moveable-control`,
+        // `.moveable-direction`, etc. The earlier check only listed two of these,
+        // so dragging the layer body started a marquee that pre-empted Moveable's
+        // own drag → drag silently failed. Match any class whose name starts with
+        // "moveable-" to cover the full set.
+        const cn = typeof el.className === "string" ? el.className : "";
+        if (cn.includes("moveable-")) return;
         el = el.parentElement;
       }
       const tp = clientToTemplate(e.clientX, e.clientY);
