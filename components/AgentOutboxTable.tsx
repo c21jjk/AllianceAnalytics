@@ -109,6 +109,25 @@ export default function AgentOutboxTable({ rows }: Props) {
                 >
                   {row.property_address ?? row.property_mls ?? "Unknown listing"}
                 </Link>
+                {row.notification_type === "status_flip" ? (
+                  <div className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider">
+                    <span
+                      className={
+                        "rounded px-1.5 py-0.5 ring-1 " +
+                        (row.flip_to_status === "sold"
+                          ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+                          : "bg-amber-50 text-amber-800 ring-amber-200")
+                      }
+                    >
+                      {row.flip_to_status === "sold"
+                        ? "Sold"
+                        : "Under contract"}
+                    </span>
+                    <span className="text-neutral-500 normal-case font-normal tracking-normal">
+                      Status-flip notification
+                    </span>
+                  </div>
+                ) : null}
                 {row.caption_snippet ? (
                   <p className="mt-0.5 text-xs text-neutral-500 line-clamp-2">
                     {row.caption_snippet}

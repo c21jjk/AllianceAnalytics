@@ -24,9 +24,12 @@ export type Database = {
           caption_snippet: string | null
           created_at: string
           delivery_method: string | null
+          flip_at: string | null
+          flip_to_status: string | null
           generated_post_id: string | null
           id: string
           last_error: string | null
+          notification_type: string
           post_urls: Json
           property_id: string | null
           sent_at: string | null
@@ -42,9 +45,12 @@ export type Database = {
           caption_snippet?: string | null
           created_at?: string
           delivery_method?: string | null
+          flip_at?: string | null
+          flip_to_status?: string | null
           generated_post_id?: string | null
           id?: string
           last_error?: string | null
+          notification_type?: string
           post_urls?: Json
           property_id?: string | null
           sent_at?: string | null
@@ -60,9 +66,12 @@ export type Database = {
           caption_snippet?: string | null
           created_at?: string
           delivery_method?: string | null
+          flip_at?: string | null
+          flip_to_status?: string | null
           generated_post_id?: string | null
           id?: string
           last_error?: string | null
+          notification_type?: string
           post_urls?: Json
           property_id?: string | null
           sent_at?: string | null

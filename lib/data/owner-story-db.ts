@@ -211,6 +211,13 @@ export interface OwnerStoryListing {
   list_price: number | null;
   listing_date: string | null;
   status: PropertyStatus;
+  /**
+   * Most recent transition timestamp on `properties.status_changed_at`.
+   * Drives the 72-hour grace window — for a UC/Sold flip in the last 72h
+   * the story page renders a softer "transition" framing instead of the
+   * full celebration copy, so sellers get a beat to process offline.
+   */
+  status_changed_at: string;
   hero_image_url: string | null;
   property_type: string | null;
   bedrooms: number | null;
@@ -308,7 +315,7 @@ export async function fetchOwnerStoryByToken(
   const { data: propRow, error: propErr } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, status, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, listing_office_name",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, status, status_changed_at, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, listing_office_name",
     )
     .eq("id", reportRow.property_id)
     .maybeSingle();
@@ -488,6 +495,7 @@ export async function fetchOwnerStoryByToken(
           : Number(propRow.list_price),
       listing_date: propRow.listing_date,
       status: asStatus(propRow.status),
+      status_changed_at: propRow.status_changed_at,
       hero_image_url: propRow.hero_image_url,
       property_type: propRow.property_type,
       bedrooms: propRow.bedrooms,

@@ -19,8 +19,10 @@ import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   loadMetaCredentials,
+  loadTikTokCredentials,
   publishToFBPage,
   publishToIG,
+  publishToTikTok,
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
@@ -29,7 +31,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 export const runtime = "nodejs";
 
-type Platform = "facebook" | "instagram";
+type Platform = "facebook" | "instagram" | "tiktok";
 
 interface RequestBody {
   generated_post_id?: string;
@@ -68,7 +70,8 @@ export async function POST(request: Request) {
     );
   }
   const platforms: Platform[] = (body.platforms ?? []).filter(
-    (p): p is Platform => p === "facebook" || p === "instagram",
+    (p): p is Platform =>
+      p === "facebook" || p === "instagram" || p === "tiktok",
   );
   if (platforms.length === 0) {
     return NextResponse.json(
@@ -77,9 +80,14 @@ export async function POST(request: Request) {
     );
   }
 
-  // Load credentials.
-  const creds = await loadMetaCredentials();
-  if (!creds) {
+  // Load credentials. Meta covers FB + IG; TikTok is a separate row in
+  // api_credentials with its own access_token.
+  const needsMeta =
+    platforms.includes("facebook") || platforms.includes("instagram");
+  const needsTikTok = platforms.includes("tiktok");
+
+  const creds = needsMeta ? await loadMetaCredentials() : null;
+  if (needsMeta && !creds) {
     return NextResponse.json(
       {
         ok: false,
@@ -89,11 +97,28 @@ export async function POST(request: Request) {
       { status: 412 },
     );
   }
-  if (platforms.includes("instagram") && !creds.ig_business_account_id) {
+  if (
+    needsMeta &&
+    creds &&
+    platforms.includes("instagram") &&
+    !creds.ig_business_account_id
+  ) {
     return NextResponse.json(
       {
         ok: false,
         error: "Instagram Business account ID not configured in api_credentials.",
+      } satisfies ErrorResponse,
+      { status: 412 },
+    );
+  }
+
+  const ttCreds = needsTikTok ? await loadTikTokCredentials() : null;
+  if (needsTikTok && !ttCreds) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "TikTok credentials not configured. Connect TikTok in /settings before publishing to TikTok.",
       } satisfies ErrorResponse,
       { status: 412 },
     );
@@ -142,13 +167,24 @@ export async function POST(request: Request) {
   }
   const imageUrls: string[] = [gp.image_url];
 
-  // Fire publish calls in parallel (FB + IG don't depend on each other).
+  // Fire publish calls in parallel — each platform is independent. The TT
+  // call uses its own access token; Meta uses the page token. Calls that
+  // weren't requested are skipped before this point via the `needs*` flags.
   const tasks: Promise<PublishResult>[] = [];
-  if (platforms.includes("facebook")) {
+  if (platforms.includes("facebook") && creds) {
     tasks.push(publishToFBPage({ creds, image_urls: imageUrls, caption: captionBody }));
   }
-  if (platforms.includes("instagram")) {
+  if (platforms.includes("instagram") && creds) {
     tasks.push(publishToIG({ creds, image_urls: imageUrls, caption: captionBody }));
+  }
+  if (platforms.includes("tiktok") && ttCreds) {
+    tasks.push(
+      publishToTikTok({
+        creds: ttCreds,
+        image_urls: imageUrls,
+        caption: captionBody,
+      }),
+    );
   }
   const results = await Promise.all(tasks);
 

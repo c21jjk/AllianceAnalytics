@@ -12,6 +12,8 @@ import {
   getRecentlySoldListings,
   getUnderContractListings,
 } from "@/lib/data/recently-sold";
+import { getRecentStatusFlips } from "@/lib/data/recent-status-flips";
+import { backfillStatusFlipOutbox } from "@/lib/data/agent-outbox-db";
 import { getUpcomingOpenHouses } from "@/lib/data/open-houses";
 import { listOffices } from "@/lib/data/offices";
 import {
@@ -28,6 +30,7 @@ import RecentlyListedRow from "@/components/RecentlyListedRow";
 import UnderContractRow from "@/components/UnderContractRow";
 import RecentlySoldRow from "@/components/RecentlySoldRow";
 import UpcomingOpenHousesRow from "@/components/UpcomingOpenHousesRow";
+import WinsToCelebrateCard from "@/components/WinsToCelebrateCard";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
@@ -137,6 +140,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     underContractListings,
     recentlySoldListings,
     upcomingOpenHouses,
+    recentStatusFlips,
+    _outboxBackfilled,
     companyAnalytics,
     followerSummary,
   ] = await Promise.all([
@@ -181,6 +186,17 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       windowDays: 7,
       limit: 12,
     }),
+    getRecentStatusFlips({
+      office_short_code: officeFilter,
+      daysBack: 3,
+      limit: 20,
+    }),
+    // Phase 6 — best-effort backfill of status_flip outbox rows on every
+    // dashboard load. Idempotent via the unique index on
+    // (property_id, flip_at) WHERE notification_type='status_flip', so it's
+    // safe to run on every render. New flips automatically materialize
+    // outbox rows that Larissa can email from /outbox.
+    backfillStatusFlipOutbox({ daysBack: 3 }).then(() => null).catch(() => null),
     getCompanyAnalytics({ days, office_short_code: officeFilter }),
     getFollowerSummary(days),
   ]);
@@ -235,6 +251,10 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         />
         {profile.role === "admin" ? <SyncNowButton /> : null}
       </div>
+
+      {/* Wins to celebrate — Phase 6. Renders only when there's actually
+          something flipped recently AND uncelebrated; quiet on slow weeks. */}
+      <WinsToCelebrateCard flips={recentStatusFlips} />
 
       {/* Milestones grid — four collapsible cards.
           Layout: 2-column grid on desktop, single column on mobile.

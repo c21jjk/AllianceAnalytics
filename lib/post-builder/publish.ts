@@ -33,22 +33,32 @@ export interface MetaCredentials {
   ig_business_account_id: string | null;
 }
 
+export type PublishPlatform = "facebook" | "instagram" | "tiktok";
+
 export interface PublishOk {
   ok: true;
-  platform: "facebook" | "instagram";
+  platform: PublishPlatform;
   platform_post_id: string;
   permalink: string | null;
 }
 
 export interface PublishErr {
   ok: false;
-  platform: "facebook" | "instagram";
+  platform: PublishPlatform;
   error: string;
   /** True when the error signals a missing publishing scope (re-auth needed). */
   scope_error?: boolean;
 }
 
 export type PublishResult = PublishOk | PublishErr;
+
+export interface TikTokCredentials {
+  access_token: string;
+  open_id: string;
+  /** Refresh token + client_key kept on the row for refresh-on-401 fallback. */
+  refresh_token: string | null;
+  client_key: string | null;
+}
 
 /**
  * Load FB + IG credentials from api_credentials. Returns null when either
@@ -84,6 +94,37 @@ export async function loadMetaCredentials(): Promise<MetaCredentials | null> {
     ig_business_account_id: igCreds.ig_business_account_id
       ? String(igCreds.ig_business_account_id)
       : null,
+  };
+}
+
+/**
+ * Load TikTok publishing credentials from api_credentials. Same row the
+ * tt-sync edge function uses; we just need access_token + open_id at
+ * publish time. Returns null when no active TikTok row exists.
+ */
+export async function loadTikTokCredentials(): Promise<TikTokCredentials | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("api_credentials")
+    .select("credentials, is_active")
+    .eq("platform", "tiktok")
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error || !data) return null;
+
+  const creds = data.credentials as {
+    access_token?: string;
+    open_id?: string;
+    refresh_token?: string;
+    client_key?: string;
+  };
+  if (!creds.access_token || !creds.open_id) return null;
+
+  return {
+    access_token: String(creds.access_token),
+    open_id: String(creds.open_id),
+    refresh_token: creds.refresh_token ? String(creds.refresh_token) : null,
+    client_key: creds.client_key ? String(creds.client_key) : null,
   };
 }
 
@@ -333,4 +374,216 @@ function classifyFBError(
     };
   }
   return { ok: false, platform, error: msg };
+}
+
+/* ----------------------------------------------------------------------- *
+ *  TikTok — Phase 6 publish parity
+ *
+ *  Uses Content Posting API → Direct Post (PHOTO mode, PULL_FROM_URL).
+ *  Photo posts publish immediately to the user's feed; nothing manual.
+ *
+ *  Requirements:
+ *    - api_credentials.tiktok.access_token must carry the `video.publish`
+ *      (or photo.publish equivalent) scope. The tt-sync scope alone is NOT
+ *      enough — re-auth may be required if the saved row predates Phase 6.
+ *    - The image URL host must be on TikTok's "verified domains" list in
+ *      the developer console for PULL_FROM_URL to succeed.
+ *
+ *  Failure modes surface with `scope_error: true` when the access token is
+ *  obviously missing the publishing scope, so the UI can prompt re-auth
+ *  without dumping a wall of TikTok JSON.
+ * ----------------------------------------------------------------------- */
+
+const TT_API = "https://open.tiktokapis.com";
+
+// TikTok captions cap at 2,200 chars. We trim defensively to leave some
+// room for hashtags / inline @mentions that Studio may have appended.
+const TT_CAPTION_MAX = 2000;
+
+interface TtPublishInitResponse {
+  data?: { publish_id?: string };
+  error?: { code?: string; message?: string };
+}
+
+interface TtPublishStatusResponse {
+  data?: {
+    status?: string;
+    publicaly_available_post_id?: string[];
+    fail_reason?: string;
+  };
+  error?: { code?: string; message?: string };
+}
+
+export async function publishToTikTok(args: {
+  creds: TikTokCredentials;
+  image_urls: string[];
+  caption: string;
+}): Promise<PublishResult> {
+  const { creds, image_urls, caption } = args;
+
+  if (image_urls.length === 0) {
+    return { ok: false, platform: "tiktok", error: "no images provided" };
+  }
+  // TikTok photo carousels cap at 35 images; we typically post 1.
+  const photoImages = image_urls.slice(0, 35);
+
+  const title = (caption ?? "").trim().slice(0, TT_CAPTION_MAX);
+
+  // 1) Init the post. PHOTO mode with PULL_FROM_URL avoids the multi-step
+  // UPLOAD/PUT flow and lets TikTok fetch the image directly.
+  const initRes = await fetch(
+    `${TT_API}/v2/post/publish/content/init/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${creds.access_token}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify({
+        post_info: {
+          title,
+          // PUBLIC_TO_EVERYONE requires the creator's privacy settings to
+          // allow it. If the creator's account is private the API will
+          // reject with a clear error — caller can surface to user.
+          privacy_level: "PUBLIC_TO_EVERYONE",
+          disable_comment: false,
+          // Photo-mode-only flags (TikTok ignores duet/stitch for photos
+          // but accepts them in the body).
+          auto_add_music: true,
+        },
+        source_info: {
+          source: "PULL_FROM_URL",
+          photo_cover_index: 0,
+          photo_images: photoImages,
+        },
+        post_mode: "DIRECT_POST",
+        media_type: "PHOTO",
+      }),
+    },
+  );
+
+  let initJson: TtPublishInitResponse;
+  try {
+    initJson = (await initRes.json()) as TtPublishInitResponse;
+  } catch {
+    return {
+      ok: false,
+      platform: "tiktok",
+      error: `TikTok init returned non-JSON (status ${initRes.status})`,
+    };
+  }
+
+  const initErrCode = initJson.error?.code;
+  if (!initRes.ok || (initErrCode && initErrCode !== "ok")) {
+    return classifyTikTokError(
+      initJson.error?.message ?? `HTTP ${initRes.status}`,
+      initErrCode,
+    );
+  }
+
+  const publishId = initJson.data?.publish_id;
+  if (!publishId) {
+    return {
+      ok: false,
+      platform: "tiktok",
+      error: "TikTok init succeeded but returned no publish_id.",
+    };
+  }
+
+  // 2) Poll status. PHOTO PULL_FROM_URL is usually fast (under 10s) but
+  // we give it up to ~25s before reporting back. The publish row already
+  // exists by then; the post arrives shortly after even if we time out.
+  const deadline = Date.now() + 25_000;
+  let lastStatus: string | undefined;
+  let publicPostId: string | undefined;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const statusRes = await fetch(
+      `${TT_API}/v2/post/publish/status/fetch/`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${creds.access_token}`,
+          "Content-Type": "application/json; charset=UTF-8",
+        },
+        body: JSON.stringify({ publish_id: publishId }),
+      },
+    );
+    let statusJson: TtPublishStatusResponse | null = null;
+    try {
+      statusJson = (await statusRes.json()) as TtPublishStatusResponse;
+    } catch {
+      // Transient — retry on the next loop iteration.
+      continue;
+    }
+    if (
+      statusJson?.error?.code &&
+      statusJson.error.code !== "ok"
+    ) {
+      return classifyTikTokError(
+        statusJson.error.message ?? "TikTok status error",
+        statusJson.error.code,
+      );
+    }
+    lastStatus = statusJson?.data?.status;
+    if (lastStatus === "PUBLISH_COMPLETE") {
+      publicPostId =
+        statusJson?.data?.publicaly_available_post_id?.[0];
+      break;
+    }
+    if (lastStatus === "FAILED") {
+      return {
+        ok: false,
+        platform: "tiktok",
+        error:
+          statusJson?.data?.fail_reason ?? "TikTok reported publish failure",
+      };
+    }
+  }
+
+  // Even if we time out polling, TikTok has accepted the publish — surface
+  // the publish_id so we have a paper trail. The post lands shortly after.
+  return {
+    ok: true,
+    platform: "tiktok",
+    platform_post_id: publicPostId ?? publishId,
+    permalink: publicPostId
+      ? `https://www.tiktok.com/@/photo/${publicPostId}`
+      : null,
+  };
+}
+
+function classifyTikTokError(
+  message: string,
+  code: string | undefined,
+): PublishErr {
+  const lc = `${code ?? ""} ${message}`.toLowerCase();
+  // Scope errors — Larissa needs to re-auth with publishing scope. The
+  // exact code TikTok returns varies; cover the common shapes.
+  if (
+    lc.includes("scope") ||
+    lc.includes("permission") ||
+    lc.includes("unauthorized")
+  ) {
+    return {
+      ok: false,
+      platform: "tiktok",
+      error: `Missing publishing permission on the TikTok app. Re-authorize with the video.publish scope. TikTok said: ${message}`,
+      scope_error: true,
+    };
+  }
+  // Domain-verification errors are common when the image URL host isn't on
+  // the developer console's allowlist. Surface a friendlier message.
+  if (lc.includes("url_ownership") || lc.includes("verified_domain")) {
+    return {
+      ok: false,
+      platform: "tiktok",
+      error: `TikTok requires the image host to be a verified domain on your TikTok developer app. Add the Supabase Storage host to the verified domains list, then retry. TikTok said: ${message}`,
+    };
+  }
+  return {
+    ok: false,
+    platform: "tiktok",
+    error: `TikTok publish failed: ${message}`,
+  };
 }

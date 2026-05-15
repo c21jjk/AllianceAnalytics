@@ -180,6 +180,7 @@ function StoryView({ data }: { data: OwnerStoryData }) {
           <WhereItStandsChapter
             status={listing.status}
             postCount={totals.post_count}
+            statusChangedAt={listing.status_changed_at}
           />
         ) : null}
         <WhatNowChapter
@@ -1276,29 +1277,55 @@ function ConversationChapter({
 function WhereItStandsChapter({
   status,
   postCount,
+  statusChangedAt,
 }: {
   status: PropertyStatus;
   postCount: number;
+  statusChangedAt: string;
 }) {
+  // Phase 6 — 72-hour grace window. When a UC/Sold flip happened in the
+  // last 72 hours, render a softer transition framing instead of the full
+  // celebration copy. Gives the seller a beat to process offline before
+  // the page tells the world. Active/expired statuses are unaffected.
+  const flippedRecentlyMs = Date.now() - new Date(statusChangedAt).getTime();
+  const inGraceWindow =
+    Number.isFinite(flippedRecentlyMs) &&
+    flippedRecentlyMs >= 0 &&
+    flippedRecentlyMs < 72 * 3_600_000;
+
   let eyebrow = "Where it stands";
   let heading = "We’re continuing to market your home.";
   let body =
     "Each week brings new posts and new eyes on your listing — we’ll keep this page fresh as the campaign continues.";
 
   if (status === "pending") {
-    eyebrow = "Under contract";
-    heading = "Your home found its buyer.";
-    body =
-      postCount > 0
-        ? "Here’s the full campaign that got it there — every post is preserved above. We’ll keep this page live through closing."
-        : "We’ll keep this page live through closing.";
+    if (inGraceWindow) {
+      eyebrow = "Update";
+      heading = "We’ve moved into the contract phase.";
+      body =
+        "Posts will keep going while we work through the steps to closing. Hold tight — your agent will be in touch as the dates firm up.";
+    } else {
+      eyebrow = "Under contract";
+      heading = "Your home found its buyer.";
+      body =
+        postCount > 0
+          ? "Here’s the full campaign that got it there — every post is preserved above. We’ll keep this page live through closing."
+          : "We’ll keep this page live through closing.";
+    }
   } else if (status === "sold") {
-    eyebrow = "Sold";
-    heading = "Mission accomplished.";
-    body =
-      postCount > 0
-        ? "This is the campaign that sold your home. Thank you for trusting Alliance with one of the biggest decisions you’ll make."
-        : "Thank you for trusting Alliance with one of the biggest decisions you’ll make.";
+    if (inGraceWindow) {
+      eyebrow = "Update";
+      heading = "Closing complete.";
+      body =
+        "Congratulations. Take a beat — your agent will be in touch shortly. We’ll keep this page live as a campaign recap for you to share and keep.";
+    } else {
+      eyebrow = "Sold";
+      heading = "Mission accomplished.";
+      body =
+        postCount > 0
+          ? "This is the campaign that sold your home. Thank you for trusting Alliance with one of the biggest decisions you’ll make."
+          : "Thank you for trusting Alliance with one of the biggest decisions you’ll make.";
+    }
   } else if (status === "expired") {
     // Gracefully degrade to active framing — don't read tragic.
     eyebrow = "Where it stands";
