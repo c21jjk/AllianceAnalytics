@@ -143,6 +143,10 @@ function StoryView({ data }: { data: OwnerStoryData }) {
         className="story-main"
       >
         <HeroChapter listing={listing} personalNote={personal_note} />
+        {photos.length > 0 ? <PhotoGalleryStrip photos={photos} /> : null}
+        {open_houses.length > 0 ? (
+          <OpenHouseChapter openHouses={open_houses} />
+        ) : null}
         {isFreshlyListed ? (
           <FreshlyListedChapter listingDate={listing.listing_date} />
         ) : null}

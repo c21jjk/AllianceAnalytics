@@ -718,7 +718,7 @@ export default function PostBuilderClient({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- changeVariant is stable enough for this pattern
-  }, [availablePhotos.length, currentVariant?.photo_count, outputMode]);
+  }, [availablePhotos.length, currentVariant?.photo_count]);
 
   function closePostNow() {
     setPostNowOpen(false);
