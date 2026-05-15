@@ -16,16 +16,18 @@ export type PostType =
 export type PostFormat = "square_1x1" | "portrait_4x5" | "story_9x16";
 
 /**
- * Variant identifier. Single-photo: v1 (Hero Editorial), v2 (Bold Stats),
- * v3 (Side-by-Side). Multi-photo: v4 (Two-Photo Diptych — 2 photos),
- * v5 (Three-Photo Grid — 3 photos).
+ * Variant identifier. Active single-photo variants: v1 (Hero Editorial),
+ * v2 (Bold Stats), v3 (Side-by-Side), v6 (Magazine Cover), v7 (Polaroid),
+ * v8 (Minimal Frame). Retired: v4 (Two-Photo Diptych — 2 photos),
+ * v5 (Three-Photo Grid — 3 photos). Retired variants remain in the union
+ * because legacy generated_posts rows still reference them.
  *
  * NOTE: the OutputMode union was removed on 2026-05-14 along with the
  * FB multi-photo bundle workflow. Every post is now a single designed
  * image; Studio handles adding extra photos via the left-panel inserter
  * if a user wants a composite.
  */
-export type PostVariant = "v1" | "v2" | "v3" | "v4" | "v5";
+export type PostVariant = "v1" | "v2" | "v3" | "v4" | "v5" | "v6" | "v7" | "v8";
 export type SourceMls = "cmc" | "sjsr" | "bright" | "manual" | null;
 
 export interface PostBuilderListing {

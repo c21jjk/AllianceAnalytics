@@ -22,6 +22,15 @@ import { renderV2BoldStatsStory } from "./primitives/v2-bold-stats-story";
 import { renderV3SideBySide } from "./primitives/v3-side-by-side";
 import { renderV3SideBySidePortrait } from "./primitives/v3-side-by-side-portrait";
 import { renderV3SideBySideStory } from "./primitives/v3-side-by-side-story";
+import { renderV6MagazineCover } from "./primitives/v6-magazine-cover";
+import { renderV6MagazineCoverPortrait } from "./primitives/v6-magazine-cover-portrait";
+import { renderV6MagazineCoverStory } from "./primitives/v6-magazine-cover-story";
+import { renderV7Polaroid } from "./primitives/v7-polaroid";
+import { renderV7PolaroidPortrait } from "./primitives/v7-polaroid-portrait";
+import { renderV7PolaroidStory } from "./primitives/v7-polaroid-story";
+import { renderV8MinimalFrame } from "./primitives/v8-minimal-frame";
+import { renderV8MinimalFramePortrait } from "./primitives/v8-minimal-frame-portrait";
+import { renderV8MinimalFrameStory } from "./primitives/v8-minimal-frame-story";
 import { POST_TYPE_THEMES, getTheme } from "./themes";
 
 // v4 (Two-Photo Diptych) and v5 (Three-Photo Grid) retired on 2026-05-14.
@@ -85,7 +94,7 @@ type PrimitiveRenderer = (args: {
 // rows in the DB use v4/v5), but the runtime registry only registers
 // the 3 active ones. listVariantsForPostType() / listTemplates() see
 // only the active set, so the picker UI never shows v4/v5 cards.
-const ACTIVE_VARIANTS = ["v1", "v2", "v3"] as const satisfies readonly PostVariant[];
+const ACTIVE_VARIANTS = ["v1", "v2", "v3", "v6", "v7", "v8"] as const satisfies readonly PostVariant[];
 type ActiveVariant = (typeof ACTIVE_VARIANTS)[number];
 
 const PRIMITIVE_RENDERERS: Record<ActiveVariant, Record<PostFormat, PrimitiveRenderer>> = {
@@ -103,6 +112,21 @@ const PRIMITIVE_RENDERERS: Record<ActiveVariant, Record<PostFormat, PrimitiveRen
     square_1x1: renderV3SideBySide,
     portrait_4x5: renderV3SideBySidePortrait,
     story_9x16: renderV3SideBySideStory,
+  },
+  v6: {
+    square_1x1: renderV6MagazineCover,
+    portrait_4x5: renderV6MagazineCoverPortrait,
+    story_9x16: renderV6MagazineCoverStory,
+  },
+  v7: {
+    square_1x1: renderV7Polaroid,
+    portrait_4x5: renderV7PolaroidPortrait,
+    story_9x16: renderV7PolaroidStory,
+  },
+  v8: {
+    square_1x1: renderV8MinimalFrame,
+    portrait_4x5: renderV8MinimalFramePortrait,
+    story_9x16: renderV8MinimalFrameStory,
   },
 };
 
@@ -126,6 +150,24 @@ const VARIANT_META: Record<
     display_name: "Side-by-Side",
     description:
       "Photo + data on a light surface with a gold accent rule between them. Listing-card composition.",
+    photo_count: 1,
+  },
+  v6: {
+    display_name: "Magazine Cover",
+    description:
+      "Editorial magazine-cover layout — hero photo above, large serif headline + price below on a cream surface.",
+    photo_count: 1,
+  },
+  v7: {
+    display_name: "Polaroid",
+    description:
+      "Polaroid-framed hero on a kraft-paper background with a slight tilt. Casual + warm, Pinterest-friendly.",
+    photo_count: 1,
+  },
+  v8: {
+    display_name: "Minimal Frame",
+    description:
+      "Gold-framed hero in maximum negative space. Gallery-poster minimalism for high-end listings.",
     photo_count: 1,
   },
 };
