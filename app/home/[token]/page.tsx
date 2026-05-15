@@ -5,6 +5,8 @@ import {
   fetchOwnerStoryByToken,
   logOwnerStoryView,
   type OwnerStoryData,
+  type OwnerStoryOpenHouse,
+  type OwnerStoryPhoto,
   type OwnerStoryPost,
   type Platform,
   type PropertyStatus,
@@ -105,7 +107,16 @@ export default async function OwnerStoryPage({ params }: PageProps) {
  * ----------------------------------------------------------------------- */
 
 function StoryView({ data }: { data: OwnerStoryData }) {
-  const { listing, posts, highlights, totals, company, personal_note } = data;
+  const {
+    listing,
+    posts,
+    highlights,
+    photos,
+    open_houses,
+    totals,
+    company,
+    personal_note,
+  } = data;
   const isFreshlyListed = posts.length === 0 && listing.status === "active";
 
   return (
