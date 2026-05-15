@@ -409,20 +409,30 @@ function LinkageBlock({
         <p className="mt-1.5 text-[10px] text-rose-700">{error}</p>
       ) : null}
 
-      {/* Owner reports — high-emphasis CTA per linked listing. Only renders
-          once posts are at least 7 days old (matches the GenerateReportButton
-          gate). Owner reports are the headline output of the system, so this
-          uses the gold-on-gold filled-button treatment rather than a quiet
-          inline link. */}
-      {group.properties.length > 0 && group.days_old >= 7 ? (
+      {/* Owner Story — high-emphasis CTA per linked listing. The story page
+          is the headline owner-facing output of the system, so this uses
+          the gold-on-gold filled-button treatment. Direct deep-link into
+          /home/[token] (the seller view) when we have a token; falls back
+          to the listing detail page for unsynced listings.
+          No post-age gate — the story page handles freshly-listed states
+          gracefully (FreshlyListedChapter), unlike the legacy Compass
+          report which required at least 7 days of post data. */}
+      {group.properties.length > 0 ? (
         <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1.5">
           {group.properties.map((prop) =>
             prop.mls ? (
               <Link
                 key={prop.mls}
-                href={`/properties/${encodeURIComponent(prop.mls)}`}
+                href={
+                  prop.story_url_path ??
+                  `/properties/${encodeURIComponent(prop.mls)}`
+                }
+                target={prop.story_url_path ? "_blank" : undefined}
+                rel={
+                  prop.story_url_path ? "noopener noreferrer" : undefined
+                }
                 className="group flex items-center gap-2 rounded-md bg-gradient-to-r from-gold-500 to-gold-600 hover:from-gold-600 hover:to-gold-700 px-2.5 py-2 text-white shadow-sm hover:shadow transition-all"
-                title={`View owner report for ${prop.address ?? prop.mls}`}
+                title={`Open the Owner Story for ${prop.address ?? prop.mls}`}
               >
                 <span
                   aria-hidden="true"
@@ -432,7 +442,7 @@ function LinkageBlock({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-white/85 leading-none">
-                    Owner Report
+                    Owner Story
                   </div>
                   <div className="mt-0.5 text-[11px] font-medium text-white truncate leading-tight">
                     {prop.address ?? prop.mls}

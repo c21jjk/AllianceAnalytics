@@ -113,20 +113,21 @@ export default function OwnerStoryAdminCard({
   const tooLong = charCount > NOTE_MAX;
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white shadow-card p-4 md:p-5 space-y-5">
+    <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-gold-50 via-white to-gold-50/60 ring-1 ring-gold-200 shadow-card p-5 md:p-6 space-y-5">
+      <div
+        aria-hidden="true"
+        className="absolute top-0 left-6 right-6 h-0.5 rounded-full bg-gradient-to-r from-gold-300/0 via-gold-500/70 to-gold-300/0"
+      />
       <header>
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-neutral-900">
-            Owner Story page
-          </h3>
-          <span className="inline-flex items-center rounded-md bg-gold-50 ring-1 ring-gold-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-gold-800">
-            New
-          </span>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gold-700">
+          Seller-facing
         </div>
-        <p className="mt-0.5 text-xs text-neutral-500">
-          The seller-facing narrative view of this listing&rsquo;s social
-          campaign. Anyone with the link can read — designed for forwarding to
-          family.
+        <h2 className="mt-1 text-xl md:text-2xl font-semibold tracking-tight text-neutral-900">
+          Owner Story page
+        </h2>
+        <p className="mt-1.5 text-sm text-neutral-600 leading-relaxed">
+          The link you send sellers. Status-aware, always live, anyone with the
+          link can read — designed for forwarding to family.
         </p>
       </header>
 

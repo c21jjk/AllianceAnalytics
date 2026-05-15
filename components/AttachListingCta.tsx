@@ -39,8 +39,8 @@ export default function AttachListingCta() {
             No listing attached yet
           </div>
           <p className="text-xs text-neutral-600 mt-0.5 leading-snug">
-            Link this campaign to a property so it rolls into the seller&apos;s
-            owner report.
+            Link this campaign to a property so it shows up on the
+            seller&apos;s Owner Story page.
           </p>
         </div>
       </div>

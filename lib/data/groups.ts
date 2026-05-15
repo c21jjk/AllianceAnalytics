@@ -130,8 +130,12 @@ function readNum(value: unknown): number {
   return 0;
 }
 
-function rowToPropertyRef(row: DbPropertyRow): PropertyRef {
+function rowToPropertyRef(
+  row: DbPropertyRow,
+  storyTokenByPropertyId?: Map<string, string>,
+): PropertyRef {
   const addressParts = [row.address, row.city, row.state].filter(Boolean);
+  const token = storyTokenByPropertyId?.get(row.id) ?? null;
   return {
     mls: row.mls_number,
     address: addressParts.join(", "),
@@ -140,6 +144,7 @@ function rowToPropertyRef(row: DbPropertyRow): PropertyRef {
         ? undefined
         : Number(row.list_price),
     hero_image_url: row.hero_image_url ?? undefined,
+    story_url_path: token ? `/home/${token}` : undefined,
   };
 }
 
@@ -367,14 +372,33 @@ export async function getGroupsLastNDays(
     }
     const propMap = new Map<string, PropertyRef>();
     if (propIds.size > 0) {
-      const { data: propRows } = await supabase
-        .from("properties")
-        .select(
-          "id, mls_number, address, city, state, list_price, hero_image_url",
-        )
-        .in("id", Array.from(propIds));
+      const idList = Array.from(propIds);
+      // Parallel: property rows + their report_token (for the dashboard's
+      // "Owner Story" gold button to go straight to /home/[token]).
+      const [{ data: propRows }, { data: reportRows }] = await Promise.all([
+        supabase
+          .from("properties")
+          .select(
+            "id, mls_number, address, city, state, list_price, hero_image_url",
+          )
+          .in("id", idList),
+        supabase
+          .from("reports")
+          .select("property_id, report_token")
+          .in("property_id", idList),
+      ]);
+      const tokenByProp = new Map<string, string>();
+      for (const r of (reportRows ?? []) as Array<{
+        property_id: string;
+        report_token: string;
+      }>) {
+        // Phase 2 backfill guarantees one report row per property; if a
+        // listing somehow has multiples, last-write-wins is fine because
+        // every row points at the same /home/[token] semantic surface.
+        tokenByProp.set(r.property_id, r.report_token);
+      }
       for (const p of (propRows ?? []) as DbPropertyRow[]) {
-        propMap.set(p.id, rowToPropertyRef(p));
+        propMap.set(p.id, rowToPropertyRef(p, tokenByProp));
       }
     }
 

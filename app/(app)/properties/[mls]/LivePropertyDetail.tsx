@@ -174,23 +174,18 @@ export default async function LivePropertyDetail({
         </div>
       </section>
 
-      {/* Legacy Compass-style Owner Report — gated on generated_at, NOT on
-          row existence. Phase 2 backfills a thin row + token for every
-          property so the story page works without anyone clicking Generate;
-          a non-null generated_at means the formal report snapshot has
-          actually been taken. */}
-      {existingReport && existingReport.generated_at ? (
-        <OwnerReportCardGenerated
-          property={property}
-          existingReport={existingReport}
-          newestPostAgeDays={newestPostAgeDays}
+      {/* Owner Story page — PRIMARY owner-facing surface (Phase 4 promotion).
+          Sits directly under the hero so Larissa never has to scroll past
+          internal stats to find the link she shares with sellers. */}
+      {existingReport ? (
+        <OwnerStoryAdminCard
+          reportId={existingReport.report_id}
+          mls={property.mls_number}
+          storyUrlPath={existingReport.story_url_path}
+          initialPersonalNote={existingReport.personal_note}
+          viewStats={storyViewStats}
         />
-      ) : (
-        <OwnerReportCardEmpty
-          property={property}
-          newestPostAgeDays={newestPostAgeDays}
-        />
-      )}
+      ) : null}
 
       {/* Open Houses for this listing — render only when scheduled. */}
       {openHouses.length > 0 ? (
@@ -227,19 +222,6 @@ export default async function LivePropertyDetail({
         </section>
       )}
 
-      {/* Owner Story page — new narrative seller view. Sits alongside the
-          existing Recipients panel; surfaces the /home/[token] link, copy
-          button, preview, and the personal-note autosave field. */}
-      {existingReport ? (
-        <OwnerStoryAdminCard
-          reportId={existingReport.report_id}
-          mls={property.mls_number}
-          storyUrlPath={existingReport.story_url_path}
-          initialPersonalNote={existingReport.personal_note}
-          viewStats={storyViewStats}
-        />
-      ) : null}
-
       {/* Recipients + cadence — only after a report exists */}
       {existingReport ? (
         <OwnerReportRecipientsPanel
@@ -248,6 +230,21 @@ export default async function LivePropertyDetail({
           initialCadence={existingReport.cadence}
           initialNextSendAt={existingReport.next_send_at}
           initialRecipients={existingReport.recipients}
+        />
+      ) : null}
+
+      {/* Legacy Compass-style Owner Report — DEMOTED (Phase 4). Was the
+          dominant card pre-Phase 4; now a small footnote-style block. The
+          /r/[token] route still works for anyone holding an old link and
+          remains the PDF source until Phase 5 adds a print mode to the
+          story page. Hidden entirely for properties that have never had a
+          formal report generated, since the empty-state CTA only adds
+          noise now that the story is the canonical surface. */}
+      {existingReport && existingReport.generated_at ? (
+        <LegacyCompassReportFootnote
+          existingReport={existingReport}
+          property={property}
+          newestPostAgeDays={newestPostAgeDays}
         />
       ) : null}
 
@@ -541,6 +538,77 @@ function PropertyOpenHousesSection({
 /* Generated: compact summary header + action bar + quiet regenerate. */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Demoted (Phase 4) Compass-style report block — replaces the dominant
+ * gold hero card. Surfaces enough to let Larissa still generate the
+ * Compass snapshot when a seller specifically asks for a PDF, but stays
+ * out of the way otherwise. Renders only when a formal report has been
+ * generated (existingReport.generated_at is non-null).
+ *
+ * Long-term (Phase 5+): adds a print mode to the Owner Story page and
+ * deletes this block entirely.
+ */
+function LegacyCompassReportFootnote({
+  existingReport,
+  property,
+  newestPostAgeDays,
+}: {
+  existingReport: NonNullable<
+    Awaited<ReturnType<typeof fetchExistingOwnerReportForProperty>>
+  >;
+  property: PropertyDetail;
+  newestPostAgeDays: number | null;
+}) {
+  return (
+    <section className="rounded-lg border border-neutral-200 bg-neutral-50/60 p-4 md:p-5">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+            Legacy report (PDF source)
+          </div>
+          <h3 className="mt-0.5 text-sm font-semibold text-neutral-900">
+            Compass-style snapshot
+          </h3>
+          <p className="mt-1 text-xs text-neutral-600 leading-relaxed max-w-prose">
+            The older one-page seller report — kept available for download as
+            a PDF. Snapshot generated{" "}
+            <span className="font-medium text-neutral-800">
+              {existingReport.generated_at
+                ? formatRelativeTime(existingReport.generated_at)
+                : "recently"}
+            </span>
+            . Most sellers should be sent the Owner Story page above instead.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <a
+            href={existingReport.share_url_path}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center rounded-md ring-1 ring-neutral-300 bg-white text-neutral-800 text-xs font-medium px-3 py-1.5 hover:ring-neutral-400 transition-colors"
+          >
+            View
+          </a>
+          <a
+            href={existingReport.pdf_url_path}
+            className="inline-flex items-center rounded-md ring-1 ring-neutral-300 bg-white text-neutral-800 text-xs font-medium px-3 py-1.5 hover:ring-neutral-400 transition-colors"
+          >
+            Download PDF
+          </a>
+        </div>
+      </div>
+      <div className="mt-3 pt-3 border-t border-neutral-200 flex items-center justify-end">
+        <GenerateReportButton
+          mls={property.mls_number}
+          newestPostAgeDays={newestPostAgeDays}
+          label="Regenerate snapshot"
+        />
+      </div>
+    </section>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function OwnerReportCardEmpty({
   property,
   newestPostAgeDays,
@@ -582,6 +650,7 @@ function OwnerReportCardEmpty({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function OwnerReportCardGenerated({
   property,
   existingReport,

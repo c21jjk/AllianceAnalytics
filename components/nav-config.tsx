@@ -22,6 +22,10 @@ const ICON: Record<string, ReactNode> = {
         ],
     ),
     reports: h("svg", SVG_PROPS, [h("path", { key: "p1", d: "M6 3.5h9l4 4V20a.5.5 0 01-.5.5H6a.5.5 0 01-.5-.5V4a.5.5 0 01.5-.5z", ...STROKE, strokeLinejoin: "round" }), h("path", { key: "p2", d: "M14.5 3.5V8h4M9 13h6M9 17h4", ...STROKE, strokeLinecap: "round" })]),
+    stories: h("svg", SVG_PROPS, [
+        h("path", { key: "book", d: "M4 5.5A1.5 1.5 0 015.5 4H11v15.5a1 1 0 00-1-1H4v-13z", ...STROKE, strokeLinejoin: "round" }),
+        h("path", { key: "book2", d: "M20 5.5A1.5 1.5 0 0018.5 4H13v15.5a1 1 0 011-1h6v-13z", ...STROKE, strokeLinejoin: "round" }),
+    ]),
     settings: h("svg", SVG_PROPS, [h("circle", { key: "c", cx: "12", cy: "12", r: "3", ...STROKE }), h("path", { key: "p", d: "M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1A2 2 0 114.3 17l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1A1.7 1.7 0 004.6 9a1.7 1.7 0 00-.3-1.8l-.1-.1A2 2 0 117 4.3l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z", ...STROKE, strokeLinejoin: "round" })]),
     users: h("svg", SVG_PROPS, [
         h("circle", { key: "h1", cx: "9", cy: "8", r: "3.4", ...STROKE }),
@@ -36,6 +40,7 @@ export function getNavItems(role: "admin" | "user"): NavItem[] {
     const base: NavItem[] = [
         { href: "/", label: "Dashboard", icon: ICON.dashboard },
         { href: "/properties", label: "Listings", icon: ICON.listings },
+        { href: "/stories", label: "Stories", icon: ICON.stories },
         { href: "/post-builder", label: "Post Builder", icon: ICON.postBuilder },
         { href: "/coach", label: "Coach", icon: ICON.coach },
         { href: "/reports", label: "Reports", icon: ICON.reports },

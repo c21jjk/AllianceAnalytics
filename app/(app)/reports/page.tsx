@@ -6,11 +6,9 @@ import {
   getCompanyReportRollup,
   getRecentDeliveries,
 } from "@/lib/data/reports-overview";
-import { fetchOwnerStoryIndex } from "@/lib/data/owner-story-index";
 import PageHeader from "@/components/PageHeader";
 import CompanyAnalyticsHero from "@/components/CompanyAnalyticsHero";
 import RecentDeliveriesTable from "@/components/RecentDeliveriesTable";
-import OwnerStoryIndexTable from "@/components/OwnerStoryIndexTable";
 
 export const metadata = { title: "Reports — Alliance Social" };
 export const dynamic = "force-dynamic";
@@ -35,14 +33,12 @@ export default async function ReportsPage() {
     deliveries,
     totalReports,
     totalDeliveries,
-    storyIndex,
   ] = await Promise.all([
     getCompanyReportRollup(30),
     getCompanyReportRollup(90),
     getRecentDeliveries(25),
     countAllReports(),
     countAllDeliveries(),
-    fetchOwnerStoryIndex(),
   ]);
 
   const hasAnyReports = totalReports > 0;
@@ -88,10 +84,8 @@ export default async function ReportsPage() {
         </div>
       ) : null}
 
-      {/* Owner Story pages — Phase 3 surface. One row per listing's
-          /home/[token] page, with copy/preview + view stats. Always renders;
-          empty-state copy is inside the component. */}
-      <OwnerStoryIndexTable rows={storyIndex} />
+      {/* Owner Story pages — Phase 4 moved this section to its own /stories
+          top-nav surface. /reports stays focused on aggregate analytics. */}
 
       <section className="space-y-3">
         <div>

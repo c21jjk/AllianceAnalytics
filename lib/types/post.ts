@@ -41,6 +41,13 @@ export interface PropertyRef {
   list_price?: number;
   /** Optional hero photo URL — used as the cover on seller property reports */
   hero_image_url?: string;
+  /**
+   * Public Owner Story URL path for this listing (e.g. "/home/<token>").
+   * Optional because manual MLS chips that have no property row yet
+   * obviously have no token. Hydrated from `reports.report_token` whenever
+   * the property row exists in the AllianceAnalytics DB.
+   */
+  story_url_path?: string;
 }
 
 export interface PostMetrics {
