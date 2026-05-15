@@ -76,6 +76,7 @@ import {
 import type {
   BrandAsset,
   BrandSyncOutcome,
+  ListingPhoto,
   OfficeOption,
   SelectionMode,
 } from "./contracts";
@@ -86,6 +87,7 @@ import AddLayerToolbar from "./panels/AddLayerToolbar";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
 import LayerListPanel from "./panels/LayerListPanel";
+import PhotosPanel from "./panels/PhotosPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -682,10 +684,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // both reading from the new brand_assets Supabase table. Loaded once per
   // editor mount; cached locally. Empty/loading states render until the
   // first fetch resolves, so the panels never flash placeholder noise.
-  const [sidebarTab, setSidebarTab] = useState<"brand" | "agents">("brand");
+  const [sidebarTab, setSidebarTab] = useState<"brand" | "agents" | "photos">("brand");
   const [brandAssets, setBrandAssets] = useState<readonly BrandAsset[]>([]);
   const [officesForFilter, setOfficesForFilter] = useState<readonly OfficeOption[]>([]);
   const [brandAssetsLoading, setBrandAssetsLoading] = useState<boolean>(true);
+  // why: listing photos for the Photos sidebar tab. Loaded from the same
+  // /api/post-builder/photos endpoint the picker uses; falls back to a
+  // single-photo array using listing.photos[0] if the endpoint errors.
+  const [listingPhotos, setListingPhotos] = useState<readonly ListingPhoto[]>([]);
+  const [listingPhotosLoading, setListingPhotosLoading] = useState<boolean>(true);
 
   // why: extracted into a useCallback so both the initial-mount load AND the
   // manual Sync button can call it. The Sync handler awaits this after the
@@ -757,6 +764,115 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         : `Already up to date (${unchanged} unchanged in ${seconds}s)`;
     return { ok: true, summary };
   }, [loadBrandAssets]);
+
+  // -------------------------------------------------------------------------
+  // Listing photos — load for the Photos sidebar tab
+  // -------------------------------------------------------------------------
+  // why: same /api/post-builder/photos endpoint the picker uses. Tries to
+  // get the full ordered photo array; falls back to MLSListingPayload.photos
+  // (typically just the hero) if the endpoint errors. Sequence numbers
+  // are used as stable React keys + the slot badges in the panel.
+  useEffect(() => {
+    let cancelled = false;
+    setListingPhotosLoading(true);
+    if (!listing.mlsNumber) {
+      // why: edge case — Studio opened against a listing with no MLS
+      // number (manual/dev). Fall back to whatever photos came in the
+      // payload (usually just the hero).
+      const fallback: ListingPhoto[] = listing.photos.map((url, i) => ({
+        url,
+        sequence: i + 1,
+      }));
+      setListingPhotos(fallback);
+      setListingPhotosLoading(false);
+      return;
+    }
+    fetch(
+      `/api/post-builder/photos?mls=${encodeURIComponent(listing.mlsNumber)}`,
+    )
+      .then((r) => r.json())
+      .then((json: { ok: boolean; photos?: Array<{ url: string; sequence: number }> }) => {
+        if (cancelled) return;
+        const arr = json.ok && json.photos ? json.photos : [];
+        if (arr.length === 0) {
+          // why: API returned ok but no rows — synth a 1-photo array from
+          // the payload's hero so the panel isn't blank when the MLS just
+          // hasn't been fully synced yet.
+          const fallback: ListingPhoto[] = listing.photos.map((url, i) => ({
+            url,
+            sequence: i + 1,
+          }));
+          setListingPhotos(fallback);
+        } else {
+          setListingPhotos(arr.map((p) => ({ url: p.url, sequence: p.sequence })));
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[CanvasEditor] listing photos fetch threw:", err);
+        const fallback: ListingPhoto[] = listing.photos.map((url, i) => ({
+          url,
+          sequence: i + 1,
+        }));
+        setListingPhotos(fallback);
+      })
+      .finally(() => {
+        if (!cancelled) setListingPhotosLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [listing.mlsNumber, listing.photos]);
+
+  // why: dropping a listing photo onto the canvas — same shape as
+  // handleSidebarAssetPicked but without the agent_headshot auto-circle
+  // and without a brand-asset id. Caps the long edge to MAX_DIM (280)
+  // so a 1080×1080 hero doesn't dominate the canvas; user resizes via
+  // selection handles after.
+  const handleListingPhotoPicked = useCallback(
+    async (photo: ListingPhoto): Promise<void> => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      try {
+        const img = await FabricImage.fromURL(photo.url, {
+          crossOrigin: "anonymous",
+        });
+        const natW = img.width || 280;
+        const natH = img.height || 280;
+        const MAX_DIM = 280;
+        const scale = Math.min(MAX_DIM / natW, MAX_DIM / natH, 1);
+        img.set({
+          left: (template.width - natW * scale) / 2,
+          top: (template.height - natH * scale) / 2,
+          scaleX: scale,
+          scaleY: scale,
+          cornerStyle: "circle",
+          cornerSize: 10,
+          transparentCorners: false,
+          borderColor: "#C9A961",
+          cornerColor: "#C9A961",
+        });
+        setLayerData(img, {
+          layerId: `photo_${photo.sequence}_${Date.now()}`,
+          layerKind: "image",
+          displayName: `Photo ${photo.sequence}`,
+        });
+        canvas.add(img);
+        canvas.setActiveObject(img);
+        canvas.requestRenderAll();
+        setLayerVersion((v) => v + 1);
+        history.record();
+      } catch (err) {
+        setEditorError({
+          kind: "image_load",
+          message: `Couldn't load photo: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+      }
+    },
+    [template.width, template.height, history],
+  );
 
   // -------------------------------------------------------------------------
   // Phase 2 — force-load Google Fonts so Fabric can actually use them
@@ -1659,12 +1775,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             already has plenty of vertical space and the panels are the
             primary creation affordances. */}
         <aside className="flex w-72 flex-col border-r border-neutral-200 bg-white">
-          {/* Tab switcher */}
+          {/* Tab switcher — three tabs: Brand · Agents · Photos.
+              Photos was added on 2026-05-14 alongside the v4/v5 retirement
+              so users can compose multi-photo posts inside Studio. */}
           <div className="flex border-b border-neutral-200">
             <button
               type="button"
               onClick={() => setSidebarTab("brand")}
-              className={`flex flex-1 items-center justify-center gap-2 px-3 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
                 sidebarTab === "brand"
                   ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
                   : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
@@ -1676,7 +1794,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             <button
               type="button"
               onClick={() => setSidebarTab("agents")}
-              className={`flex flex-1 items-center justify-center gap-2 px-3 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
                 sidebarTab === "agents"
                   ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
                   : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
@@ -1685,9 +1803,21 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               <AgentTabIcon />
               Agents
             </button>
+            <button
+              type="button"
+              onClick={() => setSidebarTab("photos")}
+              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
+                sidebarTab === "photos"
+                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
+                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
+              }`}
+            >
+              <PhotosTabIcon />
+              Photos
+            </button>
           </div>
-          {/* Active panel — Brand or Agents. why: render only the active
-              one so we don't pay the load+render cost for both at once. */}
+          {/* Active panel — Brand, Agents, or Photos. why: render only the
+              active one so we don't pay the load+render cost for all three. */}
           {sidebarTab === "brand" ? (
             <BrandPanel
               assets={brandAssets.filter(
@@ -1697,7 +1827,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
               onSync={handleSyncBrandAssets}
             />
-          ) : (
+          ) : sidebarTab === "agents" ? (
             <AgentPanel
               assets={brandAssets.filter((a) => a.kind === "agent_headshot")}
               offices={officesForFilter}
@@ -1705,6 +1835,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               isLoading={brandAssetsLoading}
               onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
               onSync={handleSyncBrandAssets}
+            />
+          ) : (
+            <PhotosPanel
+              photos={listingPhotos}
+              isLoading={listingPhotosLoading}
+              onPhotoPicked={(p) => void handleListingPhotoPicked(p)}
             />
           )}
         </aside>
@@ -2450,6 +2586,27 @@ function AgentTabIcon(): JSX.Element {
     >
       <circle cx="8" cy="5.5" r="2.5" />
       <path d="M3 14c0-2.5 2-4.5 5-4.5s5 2 5 4.5" />
+    </svg>
+  );
+}
+
+// why: photos-tab icon. Stack-of-photos silhouette so it reads "more than
+// one image" without competing with the brand/agent glyphs above.
+function PhotosTabIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="4" y="4" width="9" height="9" rx="1" />
+      <path d="M2 11V3a1 1 0 011-1h8" />
     </svg>
   );
 }

@@ -22,18 +22,18 @@ import { renderV2BoldStatsStory } from "./primitives/v2-bold-stats-story";
 import { renderV3SideBySide } from "./primitives/v3-side-by-side";
 import { renderV3SideBySidePortrait } from "./primitives/v3-side-by-side-portrait";
 import { renderV3SideBySideStory } from "./primitives/v3-side-by-side-story";
-import { renderV4TwoPhotoDiptych } from "./primitives/v4-two-photo-diptych";
-import { renderV4TwoPhotoDiptychPortrait } from "./primitives/v4-two-photo-diptych-portrait";
-import { renderV4TwoPhotoDiptychStory } from "./primitives/v4-two-photo-diptych-story";
-import { renderV5ThreePhotoGrid } from "./primitives/v5-three-photo-grid";
-import { renderV5ThreePhotoGridPortrait } from "./primitives/v5-three-photo-grid-portrait";
-import { renderV5ThreePhotoGridStory } from "./primitives/v5-three-photo-grid-story";
 import { POST_TYPE_THEMES, getTheme } from "./themes";
+
+// v4 (Two-Photo Diptych) and v5 (Three-Photo Grid) retired on 2026-05-14.
+// The product direction shifted to single-photo posts only; users who want
+// a multi-photo composite drag additional photos onto the canvas inside
+// Studio (left-sidebar Photos panel). Old generated_posts rows with
+// variant='v4'/'v5' still load via their saved image_url and layer_tree.
 
 /**
  * Template registry.
  *
- * Phase 3 architecture: 4 post types × 3 variants × 3 formats = 36
+ * Current architecture: 5 post types × 3 variants × 3 formats = 45
  * composable templates. The (variant, format) primitives are 9 files;
  * post-type is applied via the theme. Template IDs follow
  * "{post_type}_{format_short}_{variant}".
@@ -42,16 +42,21 @@ import { POST_TYPE_THEMES, getTheme } from "./themes";
  *   - Adding a new format: add 3 primitive files (one per variant), register.
  *   - Adding a new post type: one theme entry, all 9 (variant, format)
  *     combinations light up automatically.
+ *
+ * All variants are single-photo as of 2026-05-14 (v4/v5 multi-photo
+ * retired in favor of a single-photo-first UX; users compose multi-photo
+ * layouts inside Studio when they want them).
  */
 
 export type TemplateRenderer = (args: {
   listing: PostBuilderListing;
-  /** First photo (always present). Used by single-photo variants v1-v3. */
+  /** First photo. Single-photo variants render this; v4/v5 are retired. */
   heroImageDataUri: string;
   /**
-   * Full ordered array of photos passed by the render pipeline. Length
-   * equals the template's photo_count. Multi-photo variants (v4/v5) read
-   * from this; single-photo variants ignore it.
+   * Forward-compat slot. v1-v3 ignore this. Retained on the signature so
+   * future multi-photo template primitives (e.g. an editorial diptych
+   * authored under Studio's free-form canvas later) can opt in without
+   * a contract change.
    */
   heroImageDataUris?: string[];
   /**
@@ -75,8 +80,15 @@ type PrimitiveRenderer = (args: {
   heroImageDataUris?: string[];
 }) => string;
 
-// (variant, format) → primitive renderer.
-const PRIMITIVE_RENDERERS: Record<PostVariant, Record<PostFormat, PrimitiveRenderer>> = {
+// Active single-photo variants. v4/v5 retired 2026-05-14.
+// PostVariant still types as "v1" | "v2" | "v3" | "v4" | "v5" (legacy
+// rows in the DB use v4/v5), but the runtime registry only registers
+// the 3 active ones. listVariantsForPostType() / listTemplates() see
+// only the active set, so the picker UI never shows v4/v5 cards.
+const ACTIVE_VARIANTS = ["v1", "v2", "v3"] as const satisfies readonly PostVariant[];
+type ActiveVariant = (typeof ACTIVE_VARIANTS)[number];
+
+const PRIMITIVE_RENDERERS: Record<ActiveVariant, Record<PostFormat, PrimitiveRenderer>> = {
   v1: {
     square_1x1: renderV1HeroEditorial,
     portrait_4x5: renderV1HeroEditorialPortrait,
@@ -92,20 +104,10 @@ const PRIMITIVE_RENDERERS: Record<PostVariant, Record<PostFormat, PrimitiveRende
     portrait_4x5: renderV3SideBySidePortrait,
     story_9x16: renderV3SideBySideStory,
   },
-  v4: {
-    square_1x1: renderV4TwoPhotoDiptych,
-    portrait_4x5: renderV4TwoPhotoDiptychPortrait,
-    story_9x16: renderV4TwoPhotoDiptychStory,
-  },
-  v5: {
-    square_1x1: renderV5ThreePhotoGrid,
-    portrait_4x5: renderV5ThreePhotoGridPortrait,
-    story_9x16: renderV5ThreePhotoGridStory,
-  },
 };
 
 const VARIANT_META: Record<
-  PostVariant,
+  ActiveVariant,
   { display_name: string; description: string; photo_count: number }
 > = {
   v1: {
@@ -125,18 +127,6 @@ const VARIANT_META: Record<
     description:
       "Photo + data on a light surface with a gold accent rule between them. Listing-card composition.",
     photo_count: 1,
-  },
-  v4: {
-    display_name: "Two-Photo Diptych",
-    description:
-      "Side-by-side photos on a light surface with a gold seam. Lookbook feel — pair an exterior with an interior.",
-    photo_count: 2,
-  },
-  v5: {
-    display_name: "Three-Photo Grid",
-    description:
-      "Hero photo plus two stacked thumbnails. Magazine listing-spread composition for showcasing range.",
-    photo_count: 3,
   },
 };
 
@@ -181,7 +171,7 @@ function buildTemplateMap(): Record<string, TemplateEntry> {
   const out: Record<string, TemplateEntry> = {};
   for (const post_type of Object.keys(POST_TYPE_THEMES) as PostType[]) {
     for (const format of SUPPORTED_FORMATS) {
-      for (const variant of Object.keys(PRIMITIVE_RENDERERS) as PostVariant[]) {
+      for (const variant of ACTIVE_VARIANTS) {
         const id = `${post_type}_${formatShortName(format)}_${variant}`;
         const variantMeta = VARIANT_META[variant];
         const variantRenderer = PRIMITIVE_RENDERERS[variant][format];
@@ -258,12 +248,19 @@ export function listTemplatesForPostType(post_type: PostType): TemplateMeta[] {
 export function listVariantsForPostType(post_type: PostType, format: PostFormat) {
   return listTemplates()
     .filter((t) => t.post_type === post_type && t.format === format)
-    .map((t) => ({
-      template_id: t.id,
-      variant: t.variant,
-      display_name: VARIANT_META[t.variant].display_name,
-      description: VARIANT_META[t.variant].description,
-      photo_count: VARIANT_META[t.variant].photo_count,
-    }));
+    .map((t) => {
+      // why: the wider PostVariant union still includes v4/v5 for legacy
+      // generated_posts rows. The runtime registry only emits active
+      // variants, so this narrow lookup is always safe — the assertion
+      // just bridges the static type system to that runtime guarantee.
+      const v = t.variant as ActiveVariant;
+      return {
+        template_id: t.id,
+        variant: t.variant,
+        display_name: VARIANT_META[v].display_name,
+        description: VARIANT_META[v].description,
+        photo_count: VARIANT_META[v].photo_count,
+      };
+    });
 }
 

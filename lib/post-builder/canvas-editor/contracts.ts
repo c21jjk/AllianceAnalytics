@@ -103,6 +103,36 @@ export interface AgentPanelProps {
   onSync?: () => Promise<BrandSyncOutcome>;
 }
 
+/**
+ * PhotosPanel — grid of the active listing's photos.
+ *
+ * Third tab in the left sidebar, alongside Brand + Agents. Replaces the
+ * "build a multi-photo template up front" flow that v4/v5 used to serve:
+ * if Larissa wants a composite, she opens Studio and drags additional
+ * photos onto the canvas one at a time, with full positioning control.
+ *
+ * The photos come from the same `/api/post-builder/photos?mls=...` endpoint
+ * that powers the Post Builder picker — the parent (CanvasEditor.tsx) fetches
+ * them on mount once the listing is known. Panel is purely presentational.
+ */
+export interface ListingPhoto {
+  url: string;
+  /** Drive/Storage sequence number — used as a stable visual order key. */
+  sequence: number;
+}
+
+export interface PhotosPanelProps {
+  /** All listing photos in original order. The first is the hero. */
+  photos: readonly ListingPhoto[];
+  /** True while the parent is initially fetching. */
+  isLoading: boolean;
+  /**
+   * Called when the user clicks a thumbnail. Orchestrator creates a new
+   * Fabric ImageLayer at canvas center with anonymous CORS.
+   */
+  onPhotoPicked: (photo: ListingPhoto) => void;
+}
+
 // ===========================================================================
 // Layer panel entry — shared across SelectionPropertiesPanel and LayerListPanel
 // ===========================================================================
