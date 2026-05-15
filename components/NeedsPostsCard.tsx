@@ -227,7 +227,15 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
         </button>
       </div>
 
-      {/* Right-side actions */}
+      {/* Right-side actions — three distinct outcomes for this row:
+            • Open           → property page (review the listing)
+            • + Build post   → primary CTA, deep-links into Post Builder with
+                               this listing + just_listed pre-selected
+            • ⋯ kebab        → secondary menu: Mark as posted (from phone),
+                               Dismiss…, Reset.
+          why this layout: the highest-volume job is "build a post for this"
+          — making it the gold primary keeps the click path one-tap. The
+          housekeeping actions stay one menu away. */}
       <div className="flex items-center gap-1 shrink-0">
         <Link
           href={`/properties/${encodeURIComponent(listing.mls_number)}`}
@@ -235,18 +243,31 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
         >
           Open
         </Link>
+        {/* Hide the primary "Build post" CTA once the row is posted or
+            dismissed — the headline action no longer applies; the kebab still
+            offers Reset if Larissa changes her mind. */}
+        {!isPosted && !isDismissed ? (
+          <Link
+            href={`/post-builder?mls=${encodeURIComponent(listing.mls_number)}&postType=just_listed`}
+            className="inline-flex items-center gap-1 rounded-md bg-gold-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gold-600 transition-colors"
+            title="Open the Post Builder with this listing pre-selected"
+          >
+            <PlusGlyph />
+            Build post
+          </Link>
+        ) : null}
         <div className="relative">
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
             disabled={isPending}
-            className="inline-flex items-center gap-0.5 rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+            className="inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            title="Change status: mark as posted, dismiss, or reset"
+            aria-label="More actions"
+            title="More actions: mark as posted, dismiss, or reset"
           >
-            Status
-            <ChevronDown />
+            <KebabGlyph />
           </button>
           {menuOpen ? (
             <div
@@ -261,7 +282,7 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
                   onClick={handleConfirmPosted}
                   className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-emerald-700 hover:bg-emerald-50 font-medium"
                 >
-                  ✓ Mark as posted
+                  ✓ Mark as posted (from phone)
                 </button>
               ) : null}
 
@@ -372,16 +393,30 @@ function HouseIcon() {
   );
 }
 
-function ChevronDown() {
+function PlusGlyph() {
+  // why: thin-stroke "+" sized to sit cleanly next to "Build post" text
+  // without over-weighting the gold pill.
   return (
-    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 16 16" className="w-3 h-3" fill="none" aria-hidden="true">
       <path
-        d="M6 9l6 6 6-6"
+        d="M8 3v10M3 8h10"
         stroke="currentColor"
         strokeWidth={1.8}
         strokeLinecap="round"
-        strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function KebabGlyph() {
+  // why: three-dot "more" glyph — standard pattern for secondary action
+  // menus. The vertical orientation reads as "in-row context menu" without
+  // competing with the gold CTA next to it.
+  return (
+    <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor" aria-hidden="true">
+      <circle cx="8" cy="3.5" r="1.3" />
+      <circle cx="8" cy="8" r="1.3" />
+      <circle cx="8" cy="12.5" r="1.3" />
     </svg>
   );
 }
