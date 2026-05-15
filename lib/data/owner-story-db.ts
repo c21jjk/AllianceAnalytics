@@ -105,6 +105,94 @@ export async function fetchOwnerStoryViewStats(
   }
 }
 
+/**
+ * Aggregate story-view count across ALL listings within a window. Used by
+ * the dashboard's Morning Briefing card to surface "N stories opened by
+ * sellers overnight" without needing per-listing detail.
+ *
+ * Returns just a number — keeps the dashboard fetch lean.
+ */
+/**
+ * Phase 7 — match a listing's `agent_name` against the `brand_assets`
+ * table (kind='agent_headshot') to surface a real headshot on the public
+ * story page. Returns null when nothing matches; the story view falls back
+ * to the initials medallion.
+ *
+ * Match is by normalized (first + last, lowercased) name. Strips middle
+ * initials and punctuation so "John J. Koch" matches a stored "John Koch".
+ */
+function normalizeAgentName(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return null;
+  const parts = trimmed
+    .split(/\s+/)
+    .map((p) => p.replace(/[^a-z'-]/g, ""))
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
+export async function fetchAgentHeadshotUrl(
+  agentName: string,
+): Promise<string | null> {
+  const norm = normalizeAgentName(agentName);
+  if (!norm) return null;
+  const [first, last] = norm.split(" ");
+  if (!first) return null;
+
+  const supabase = createAdminClient();
+  try {
+    // Narrow by last-name LIKE first to keep the result set small, then
+    // normalize labels in memory and match on (first+last). The
+    // brand-assets table is small (low hundreds) so the join is cheap.
+    const lastNeedle = last ?? first;
+    const { data, error } = await supabase
+      .from("brand_assets")
+      .select("label, public_url")
+      .eq("kind", "agent_headshot")
+      .ilike("label", `%${lastNeedle}%`)
+      .limit(50);
+    if (error || !data) return null;
+
+    for (const row of data as Array<{
+      label: string;
+      public_url: string;
+    }>) {
+      const labelNorm = normalizeAgentName(row.label);
+      if (!labelNorm) continue;
+      if (labelNorm === norm) return row.public_url;
+    }
+    // No exact-pair match; if there's exactly one row whose last name
+    // matches, accept it as a best-effort lookup (handles "Jeanne Gibbons2"
+    // style suffixes that survive normalization).
+    if (data.length === 1) {
+      return (data[0] as { public_url: string }).public_url;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function countOwnerStoryViewsInWindow(
+  windowMs: number,
+): Promise<number> {
+  if (!Number.isFinite(windowMs) || windowMs <= 0) return 0;
+  const cutoff = new Date(Date.now() - windowMs).toISOString();
+  const supabase = createAdminClient();
+  try {
+    const { count, error } = await supabase
+      .from("owner_story_views")
+      .select("id", { count: "exact", head: true })
+      .gte("viewed_at", cutoff);
+    if (error) return 0;
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 /* ----------------------------------------------------------------------- *
  *  Token lifecycle
  * ----------------------------------------------------------------------- */
@@ -225,6 +313,10 @@ export interface OwnerStoryListing {
   bathrooms_half: number | null;
   agent_name: string | null;
   agent_email: string | null;
+  /** Phase 5 column — enables tap-to-text on the public story page. */
+  agent_phone: string | null;
+  /** Phase 7 — pulled from brand_assets.kind='agent_headshot' by name match. */
+  agent_headshot_url: string | null;
   /** Raw Paragon office name (e.g. "CENTURY 21 ALLIANCE wc"). UI normalizes. */
   listing_office_name: string | null;
 }
@@ -315,7 +407,7 @@ export async function fetchOwnerStoryByToken(
   const { data: propRow, error: propErr } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, status, status_changed_at, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, listing_office_name",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, status, status_changed_at, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, agent_phone, listing_office_name",
     )
     .eq("id", reportRow.property_id)
     .maybeSingle();
@@ -434,6 +526,13 @@ export async function fetchOwnerStoryByToken(
       )
     : null;
 
+  // 6b) Phase 7 — agent headshot lookup. Match properties.agent_name
+  //     against brand_assets.label (normalized to first+last lowercase).
+  //     Returns null when no match — story page falls back to initials.
+  const agentHeadshotUrl = propRow.agent_name
+    ? await fetchAgentHeadshotUrl(propRow.agent_name)
+    : null;
+
   // 7) Photos + open houses — both keyed differently:
   //    photos by mls_number (Paragon-native key)
   //    open_houses by property_id (already linked locally)
@@ -503,6 +602,8 @@ export async function fetchOwnerStoryByToken(
       bathrooms_half: propRow.bathrooms_half,
       agent_name: propRow.agent_name,
       agent_email: propRow.agent_email,
+      agent_phone: propRow.agent_phone,
+      agent_headshot_url: agentHeadshotUrl,
       listing_office_name: propRow.listing_office_name,
     },
     posts,

@@ -14,6 +14,7 @@ import {
 } from "@/lib/data/recently-sold";
 import { getRecentStatusFlips } from "@/lib/data/recent-status-flips";
 import { backfillStatusFlipOutbox } from "@/lib/data/agent-outbox-db";
+import { countOwnerStoryViewsInWindow } from "@/lib/data/owner-story-db";
 import { getUpcomingOpenHouses } from "@/lib/data/open-houses";
 import { listOffices } from "@/lib/data/offices";
 import {
@@ -31,6 +32,7 @@ import UnderContractRow from "@/components/UnderContractRow";
 import RecentlySoldRow from "@/components/RecentlySoldRow";
 import UpcomingOpenHousesRow from "@/components/UpcomingOpenHousesRow";
 import WinsToCelebrateCard from "@/components/WinsToCelebrateCard";
+import MorningBriefingCard from "@/components/MorningBriefingCard";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
@@ -142,6 +144,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     upcomingOpenHouses,
     recentStatusFlips,
     _outboxBackfilled,
+    storyViewsLast24h,
     companyAnalytics,
     followerSummary,
   ] = await Promise.all([
@@ -197,6 +200,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     // safe to run on every render. New flips automatically materialize
     // outbox rows that Larissa can email from /outbox.
     backfillStatusFlipOutbox({ daysBack: 3 }).then(() => null).catch(() => null),
+    // Story-view rollup for the Morning Briefing card. Single COUNT query.
+    countOwnerStoryViewsInWindow(24 * 3_600_000),
     getCompanyAnalytics({ days, office_short_code: officeFilter }),
     getFollowerSummary(days),
   ]);
@@ -285,33 +290,53 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         ).length;
 
         return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-            <RecentlyListedRow
-              listings={listingsNeedingPosts}
-              statusFilter={listingsFilter}
-              officeShortCode={officeFilter}
-              freshCount={listedFreshCount}
+          <>
+            {/* Phase 7 — Morning Briefing one-liner. Anchors below jump to
+                the relevant milestone card. Hides when there's nothing to say. */}
+            <MorningBriefingCard
+              newListingsFresh={listedFreshCount}
+              underContractFresh={underContractFreshCount}
+              recentlySoldFresh={recentlySoldFreshCount}
+              openHousesThisWeek={upcomingOpenHouses.length}
+              storyViewsLast24h={storyViewsLast24h ?? 0}
             />
-            <div className="grid grid-cols-1 gap-4">
-              <UpcomingOpenHousesRow
-                openHouses={upcomingOpenHouses}
-                windowDays={7}
-                officeShortCode={officeFilter}
-                freshCount={openHousesFreshCount}
-              />
-              <UnderContractRow
-                listings={underContractListings}
-                officeShortCode={officeFilter}
-                freshCount={underContractFreshCount}
-              />
-              <RecentlySoldRow
-                listings={recentlySoldListings}
-                windowDays={30}
-                officeShortCode={officeFilter}
-                freshCount={recentlySoldFreshCount}
-              />
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+              <div id="recently-listed" className="scroll-mt-32">
+                <RecentlyListedRow
+                  listings={listingsNeedingPosts}
+                  statusFilter={listingsFilter}
+                  officeShortCode={officeFilter}
+                  freshCount={listedFreshCount}
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4">
+                <div id="open-houses" className="scroll-mt-32">
+                  <UpcomingOpenHousesRow
+                    openHouses={upcomingOpenHouses}
+                    windowDays={7}
+                    officeShortCode={officeFilter}
+                    freshCount={openHousesFreshCount}
+                  />
+                </div>
+                <div id="under-contract" className="scroll-mt-32">
+                  <UnderContractRow
+                    listings={underContractListings}
+                    officeShortCode={officeFilter}
+                    freshCount={underContractFreshCount}
+                  />
+                </div>
+                <div id="recently-sold" className="scroll-mt-32">
+                  <RecentlySoldRow
+                    listings={recentlySoldListings}
+                    windowDays={30}
+                    officeShortCode={officeFilter}
+                    freshCount={recentlySoldFreshCount}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
+          </>
         );
       })()}
 

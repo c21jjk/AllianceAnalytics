@@ -88,12 +88,12 @@ export async function fetchOwnerStoryIndex(): Promise<OwnerStoryIndexRow[]> {
   // 3) Shape + filter (drop rows whose property has been deleted out from
   //    under their report — defensive against orphans).
   type ReportRow = (typeof reportRows)[number];
-  const out: OwnerStoryIndexRow[] = [];
+  const raw: OwnerStoryIndexRow[] = [];
   for (const r of reportRows as ReportRow[]) {
     const prop = Array.isArray(r.properties) ? r.properties[0] : r.properties;
     if (!prop) continue;
     const stats = viewsByReport.get(r.id);
-    out.push({
+    raw.push({
       property_id: prop.id,
       mls_number: prop.mls_number,
       address: prop.address,
@@ -115,7 +115,18 @@ export async function fetchOwnerStoryIndex(): Promise<OwnerStoryIndexRow[]> {
     });
   }
 
-  // 4) Sort — recent activity first, then generated reports, then newest.
+  // 4) Phase 7 — dedupe cross-MLS mirrors. When the SAME listing appears
+  //    in BOTH CMC and SJSR feeds at the same (street, city, list_price),
+  //    pick a single canonical row. Preference: more views > newer
+  //    listing_date > stable mls_number order. The losing row is dropped
+  //    from the index (its `/r/[token]` still resolves directly).
+  //
+  //    Multi-unit cases (multiple distinct MLS rows at the same street
+  //    address but DIFFERENT prices) are intentionally left alone — they
+  //    are real separate listings.
+  const out = dedupeCrossMlsMirrors(raw);
+
+  // 5) Sort — recent activity first, then generated reports, then newest.
   out.sort((a, b) => {
     const lva = a.last_viewed_at ? new Date(a.last_viewed_at).getTime() : 0;
     const lvb = b.last_viewed_at ? new Date(b.last_viewed_at).getTime() : 0;
@@ -128,5 +139,44 @@ export async function fetchOwnerStoryIndex(): Promise<OwnerStoryIndexRow[]> {
     return ldb - lda;
   });
 
+  return out;
+}
+
+function dedupeKey(row: OwnerStoryIndexRow): string {
+  const street = (row.address ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  const city = (row.city ?? "").trim().toLowerCase();
+  const price = row.list_price ?? 0;
+  return `${street}|${city}|${price}`;
+}
+
+function dedupeCrossMlsMirrors(
+  rows: OwnerStoryIndexRow[],
+): OwnerStoryIndexRow[] {
+  const groups = new Map<string, OwnerStoryIndexRow[]>();
+  for (const r of rows) {
+    const key = dedupeKey(r);
+    const arr = groups.get(key) ?? [];
+    arr.push(r);
+    groups.set(key, arr);
+  }
+  const out: OwnerStoryIndexRow[] = [];
+  for (const [, arr] of groups) {
+    if (arr.length === 1) {
+      out.push(arr[0]!);
+      continue;
+    }
+    // Multiple rows at same (street, city, price). Pick canonical:
+    //   most views → newest listing_date → lowest mls_number string
+    const winner = arr.slice().sort((a, b) => {
+      if (b.total_views !== a.total_views) {
+        return b.total_views - a.total_views;
+      }
+      const lda = a.listing_date ? new Date(a.listing_date).getTime() : 0;
+      const ldb = b.listing_date ? new Date(b.listing_date).getTime() : 0;
+      if (ldb !== lda) return ldb - lda;
+      return a.mls_number.localeCompare(b.mls_number);
+    })[0];
+    if (winner) out.push(winner);
+  }
   return out;
 }

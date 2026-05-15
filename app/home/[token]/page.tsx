@@ -187,6 +187,7 @@ function StoryView({ data }: { data: OwnerStoryData }) {
           address={listing.address}
           agentName={listing.agent_name}
           agentEmail={listing.agent_email}
+          agentPhone={listing.agent_phone}
         />
         <Footer />
       </main>
@@ -374,6 +375,7 @@ function HeroChapter({
         <AgentBlock
           agentName={listing.agent_name}
           agentEmail={listing.agent_email}
+          agentHeadshotUrl={listing.agent_headshot_url}
           listingOfficeName={listing.listing_office_name}
         />
       ) : null}
@@ -384,10 +386,12 @@ function HeroChapter({
 function AgentBlock({
   agentName,
   agentEmail,
+  agentHeadshotUrl,
   listingOfficeName,
 }: {
   agentName: string;
   agentEmail: string | null;
+  agentHeadshotUrl: string | null;
   listingOfficeName: string | null;
 }) {
   const officeDisplay = normalizeOfficeName(listingOfficeName);
@@ -404,28 +408,45 @@ function AgentBlock({
         gap: 14,
       }}
     >
-      {/* Initials medallion — placeholder for an eventual headshot.
-          Gold-tinted ring keeps it on-brand without a real photo. */}
-      <div
-        aria-hidden="true"
-        style={{
-          width: 48,
-          height: 48,
-          borderRadius: "50%",
-          backgroundColor: BG_SOFT,
-          border: `1px solid ${RULE}`,
-          color: INK,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 15,
-          fontWeight: 500,
-          letterSpacing: "0.02em",
-          flexShrink: 0,
-        }}
-      >
-        {initials}
-      </div>
+      {/* Phase 7 — real headshot when brand_assets has one matched by name;
+          falls back to the gold-trim initials medallion otherwise. */}
+      {agentHeadshotUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={agentHeadshotUrl}
+          alt={agentName}
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: "50%",
+            objectFit: "cover",
+            border: `1px solid ${RULE}`,
+            flexShrink: 0,
+            display: "block",
+          }}
+        />
+      ) : (
+        <div
+          aria-hidden="true"
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            backgroundColor: BG_SOFT,
+            border: `1px solid ${RULE}`,
+            color: INK,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 15,
+            fontWeight: 500,
+            letterSpacing: "0.02em",
+            flexShrink: 0,
+          }}
+        >
+          {initials}
+        </div>
+      )}
       <div style={{ minWidth: 0, flex: 1 }}>
         <div
           style={{
@@ -1346,10 +1367,12 @@ function WhatNowChapter({
   address,
   agentName,
   agentEmail,
+  agentPhone,
 }: {
   address: string | null;
   agentName: string | null;
   agentEmail: string | null;
+  agentPhone: string | null;
 }) {
   const firstName = agentName?.split(" ")[0] ?? "your agent";
   const subjectLine = address
@@ -1362,6 +1385,18 @@ function WhatNowChapter({
     ? `mailto:${agentEmail}?subject=${encodeURIComponent(
         address ? `Question about a post — ${address}` : "Question about a post",
       )}`
+    : null;
+  // Phase 7 — tap-to-text via sms: URI. Opens the visitor's Messages app
+  // with the agent's number + a friendly body pre-filled. Falls through
+  // cleanly when agent_phone is null.
+  const smsBody = address
+    ? `Hi ${firstName} — question about ${address}.`
+    : `Hi ${firstName} — question about my listing.`;
+  const cleanedPhone = agentPhone
+    ? normalizePhoneForSms(agentPhone)
+    : null;
+  const smsHref = cleanedPhone
+    ? `sms:${cleanedPhone}?&body=${encodeURIComponent(smsBody)}`
     : null;
 
   return (
@@ -1391,13 +1426,19 @@ function WhatNowChapter({
           gap: 12,
         }}
       >
+        {smsHref ? (
+          <a href={smsHref} style={primaryActionStyle}>
+            Text {firstName}
+            <ArrowRight />
+          </a>
+        ) : null}
         {mailto ? (
           <a
             href={mailto}
-            style={primaryActionStyle}
+            style={smsHref ? secondaryActionStyle : primaryActionStyle}
           >
-            Text or email {firstName}
-            <ArrowRight />
+            Email {firstName}
+            {!smsHref ? <ArrowRight /> : null}
           </a>
         ) : null}
         <ShareLinkButton style={secondaryActionStyle} address={address} />
@@ -1412,6 +1453,20 @@ function WhatNowChapter({
       </div>
     </section>
   );
+}
+
+/**
+ * Convert a Paragon-style display phone ("(609) 555-1234" / "609.555.1234")
+ * into something `sms:` can navigate to. We strip everything that isn't a
+ * digit or a leading +; mobile OSes accept either form.
+ */
+function normalizePhoneForSms(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/[^\d]/g, "");
+  if (digits.length < 7) return null;
+  return hasPlus ? `+${digits}` : digits;
 }
 
 function Footer() {

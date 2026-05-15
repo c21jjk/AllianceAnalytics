@@ -661,14 +661,18 @@ function StatusBlock({ group }: { group: PostGroup }) {
         ✦ {insight?.headline ?? "Awaiting insight"}
       </div>
       <div className="mt-2 pt-2 border-t border-neutral-100">
-        <button
-          type="button"
-          disabled
-          className="w-full text-[11px] font-medium text-neutral-400 bg-neutral-50 ring-1 ring-neutral-200 rounded px-2 py-1 cursor-not-allowed"
-          title="Promote flow ships in a follow-up sprint"
+        {/* Phase 7 — copy clarified. Coach already produces spend
+            recommendations; this button is the eventual one-click boost
+            execution path, not "we don't recommend yet." Linking to
+            Coach makes the connection explicit and gets Larissa value
+            today instead of an inert button. */}
+        <Link
+          href="/coach"
+          title="Coach already recommends boost spend per listing. Auto-boost execution from this card lands in a future sprint."
+          className="w-full block text-center text-[11px] font-medium text-neutral-600 bg-neutral-50 hover:bg-neutral-100 ring-1 ring-neutral-200 rounded px-2 py-1 transition-colors"
         >
-          🚀 Promote (coming soon)
-        </button>
+          🚀 Auto-boost — see Coach recs
+        </Link>
       </div>
     </section>
   );

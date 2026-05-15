@@ -153,10 +153,16 @@ function OpenHouseRow({
     .join(", ");
   const timeLabel = formatOpenHouseTimeLabel(openHouse.start_at, openHouse.end_at);
 
+  const propertyHref = `/properties/${encodeURIComponent(openHouse.mls_number)}`;
+  // Phase 7 — deep-link straight to Post Builder with the OH template
+  // pre-selected. Skips the property-detail → builder hop entirely.
+  const buildHref = `/post-builder?mls=${encodeURIComponent(
+    openHouse.mls_number,
+  )}&postType=open_house`;
+
   return (
-    <Link
-      href={`/properties/${encodeURIComponent(openHouse.mls_number)}`}
-      className="grid items-center hover:opacity-70 transition-opacity"
+    <div
+      className="grid items-center"
       style={{
         gridTemplateColumns: "56px 1fr auto",
         gap: 14,
@@ -164,8 +170,10 @@ function OpenHouseRow({
         borderTop: isFirst ? "none" : "1px solid #ececec",
       }}
     >
-      {/* Hero */}
-      <div
+      {/* Hero — clickable into property detail */}
+      <Link
+        href={propertyHref}
+        className="block hover:opacity-70 transition-opacity"
         style={{
           width: 56,
           height: 56,
@@ -188,10 +196,14 @@ function OpenHouseRow({
             }}
           />
         ) : null}
-      </div>
+      </Link>
 
-      {/* Body */}
-      <div style={{ minWidth: 0 }}>
+      {/* Body — also a link into property detail */}
+      <Link
+        href={propertyHref}
+        className="block hover:opacity-80 transition-opacity"
+        style={{ minWidth: 0 }}
+      >
         <div
           style={{
             fontSize: 13,
@@ -265,13 +277,27 @@ function OpenHouseRow({
             </span>
           </div>
         ) : null}
-      </div>
+      </Link>
 
-      {/* Right column — arrow chevron */}
-      <div style={{ color: "#a3a3a3", fontSize: 14 }}>
-        <ArrowIcon />
+      {/* Right column — primary "Build OH promo" CTA, with the chevron
+          collapsed into a quiet "Open" link below. */}
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        <Link
+          href={buildHref}
+          className="inline-flex items-center rounded-md bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-semibold px-2.5 py-1 transition-colors"
+          title="Build a promo post for this open house"
+        >
+          + Build post
+        </Link>
+        <Link
+          href={propertyHref}
+          className="inline-flex items-center text-[10px] font-medium text-neutral-500 hover:text-neutral-800"
+        >
+          Open
+          <ArrowIcon />
+        </Link>
       </div>
-    </Link>
+    </div>
   );
 }
 

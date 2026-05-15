@@ -38,6 +38,11 @@ export default function OwnerStoryIndexTable({ rows }: Props) {
   const [sort, setSort] = useState<SortKey>("recent_activity");
   const [query, setQuery] = useState("");
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  // Phase 7 — bulk selection + copy. Stored as a Set of property_id.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkCopied, setBulkCopied] = useState<"copied" | "empty" | null>(
+    null,
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -99,7 +104,62 @@ export default function OwnerStoryIndexTable({ rows }: Props) {
     }
   }
 
+  // Phase 7 — bulk selection helpers.
+  function toggleSelected(propertyId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(propertyId)) next.delete(propertyId);
+      else next.add(propertyId);
+      return next;
+    });
+  }
+  function toggleAllVisible() {
+    setSelected((prev) => {
+      // If every visible row is selected, clear; otherwise select all visible.
+      const allSelected =
+        filtered.length > 0 && filtered.every((r) => prev.has(r.property_id));
+      if (allSelected) return new Set();
+      const next = new Set(prev);
+      for (const r of filtered) next.add(r.property_id);
+      return next;
+    });
+  }
+  function clearSelection() {
+    setSelected(new Set());
+  }
+  async function handleBulkCopy() {
+    if (typeof window === "undefined") return;
+    const origin = window.location.origin;
+    const rowsToCopy = filtered.filter((r) => selected.has(r.property_id));
+    if (rowsToCopy.length === 0) {
+      setBulkCopied("empty");
+      window.setTimeout(() => setBulkCopied(null), 1500);
+      return;
+    }
+    // One line per row: address + URL. Tab-separated so it pastes cleanly
+    // into both plain text and Gmail/Notes.
+    const text = rowsToCopy
+      .map((r) => {
+        const label = r.address ?? r.mls_number;
+        return `${label}\t${origin}${r.story_url_path}`;
+      })
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setBulkCopied("copied");
+      window.setTimeout(() => setBulkCopied(null), 1800);
+    } catch {
+      setBulkCopied(null);
+    }
+  }
+
   const totalViews = rows.reduce((s, r) => s + r.total_views, 0);
+  const selectionCount = filtered.filter((r) =>
+    selected.has(r.property_id),
+  ).length;
+  const allVisibleSelected =
+    filtered.length > 0 &&
+    filtered.every((r) => selected.has(r.property_id));
   const recentlyViewed = rows.filter((r) => {
     if (!r.last_viewed_at) return false;
     return Date.now() - new Date(r.last_viewed_at).getTime() < 7 * 86_400_000;
@@ -171,6 +231,39 @@ export default function OwnerStoryIndexTable({ rows }: Props) {
         </div>
       </div>
 
+      {/* Bulk actions strip — shown only when at least one row is selected.
+          Phase 7 — lets Larissa grab multiple story links in one paste. */}
+      {selectionCount > 0 ? (
+        <div className="rounded-md bg-gold-50 ring-1 ring-gold-200 px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium text-gold-900">
+            {selectionCount}{" "}
+            {selectionCount === 1 ? "listing selected" : "listings selected"}
+          </span>
+          <span className="text-neutral-400">·</span>
+          <button
+            type="button"
+            onClick={handleBulkCopy}
+            className="inline-flex items-center rounded-md bg-gold-600 hover:bg-gold-700 text-white text-xs font-semibold px-3 py-1.5"
+          >
+            {bulkCopied === "copied"
+              ? `Copied ${selectionCount} links`
+              : "Copy all selected"}
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="text-xs font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
+          >
+            Clear
+          </button>
+          {bulkCopied === "empty" ? (
+            <span className="text-xs text-rose-700 font-medium">
+              Nothing selected to copy
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Table */}
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-dashed border-neutral-300 bg-neutral-50/50 px-4 py-10 text-center text-sm text-neutral-500">
@@ -180,7 +273,16 @@ export default function OwnerStoryIndexTable({ rows }: Props) {
         </div>
       ) : (
         <div className="rounded-xl border border-neutral-200 bg-white shadow-card overflow-hidden">
-          <div className="hidden md:grid md:grid-cols-[minmax(0,_3fr)_minmax(0,_1fr)_minmax(0,_1.4fr)_minmax(0,_1.2fr)_auto] gap-3 px-4 py-2 bg-neutral-50 text-[11px] font-semibold uppercase tracking-wider text-neutral-500 border-b border-neutral-200">
+          <div className="hidden md:grid md:grid-cols-[36px_minmax(0,_3fr)_minmax(0,_1fr)_minmax(0,_1.4fr)_minmax(0,_1.2fr)_auto] gap-3 px-4 py-2 bg-neutral-50 text-[11px] font-semibold uppercase tracking-wider text-neutral-500 border-b border-neutral-200">
+            <div>
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleAllVisible}
+                aria-label="Select all visible listings"
+                className="w-4 h-4 rounded border-neutral-300 text-gold-600 focus:ring-gold-500"
+              />
+            </div>
             <div>Listing</div>
             <div>Status</div>
             <div>Views</div>
@@ -191,8 +293,21 @@ export default function OwnerStoryIndexTable({ rows }: Props) {
             {filtered.map((row) => (
               <li
                 key={row.property_id}
-                className="grid grid-cols-1 md:grid-cols-[minmax(0,_3fr)_minmax(0,_1fr)_minmax(0,_1.4fr)_minmax(0,_1.2fr)_auto] gap-3 px-4 py-3 items-center"
+                className={
+                  "grid grid-cols-1 md:grid-cols-[36px_minmax(0,_3fr)_minmax(0,_1fr)_minmax(0,_1.4fr)_minmax(0,_1.2fr)_auto] gap-3 px-4 py-3 items-center " +
+                  (selected.has(row.property_id) ? "bg-gold-50/40" : "")
+                }
               >
+                {/* Bulk-select checkbox */}
+                <div className="flex items-start md:items-center">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(row.property_id)}
+                    onChange={() => toggleSelected(row.property_id)}
+                    aria-label={`Select ${row.address ?? row.mls_number}`}
+                    className="w-4 h-4 rounded border-neutral-300 text-gold-600 focus:ring-gold-500"
+                  />
+                </div>
                 {/* Listing */}
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-12 h-12 shrink-0 rounded bg-neutral-100 overflow-hidden">
