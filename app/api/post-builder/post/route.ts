@@ -23,6 +23,7 @@ import {
   publishToIG,
   type PublishResult,
 } from "@/lib/post-builder/publish";
+import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -103,7 +104,7 @@ export async function POST(request: Request) {
   const { data: gp, error: gpErr } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids",
+      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids, property_id",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -180,6 +181,29 @@ export async function POST(request: Request) {
   if (updateErr) {
     // Don't fail the request — posts went up. Just log so we know.
     console.error("[post] generated_posts update failed:", updateErr.message);
+  }
+
+  // Phase 5 — Agent Activation Loop. After a successful publish, drop a row
+  // into the agent_post_outbox so the listing agent can be notified to
+  // reshare. Idempotent per generated_post_id, so re-publishing the same
+  // post (e.g. retry after partial failure) doesn't stack notifications.
+  // Failure here NEVER fails the publish — the posts went up, the agent
+  // notification is best-effort scaffolding for the post-publish workflow.
+  if (successResults.length > 0 && gp.property_id) {
+    try {
+      const postUrls = successResults
+        .filter((r) => r.permalink)
+        .map((r) => ({ platform: r.platform, url: r.permalink as string }));
+      await createOutboxRowForPost({
+        generated_post_id: gp.id,
+        property_id: gp.property_id,
+        post_urls: postUrls,
+        caption: captionBody,
+        thumbnail_url: gp.image_url,
+      });
+    } catch (e) {
+      console.error("[post] agent outbox row create failed:", e);
+    }
   }
 
   const response: SuccessResponse = {

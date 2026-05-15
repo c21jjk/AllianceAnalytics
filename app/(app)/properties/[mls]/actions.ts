@@ -11,6 +11,62 @@ import {
   type OwnerReportCadence,
 } from "@/lib/data/owner-reports-db";
 
+const EMAIL_REGEX_GUARD = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX_GUARD = /^[\d\s+()\-.]{7,32}$/;
+
+/**
+ * Inline-fill the listing agent's email and/or phone on the property row.
+ * Called from the NullAgentEmailWarning component when Larissa fills in
+ * missing agent contact directly on the property detail page.
+ *
+ * Either field may be null (no change); both empty is a no-op. Strict
+ * format validation to avoid garbage values landing in the column the
+ * publish-time agent-notification flow depends on.
+ */
+export async function updateAgentContactAction(
+  mls: string,
+  raw: { agent_email?: string | null; agent_phone?: string | null },
+): Promise<{ ok: boolean; error?: string }> {
+  await requireAdmin();
+  if (!mls) return { ok: false, error: "Missing MLS number." };
+
+  const update: { agent_email?: string | null; agent_phone?: string | null } =
+    {};
+  if (typeof raw.agent_email === "string") {
+    const trimmed = raw.agent_email.trim();
+    if (trimmed.length === 0) {
+      update.agent_email = null;
+    } else if (!EMAIL_REGEX_GUARD.test(trimmed)) {
+      return { ok: false, error: "That doesn’t look like a valid email." };
+    } else {
+      update.agent_email = trimmed.toLowerCase();
+    }
+  }
+  if (typeof raw.agent_phone === "string") {
+    const trimmed = raw.agent_phone.trim();
+    if (trimmed.length === 0) {
+      update.agent_phone = null;
+    } else if (!PHONE_REGEX_GUARD.test(trimmed)) {
+      return { ok: false, error: "That doesn’t look like a valid phone." };
+    } else {
+      update.agent_phone = trimmed;
+    }
+  }
+  if (Object.keys(update).length === 0) {
+    return { ok: false, error: "Nothing to save." };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("properties")
+    .update(update)
+    .eq("mls_number", mls);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/properties/${mls}`);
+  return { ok: true };
+}
+
 const POST_AGE_GATE_DAYS = 7;
 
 export interface GenerateReportResult {

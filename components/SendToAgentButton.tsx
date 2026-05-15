@@ -9,39 +9,45 @@ interface SendToAgentButtonProps {
   agentEmail?: string | null;
   /** Listing agent's name, if known */
   agentName?: string | null;
-  /** Public flyer URL (relative or absolute) */
-  flyerUrl: string;
-  /** PDF download URL (relative or absolute) */
-  pdfUrl: string;
+  /** Owner Story public URL (absolute or relative `/home/[token]`). */
+  storyUrl: string;
   /**
-   * Disable the button when no flyer is generated yet. Renders a muted, inert link.
+   * Render in the small-and-quiet style instead of the primary CTA style.
+   * Used inside the demoted legacy Compass block to keep it secondary.
    */
+  variant?: "primary" | "quiet";
   disabled?: boolean;
   className?: string;
 }
 
 /**
- * Mailto-driven "send to listing agent" button. Pre-fills a friendly note
- * with the flyer link and the PDF link.
+ * Mailto-driven "send Owner Story to listing agent" button.
  *
- * No actual email is sent — the user's mail client opens with the draft.
+ * Phase 5 — re-pointed from the legacy /r/[token] flyer to the new
+ * /home/[token] Owner Story page. The agent forwards the link to the
+ * seller; Larissa stays out of the email thread.
+ *
+ * No actual email is sent here — the user's mail client opens with the
+ * draft. Phase 6 will swap this for a Resend-driven send via the outbox.
  */
 export default function SendToAgentButton({
   propertyAddress,
   agentEmail,
   agentName,
-  flyerUrl,
-  pdfUrl,
+  storyUrl,
+  variant = "primary",
   disabled,
   className,
 }: SendToAgentButtonProps) {
-  const subject = `Alliance Social — Marketing report for ${propertyAddress}`;
+  const subject = `Owner Story page for ${propertyAddress}`;
   const greeting = `Hi ${agentName ? agentName.split(" ")[0] : "there"},`;
   const body =
     `${greeting}\n\n` +
-    `Here's the latest marketing report for ${propertyAddress}. Please share with your seller.\n\n` +
-    `View online: ${flyerUrl}\n` +
-    `Download PDF: ${pdfUrl}\n\n` +
+    `Here's the Owner Story page for ${propertyAddress}. It's the live, ` +
+    `seller-facing view of every social post we've put behind this listing — ` +
+    `updates automatically as the campaign progresses. Please share it with ` +
+    `your seller; they can keep it bookmarked.\n\n` +
+    `${storyUrl}\n\n` +
     `— Alliance Social`;
 
   const href = disabled
@@ -49,6 +55,11 @@ export default function SendToAgentButton({
     : `mailto:${encodeURIComponent(agentEmail ?? "")}?subject=${encodeURIComponent(
         subject,
       )}&body=${encodeURIComponent(body)}`;
+
+  const primaryStyle =
+    "border-transparent bg-neutral-900 hover:bg-neutral-800 text-white";
+  const quietStyle =
+    "border-neutral-200 bg-white text-neutral-800 hover:bg-neutral-50";
 
   return (
     <a
@@ -58,23 +69,27 @@ export default function SendToAgentButton({
         if (disabled) e.preventDefault();
       }}
       className={clsx(
-        "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5",
+        "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2",
         "text-xs font-medium transition-colors border",
         disabled
           ? "border-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed"
-          : "border-neutral-200 bg-white text-neutral-800 hover:bg-neutral-50",
+          : variant === "primary"
+            ? primaryStyle
+            : quietStyle,
         className,
       )}
       title={
         disabled
-          ? "Generate a report first."
+          ? "Owner Story not ready yet."
           : agentEmail
             ? `Send to ${agentEmail}`
-            : "Open a new email draft (recipient blank)"
+            : "Open a new email draft (recipient blank — fill in agent email)"
       }
     >
       <MailIcon />
-      Send to listing agent
+      {variant === "primary"
+        ? "Email Owner Story to agent"
+        : "Send legacy report"}
     </a>
   );
 }

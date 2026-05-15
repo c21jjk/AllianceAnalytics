@@ -12,6 +12,8 @@ const PUBLIC_PATHS = new Set<string>(["/login"]);
 // `/r/` is the legacy Compass-style report view; `/home/` is the new
 // owner-facing story view. Both are bearer-auth via long random tokens in
 // the URL — anyone with the link can read, by design.
+//
+// (Note: `/outbox` is intentionally NOT here — it's an admin-only surface.)
 const PUBLIC_PATH_PREFIXES = ["/r/", "/home/"];
 
 function isPublicPath(pathname: string) {

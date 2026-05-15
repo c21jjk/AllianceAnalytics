@@ -319,15 +319,11 @@ export default function GroupDetailBody({
               propertyAddress={group.property?.address ?? "this listing"}
               agentEmail={listingAgent?.email}
               agentName={listingAgent?.name}
-              flyerUrl={
-                group.property
+              storyUrl={
+                group.property?.story_url_path ??
+                (group.property
                   ? `/properties/${encodeURIComponent(group.property.mls)}`
-                  : ""
-              }
-              pdfUrl={
-                group.property
-                  ? `/properties/${encodeURIComponent(group.property.mls)}`
-                  : ""
+                  : "")
               }
               disabled={!hasProperty}
             />

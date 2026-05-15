@@ -118,9 +118,9 @@ export default async function PropertyDetailPage({ params }: PageProps) {
         />
         <SendToAgentButton
           propertyAddress={property.address}
-          flyerUrl={flyerUrl}
-          pdfUrl={pdfUrl}
+          storyUrl={sharedDelivery ? `/r/${sharedDelivery.share_token}` : ""}
           disabled={!sharedDelivery}
+          variant="quiet"
         />
       </div>
 

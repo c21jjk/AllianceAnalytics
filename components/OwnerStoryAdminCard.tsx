@@ -12,6 +12,11 @@ interface Props {
   storyUrlPath: string;
   initialPersonalNote: string | null;
   viewStats: OwnerStoryViewStats | null;
+  /** Listing agent contact — used for the "Email Owner Story to agent" CTA. */
+  agentName: string | null;
+  agentEmail: string | null;
+  /** Listing address, used in the mailto subject + body. */
+  propertyAddress: string | null;
 }
 
 const SAVE_DEBOUNCE_MS = 700;
@@ -34,6 +39,9 @@ export default function OwnerStoryAdminCard({
   storyUrlPath,
   initialPersonalNote,
   viewStats,
+  agentName,
+  agentEmail,
+  propertyAddress,
 }: Props) {
   const [note, setNote] = useState<string>(initialPersonalNote ?? "");
   const [savedNote, setSavedNote] = useState<string>(initialPersonalNote ?? "");
@@ -164,7 +172,9 @@ export default function OwnerStoryAdminCard({
         </section>
       ) : null}
 
-      {/* Shareable link */}
+      {/* Shareable link + send-to-agent CTA. Promoted in Phase 5 — the
+          "Email Owner Story to agent" mailto is the primary delivery action
+          until Resend lands in Phase 6 and auto-sends from the outbox. */}
       <section className="rounded-lg bg-neutral-50 ring-1 ring-neutral-200 px-3 py-3">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
           Public link
@@ -187,6 +197,12 @@ export default function OwnerStoryAdminCard({
           >
             Open story page
           </Link>
+          <EmailStoryToAgentButton
+            agentName={agentName}
+            agentEmail={agentEmail}
+            propertyAddress={propertyAddress}
+            storyUrlPath={storyUrlPath}
+          />
         </div>
       </section>
 
@@ -228,6 +244,73 @@ export default function OwnerStoryAdminCard({
         ) : null}
       </section>
     </section>
+  );
+}
+
+/**
+ * Quick mailto button beside Copy + Open. Phase 5 promotion — sits inside
+ * the gold OwnerStoryAdminCard so the "send to agent" action is no longer
+ * buried in the legacy Compass block at the bottom of the page.
+ *
+ * When agent_email is missing the button renders disabled with a tooltip
+ * explaining why; the NullAgentEmailWarning surfaces the same problem at
+ * a higher altitude with an inline fix prompt.
+ */
+function EmailStoryToAgentButton({
+  agentName,
+  agentEmail,
+  propertyAddress,
+  storyUrlPath,
+}: {
+  agentName: string | null;
+  agentEmail: string | null;
+  propertyAddress: string | null;
+  storyUrlPath: string;
+}) {
+  const disabled = !agentEmail;
+  const firstName = agentName?.split(" ")[0] ?? "there";
+  const addressLabel = propertyAddress ?? "your listing";
+  const subject = `Owner Story page for ${addressLabel}`;
+  // Build origin-aware URL on click so we don't render an empty string at
+  // SSR (window is undefined). The handler grafts location.origin then
+  // navigates to the mailto.
+  function handleClick(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (disabled) {
+      e.preventDefault();
+      return;
+    }
+    if (typeof window === "undefined") return;
+    e.preventDefault();
+    const absolute = `${window.location.origin}${storyUrlPath}`;
+    const body =
+      `Hi ${firstName},\n\n` +
+      `Here's the Owner Story page for ${addressLabel}. It's the live, seller-facing view of every social post we've put behind this listing — it updates automatically as the campaign progresses. Please share it with your seller; they can keep it bookmarked.\n\n` +
+      `${absolute}\n\n` +
+      `— Alliance Social`;
+    window.location.href = `mailto:${agentEmail}?subject=${encodeURIComponent(
+      subject,
+    )}&body=${encodeURIComponent(body)}`;
+  }
+
+  return (
+    <a
+      href="#"
+      onClick={handleClick}
+      aria-disabled={disabled || undefined}
+      className={
+        "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors " +
+        (disabled
+          ? "ring-1 ring-neutral-200 bg-neutral-50 text-neutral-400 cursor-not-allowed"
+          : "bg-gold-500 hover:bg-gold-600 text-white")
+      }
+      title={
+        disabled
+          ? "Listing agent email is missing — fill it in to email the story."
+          : `Email Owner Story to ${agentEmail}`
+      }
+    >
+      Email to agent
+    </a>
   );
 }
 

@@ -14,6 +14,85 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_post_outbox: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          agent_email: string | null
+          agent_name: string | null
+          agent_phone: string | null
+          caption_snippet: string | null
+          created_at: string
+          delivery_method: string | null
+          generated_post_id: string | null
+          id: string
+          last_error: string | null
+          post_urls: Json
+          property_id: string | null
+          sent_at: string | null
+          story_url_path: string | null
+          thumbnail_url: string | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          agent_email?: string | null
+          agent_name?: string | null
+          agent_phone?: string | null
+          caption_snippet?: string | null
+          created_at?: string
+          delivery_method?: string | null
+          generated_post_id?: string | null
+          id?: string
+          last_error?: string | null
+          post_urls?: Json
+          property_id?: string | null
+          sent_at?: string | null
+          story_url_path?: string | null
+          thumbnail_url?: string | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          agent_email?: string | null
+          agent_name?: string | null
+          agent_phone?: string | null
+          caption_snippet?: string | null
+          created_at?: string
+          delivery_method?: string | null
+          generated_post_id?: string | null
+          id?: string
+          last_error?: string | null
+          post_urls?: Json
+          property_id?: string | null
+          sent_at?: string | null
+          story_url_path?: string | null
+          thumbnail_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_post_outbox_acknowledged_by_fkey"
+            columns: ["acknowledged_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_post_outbox_generated_post_id_fkey"
+            columns: ["generated_post_id"]
+            isOneToOne: false
+            referencedRelation: "generated_posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_post_outbox_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       api_credentials: {
         Row: {
           created_at: string
@@ -905,6 +984,7 @@ export type Database = {
           address: string | null
           agent_email: string | null
           agent_name: string | null
+          agent_phone: string | null
           alliance_role: string
           bathrooms_full: number | null
           bathrooms_half: number | null
@@ -943,6 +1023,7 @@ export type Database = {
           address?: string | null
           agent_email?: string | null
           agent_name?: string | null
+          agent_phone?: string | null
           alliance_role?: string
           bathrooms_full?: number | null
           bathrooms_half?: number | null
@@ -981,6 +1062,7 @@ export type Database = {
           address?: string | null
           agent_email?: string | null
           agent_name?: string | null
+          agent_phone?: string | null
           alliance_role?: string
           bathrooms_full?: number | null
           bathrooms_half?: number | null

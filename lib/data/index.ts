@@ -139,6 +139,8 @@ function fixturePropertySummaries(): PropertySummary[] {
       list_price: p.list_price ?? null,
       listing_date: null,
       agent_name: null,
+      agent_email: null,
+      agent_phone: null,
       hero_image_url: p.hero_image_url ?? null,
       status: "active" as const,
       source_mls: null,

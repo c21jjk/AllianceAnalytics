@@ -10,6 +10,7 @@ import SendToAgentButton from "@/components/SendToAgentButton";
 import ReportActionBar from "@/components/ReportActionBar";
 import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel";
 import OwnerStoryAdminCard from "@/components/OwnerStoryAdminCard";
+import NullAgentEmailWarning from "@/components/NullAgentEmailWarning";
 import CreatedPostsStrip from "@/components/CreatedPostsStrip";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 import {
@@ -184,6 +185,19 @@ export default async function LivePropertyDetail({
           storyUrlPath={existingReport.story_url_path}
           initialPersonalNote={existingReport.personal_note}
           viewStats={storyViewStats}
+          agentName={property.agent_name}
+          agentEmail={property.agent_email}
+          propertyAddress={property.address}
+        />
+      ) : null}
+
+      {/* Null-agent-email warning — Phase 5. Renders only when the listing
+          is missing the email needed to ping the agent on publish. Inline
+          so Larissa can fix it without leaving the page. */}
+      {property.agent_email === null ? (
+        <NullAgentEmailWarning
+          mls={property.mls_number}
+          agentName={property.agent_name}
         />
       ) : null}
 
@@ -717,8 +731,8 @@ function OwnerReportCardGenerated({
         />
         <SendToAgentButton
           propertyAddress={property.address ?? property.mls_number}
-          flyerUrl={existingReport.flyer_url_path}
-          pdfUrl={existingReport.pdf_url_path}
+          storyUrl={existingReport.story_url_path}
+          variant="quiet"
           disabled={false}
         />
       </div>

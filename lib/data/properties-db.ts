@@ -35,6 +35,10 @@ export interface PropertySummary {
   list_price: number | null;
   listing_date: string | null;
   agent_name: string | null;
+  /** Listing agent email — drives the agent-notification + mailto flows. */
+  agent_email: string | null;
+  /** Listing agent phone — Phase 5 column, consumed by SMS in Phase 6. */
+  agent_phone: string | null;
   hero_image_url: string | null;
   status: "active" | "pending" | "sold" | "expired";
   source_mls: string | null;
@@ -65,6 +69,8 @@ interface DbPropertyRow {
   list_price: number | null;
   listing_date: string | null;
   agent_name: string | null;
+  agent_email: string | null;
+  agent_phone: string | null;
   hero_image_url: string | null;
   status: "active" | "pending" | "sold" | "expired";
   source_mls: string | null;
@@ -120,7 +126,7 @@ export async function fetchProperties(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, agent_email, agent_phone, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
     )
     .limit(500);
 
@@ -213,6 +219,8 @@ export async function fetchProperties(
       list_price: p.list_price,
       listing_date: p.listing_date,
       agent_name: p.agent_name,
+      agent_email: p.agent_email,
+      agent_phone: p.agent_phone,
       hero_image_url: p.hero_image_url,
       status: p.status,
       source_mls: p.source_mls,
@@ -343,7 +351,7 @@ export async function fetchPropertyByMls(
   const { data: propRow, error } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, agent_email, agent_phone, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
     )
     .ilike("mls_number", trimmed)
     .maybeSingle();
@@ -449,6 +457,8 @@ export async function fetchPropertyByMls(
       row.list_price === null ? null : Number(row.list_price),
     listing_date: row.listing_date,
     agent_name: row.agent_name,
+    agent_email: row.agent_email,
+    agent_phone: row.agent_phone,
     hero_image_url: row.hero_image_url,
     status: row.status,
     source_mls: row.source_mls,
