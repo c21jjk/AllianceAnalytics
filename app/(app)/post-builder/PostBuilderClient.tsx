@@ -228,13 +228,25 @@ export default function PostBuilderClient({
     }
     if (initialPick) {
       // why: fresh-build deep link from the dashboard. Set the post_type and
-      // pre-select the listing. Format/variant come from localStorage below
-      // (or defaults) — the user can change them in the Post Builder picker.
+      // pre-select the listing — and early-return so the localStorage block
+      // below DOESN'T overwrite the post_type with the last-used value.
+      // Format + variant still come from localStorage inside this branch so
+      // the user's preferred output dimensions stay sticky across sessions.
       setPostType(initialPick.postType);
       setSelectedMls(initialPick.mls);
-      // why: still apply format + variant from localStorage below so users
-      // keep their preferred output dimensions. Falls through to the
-      // existing localStorage restore.
+      const savedFmtPick = localStorage.getItem(STORAGE_KEY_FORMAT) as PostFormat | null;
+      if (savedFmtPick && FORMATS.includes(savedFmtPick)) {
+        setFormat(savedFmtPick);
+      }
+      const savedVPick = localStorage.getItem(STORAGE_KEY_VARIANT) as PostVariant | null;
+      if (savedVPick && (savedVPick === "v1" || savedVPick === "v2" || savedVPick === "v3")) {
+        setVariantId(savedVPick);
+      }
+      const savedModePick = localStorage.getItem(STORAGE_KEY_OUTPUT_MODE) as OutputMode | null;
+      if (savedModePick === "ig_single" || savedModePick === "fb_multi") {
+        setOutputMode(savedModePick);
+      }
+      return;
     }
     const savedMode = localStorage.getItem(STORAGE_KEY_OUTPUT_MODE) as OutputMode | null;
     if (savedMode === "ig_single" || savedMode === "fb_multi") {

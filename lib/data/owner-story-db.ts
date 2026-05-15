@@ -2,6 +2,67 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
 
+/* ----------------------------------------------------------------------- *
+ *  Token lifecycle
+ * ----------------------------------------------------------------------- */
+
+/**
+ * Idempotently ensure a property has an owner-story `reports` row + token.
+ *
+ * The auto-row is intentionally thin: only `property_id` and `report_token`
+ * are set. The legacy `/r/[token]` Compass report flow needs `kpis`,
+ * `audience`, `narrative`, `generated_at` — those are still set by
+ * `generateReportAction` when Larissa hits "Generate". The story page
+ * doesn't need any of that; it reads live data on every render.
+ *
+ * Returns the token. Safe to call on every page render — does at most one
+ * SELECT + one INSERT.
+ *
+ * Why this helper exists alongside the `ensure_owner_story_tokens` SQL
+ * function: the SQL function is the bulk path (post-sync hook + one-time
+ * backfill). This TS helper is the on-demand path for properties created
+ * outside the sync (manual add, edge cases). Both paths use the same
+ * idempotency rule — INSERT only when no row exists.
+ */
+export async function getOrCreateStoryTokenForProperty(
+  propertyId: string,
+): Promise<string | null> {
+  if (!propertyId) return null;
+  const supabase = createAdminClient();
+
+  const { data: existing } = await supabase
+    .from("reports")
+    .select("report_token")
+    .eq("property_id", propertyId)
+    .order("generated_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing?.report_token) return existing.report_token;
+
+  const token = (globalThis.crypto as Crypto).randomUUID();
+  const { data: inserted, error } = await supabase
+    .from("reports")
+    .insert({
+      property_id: propertyId,
+      report_token: token,
+    })
+    .select("report_token")
+    .single();
+
+  if (error || !inserted) {
+    // Race: another caller inserted between our SELECT and INSERT. Re-read.
+    const { data: retry } = await supabase
+      .from("reports")
+      .select("report_token")
+      .eq("property_id", propertyId)
+      .limit(1)
+      .maybeSingle();
+    return retry?.report_token ?? null;
+  }
+  return inserted.report_token;
+}
+
 /**
  * Data fetcher for the public owner story page at `/home/[token]`.
  *

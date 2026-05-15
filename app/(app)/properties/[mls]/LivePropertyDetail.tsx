@@ -12,6 +12,7 @@ import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel"
 import OwnerStoryAdminCard from "@/components/OwnerStoryAdminCard";
 import CreatedPostsStrip from "@/components/CreatedPostsStrip";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
+import { getOrCreateStoryTokenForProperty } from "@/lib/data/owner-story-db";
 import {
   getOpenHousesForProperty,
   type UpcomingOpenHouse,
@@ -55,7 +56,15 @@ export default async function LivePropertyDetail({
       ? Math.floor((NOW - newestPostMs) / 86_400_000)
       : null;
 
-  const existingReport = await fetchExistingOwnerReportForProperty(property.id);
+  // Ensure this property has an owner-story token before we read the report
+  // row. After the one-time backfill every existing property already has
+  // one; this guards new properties created outside the RETS sync path.
+  // Idempotent — at most one extra round-trip when the row is missing.
+  let existingReport = await fetchExistingOwnerReportForProperty(property.id);
+  if (!existingReport) {
+    await getOrCreateStoryTokenForProperty(property.id);
+    existingReport = await fetchExistingOwnerReportForProperty(property.id);
+  }
   const openHouses = await getOpenHousesForProperty(property.id);
   // why: per-listing Created Posts strip — pulls every generated_posts row
   // saved for this MLS, drafts + posted alike, so Larissa can resume editing
@@ -159,11 +168,12 @@ export default async function LivePropertyDetail({
         </div>
       </section>
 
-      {/* Owner Report — single dominant card. Pre-generation: unmissable hero
-          CTA. Post-generation: compact header with timestamp + actions, quiet
-          Regenerate link. Two distinct surfaces so the user always knows
-          which step they're on. */}
-      {existingReport ? (
+      {/* Legacy Compass-style Owner Report — gated on generated_at, NOT on
+          row existence. Phase 2 backfills a thin row + token for every
+          property so the story page works without anyone clicking Generate;
+          a non-null generated_at means the formal report snapshot has
+          actually been taken. */}
+      {existingReport && existingReport.generated_at ? (
         <OwnerReportCardGenerated
           property={property}
           existingReport={existingReport}
