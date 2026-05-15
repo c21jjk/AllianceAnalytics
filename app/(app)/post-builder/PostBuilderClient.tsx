@@ -974,36 +974,6 @@ export default function PostBuilderClient({
 
   return (
     <div className="space-y-5">
-      {/* Output mode toggle — Instagram (one designed image) vs Facebook (hero card + real photos bundled) */}
-      <div className="card p-2 flex gap-1">
-        {OUTPUT_MODES.map((mode) => {
-          const active = mode.id === outputMode;
-          return (
-            <button
-              key={mode.id}
-              type="button"
-              onClick={() => {
-                setOutputMode(mode.id);
-                setBundleResult(null);
-                setRenderResult(null);
-                setError(null);
-              }}
-              className={[
-                "flex-1 px-4 py-3 rounded-lg transition text-left",
-                active
-                  ? "bg-neutral-900 text-white"
-                  : "bg-white text-neutral-700 hover:bg-neutral-50 ring-1 ring-neutral-200",
-              ].join(" ")}
-            >
-              <div className="text-sm font-semibold">{mode.label}</div>
-              <div className={["text-xs mt-0.5", active ? "text-neutral-300" : "text-neutral-500"].join(" ")}>
-                {mode.sub}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
       {/* Post type segmented picker */}
       <div className="card p-2 flex flex-wrap gap-1">
         {POST_TYPES.map((pt) => {
