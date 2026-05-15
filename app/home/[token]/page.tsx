@@ -193,6 +193,7 @@ function StoryView({ data }: { data: OwnerStoryData }) {
           chapter padding on >=768px. Kept inline so the public story page
           stays self-contained (no global CSS leak into the auth'd app). */}
       <style>{`
+        .story-gallery::-webkit-scrollbar { display: none; }
         @media (min-width: 768px) {
           .story-main { max-width: 880px; }
           .story-chapter { padding-left: 48px !important; padding-right: 48px !important; padding-top: 56px !important; padding-bottom: 56px !important; }
@@ -201,6 +202,7 @@ function StoryView({ data }: { data: OwnerStoryData }) {
           .story-callout { padding: 72px 48px !important; }
           .story-whatnow { padding: 64px 48px 36px !important; }
           .story-header { padding: 24px 48px !important; }
+          .story-gallery { padding: 0 48px !important; }
         }
       `}</style>
     </div>
@@ -522,6 +524,171 @@ function normalizeOfficeName(raw: string | null): string | null {
   // "CENTURY" stays special because the regex above only catches all-caps
   // multi-letter runs; numbers like "21" pass through.
   return cased;
+}
+
+function PhotoGalleryStrip({ photos }: { photos: OwnerStoryPhoto[] }) {
+  // Cap at 8 so the page doesn't turn into a photo album. Sellers can see
+  // them all by clicking into Zillow / the MLS — this strip is just to
+  // remind them their home looks great.
+  const display = photos.slice(0, 8);
+  return (
+    <section
+      aria-label="More photos of your home"
+      style={{
+        padding: "0 0 32px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          overflowX: "auto",
+          padding: "0 24px",
+          scrollSnapType: "x mandatory",
+          WebkitOverflowScrolling: "touch",
+          scrollbarWidth: "none",
+        }}
+        className="story-gallery"
+      >
+        {display.map((photo, idx) => (
+          <div
+            key={idx}
+            style={{
+              flex: "0 0 auto",
+              width: 220,
+              aspectRatio: "4 / 3",
+              backgroundColor: "#f4f4f4",
+              borderRadius: 4,
+              overflow: "hidden",
+              scrollSnapAlign: "start",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photo.url}
+              alt={photo.caption ?? `Listing photo ${idx + 2}`}
+              loading="lazy"
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                display: "block",
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function OpenHouseChapter({
+  openHouses,
+}: {
+  openHouses: OwnerStoryOpenHouse[];
+}) {
+  const now = Date.now();
+  const upcoming = openHouses.filter(
+    (oh) => new Date(oh.start_at).getTime() >= now,
+  );
+  const past = openHouses.filter(
+    (oh) => new Date(oh.start_at).getTime() < now,
+  );
+
+  if (upcoming.length === 0 && past.length === 0) return null;
+
+  const eyebrow = upcoming.length > 0 ? "Open House" : "Open Houses Held";
+  const heading =
+    upcoming.length > 0
+      ? past.length > 0
+        ? "We’ve opened your home to buyers — and we’re doing it again."
+        : "We’re opening your home to buyers."
+      : past.length === 1
+        ? "We opened your home to buyers."
+        : "We opened your home to buyers more than once.";
+
+  return (
+    <ChapterShell eyebrow={eyebrow}>
+      <h2 style={chapterHeadingStyle}>{heading}</h2>
+      <div style={{ marginTop: 20 }}>
+        {upcoming.map((oh) => (
+          <OpenHouseRow key={oh.id} openHouse={oh} kind="upcoming" />
+        ))}
+        {past.map((oh) => (
+          <OpenHouseRow key={oh.id} openHouse={oh} kind="past" />
+        ))}
+      </div>
+    </ChapterShell>
+  );
+}
+
+function OpenHouseRow({
+  openHouse,
+  kind,
+}: {
+  openHouse: OwnerStoryOpenHouse;
+  kind: "upcoming" | "past";
+}) {
+  const date = formatShortDate(openHouse.start_at);
+  const startTime = formatTimeOfDay(openHouse.start_at);
+  const endTime = openHouse.end_at ? formatTimeOfDay(openHouse.end_at) : null;
+  const timeLabel = endTime ? `${startTime} – ${endTime}` : startTime;
+
+  return (
+    <div
+      style={{
+        padding: "16px 0",
+        borderTop: `1px solid ${RULE}`,
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 16,
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 17,
+            fontWeight: 500,
+            color: INK,
+            letterSpacing: "-0.01em",
+          }}
+        >
+          {date}
+        </div>
+        <div
+          style={{
+            marginTop: 2,
+            fontSize: 14,
+            color: INK_SOFT,
+          }}
+        >
+          {timeLabel}
+        </div>
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          letterSpacing: "0.16em",
+          textTransform: "uppercase",
+          fontWeight: 500,
+          color: kind === "upcoming" ? GOLD : INK_MUTED,
+          flexShrink: 0,
+        }}
+      >
+        {kind === "upcoming" ? "Upcoming" : "Held"}
+      </div>
+    </div>
+  );
+}
+
+function formatTimeOfDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: d.getMinutes() === 0 ? undefined : "2-digit",
+  });
 }
 
 function FactsStrip({ listing }: { listing: OwnerStoryData["listing"] }) {

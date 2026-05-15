@@ -1041,9 +1041,7 @@ export default function PostBuilderClient({
           ) : (
             <div className="max-h-[640px] overflow-y-auto -mx-2 px-2 space-y-1.5">
               {filteredListings.map((l) => {
-                const active = isOhMultiMode
-                  ? ohMultiSelected.has(l.mls_number)
-                  : l.mls_number === selectedMls;
+                const active = l.mls_number === selectedMls;
                 const showPrice =
                   postType === "just_sold" && typeof l.close_price === "number"
                     ? l.close_price
@@ -1052,9 +1050,7 @@ export default function PostBuilderClient({
                   <button
                     key={l.mls_number}
                     type="button"
-                    onClick={() =>
-                      isOhMultiMode ? toggleOhMulti(l.mls_number) : pickListing(l.mls_number)
-                    }
+                    onClick={() => pickListing(l.mls_number)}
                     className={[
                       "w-full text-left rounded-lg border p-2.5 transition flex gap-3 items-start",
                       active
@@ -1062,28 +1058,6 @@ export default function PostBuilderClient({
                         : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50",
                     ].join(" ")}
                   >
-                    {isOhMultiMode ? (
-                      <div
-                        className={[
-                          "w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center flex-shrink-0 transition",
-                          active
-                            ? "bg-gold-500 border-gold-500"
-                            : "bg-white border-neutral-300",
-                        ].join(" ")}
-                      >
-                        {active ? (
-                          <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
-                            <path
-                              d="M2 6l3 3 5-6"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        ) : null}
-                      </div>
-                    ) : null}
                     {l.hero_image_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -1135,28 +1109,10 @@ export default function PostBuilderClient({
 
         {/* Right: Format + Variant + Photo picker + Generate + Preview */}
         <section className="card p-5 min-h-[640px]">
-          {isOhMultiMode ? (
-            <OhMultiPanel
-              selectedCount={ohMultiSelected.size}
-              selectedListings={listings.filter((l) => ohMultiSelected.has(l.mls_number))}
-              bundleGenerating={bundleGenerating}
-              bundleResult={bundleResult}
-              error={error}
-              editedCaption={editedCaption}
-              onEditedCaptionChange={setEditedCaption}
-              onGenerate={generateOhBundle}
-              onDownload={downloadBundle}
-              onCopyCaption={copyCaption}
-              copyState={copyState}
-              isAdmin={isAdmin}
-              onPostNow={isAdmin ? openPostNow : undefined}
-            />
-          ) : !selectedListing ? (
+          {!selectedListing ? (
             <EmptyPreview />
           ) : (
             <div className="flex flex-col h-full">
-              {/* Format + Variant (only shown in IG single-image mode) */}
-              {outputMode === "ig_single" ? (
               <div className="mb-4 space-y-4">
                 {/* Step 2 · Format — full-width row */}
                 <div>
@@ -1327,35 +1283,17 @@ export default function PostBuilderClient({
                   </div>
                 </div>
               </div>
-              ) : null}
 
-              {/* FB-mode header: shows which template is in play */}
-              {outputMode === "fb_multi" ? (
-                <div className="mb-4 rounded-lg border border-neutral-200 bg-neutral-50 p-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Step 2 · Hero card
-                    </div>
-                    <div className="text-sm font-semibold text-neutral-900 mt-0.5">
-                      NEW LISTING · Editorial card with photo + stats strip
-                    </div>
-                  </div>
-                  <span className="text-xs font-mono text-neutral-500">fb_new_listing_v1</span>
-                </div>
-              ) : null}
-
-              {/* Photo picker — single-select (IG) or multi-select (FB) */}
+              {/* Photo picker — single-select */}
               {availablePhotos.length > 1 ? (
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="eyebrow">
-                      {outputMode === "fb_multi"
-                        ? `Step 3 · Photos · ${fbSelectedPhotos.size} selected (FB gallery, first becomes hero card)`
-                        : `Step 4 · ${photoCount === 1 ? "Hero photo" : `${photoCount} photos`}${
-                            photoCount === 1
-                              ? ` · ${selectedPhotoIndex + 1} of ${availablePhotos.length}`
-                              : ` · slots ${(selectedPhotoIndex % availablePhotos.length) + 1}–${((selectedPhotoIndex + photoCount - 1) % availablePhotos.length) + 1}`
-                          }`}
+                      {`Step 4 · ${photoCount === 1 ? "Hero photo" : `${photoCount} photos`}${
+                        photoCount === 1
+                          ? ` · ${selectedPhotoIndex + 1} of ${availablePhotos.length}`
+                          : ` · slots ${(selectedPhotoIndex % availablePhotos.length) + 1}–${((selectedPhotoIndex + photoCount - 1) % availablePhotos.length) + 1}`
+                      }`}
                     </div>
                     {photosLoading ? (
                       <span className="text-xs text-neutral-500">Loading…</span>
@@ -1363,64 +1301,7 @@ export default function PostBuilderClient({
                   </div>
                   <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
                     {availablePhotos.map((p, i) => {
-                      // Two selection models depending on output mode:
-                      //   IG: rolling window from selectedPhotoIndex sized by photoCount
-                      //   FB: free multi-select via fbSelectedPhotos Set
-                      if (outputMode === "fb_multi") {
-                        const isSelected = fbSelectedPhotos.has(i);
-                        // Slot number reflects ORDER in the gallery (sorted ascending)
-                        const slotNum = isSelected
-                          ? [...fbSelectedPhotos].sort((a, b) => a - b).indexOf(i) + 1
-                          : null;
-                        return (
-                          <button
-                            key={`${p.sequence}-${i}`}
-                            type="button"
-                            onClick={() => toggleFbPhoto(i)}
-                            className={[
-                              "relative shrink-0 rounded-lg overflow-hidden transition",
-                              isSelected
-                                ? slotNum === 1
-                                  ? "ring-2 ring-gold-500 ring-offset-2 ring-offset-white"
-                                  : "ring-2 ring-emerald-500 ring-offset-1 ring-offset-white"
-                                : "ring-1 ring-neutral-200 hover:ring-neutral-400 opacity-70 hover:opacity-100",
-                            ].join(" ")}
-                            title={
-                              isSelected
-                                ? slotNum === 1
-                                  ? `Photo ${p.sequence} · HERO (becomes the designed card)`
-                                  : `Photo ${p.sequence} · gallery slot ${slotNum}`
-                                : `Photo ${p.sequence} — click to add`
-                            }
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={p.url}
-                              alt=""
-                              className="w-24 h-24 object-cover bg-neutral-100"
-                              loading="lazy"
-                            />
-                            <span
-                              className={[
-                                "absolute bottom-1 left-1 rounded-full px-1.5 py-px text-[10px] font-semibold",
-                                slotNum === 1
-                                  ? "bg-gold-500 text-neutral-900"
-                                  : isSelected
-                                    ? "bg-emerald-500 text-white"
-                                    : "bg-black/55 text-white",
-                              ].join(" ")}
-                            >
-                              {slotNum === 1
-                                ? "HERO"
-                                : isSelected
-                                  ? `#${slotNum}`
-                                  : p.sequence || "★"}
-                            </span>
-                          </button>
-                        );
-                      }
-
-                      // IG single-image mode (original behavior)
+                      // IG single-image rolling window from selectedPhotoIndex sized by photoCount
                       const slotPosition = computeSlotPosition(
                         i,
                         selectedPhotoIndex,
@@ -1476,50 +1357,6 @@ export default function PostBuilderClient({
                 </div>
               ) : null}
 
-              {/* FB-mode custom feature input + generate bundle */}
-              {outputMode === "fb_multi" ? (
-                <div className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold uppercase tracking-wide text-gold-700">
-                        Step 4 · Custom feature (stat #3)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={regenerateCustomFeature}
-                        disabled={customFeatureLoading}
-                        className="text-xs text-neutral-600 hover:text-neutral-900 font-medium disabled:opacity-40"
-                      >
-                        {customFeatureLoading ? "Thinking…" : "↻ AI suggest"}
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      className="input"
-                      placeholder={customFeatureSuggestion || "e.g. SUNSET VIEWS"}
-                      value={customFeature}
-                      onChange={(e) => {
-                        setCustomFeature(e.target.value);
-                        setBundleResult(null);
-                      }}
-                      maxLength={30}
-                    />
-                    <div className="mt-1 text-[11px] text-neutral-500">
-                      Appears on the hero card after BD/BA. ALL CAPS, 1-3 words. Falls back to property type if blank.
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={generateBundle}
-                    disabled={bundleGenerating || fbSelectedPhotos.size < 2}
-                    className="btn-primary whitespace-nowrap"
-                  >
-                    {bundleGenerating ? "Building bundle…" : bundleResult ? "Rebuild bundle" : "Generate FB Bundle"}
-                  </button>
-                </div>
-              ) : null}
-
-              {outputMode === "ig_single" ? (
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
                   <div className="eyebrow mb-1">
@@ -1543,7 +1380,6 @@ export default function PostBuilderClient({
                   {generating ? "Generating…" : renderResult ? "Regenerate" : "Generate Post"}
                 </button>
               </div>
-              ) : null}
 
               {error ? (
                 <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
@@ -1552,60 +1388,11 @@ export default function PostBuilderClient({
               ) : null}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
-                {/* Preview pane (IG mode shows rendered image; FB mode shows bundle summary) */}
+                {/* Preview pane */}
                 <div className="flex flex-col">
                   <div className="eyebrow mb-2">
-                    {outputMode === "fb_multi"
-                      ? `Bundle · ${bundleResult ? `${bundleResult.asset_count} assets` : `${fbSelectedPhotos.size} photo${fbSelectedPhotos.size === 1 ? "" : "s"} selected`}`
-                      : `Preview · ${dimensionsLabel(format)}`}
+                    {`Preview · ${dimensionsLabel(format)}`}
                   </div>
-                  {outputMode === "fb_multi" ? (
-                    <div className="relative rounded-xl bg-neutral-50 border border-neutral-200 overflow-hidden mx-auto w-full max-w-md aspect-square flex items-center justify-center text-center p-6">
-                      {bundleGenerating ? (
-                        <div className="flex flex-col items-center gap-3">
-                          <div className="w-10 h-10 rounded-full border-2 border-gold-500 border-t-transparent animate-spin" />
-                          <div className="text-sm font-medium text-neutral-700">Building FB bundle…</div>
-                          <div className="text-xs text-neutral-500 max-w-[260px]">
-                            Rendering hero card, fetching {fbSelectedPhotos.size - 1} real photo{fbSelectedPhotos.size - 1 === 1 ? "" : "s"}, zipping everything.
-                          </div>
-                        </div>
-                      ) : bundleResult ? (
-                        <div className="flex flex-col items-center gap-3">
-                          <div className="text-3xl">📦</div>
-                          <div className="text-sm font-semibold text-neutral-900">
-                            Bundle ready
-                          </div>
-                          <div className="text-xs text-neutral-600 max-w-[260px]">
-                            {bundleResult.asset_count} files packaged. Download, unzip, drag photos to FB in numerical order, paste the caption.
-                          </div>
-                          <div className="flex flex-col items-stretch gap-2 w-full max-w-[260px] mx-auto mt-1">
-                            <button
-                              type="button"
-                              onClick={downloadBundle}
-                              className="btn-primary"
-                            >
-                              Download ZIP
-                            </button>
-                            {isAdmin ? (
-                              <button
-                                type="button"
-                                onClick={openPostNow}
-                                className="btn-secondary"
-                              >
-                                Post Now →
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-sm text-neutral-500">
-                          {fbSelectedPhotos.size < 2
-                            ? "Pick at least 2 photos to enable bundle generation."
-                            : "Click Generate FB Bundle to package the caption + hero card + selected photos."}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
                   <div
                     className={[
                       "relative rounded-xl bg-neutral-100 border border-neutral-200 overflow-hidden mx-auto w-full max-w-md",
@@ -1638,8 +1425,7 @@ export default function PostBuilderClient({
                       </button>
                     ) : null}
                   </div>
-                  )}
-                  {outputMode === "ig_single" && renderResult ? (
+                  {renderResult ? (
                     <div className="mt-3 flex gap-2 flex-wrap">
                       <button
                         type="button"
@@ -1745,24 +1531,11 @@ export default function PostBuilderClient({
 
       {postNowOpen ? (
         <PostNowModal
-          outputMode={outputMode}
-          isOhMulti={isOhMultiMode}
-          assetCount={
-            outputMode === "fb_multi"
-              ? bundleResult?.asset_count ?? 0
-              : 1
-          }
-          previewImageUrl={
-            outputMode === "ig_single"
-              ? renderResult?.image_url ?? null
-              : null
-          }
+          previewImageUrl={renderResult?.image_url ?? null}
           listingLabel={
-            isOhMultiMode
-              ? `${ohMultiSelected.size} open house${ohMultiSelected.size === 1 ? "" : "s"}`
-              : selectedListing
-                ? `${selectedListing.address ?? selectedListing.mls_number}`
-                : ""
+            selectedListing
+              ? `${selectedListing.address ?? selectedListing.mls_number}`
+              : ""
           }
           captionPreview={editedCaption}
           platforms={postNowPlatforms}
@@ -1792,9 +1565,6 @@ export default function PostBuilderClient({
 }
 
 interface PostNowModalProps {
-  outputMode: OutputMode;
-  isOhMulti: boolean;
-  assetCount: number;
   previewImageUrl: string | null;
   listingLabel: string;
   captionPreview: string;
@@ -1811,9 +1581,6 @@ const POST_NOW_ARM_MS = 2000;
 
 function PostNowModal(props: PostNowModalProps) {
   const {
-    outputMode,
-    isOhMulti,
-    assetCount,
     previewImageUrl,
     listingLabel,
     captionPreview,
@@ -1840,12 +1607,6 @@ function PostNowModal(props: PostNowModalProps) {
   const armed = armElapsed >= POST_NOW_ARM_MS;
   const armPct = Math.round((armElapsed / POST_NOW_ARM_MS) * 100);
 
-  // IG carousel cap is 10 images. Disable IG checkbox when bundle exceeds it.
-  const igDisabledReason: string | null =
-    outputMode === "fb_multi" && assetCount > 10
-      ? `Instagram carousel max is 10 images — this bundle has ${assetCount}.`
-      : null;
-
   const canConfirm = platforms.size > 0 && armed && !sending && !results;
 
   // Trim caption preview for the modal (we have textarea on the main page).
@@ -1870,7 +1631,7 @@ function PostNowModal(props: PostNowModalProps) {
               </div>
               <h3 className="text-lg font-bold text-neutral-900">Post Now</h3>
               <div className="text-sm text-neutral-600 mt-0.5">
-                Publishes this {outputMode === "fb_multi" ? "bundle" : "image"} directly to Meta. There is no preview step on Facebook or Instagram once submitted.
+                Publishes this image directly to Meta. There is no preview step on Facebook or Instagram once submitted.
               </div>
             </div>
             <button
@@ -1905,9 +1666,7 @@ function PostNowModal(props: PostNowModalProps) {
                 {listingLabel}
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                {outputMode === "fb_multi"
-                  ? `${assetCount} image${assetCount === 1 ? "" : "s"} · ${isOhMulti ? "Open House gallery" : "FB photo bundle"}`
-                  : "1 designed image · IG single post"}
+                1 designed image · IG single post
               </div>
             </div>
           </div>
@@ -1934,9 +1693,7 @@ function PostNowModal(props: PostNowModalProps) {
                 <div className="flex-1">
                   <div className="text-sm font-semibold text-neutral-900">Facebook Page</div>
                   <div className="text-xs text-neutral-600 mt-0.5">
-                    {outputMode === "fb_multi"
-                      ? `Posts a ${assetCount}-photo gallery to the Alliance Page.`
-                      : "Posts a single photo to the Alliance Page."}
+                    Posts a single photo to the Alliance Page.
                   </div>
                 </div>
               </label>
@@ -1944,11 +1701,9 @@ function PostNowModal(props: PostNowModalProps) {
               <label
                 className={[
                   "flex items-start gap-3 rounded-lg p-3 transition ring-1",
-                  igDisabledReason
-                    ? "bg-neutral-50 ring-neutral-200 opacity-60 cursor-not-allowed"
-                    : platforms.has("instagram")
-                      ? "bg-pink-50 ring-pink-300 cursor-pointer"
-                      : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer",
+                  platforms.has("instagram")
+                    ? "bg-pink-50 ring-pink-300 cursor-pointer"
+                    : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer",
                 ].join(" ")}
               >
                 <input
@@ -1956,14 +1711,12 @@ function PostNowModal(props: PostNowModalProps) {
                   className="mt-0.5"
                   checked={platforms.has("instagram")}
                   onChange={() => onTogglePlatform("instagram")}
-                  disabled={sending || !!results || !!igDisabledReason}
+                  disabled={sending || !!results}
                 />
                 <div className="flex-1">
                   <div className="text-sm font-semibold text-neutral-900">Instagram Business</div>
                   <div className="text-xs text-neutral-600 mt-0.5">
-                    {igDisabledReason ?? (outputMode === "fb_multi"
-                      ? `Posts as a ${assetCount}-image carousel.`
-                      : "Posts a single image to the Alliance IG.")}
+                    Posts a single image to the Alliance IG.
                   </div>
                 </div>
               </label>
@@ -2083,201 +1836,6 @@ function PostNowModal(props: PostNowModalProps) {
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface OhMultiPanelProps {
-  selectedCount: number;
-  selectedListings: PostBuilderListing[];
-  bundleGenerating: boolean;
-  bundleResult: BundleUiResult | null;
-  error: string | null;
-  editedCaption: string;
-  onEditedCaptionChange: (s: string) => void;
-  onGenerate: () => void;
-  onDownload: () => void;
-  onCopyCaption: () => void;
-  copyState: "idle" | "copied";
-  isAdmin: boolean;
-  onPostNow?: () => void;
-}
-
-function OhMultiPanel(props: OhMultiPanelProps) {
-  const {
-    selectedCount,
-    selectedListings,
-    bundleGenerating,
-    bundleResult,
-    error,
-    editedCaption,
-    onEditedCaptionChange,
-    onGenerate,
-    onDownload,
-    onCopyCaption,
-    copyState,
-  } = props;
-
-  // Day-group the selected listings for the preview list (matches the caption shape)
-  const grouped = useMemo(() => {
-    const byDay = new Map<
-      string,
-      { label: string; rows: { listing: PostBuilderListing; time: string }[] }
-    >();
-    for (const l of selectedListings) {
-      if (!l.oh_start_at) continue;
-      const start = new Date(l.oh_start_at);
-      if (Number.isNaN(start.getTime())) continue;
-      const dayKey = new Intl.DateTimeFormat("en-CA", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        timeZone: "America/New_York",
-      }).format(start);
-      const dayLabel = new Intl.DateTimeFormat("en-US", {
-        weekday: "long",
-        timeZone: "America/New_York",
-      }).format(start);
-      const timeFmt = new Intl.DateTimeFormat("en-US", {
-        hour: "numeric",
-        minute: start.getUTCMinutes() === 0 ? undefined : "2-digit",
-        hour12: true,
-        timeZone: "America/New_York",
-      });
-      const timeStr = timeFmt.format(start);
-      if (!byDay.has(dayKey)) byDay.set(dayKey, { label: dayLabel, rows: [] });
-      byDay.get(dayKey)!.rows.push({ listing: l, time: timeStr });
-    }
-    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [selectedListings]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-        <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-          Open House Weekend · multi-property
-        </div>
-        <div className="text-sm text-emerald-900 mt-1">
-          Multi-select listings from the left panel. Each selection becomes
-          one designed "Open House" card in the FB gallery. The caption
-          auto-builds with day-grouped addresses + times.
-        </div>
-      </div>
-
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div>
-          <div className="eyebrow mb-1">Step · Generate</div>
-          <h2 className="text-lg font-semibold text-neutral-900">
-            {selectedCount === 0
-              ? "No listings selected"
-              : `${selectedCount} open house${selectedCount === 1 ? "" : "s"} selected`}
-          </h2>
-          <div className="text-sm text-neutral-600">
-            Each generates one designed card. Max 15 per post.
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={bundleGenerating || selectedCount < 2}
-          className="btn-primary whitespace-nowrap"
-        >
-          {bundleGenerating ? "Building bundle…" : bundleResult ? "Rebuild" : "Generate OH Bundle"}
-        </button>
-      </div>
-
-      {error ? (
-        <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
-        {/* Selected listings preview (day-grouped) */}
-        <div className="flex flex-col">
-          <div className="eyebrow mb-2">Selected listings · grouped by OH day</div>
-          <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-3 flex-1 overflow-y-auto min-h-[280px]">
-            {grouped.length === 0 ? (
-              <div className="text-sm text-neutral-500 italic text-center mt-12 px-4">
-                Pick at least 2 listings from the left panel.
-                <br />
-                Each selected listing gets its own Open House card in the FB gallery.
-              </div>
-            ) : (
-              grouped.map(([key, group]) => (
-                <div key={key} className="mb-4 last:mb-0">
-                  <div className="text-xs font-bold uppercase tracking-wide text-neutral-700 mb-1.5">
-                    {group.label}
-                  </div>
-                  <ul className="space-y-1 text-sm text-neutral-700">
-                    {group.rows.map((r) => (
-                      <li key={r.listing.mls_number} className="flex items-baseline gap-2">
-                        <span>📍</span>
-                        <span className="flex-1 truncate">
-                          {r.listing.address}, {r.listing.city}
-                        </span>
-                        <span className="text-xs text-neutral-500 font-mono">{r.time}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))
-            )}
-          </div>
-          {bundleResult ? (
-            <div className="mt-3 flex flex-col gap-2">
-              <button type="button" onClick={onDownload} className="btn-primary">
-                Download ZIP · {bundleResult.asset_count} cards
-              </button>
-              {props.isAdmin && props.onPostNow ? (
-                <button
-                  type="button"
-                  onClick={props.onPostNow}
-                  className="btn-secondary"
-                  title="Publish directly to Facebook"
-                >
-                  Post Now →
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-
-        {/* Caption preview / editor */}
-        <div className="flex flex-col">
-          <div className="flex items-center justify-between mb-2">
-            <div className="eyebrow">Caption preview</div>
-            {bundleResult ? (
-              <button
-                type="button"
-                onClick={onCopyCaption}
-                className="text-xs text-gold-700 font-medium hover:text-gold-800"
-              >
-                {copyState === "copied" ? "✓ Copied" : "Copy all"}
-              </button>
-            ) : null}
-          </div>
-          <textarea
-            className="input flex-1 min-h-[280px] font-mono text-[13px] leading-relaxed resize-y"
-            placeholder={
-              bundleGenerating
-                ? "Building bundle + caption…"
-                : "Caption appears after Generate. Day-grouped addresses, times, and hashtags built automatically."
-            }
-            value={editedCaption}
-            onChange={(e) => onEditedCaptionChange(e.target.value)}
-          />
-          {bundleResult ? (
-            <div className="mt-3 text-xs text-neutral-500 leading-relaxed">
-              First listing's MLS hashtag{" "}
-              <code className="font-mono text-neutral-700 bg-neutral-100 px-1 rounded">
-                {bundleResult.mls_hashtag}
-              </code>{" "}
-              is in the caption for auto-attribution.
-            </div>
-          ) : null}
         </div>
       </div>
     </div>
