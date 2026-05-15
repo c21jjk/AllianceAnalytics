@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { Barlow } from "next/font/google";
 import {
   fetchOwnerStoryByToken,
+  logOwnerStoryView,
   type OwnerStoryData,
   type OwnerStoryPost,
   type Platform,
@@ -9,6 +11,7 @@ import {
 } from "@/lib/data/owner-story-db";
 import {
   formatCompactNumber,
+  formatCurrency,
   formatNumber,
   formatShortDate,
 } from "@/lib/format";
@@ -79,6 +82,20 @@ export default async function OwnerStoryPage({ params }: PageProps) {
   const { token } = await params;
   const data = await fetchOwnerStoryByToken(token);
   if (!data) notFound();
+
+  // Fire-and-forget view log. Pull headers from the request so we can stash
+  // a trimmed user-agent + referrer host without holding the render. Any
+  // failure inside logOwnerStoryView is swallowed there.
+  try {
+    const hdrs = await headers();
+    void logOwnerStoryView(
+      data.report_id,
+      hdrs.get("user-agent"),
+      hdrs.get("referer"),
+    );
+  } catch {
+    // headers() can throw outside a request scope — never block rendering.
+  }
 
   return <StoryView data={data} />;
 }
@@ -290,6 +307,8 @@ function HeroChapter({
         </div>
       ) : null}
 
+      <FactsStrip listing={listing} />
+
       {/* Hero photo */}
       <div
         style={{
@@ -488,6 +507,81 @@ function normalizeOfficeName(raw: string | null): string | null {
   // "CENTURY" stays special because the regex above only catches all-caps
   // multi-letter runs; numbers like "21" pass through.
   return cased;
+}
+
+function FactsStrip({ listing }: { listing: OwnerStoryData["listing"] }) {
+  const facts: { label: string; value: string }[] = [];
+
+  if (listing.bedrooms !== null && listing.bedrooms !== undefined) {
+    facts.push({
+      label: listing.bedrooms === 1 ? "bedroom" : "bedrooms",
+      value: String(listing.bedrooms),
+    });
+  }
+  const bathTotal =
+    (listing.bathrooms_full ?? 0) + 0.5 * (listing.bathrooms_half ?? 0);
+  if (bathTotal > 0) {
+    facts.push({
+      label: bathTotal === 1 ? "bath" : "baths",
+      value: bathTotal % 1 === 0 ? String(bathTotal) : bathTotal.toFixed(1),
+    });
+  }
+  if (listing.list_price !== null && listing.list_price !== undefined) {
+    facts.push({
+      label: "listed",
+      value: formatCurrency(listing.list_price),
+    });
+  }
+  if (listing.property_type) {
+    facts.push({
+      label: "type",
+      value: listing.property_type,
+    });
+  }
+
+  if (facts.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: 24,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "16px 28px",
+      }}
+    >
+      {facts.map((fact, idx) => (
+        <div
+          key={`${fact.label}-${idx}`}
+          style={{ display: "flex", flexDirection: "column", gap: 2 }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              letterSpacing: "0.22em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+              color: INK_MUTED,
+            }}
+          >
+            {fact.label}
+          </div>
+          <div
+            style={{
+              fontSize: 17,
+              fontWeight: 500,
+              color: INK,
+              fontVariantNumeric: "tabular-nums",
+              letterSpacing: "-0.01em",
+              lineHeight: 1.1,
+            }}
+          >
+            {fact.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function FreshlyListedChapter({

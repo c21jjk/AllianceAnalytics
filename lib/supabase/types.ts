@@ -590,6 +590,38 @@ export type Database = {
           },
         ]
       }
+      owner_story_views: {
+        Row: {
+          id: number
+          referrer_host: string | null
+          report_id: string
+          user_agent: string | null
+          viewed_at: string
+        }
+        Insert: {
+          id?: number
+          referrer_host?: string | null
+          report_id: string
+          user_agent?: string | null
+          viewed_at?: string
+        }
+        Update: {
+          id?: number
+          referrer_host?: string | null
+          report_id?: string
+          user_agent?: string | null
+          viewed_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "owner_story_views_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       platform_followers: {
         Row: {
           captured_at: string
@@ -1213,6 +1245,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      ensure_owner_story_tokens: { Args: never; Returns: number }
       invoke_edge_function: { Args: { fn_name: string }; Returns: number }
       invoke_mls_rets_sync: { Args: { feed: string }; Returns: number }
       is_admin: { Args: never; Returns: boolean }

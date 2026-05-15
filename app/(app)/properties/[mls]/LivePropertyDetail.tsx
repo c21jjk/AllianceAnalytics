@@ -12,7 +12,10 @@ import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel"
 import OwnerStoryAdminCard from "@/components/OwnerStoryAdminCard";
 import CreatedPostsStrip from "@/components/CreatedPostsStrip";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
-import { getOrCreateStoryTokenForProperty } from "@/lib/data/owner-story-db";
+import {
+  fetchOwnerStoryViewStats,
+  getOrCreateStoryTokenForProperty,
+} from "@/lib/data/owner-story-db";
 import {
   getOpenHousesForProperty,
   type UpcomingOpenHouse,
@@ -65,6 +68,9 @@ export default async function LivePropertyDetail({
     await getOrCreateStoryTokenForProperty(property.id);
     existingReport = await fetchExistingOwnerReportForProperty(property.id);
   }
+  const storyViewStats = existingReport
+    ? await fetchOwnerStoryViewStats(existingReport.report_id)
+    : null;
   const openHouses = await getOpenHousesForProperty(property.id);
   // why: per-listing Created Posts strip — pulls every generated_posts row
   // saved for this MLS, drafts + posted alike, so Larissa can resume editing
@@ -230,6 +236,7 @@ export default async function LivePropertyDetail({
           mls={property.mls_number}
           storyUrlPath={existingReport.story_url_path}
           initialPersonalNote={existingReport.personal_note}
+          viewStats={storyViewStats}
         />
       ) : null}
 

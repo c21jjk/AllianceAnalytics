@@ -3,12 +3,15 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { updateReportPersonalNoteAction } from "@/app/(app)/properties/[mls]/actions";
+import { formatRelativeTime } from "@/lib/format";
+import type { OwnerStoryViewStats } from "@/lib/data/owner-story-db";
 
 interface Props {
   reportId: string;
   mls: string;
   storyUrlPath: string;
   initialPersonalNote: string | null;
+  viewStats: OwnerStoryViewStats | null;
 }
 
 const SAVE_DEBOUNCE_MS = 700;
@@ -30,6 +33,7 @@ export default function OwnerStoryAdminCard({
   mls,
   storyUrlPath,
   initialPersonalNote,
+  viewStats,
 }: Props) {
   const [note, setNote] = useState<string>(initialPersonalNote ?? "");
   const [savedNote, setSavedNote] = useState<string>(initialPersonalNote ?? "");
@@ -125,6 +129,39 @@ export default function OwnerStoryAdminCard({
           family.
         </p>
       </header>
+
+      {/* View stats — the feedback loop. Shows nothing until someone has
+          actually opened the page, so it doesn't beg for attention when
+          quiet. The "Viewed N times" copy is the psychological hook for
+          Larissa — she can tell a seller "I see you opened it twice this
+          week" without anyone wiring up email. */}
+      {viewStats && viewStats.total_views > 0 ? (
+        <section
+          className="rounded-lg bg-emerald-50 ring-1 ring-emerald-200 px-3 py-3 flex items-center justify-between gap-3"
+          role="status"
+        >
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+              Activity
+            </div>
+            <div className="mt-1 text-sm text-emerald-900 font-medium">
+              Viewed {viewStats.total_views}{" "}
+              {viewStats.total_views === 1 ? "time" : "times"}
+              {viewStats.last_viewed_at ? (
+                <span className="font-normal text-emerald-800">
+                  {" "}
+                  · last opened {formatRelativeTime(viewStats.last_viewed_at)}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          {viewStats.views_last_7d > 0 ? (
+            <div className="text-[11px] font-medium text-emerald-700 shrink-0">
+              {viewStats.views_last_7d} in past 7d
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Shareable link */}
       <section className="rounded-lg bg-neutral-50 ring-1 ring-neutral-200 px-3 py-3">

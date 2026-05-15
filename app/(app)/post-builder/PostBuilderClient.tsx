@@ -6,13 +6,10 @@ import type {
   PostFormat,
   PostType,
   PostVariant,
-  OutputMode,
   CaptionResponse,
   CaptionErrorResponse,
   RenderResponse,
   RenderErrorResponse,
-  FBBundleResponse,
-  FBBundleErrorResponse,
 } from "@/lib/post-builder/types";
 import {
   saveGeneratedPostAction,
@@ -123,22 +120,6 @@ const FORMATS: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
 const STORAGE_KEY_POST_TYPE = "post-builder.post_type";
 const STORAGE_KEY_VARIANT = "post-builder.variant";
 const STORAGE_KEY_FORMAT = "post-builder.format";
-const STORAGE_KEY_OUTPUT_MODE = "post-builder.output_mode";
-
-const OUTPUT_MODES: { id: OutputMode; label: string; sub: string }[] = [
-  { id: "ig_single", label: "Instagram", sub: "One designed image · 75 templates" },
-  { id: "fb_multi", label: "Facebook", sub: "Hero card + real photos · bundled ZIP" },
-];
-
-interface BundleUiResult {
-  bundle_url: string;
-  asset_count: number;
-  caption: string;
-  hashtags: string[];
-  mls_hashtag: string;
-  mls_number: string;
-  generated_post_id: string;
-}
 
 export default function PostBuilderClient({
   listingsByPostType,
@@ -148,21 +129,11 @@ export default function PostBuilderClient({
   initialResume,
   initialPick,
 }: Props) {
-  const [outputMode, setOutputMode] = useState<OutputMode>("ig_single");
   const [postType, setPostType] = useState<PostType>("just_listed");
   const [format, setFormat] = useState<PostFormat>("square_1x1");
   const [variantId, setVariantId] = useState<PostVariant>("v1");
   const [search, setSearch] = useState("");
   const [selectedMls, setSelectedMls] = useState<string | null>(null);
-  // FB Native multi-photo state
-  const [fbSelectedPhotos, setFbSelectedPhotos] = useState<Set<number>>(new Set([0, 1, 2, 3]));
-  const [customFeature, setCustomFeature] = useState("");
-  const [customFeatureSuggestion, setCustomFeatureSuggestion] = useState<string | null>(null);
-  const [customFeatureLoading, setCustomFeatureLoading] = useState(false);
-  const [bundleResult, setBundleResult] = useState<BundleUiResult | null>(null);
-  const [bundleGenerating, setBundleGenerating] = useState(false);
-  // Open House FB multi-property state (Phase 8) — set of MLS numbers
-  const [ohMultiSelected, setOhMultiSelected] = useState<Set<string>>(new Set());
   // Phase 5A — Post Now state
   const [generatedPostId, setGeneratedPostId] = useState<string | null>(null);
   const [postNowOpen, setPostNowOpen] = useState(false);
@@ -242,15 +213,7 @@ export default function PostBuilderClient({
       if (savedVPick && (savedVPick === "v1" || savedVPick === "v2" || savedVPick === "v3")) {
         setVariantId(savedVPick);
       }
-      const savedModePick = localStorage.getItem(STORAGE_KEY_OUTPUT_MODE) as OutputMode | null;
-      if (savedModePick === "ig_single" || savedModePick === "fb_multi") {
-        setOutputMode(savedModePick);
-      }
       return;
-    }
-    const savedMode = localStorage.getItem(STORAGE_KEY_OUTPUT_MODE) as OutputMode | null;
-    if (savedMode === "ig_single" || savedMode === "fb_multi") {
-      setOutputMode(savedMode);
     }
     const savedPT = localStorage.getItem(STORAGE_KEY_POST_TYPE) as PostType | null;
     if (savedPT && POST_TYPES.some((p) => p.id === savedPT)) {
@@ -265,10 +228,6 @@ export default function PostBuilderClient({
       setVariantId(savedV);
     }
   }, [initialResume, initialPick]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_OUTPUT_MODE, outputMode);
-  }, [outputMode]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_POST_TYPE, postType);
@@ -638,237 +597,6 @@ export default function PostBuilderClient({
     setCaptionResult(null);
     setEditedCaption("");
     setError(null);
-    // Reset FB state when listing changes
-    setBundleResult(null);
-    setFbSelectedPhotos(new Set([0, 1, 2, 3]));
-    setCustomFeature("");
-    setCustomFeatureSuggestion(null);
-  }
-
-  function toggleFbPhoto(index: number) {
-    setFbSelectedPhotos((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-    // Photo set change invalidates the bundle but not the caption.
-    setBundleResult(null);
-  }
-
-  /** Fetch AI-suggested custom feature when listing changes (FB mode only). */
-  useEffect(() => {
-    if (outputMode !== "fb_multi" || !selectedListing) {
-      setCustomFeatureSuggestion(null);
-      return;
-    }
-    let cancelled = false;
-    setCustomFeatureLoading(true);
-    fetch("/api/post-builder/custom-feature", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ listing: selectedListing }),
-    })
-      .then((r) => r.json())
-      .then((json: { ok?: boolean; suggestion?: string | null }) => {
-        if (cancelled) return;
-        const suggestion = json.ok && json.suggestion ? json.suggestion : null;
-        setCustomFeatureSuggestion(suggestion);
-        // Pre-fill the input with the suggestion, but only if user hasn't typed
-        if (suggestion && !customFeature) {
-          setCustomFeature(suggestion);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setCustomFeatureLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: customFeature shouldn't re-trigger
-  }, [outputMode, selectedListing?.mls_number]);
-
-  async function regenerateCustomFeature() {
-    if (!selectedListing) return;
-    setCustomFeatureLoading(true);
-    try {
-      const r = await fetch("/api/post-builder/custom-feature", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ listing: selectedListing }),
-      });
-      const json = (await r.json()) as { ok?: boolean; suggestion?: string | null };
-      const suggestion = json.ok && json.suggestion ? json.suggestion : null;
-      setCustomFeatureSuggestion(suggestion);
-      if (suggestion) setCustomFeature(suggestion);
-    } catch {
-      // ignore
-    } finally {
-      setCustomFeatureLoading(false);
-    }
-  }
-
-  async function generateBundle() {
-    if (!selectedListing) return;
-    const sortedIndexes = [...fbSelectedPhotos].sort((a, b) => a - b);
-    if (sortedIndexes.length < 2) {
-      setError("Pick at least 2 photos for the FB gallery (the first one becomes the hero card).");
-      return;
-    }
-    const realPhotoUrls = sortedIndexes
-      .map((i) => availablePhotos[i]?.url)
-      .filter((u): u is string => typeof u === "string" && u.length > 0);
-    if (realPhotoUrls.length < 2) {
-      setError("Could not resolve enough photo URLs. Try refreshing.");
-      return;
-    }
-    setBundleGenerating(true);
-    setError(null);
-    setBundleResult(null);
-    try {
-      const res = await fetch("/api/post-builder/bundle", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          hero_template_id: "fb_new_listing_v1",
-          caption_shape: "new_listing_single",
-          listings: [
-            {
-              listing: selectedListing,
-              real_photo_urls: realPhotoUrls,
-              custom_feature: customFeature.trim() || null,
-            },
-          ],
-        }),
-      });
-      const text = await res.text();
-      let json: FBBundleResponse | FBBundleErrorResponse | null = null;
-      try {
-        json = JSON.parse(text) as FBBundleResponse | FBBundleErrorResponse;
-      } catch {
-        setError(`Bundle returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
-        return;
-      }
-      if (!json.ok) {
-        setError(`Bundle failed: ${json.error}`);
-        return;
-      }
-      setBundleResult({
-        bundle_url: json.bundle_url,
-        asset_count: json.asset_count,
-        caption: json.caption,
-        hashtags: json.hashtags,
-        mls_hashtag: json.mls_hashtag,
-        mls_number: selectedListing.mls_number,
-        generated_post_id: json.generated_post_id,
-      });
-      setGeneratedPostId(json.generated_post_id);
-      setEditedCaption(json.caption);
-    } catch (e) {
-      setError(`Bundle generate threw: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBundleGenerating(false);
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────────
-  // Phase 8 — Open House FB Multi-Property
-  // ─────────────────────────────────────────────────────────────────
-  const isOhMultiMode = postType === "open_house" && outputMode === "fb_multi";
-
-  function toggleOhMulti(mls: string) {
-    setOhMultiSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(mls)) next.delete(mls);
-      else next.add(mls);
-      return next;
-    });
-    setBundleResult(null);
-  }
-
-  async function generateOhBundle() {
-    const selectedListings = listings.filter((l) => ohMultiSelected.has(l.mls_number));
-    if (selectedListings.length < 2) {
-      setError("Pick at least 2 open houses for the gallery.");
-      return;
-    }
-    if (selectedListings.length > 15) {
-      setError("Max 15 open houses per post (Facebook gallery limit).");
-      return;
-    }
-    setBundleGenerating(true);
-    setError(null);
-    setBundleResult(null);
-    try {
-      const res = await fetch("/api/post-builder/bundle", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          hero_template_id: "fb_open_house_v1",
-          caption_shape: "open_house_multi",
-          listings: selectedListings.map((l) => ({
-            listing: l,
-            // For OH cards, only the hero photo matters (used as the photo
-            // inside the designed card). No supporting photos shipped.
-            real_photo_urls: l.hero_image_url ? [l.hero_image_url] : [],
-            custom_feature: null,
-          })),
-        }),
-      });
-      const text = await res.text();
-      let json: FBBundleResponse | FBBundleErrorResponse | null = null;
-      try {
-        json = JSON.parse(text) as FBBundleResponse | FBBundleErrorResponse;
-      } catch {
-        setError(`Bundle returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
-        return;
-      }
-      if (!json.ok) {
-        setError(`OH bundle failed: ${json.error}`);
-        return;
-      }
-      setBundleResult({
-        bundle_url: json.bundle_url,
-        asset_count: json.asset_count,
-        caption: json.caption,
-        hashtags: json.hashtags,
-        mls_hashtag: json.mls_hashtag,
-        mls_number: selectedListings[0].mls_number,
-        generated_post_id: json.generated_post_id,
-      });
-      setGeneratedPostId(json.generated_post_id);
-      setEditedCaption(json.caption);
-    } catch (e) {
-      setError(`OH bundle threw: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBundleGenerating(false);
-    }
-  }
-
-  // Reset OH selection when leaving OH+FB mode or changing post-type away from OH.
-  useEffect(() => {
-    if (!isOhMultiMode) {
-      setOhMultiSelected(new Set());
-    }
-  }, [isOhMultiMode]);
-
-  async function downloadBundle() {
-    if (!bundleResult) return;
-    try {
-      const res = await fetch(bundleResult.bundle_url);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `c21-alliance_fb_${bundleResult.mls_number}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      setError(`Bundle download failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -921,13 +649,7 @@ export default function PostBuilderClient({
     setPostNowOpen(true);
     setPostNowArmedAt(Date.now());
     setPostNowResults(null);
-    // Default platform selection — both for IG-compatible outputs, FB-only
-    // when the bundle has more than 10 photos (IG carousel cap).
-    if (isOhMultiMode && ohMultiSelected.size > 10) {
-      setPostNowPlatforms(new Set(["facebook"]));
-    } else {
-      setPostNowPlatforms(new Set(["facebook", "instagram"]));
-    }
+    setPostNowPlatforms(new Set(["facebook", "instagram"]));
   }
 
   function togglePostNowPlatform(p: PostPlatform) {
@@ -945,13 +667,6 @@ export default function PostBuilderClient({
     try {
       let id: string | null = generatedPostId;
       if (!id) {
-        if (outputMode === "fb_multi" && bundleResult) {
-          // Bundle endpoint already saved — but somehow we don't have the id.
-          // Should never happen since we set it in generateBundle/OhBundle.
-          setError("Bundle was generated but no post id is set. Re-generate.");
-          setPostNowSending(false);
-          return;
-        }
         id = await ensureGeneratedPostId();
         if (!id) {
           setPostNowSending(false);
@@ -980,21 +695,19 @@ export default function PostBuilderClient({
     }
   }
 
-  // Reset Post Now state whenever the user changes the selection, output
-  // mode, or rebuilds the bundle. Anything that invalidates the underlying
-  // generated_posts row should also close the Post Now panel and clear
-  // results.
+  // Reset Post Now state whenever the user changes the selection. Anything
+  // that invalidates the underlying generated_posts row should also close
+  // the Post Now panel and clear results.
   useEffect(() => {
     setPostNowOpen(false);
     setPostNowResults(null);
     setPostNowArmedAt(null);
-  }, [selectedMls, outputMode, ohMultiSelected, bundleResult?.generated_post_id, renderResult?.image_url]);
+  }, [selectedMls, renderResult?.image_url]);
 
   // If the listing only has N photos but the user has v4 (2) or v5 (3) selected,
   // auto-fall-back to v1 so the variant card grid never shows a selected-but-
-  // disabled state. Only applies in IG mode.
+  // disabled state.
   useEffect(() => {
-    if (outputMode !== "ig_single") return;
     if (availablePhotos.length === 0) return;
     if (!currentVariant) return;
     if (availablePhotos.length < currentVariant.photo_count) {

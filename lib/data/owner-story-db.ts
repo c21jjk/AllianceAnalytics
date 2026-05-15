@@ -3,6 +3,109 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
 
 /* ----------------------------------------------------------------------- *
+ *  View tracking
+ * ----------------------------------------------------------------------- */
+
+export interface OwnerStoryViewStats {
+  total_views: number;
+  last_viewed_at: string | null;
+  /** Views in the last 7 days — for "recent activity" hints on the admin card. */
+  views_last_7d: number;
+}
+
+/**
+ * Log a single page-view of /home/[token]. Fire-and-forget — caller is
+ * expected to NOT await this (use `void logOwnerStoryView(...)`). A failed
+ * write should never block the public page from rendering.
+ *
+ * No PII captured. The user agent is trimmed to 240 chars (defense against
+ * abusive headers); the referrer is reduced to host only.
+ */
+export async function logOwnerStoryView(
+  reportId: string,
+  userAgent: string | null,
+  referrer: string | null,
+): Promise<void> {
+  if (!reportId) return;
+
+  let referrerHost: string | null = null;
+  if (referrer) {
+    try {
+      referrerHost = new URL(referrer).host || null;
+    } catch {
+      referrerHost = null;
+    }
+  }
+
+  const trimmedUa =
+    typeof userAgent === "string" && userAgent.length > 0
+      ? userAgent.slice(0, 240)
+      : null;
+
+  try {
+    const supabase = createAdminClient();
+    await supabase.from("owner_story_views").insert({
+      report_id: reportId,
+      user_agent: trimmedUa,
+      referrer_host: referrerHost,
+    });
+  } catch {
+    // Swallow — view tracking is not allowed to break the public route.
+  }
+}
+
+/**
+ * Aggregate view stats for one report. Used by the admin card on
+ * /properties/[mls] to display "Viewed N times, most recently …".
+ *
+ * Two queries: a HEAD count for total, a HEAD count for the 7d window, and
+ * a 1-row read for `last_viewed_at`. Could be fused into a single SQL
+ * function later if it shows up in the dashboard load profile.
+ */
+export async function fetchOwnerStoryViewStats(
+  reportId: string,
+): Promise<OwnerStoryViewStats> {
+  const empty: OwnerStoryViewStats = {
+    total_views: 0,
+    last_viewed_at: null,
+    views_last_7d: 0,
+  };
+  if (!reportId) return empty;
+
+  const supabase = createAdminClient();
+  const cutoff7d = new Date(Date.now() - 7 * 86_400_000).toISOString();
+
+  try {
+    const [totalRes, last7dRes, lastViewRes] = await Promise.all([
+      supabase
+        .from("owner_story_views")
+        .select("id", { count: "exact", head: true })
+        .eq("report_id", reportId),
+      supabase
+        .from("owner_story_views")
+        .select("id", { count: "exact", head: true })
+        .eq("report_id", reportId)
+        .gte("viewed_at", cutoff7d),
+      supabase
+        .from("owner_story_views")
+        .select("viewed_at")
+        .eq("report_id", reportId)
+        .order("viewed_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    return {
+      total_views: totalRes.count ?? 0,
+      views_last_7d: last7dRes.count ?? 0,
+      last_viewed_at: lastViewRes.data?.viewed_at ?? null,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/* ----------------------------------------------------------------------- *
  *  Token lifecycle
  * ----------------------------------------------------------------------- */
 
@@ -119,6 +222,18 @@ export interface OwnerStoryListing {
   listing_office_name: string | null;
 }
 
+export interface OwnerStoryPhoto {
+  url: string;
+  caption: string | null;
+}
+
+export interface OwnerStoryOpenHouse {
+  id: string;
+  start_at: string;
+  end_at: string | null;
+  comments: string | null;
+}
+
 export interface OwnerStoryData {
   token: string;
   report_id: string;
@@ -127,6 +242,10 @@ export interface OwnerStoryData {
   posts: OwnerStoryPost[];
   /** Top 3 posts by reach (subset of `posts`). */
   highlights: OwnerStoryPost[];
+  /** Additional listing photos beyond the hero, sequence-ordered. */
+  photos: OwnerStoryPhoto[];
+  /** Open houses (past + future) for this listing, chronological. */
+  open_houses: OwnerStoryOpenHouse[];
   totals: {
     reach: number;
     engagements: number;
@@ -308,8 +427,45 @@ export async function fetchOwnerStoryByToken(
       )
     : null;
 
-  // 7) Company rollup — never throws (returns zeros on failure).
-  const company = await fetchCompanyRollup();
+  // 7) Photos + open houses — both keyed differently:
+  //    photos by mls_number (Paragon-native key)
+  //    open_houses by property_id (already linked locally)
+  //    Run in parallel with the company rollup below.
+  const [{ data: photoRows }, { data: ohRows }, company] = await Promise.all([
+    supabase
+      .from("listing_photos")
+      .select("url, caption, sequence")
+      .eq("mls_number", propRow.mls_number)
+      .order("sequence", { ascending: true }),
+    supabase
+      .from("open_houses")
+      .select("id, start_at, end_at, comments")
+      .eq("property_id", propRow.id)
+      .order("start_at", { ascending: true }),
+    fetchCompanyRollup(),
+  ]);
+
+  // Skip the hero photo (sequence=1) — story page already shows it large
+  // at the top, so the gallery is the *additional* photos only.
+  const photos: OwnerStoryPhoto[] = ((photoRows ?? []) as Array<{
+    url: string | null;
+    caption: string | null;
+    sequence: number | null;
+  }>)
+    .filter((p) => (p.sequence ?? 0) !== 1 && p.url)
+    .map((p) => ({ url: p.url as string, caption: p.caption }));
+
+  const openHouses: OwnerStoryOpenHouse[] = ((ohRows ?? []) as Array<{
+    id: string;
+    start_at: string;
+    end_at: string | null;
+    comments: string | null;
+  }>).map((oh) => ({
+    id: oh.id,
+    start_at: oh.start_at,
+    end_at: oh.end_at,
+    comments: oh.comments,
+  }));
 
   return {
     token,
@@ -343,6 +499,8 @@ export async function fetchOwnerStoryByToken(
     },
     posts,
     highlights,
+    photos,
+    open_houses: openHouses,
     totals,
     company,
     days_since_launch: daysSinceLaunch,
