@@ -2,8 +2,8 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import type { AgentOutboxRow } from "@/lib/data/agent-outbox-db";
-import { buildOutboxMailto } from "@/lib/data/agent-outbox-db";
+import type { AgentOutboxRow } from "@/lib/data/agent-outbox-shared";
+import { buildOutboxMailto } from "@/lib/data/agent-outbox-shared";
 import { acknowledgeOutboxRowAction } from "@/app/(app)/outbox/actions";
 import { formatRelativeTime } from "@/lib/format";
 
