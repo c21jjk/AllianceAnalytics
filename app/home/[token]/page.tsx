@@ -158,7 +158,11 @@ function StoryView({ data }: { data: OwnerStoryData }) {
           />
         ) : null}
         {totals.reach > 0 ? (
-          <ReachChapter totalReach={totals.reach} company={company} />
+          <ReachChapter
+            totalReach={totals.reach}
+            postCount={totals.post_count}
+            company={company}
+          />
         ) : null}
         {highlights.length > 0 ? (
           <HighlightsChapter highlights={highlights} company={company} />
@@ -205,6 +209,36 @@ function StoryView({ data }: { data: OwnerStoryData }) {
           .story-whatnow { padding: 64px 48px 36px !important; }
           .story-header { padding: 24px 48px !important; }
           .story-gallery { padding: 0 48px !important; }
+        }
+        /* Phase 7.5 — print stylesheet. Browser Print → Save as PDF gives
+           sellers a tangible artifact without us maintaining a separate
+           PDF route. Strips interactive chrome; keeps the story chapters,
+           hero photo, photo gallery, and agent block. */
+        @media print {
+          .story-header { display: none !important; }
+          .story-whatnow { display: none !important; }
+          .story-footer { display: none !important; }
+          .story-gallery {
+            overflow: visible !important;
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 8px !important;
+            padding: 0 !important;
+          }
+          .story-gallery > div {
+            width: auto !important;
+            scroll-snap-align: unset !important;
+          }
+          .story-main { max-width: 100% !important; }
+          .story-chapter,
+          .story-hero,
+          .story-callout {
+            padding: 28px 24px !important;
+            break-inside: avoid;
+          }
+          /* Force-light background so photos and gold accents render on
+             white paper even when the browser's print-color setting is off. */
+          html, body { background: #ffffff !important; }
         }
       `}</style>
     </div>
@@ -851,20 +885,55 @@ function LaunchChapter({
   );
 }
 
+/* ----------------------------------------------------------------------- *
+ *  Phase 7.5 — auto-pick the most-favorable comparison window
+ *
+ *  Walks 30-day → 90-day → 365-day and returns the FIRST window whose
+ *  per-post average reach the listing's comparison-value beats. Returns
+ *  null when no window beats — in which case the comparison line is
+ *  omitted entirely (honest framing, never "above average" when it isn't).
+ * ----------------------------------------------------------------------- */
+type BaselineLabel = "30-day average" | "90-day average" | "1-year average";
+
+interface PickedBaseline {
+  perPostReach: number;
+  label: BaselineLabel;
+}
+
+function pickFavorableBaseline(
+  comparisonPerPost: number,
+  company: OwnerStoryData["company"],
+): PickedBaseline | null {
+  const candidates: Array<[number, number, BaselineLabel]> = [
+    [company.window_30d.reach, company.window_30d.posts, "30-day average"],
+    [company.window_90d.reach, company.window_90d.posts, "90-day average"],
+    [company.window_365d.reach, company.window_365d.posts, "1-year average"],
+  ];
+  for (const [reach, posts, label] of candidates) {
+    if (posts <= 0) continue;
+    const perPost = reach / posts;
+    if (perPost > 0 && comparisonPerPost >= perPost) {
+      return { perPostReach: perPost, label };
+    }
+  }
+  return null;
+}
+
 function ReachChapter({
   totalReach,
+  postCount,
   company,
 }: {
   totalReach: number;
+  postCount: number;
   company: OwnerStoryData["company"];
 }) {
-  // Comparison line — only when listing's per-post reach beats the 30-day
-  // company baseline. Honest framing: don't say "above average" unless it is.
-  const baseline =
-    company.window_30d.posts > 0
-      ? company.window_30d.reach / company.window_30d.posts
-      : 0;
-  const showBeat = baseline > 0 && totalReach >= baseline;
+  // Phase 7.5 — compare this listing's per-post average reach against the
+  // most-favorable accurate company window. Honest framing: if no window
+  // beats, the comparison line is omitted entirely.
+  const listingPerPost = postCount > 0 ? totalReach / postCount : 0;
+  const picked =
+    listingPerPost > 0 ? pickFavorableBaseline(listingPerPost, company) : null;
 
   return (
     <ChapterShell eyebrow="Reach">
@@ -901,14 +970,17 @@ function ReachChapter({
       <p style={{ ...proseStyle, marginTop: 24 }}>
         Every one of those views is a real person on Instagram, TikTok, or
         Facebook seeing your home in their feed.
-        {showBeat ? (
+        {picked ? (
           <>
             {" "}
-            That&apos;s already{" "}
+            That&apos;s{" "}
             <strong style={strongStyle}>
               above what an Alliance listing typically reaches
             </strong>{" "}
-            in this window.
+            on a per-post basis over the last {picked.label.replace(
+              " average",
+              "",
+            )}.
           </>
         ) : null}
       </p>
@@ -923,10 +995,17 @@ function HighlightsChapter({
   highlights: OwnerStoryPost[];
   company: OwnerStoryData["company"];
 }) {
-  const baseline =
-    company.window_30d.posts > 0
-      ? company.window_30d.reach / company.window_30d.posts
-      : 0;
+  // Phase 7.5 — pick the most-favorable accurate window for the highlights
+  // multiplier line. Falls back to no comparison if no window beats.
+  const maxHighlightReach = highlights.reduce(
+    (m, p) => (p.reach > m ? p.reach : m),
+    0,
+  );
+  const picked =
+    maxHighlightReach > 0
+      ? pickFavorableBaseline(maxHighlightReach, company)
+      : null;
+  const baseline = picked?.perPostReach ?? 0;
   const singular = highlights.length === 1;
 
   return (

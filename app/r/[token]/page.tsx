@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect, permanentRedirect } from "next/navigation";
 import { Barlow } from "next/font/google";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildReportPayload } from "@/lib/reports/build";
@@ -247,30 +247,25 @@ export async function generateMetadata({ params }: PageProps) {
 export default async function PublicReportPage({ params }: PageProps) {
   const { token } = await params;
 
-  // 1. Try live data (DB-backed)
+  // Phase 7.5 — retire the legacy Compass-style /r/[token] web view in
+  // favor of the story page. Old emailed links keep working; they
+  // 308-redirect to /home/[token] (same token, different design). The
+  // PDF route at /r/[token]/flyer.pdf is untouched and remains the
+  // current source for downloadable PDFs.
+  //
+  // The `live` lookup remains so we only redirect for tokens that
+  // actually resolve — bogus tokens still 404 instead of bouncing.
   const live = await loadLiveData(token);
   if (live) {
-    return <LiveReportView data={live} />;
+    permanentRedirect(`/home/${token}`);
   }
 
-  // 2. Fallback to legacy demo fixture path
+  // Legacy fixture fallback — these are demo-only tokens (rpt_*) used by
+  // the seed data. Forward them to the story page too, since /home/[token]
+  // also handles fixture tokens via its own data path.
   const delivery = findDeliveryByToken(token);
   if (delivery) {
-    const report = findReportById(delivery.report_id);
-    const property = report ? findProperty(report.mls) : undefined;
-    if (report && property) {
-      const posts = report.post_ids
-        .map((id) => POSTS.find((p) => p.id === id))
-        .filter((p): p is (typeof POSTS)[0] => p !== undefined);
-      return (
-        <FixtureReportView
-          recipientName={delivery.recipient_name}
-          report={report}
-          property={property}
-          posts={posts}
-        />
-      );
-    }
+    redirect(`/home/${token}`);
   }
 
   notFound();

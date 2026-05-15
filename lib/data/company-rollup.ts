@@ -29,6 +29,8 @@ export interface CompanyRollup {
   };
   /** Rolling 30-day window — short-term momentum. */
   window_30d: WindowStats;
+  /** Rolling 90-day window — Phase 7.5 baseline for the auto-pick comparison. */
+  window_90d: WindowStats;
   /** Trailing 365-day window — full year of work behind every listing. */
   window_365d: WindowStats;
   /** Count of properties where status = 'active'. Same in either window. */
@@ -69,6 +71,7 @@ function emptyRollup(): CompanyRollup {
       total: 0,
     },
     window_30d: empty,
+    window_90d: empty,
     window_365d: empty,
     active_listings: 0,
     captured_at: new Date().toISOString(),
@@ -124,24 +127,30 @@ async function loadLatestFollowers(
  */
 async function loadPostWindows(
   supabase: ReturnType<typeof createAdminClient>,
-): Promise<{ window_30d: WindowStats; window_365d: WindowStats }> {
+): Promise<{
+  window_30d: WindowStats;
+  window_90d: WindowStats;
+  window_365d: WindowStats;
+}> {
   try {
     const now = Date.now();
-    const cutoff30 = new Date(now - 30 * 86_400_000).toISOString();
-    const cutoff365 = new Date(now - 365 * 86_400_000).toISOString();
+    const cutoff30Ms = now - 30 * 86_400_000;
+    const cutoff90Ms = now - 90 * 86_400_000;
+    const cutoff365Iso = new Date(now - 365 * 86_400_000).toISOString();
 
     const { data, error } = await supabase
       .from("posts")
       .select("metrics, posted_at")
-      .gte("posted_at", cutoff365);
+      .gte("posted_at", cutoff365Iso);
     if (error || !data) {
       const empty: WindowStats = { posts: 0, reach: 0 };
-      return { window_30d: empty, window_365d: empty };
+      return { window_30d: empty, window_90d: empty, window_365d: empty };
     }
 
-    const cutoff30Ms = new Date(cutoff30).getTime();
     let posts30 = 0;
     let reach30 = 0;
+    let posts90 = 0;
+    let reach90 = 0;
     let posts365 = 0;
     let reach365 = 0;
 
@@ -150,10 +159,12 @@ async function loadPostWindows(
       const reach = readNum(m.reach) || readNum(m.impressions);
       posts365 += 1;
       reach365 += reach;
-      if (
-        row.posted_at &&
-        new Date(row.posted_at).getTime() >= cutoff30Ms
-      ) {
+      const t = row.posted_at ? new Date(row.posted_at).getTime() : 0;
+      if (t >= cutoff90Ms) {
+        posts90 += 1;
+        reach90 += reach;
+      }
+      if (t >= cutoff30Ms) {
         posts30 += 1;
         reach30 += reach;
       }
@@ -161,11 +172,12 @@ async function loadPostWindows(
 
     return {
       window_30d: { posts: posts30, reach: reach30 },
+      window_90d: { posts: posts90, reach: reach90 },
       window_365d: { posts: posts365, reach: reach365 },
     };
   } catch {
     const empty: WindowStats = { posts: 0, reach: 0 };
-    return { window_30d: empty, window_365d: empty };
+    return { window_30d: empty, window_90d: empty, window_365d: empty };
   }
 }
 
@@ -200,6 +212,7 @@ export async function fetchCompanyRollup(): Promise<CompanyRollup> {
     return {
       followers,
       window_30d: windows.window_30d,
+      window_90d: windows.window_90d,
       window_365d: windows.window_365d,
       active_listings: activeListings,
       captured_at: new Date().toISOString(),
