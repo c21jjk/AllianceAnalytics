@@ -89,6 +89,7 @@ export default async function OwnerStoryPage({ params }: PageProps) {
 
 function StoryView({ data }: { data: OwnerStoryData }) {
   const { listing, posts, highlights, totals, company, personal_note } = data;
+  const isFreshlyListed = posts.length === 0 && listing.status === "active";
 
   return (
     <div
@@ -103,8 +104,20 @@ function StoryView({ data }: { data: OwnerStoryData }) {
       }}
     >
       <Header />
-      <main style={{ maxWidth: 720, margin: "0 auto" }}>
+      {/* Page-content container — mobile-first 720 cap, desktop bumps to 880
+          so hero photo + highlights breathe; prose chapters stay capped at
+          ~600 inside via their own constraints (see ChapterShell). */}
+      <main
+        style={{
+          margin: "0 auto",
+          maxWidth: 720,
+        }}
+        className="story-main"
+      >
         <HeroChapter listing={listing} personalNote={personal_note} />
+        {isFreshlyListed ? (
+          <FreshlyListedChapter listingDate={listing.listing_date} />
+        ) : null}
         {posts.length > 0 ? (
           <LaunchChapter
             firstPostAt={data.first_post_at}
@@ -128,10 +141,15 @@ function StoryView({ data }: { data: OwnerStoryData }) {
             postCount={totals.post_count}
           />
         ) : null}
-        <WhereItStandsChapter
-          status={listing.status}
-          postCount={totals.post_count}
-        />
+        {/* WhereItStands is suppressed for freshly-listed active homes — the
+            FreshlyListedChapter already owns that moment and rendering both
+            duplicates the "we're marketing your home" beat. */}
+        {!isFreshlyListed ? (
+          <WhereItStandsChapter
+            status={listing.status}
+            postCount={totals.post_count}
+          />
+        ) : null}
         <WhatNowChapter
           address={listing.address}
           agentName={listing.agent_name}
@@ -139,6 +157,20 @@ function StoryView({ data }: { data: OwnerStoryData }) {
         />
         <Footer />
       </main>
+      {/* Single global style block — desktop max-width bump and roomier
+          chapter padding on >=768px. Kept inline so the public story page
+          stays self-contained (no global CSS leak into the auth'd app). */}
+      <style>{`
+        @media (min-width: 768px) {
+          .story-main { max-width: 880px; }
+          .story-chapter { padding-left: 48px !important; padding-right: 48px !important; padding-top: 56px !important; padding-bottom: 56px !important; }
+          .story-hero { padding: 56px 48px 36px !important; }
+          .story-footer { padding: 72px 48px 56px !important; }
+          .story-callout { padding: 72px 48px !important; }
+          .story-whatnow { padding: 64px 48px 36px !important; }
+          .story-header { padding: 24px 48px !important; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -150,6 +182,7 @@ function StoryView({ data }: { data: OwnerStoryData }) {
 function Header() {
   return (
     <header
+      className="story-header"
       style={{
         padding: "20px 24px",
         borderBottom: `1px solid ${RULE}`,
@@ -185,7 +218,7 @@ function HeroChapter({
   const secondLine = secondLineOfAddress(listing);
 
   return (
-    <section style={{ padding: "40px 24px 28px" }}>
+    <section className="story-hero" style={{ padding: "40px 24px 28px" }}>
       {personalNote ? (
         <div
           style={{
@@ -301,41 +334,186 @@ function HeroChapter({
       </div>
 
       {listing.agent_name ? (
-        <div
-          style={{
-            marginTop: 24,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 11,
-                letterSpacing: "0.22em",
-                textTransform: "uppercase",
-                fontWeight: 500,
-                color: INK_MUTED,
-              }}
-            >
-              Listed by
-            </div>
-            <div
-              style={{
-                marginTop: 4,
-                fontSize: 16,
-                color: INK,
-                fontWeight: 500,
-              }}
-            >
-              {listing.agent_name}
-            </div>
-          </div>
-        </div>
+        <AgentBlock
+          agentName={listing.agent_name}
+          agentEmail={listing.agent_email}
+          listingOfficeName={listing.listing_office_name}
+        />
       ) : null}
     </section>
+  );
+}
+
+function AgentBlock({
+  agentName,
+  agentEmail,
+  listingOfficeName,
+}: {
+  agentName: string;
+  agentEmail: string | null;
+  listingOfficeName: string | null;
+}) {
+  const officeDisplay = normalizeOfficeName(listingOfficeName);
+  const initials = computeInitials(agentName);
+
+  return (
+    <div
+      style={{
+        marginTop: 32,
+        paddingTop: 24,
+        borderTop: `1px solid ${RULE}`,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+      }}
+    >
+      {/* Initials medallion — placeholder for an eventual headshot.
+          Gold-tinted ring keeps it on-brand without a real photo. */}
+      <div
+        aria-hidden="true"
+        style={{
+          width: 48,
+          height: 48,
+          borderRadius: "50%",
+          backgroundColor: BG_SOFT,
+          border: `1px solid ${RULE}`,
+          color: INK,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 15,
+          fontWeight: 500,
+          letterSpacing: "0.02em",
+          flexShrink: 0,
+        }}
+      >
+        {initials}
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.22em",
+            textTransform: "uppercase",
+            fontWeight: 500,
+            color: INK_MUTED,
+          }}
+        >
+          Your agent
+        </div>
+        <div
+          style={{
+            marginTop: 2,
+            fontSize: 17,
+            color: INK,
+            fontWeight: 500,
+            lineHeight: 1.2,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {agentName}
+        </div>
+        {officeDisplay ? (
+          <div
+            style={{
+              marginTop: 2,
+              fontSize: 13,
+              color: INK_SOFT,
+              fontWeight: 400,
+              lineHeight: 1.3,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {officeDisplay}
+          </div>
+        ) : null}
+      </div>
+      {agentEmail ? (
+        <a
+          href={`mailto:${agentEmail}`}
+          aria-label={`Email ${agentName}`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "10px 14px",
+            border: `1px solid ${INK}`,
+            color: INK,
+            textDecoration: "none",
+            fontSize: 12,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            fontWeight: 500,
+            borderRadius: 2,
+            flexShrink: 0,
+          }}
+        >
+          Email
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+function computeInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "··";
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return (
+    (parts[0]!.charAt(0) + (parts[parts.length - 1]?.charAt(0) ?? ""))
+      .toUpperCase()
+  );
+}
+
+/**
+ * Paragon office names land here as `CENTURY 21 ALLIANCE wc` or similar —
+ * caps + a short-code suffix. Pretty up for seller display: title-case the
+ * brand and drop short-code-only fragments.
+ */
+function normalizeOfficeName(raw: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Strip trailing 2-3 letter office short codes (e.g. "wc", "ws", "cmc")
+  // when they're appended without a separating word.
+  const withoutSuffix = trimmed.replace(/\s+[a-z]{2,4}$/i, "");
+  // Title-case run of CENTURY 21 ALLIANCE → Century 21 Alliance
+  const cased = withoutSuffix.replace(/\b[A-Z][A-Z]+\b/g, (word) =>
+    word.charAt(0) + word.slice(1).toLowerCase(),
+  );
+  // "CENTURY" stays special because the regex above only catches all-caps
+  // multi-letter runs; numbers like "21" pass through.
+  return cased;
+}
+
+function FreshlyListedChapter({
+  listingDate,
+}: {
+  listingDate: string | null;
+}) {
+  const listedOn = listingDate ? formatShortDate(listingDate) : null;
+  return (
+    <ChapterShell eyebrow="Just Listed">
+      <h2 style={chapterHeadingStyle}>
+        Your home is officially on the market.
+      </h2>
+      <p style={{ ...proseStyle, marginTop: 16 }}>
+        {listedOn ? (
+          <>
+            We brought your listing live on{" "}
+            <strong style={strongStyle}>{listedOn}</strong>.{" "}
+          </>
+        ) : null}
+        Your agent and the Alliance social team are preparing your first round
+        of posts — Instagram, TikTok, and Facebook all start here. This page
+        will update with every post that goes out, so feel free to keep it
+        bookmarked.
+      </p>
+    </ChapterShell>
   );
 }
 
@@ -451,12 +629,19 @@ function HighlightsChapter({
     company.window_30d.posts > 0
       ? company.window_30d.reach / company.window_30d.posts
       : 0;
+  const singular = highlights.length === 1;
 
   return (
-    <ChapterShell eyebrow="Highlights">
-      <h2 style={chapterHeadingStyle}>The posts that broke through.</h2>
+    <ChapterShell eyebrow={singular ? "Standout" : "Highlights"}>
+      <h2 style={chapterHeadingStyle}>
+        {singular
+          ? "The post that broke through."
+          : "The posts that broke through."}
+      </h2>
       <p style={{ ...proseStyle, marginTop: 16 }}>
-        These are the moments that pulled the most eyes onto your home.
+        {singular
+          ? "Here's the moment that pulled the most eyes onto your home so far."
+          : "These are the moments that pulled the most eyes onto your home."}
       </p>
       <div style={{ marginTop: 24 }}>
         {highlights.map((post) => (
@@ -583,6 +768,7 @@ function CompanyCalloutChapter({
 
   return (
     <section
+      className="story-callout"
       style={{
         padding: "56px 24px",
         margin: "32px 0",
@@ -876,7 +1062,10 @@ function WhatNowChapter({
     : null;
 
   return (
-    <section style={{ padding: "48px 24px 24px" }}>
+    <section
+      className="story-whatnow"
+      style={{ padding: "48px 24px 24px" }}
+    >
       <div
         style={{
           fontSize: 11,
@@ -925,6 +1114,7 @@ function WhatNowChapter({
 function Footer() {
   return (
     <footer
+      className="story-footer"
       style={{
         padding: "56px 24px 40px",
         textAlign: "center",
@@ -969,7 +1159,7 @@ function ChapterShell({
   children: React.ReactNode;
 }) {
   return (
-    <section style={{ padding: "44px 24px" }}>
+    <section className="story-chapter" style={{ padding: "44px 24px" }}>
       <div
         style={{
           fontSize: 11,
@@ -986,12 +1176,15 @@ function ChapterShell({
   );
 }
 
+// Prose stays readable even when the outer container grows to 880px on
+// desktop. Caps the line length at ~64-70ch so paragraphs don't sprawl.
 const proseStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 17,
   lineHeight: 1.6,
   color: INK,
   fontWeight: 400,
+  maxWidth: 600,
 };
 
 const strongStyle: React.CSSProperties = {
@@ -1006,6 +1199,7 @@ const chapterHeadingStyle: React.CSSProperties = {
   letterSpacing: "-0.02em",
   fontWeight: 500,
   color: INK,
+  maxWidth: 600,
 };
 
 const primaryActionStyle: React.CSSProperties = {

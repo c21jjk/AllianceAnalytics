@@ -1473,6 +1473,17 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
     console.error("link_property_offices post-sync:", (e as Error).message);
   }
 
+  // Ensure every property has an owner-story token (Phase 2). Idempotent —
+  // only inserts a thin reports row when one doesn't already exist. The
+  // story page (/home/[token]) is the seller-facing narrative view and is
+  // expected to exist for every listing, not just ones with a formal
+  // generated report.
+  try {
+    await analytics.rpc("ensure_owner_story_tokens");
+  } catch (e) {
+    console.error("ensure_owner_story_tokens post-sync:", (e as Error).message);
+  }
+
   result.ok = totalUpserted > 0 || (totalSeen === 0 && !anyClassFailed);
   await updateFeedTimestamps(analytics, feed.id, result.ok);
 

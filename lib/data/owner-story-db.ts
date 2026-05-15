@@ -115,6 +115,8 @@ export interface OwnerStoryListing {
   bathrooms_half: number | null;
   agent_name: string | null;
   agent_email: string | null;
+  /** Raw Paragon office name (e.g. "CENTURY 21 ALLIANCE wc"). UI normalizes. */
+  listing_office_name: string | null;
 }
 
 export interface OwnerStoryData {
@@ -187,7 +189,7 @@ export async function fetchOwnerStoryByToken(
   const { data: propRow, error: propErr } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, status, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, status, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, listing_office_name",
     )
     .eq("id", reportRow.property_id)
     .maybeSingle();
@@ -337,6 +339,7 @@ export async function fetchOwnerStoryByToken(
       bathrooms_half: propRow.bathrooms_half,
       agent_name: propRow.agent_name,
       agent_email: propRow.agent_email,
+      listing_office_name: propRow.listing_office_name,
     },
     posts,
     highlights,
