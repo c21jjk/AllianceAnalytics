@@ -290,3 +290,59 @@ export async function setOwnerReportCadenceAction(
   if (mls) revalidatePath(`/properties/${mls}`);
   return { ok: true };
 }
+
+/**
+ * Update the optional personal note that renders above the listing hero on
+ * the public /home/[token] story view. Empty / whitespace-only input clears
+ * the note (stored as NULL). Length cap is generous (~600 chars) — the page
+ * design is built around 1-2 sentences but doesn't crash on more.
+ *
+ * `mls` is passed in for revalidation so the listing detail page picks up
+ * the autosaved note immediately. We also revalidate the public story view
+ * so the next anonymous load sees the update without waiting on cache.
+ */
+const PERSONAL_NOTE_MAX = 600;
+
+export async function updateReportPersonalNoteAction(
+  reportId: string,
+  mls: string,
+  note: string,
+): Promise<OwnerReportActionResult> {
+  await requireAdmin();
+
+  if (!reportId) return { ok: false, error: "Missing report id." };
+
+  const trimmed = typeof note === "string" ? note.trim() : "";
+  if (trimmed.length > PERSONAL_NOTE_MAX) {
+    return {
+      ok: false,
+      error: `Note is ${trimmed.length} characters — please keep it under ${PERSONAL_NOTE_MAX}.`,
+    };
+  }
+
+  const supabase = createAdminClient();
+
+  // Load token first so we can revalidate the public story path without
+  // round-tripping a second query.
+  const { data: row, error: lookupErr } = await supabase
+    .from("reports")
+    .select("report_token")
+    .eq("id", reportId)
+    .maybeSingle();
+  if (lookupErr || !row) {
+    return { ok: false, error: lookupErr?.message ?? "Report not found." };
+  }
+
+  const { error } = await supabase
+    .from("reports")
+    .update({
+      personal_note: trimmed.length > 0 ? trimmed : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", reportId);
+  if (error) return { ok: false, error: error.message };
+
+  if (mls) revalidatePath(`/properties/${mls}`);
+  revalidatePath(`/home/${row.report_token}`);
+  return { ok: true };
+}

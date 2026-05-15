@@ -42,10 +42,14 @@ export interface ExistingOwnerReport {
   flyer_url_path: string;
   /** PDF download, e.g. "/r/{token}/flyer.pdf" */
   pdf_url_path: string;
+  /** New story-format public view, e.g. "/home/{token}" */
+  story_url_path: string;
   /** Subscriber cadence — "none" means manual-only. */
   cadence: OwnerReportCadence;
   /** When the next scheduled send is due (null when cadence is "none"). */
   next_send_at: string | null;
+  /** Optional 1-2 sentence personal note rendered above the story hero. */
+  personal_note: string | null;
   /** Subscriber list ordered newest-first. */
   recipients: OwnerReportRecipient[];
 }
@@ -64,7 +68,7 @@ export async function fetchExistingOwnerReportForProperty(
   const { data, error } = await supabase
     .from("reports")
     .select(
-      "id, report_token, generated_at, is_locked, cadence, next_send_at",
+      "id, report_token, generated_at, is_locked, cadence, next_send_at, personal_note",
     )
     .eq("property_id", propertyId)
     .order("generated_at", { ascending: false, nullsFirst: false })
@@ -86,6 +90,12 @@ export async function fetchExistingOwnerReportForProperty(
     ? (data.cadence as OwnerReportCadence)
     : "none";
 
+  const personalNote =
+    typeof data.personal_note === "string" &&
+    data.personal_note.trim().length > 0
+      ? data.personal_note
+      : null;
+
   return {
     report_id: data.id,
     report_token: token,
@@ -94,8 +104,10 @@ export async function fetchExistingOwnerReportForProperty(
     share_url_path: `/r/${token}`,
     flyer_url_path: `/r/${token}/flyer`,
     pdf_url_path: `/r/${token}/flyer.pdf`,
+    story_url_path: `/home/${token}`,
     cadence,
     next_send_at: data.next_send_at,
+    personal_note: personalNote,
     recipients: (recipientRows ?? []).map((r) => ({
       id: r.id,
       name: r.name,

@@ -8,10 +8,19 @@ import type { Database } from "./types";
 
 const PUBLIC_PATHS = new Set<string>(["/login"]);
 
+// Public path prefixes — anything starting with these resolves without auth.
+// `/r/` is the legacy Compass-style report view; `/home/` is the new
+// owner-facing story view. Both are bearer-auth via long random tokens in
+// the URL — anyone with the link can read, by design.
+const PUBLIC_PATH_PREFIXES = ["/r/", "/home/"];
+
 function isPublicPath(pathname: string) {
   if (PUBLIC_PATHS.has(pathname)) return true;
   if (pathname.startsWith("/_next")) return true;
   if (pathname.startsWith("/favicon")) return true;
+  for (const prefix of PUBLIC_PATH_PREFIXES) {
+    if (pathname.startsWith(prefix)) return true;
+  }
   // Public assets in /public/* are served before middleware in most cases,
   // but be permissive about file-extension paths just in case.
   if (/\.[a-zA-Z0-9]{2,5}$/.test(pathname)) return true;

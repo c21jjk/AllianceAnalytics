@@ -61,6 +61,15 @@ interface Props {
    * is null on an older row).
    */
   initialResume?: CreatedPostResumeRow | null;
+  /**
+   * Optional fresh-build context from /post-builder?mls=X&postType=Y.
+   * Used by the dashboard's "Build post" CTA so Larissa lands directly on
+   * the right post_type with the right listing already selected. Validated
+   * server-side; if the listing isn't in the requested bucket the page
+   * passes null and the client falls back to its normal localStorage
+   * preferences.
+   */
+  initialPick?: { postType: PostType; mls: string } | null;
 }
 
 type PostPlatform = "facebook" | "instagram";
@@ -137,6 +146,7 @@ export default function PostBuilderClient({
   formatMeta,
   isAdmin,
   initialResume,
+  initialPick,
 }: Props) {
   const [outputMode, setOutputMode] = useState<OutputMode>("ig_single");
   const [postType, setPostType] = useState<PostType>("just_listed");
@@ -189,9 +199,11 @@ export default function PostBuilderClient({
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
   // Restore last-used preferences on mount.
-  // why: resume context (when present) wins over localStorage — the user
-  // explicitly clicked a saved post, so we honor that selection even if
-  // their last-used preferences point elsewhere.
+  // why: priority order is resume → fresh-build pick → localStorage. Both
+  // resume and fresh-build pick are explicit user intents (clicked a saved
+  // post / clicked "Build post" on the dashboard), so they win over the
+  // last-used localStorage state. Resume wins over fresh-build pick because
+  // resume carries more state (template, layer_tree, generated_post id).
   useEffect(() => {
     if (initialResume) {
       setPostType(initialResume.post_type);
@@ -214,6 +226,16 @@ export default function PostBuilderClient({
       }
       return;
     }
+    if (initialPick) {
+      // why: fresh-build deep link from the dashboard. Set the post_type and
+      // pre-select the listing. Format/variant come from localStorage below
+      // (or defaults) — the user can change them in the Post Builder picker.
+      setPostType(initialPick.postType);
+      setSelectedMls(initialPick.mls);
+      // why: still apply format + variant from localStorage below so users
+      // keep their preferred output dimensions. Falls through to the
+      // existing localStorage restore.
+    }
     const savedMode = localStorage.getItem(STORAGE_KEY_OUTPUT_MODE) as OutputMode | null;
     if (savedMode === "ig_single" || savedMode === "fb_multi") {
       setOutputMode(savedMode);
@@ -230,7 +252,7 @@ export default function PostBuilderClient({
     if (savedV && (savedV === "v1" || savedV === "v2" || savedV === "v3")) {
       setVariantId(savedV);
     }
-  }, [initialResume]);
+  }, [initialResume, initialPick]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_OUTPUT_MODE, outputMode);

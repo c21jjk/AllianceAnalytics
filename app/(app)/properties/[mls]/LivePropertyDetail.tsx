@@ -9,6 +9,7 @@ import GenerateReportButton from "@/components/GenerateReportButton";
 import SendToAgentButton from "@/components/SendToAgentButton";
 import ReportActionBar from "@/components/ReportActionBar";
 import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel";
+import OwnerStoryAdminCard from "@/components/OwnerStoryAdminCard";
 import CreatedPostsStrip from "@/components/CreatedPostsStrip";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 import {
@@ -209,6 +210,18 @@ export default async function LivePropertyDetail({
           syncs, it&rsquo;ll appear here automatically.
         </section>
       )}
+
+      {/* Owner Story page — new narrative seller view. Sits alongside the
+          existing Recipients panel; surfaces the /home/[token] link, copy
+          button, preview, and the personal-note autosave field. */}
+      {existingReport ? (
+        <OwnerStoryAdminCard
+          reportId={existingReport.report_id}
+          mls={property.mls_number}
+          storyUrlPath={existingReport.story_url_path}
+          initialPersonalNote={existingReport.personal_note}
+        />
+      ) : null}
 
       {/* Recipients + cadence — only after a report exists */}
       {existingReport ? (

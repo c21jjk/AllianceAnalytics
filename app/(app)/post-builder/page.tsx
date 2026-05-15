@@ -20,6 +20,10 @@ export const dynamic = "force-dynamic";
 
 interface SearchParamsShape {
   gp?: string | string[];
+  /** Optional MLS number to pre-select in the listings list. */
+  mls?: string | string[];
+  /** Optional post type to default into ("just_listed", "open_house", etc.). */
+  postType?: string | string[];
 }
 
 const POST_TYPES: PostType[] = [
@@ -29,6 +33,11 @@ const POST_TYPES: PostType[] = [
   "open_house",
   "price_reduction",
 ];
+
+function asStringParam(value: string | string[] | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value[0] : value;
+}
 
 /**
  * Post Builder — Phase 3.
@@ -116,6 +125,26 @@ export default async function PostBuilderPage({
     0,
   );
 
+  // why: optional initial-pick context — ?mls=X&postType=Y lets the
+  // dashboard's "Build post" CTA deep-link straight to a pre-selected
+  // listing. We validate server-side so the client only ever sees a
+  // shape it can act on; if the listing isn't in the requested post_type
+  // bucket (e.g., its status changed before Larissa clicked), we just
+  // skip the pre-select and let the user pick manually.
+  const mlsParam = asStringParam(sp.mls);
+  const postTypeParam = asStringParam(sp.postType);
+  const requestedPostType: PostType | null =
+    postTypeParam && (POST_TYPES as string[]).includes(postTypeParam)
+      ? (postTypeParam as PostType)
+      : null;
+  const initialPick: { postType: PostType; mls: string } | null =
+    mlsParam && requestedPostType &&
+    listingsByPostType[requestedPostType].some(
+      (l) => l.mls_number === mlsParam,
+    )
+      ? { postType: requestedPostType, mls: mlsParam }
+      : null;
+
   return (
     <div>
       <PageHeader
@@ -152,6 +181,7 @@ export default async function PostBuilderPage({
         formatMeta={formatMeta}
         isAdmin={isAdmin}
         initialResume={resume}
+        initialPick={initialPick}
       />
     </div>
   );
