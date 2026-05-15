@@ -2,12 +2,13 @@
  * POST /api/post-builder/post
  * Body: { generated_post_id: string, platforms: ('facebook'|'instagram')[] }
  *
- * Phase 5A — publish a previously-generated post (IG single image OR FB
- * multi-photo bundle) to Facebook Page and/or Instagram Business via the
- * Meta Graph API. Admin-only (publishing is a high-trust action).
+ * Phase 5A — publish a previously-generated single-image post to Facebook
+ * Page and/or Instagram Business via the Meta Graph API. Admin-only
+ * (publishing is a high-trust action).
  *
- * Asset URLs are read from the generated_posts row (template_props.asset_urls
- * for bundles, or image_url for single-image renders).
+ * The FB multi-photo bundle path was removed on 2026-05-14 — every post is
+ * now one designed image. Legacy fb_multi rows in the table still load but
+ * will return an error when the user tries to re-publish them.
  *
  * Returns per-platform results so the UI can show "FB succeeded, IG failed"
  * partial-success states. Updates posted_to[], platform_post_ids{},
@@ -97,12 +98,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // Load the generated post + caption + asset URLs.
+  // Load the generated post + caption + image URL.
   const supabase = createAdminClient();
   const { data: gp, error: gpErr } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, output_mode, caption, hashtags, image_url, bundle_url, template_props, posted_to, platform_post_ids",
+      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -114,7 +115,8 @@ export async function POST(request: Request) {
   }
 
   // Resolve the caption (caption + hashtags joined, since the FB body wants
-  // the full text). For fb_multi this is already the multi-block caption.
+  // the full text). Hashtags are already part of caption at download/save
+  // time; the param is kept for forward-compat.
   const captionBody = resolveCaption(gp.caption, gp.hashtags);
   if (!captionBody) {
     return NextResponse.json(
@@ -123,32 +125,21 @@ export async function POST(request: Request) {
     );
   }
 
-  // Resolve asset URLs based on output mode.
-  let imageUrls: string[];
-  if (gp.output_mode === "fb_multi") {
-    const props = (gp.template_props ?? {}) as { asset_urls?: unknown };
-    if (!Array.isArray(props.asset_urls) || props.asset_urls.length === 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Bundle has no asset_urls. Re-generate the bundle before publishing.",
-        } satisfies ErrorResponse,
-        { status: 412 },
-      );
-    }
-    imageUrls = props.asset_urls.filter(
-      (u): u is string => typeof u === "string" && u.length > 0,
+  // why: every post in the system is now a single designed image — the
+  // fb_multi bundle path was removed on 2026-05-14. Legacy bundle rows
+  // (image_url null but bundle_url populated) error out here; the user
+  // can rebuild as a single-image post from Studio if they want to repost.
+  if (!gp.image_url) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "generated_post has no image_url — looks like a legacy FB bundle. Rebuild as a single-image post in Studio before publishing.",
+      } satisfies ErrorResponse,
+      { status: 412 },
     );
-  } else {
-    if (!gp.image_url) {
-      return NextResponse.json(
-        { ok: false, error: "generated_post has no image_url" } satisfies ErrorResponse,
-        { status: 412 },
-      );
-    }
-    imageUrls = [gp.image_url];
   }
+  const imageUrls: string[] = [gp.image_url];
 
   // Fire publish calls in parallel (FB + IG don't depend on each other).
   const tasks: Promise<PublishResult>[] = [];
@@ -202,11 +193,8 @@ export async function POST(request: Request) {
 function resolveCaption(caption: string | null, hashtags: string[] | null): string {
   const cap = (caption ?? "").trim();
   if (!cap) return "";
-  // For ig_single, hashtags are part of caption already (joined at download).
-  // For fb_multi, the caption already includes the hashtags block at the end.
-  // So we just return the caption as-is — hashtags param is redundant but
-  // kept for forward-compat (e.g., per-platform hashtag tweaks).
+  // Hashtags are joined into caption at download/save time; the param
+  // is kept for forward-compat (e.g. per-platform hashtag tweaks later).
   return cap;
-  // Suppress unused-warning for forward-compat parameter:
   void hashtags;
 }
