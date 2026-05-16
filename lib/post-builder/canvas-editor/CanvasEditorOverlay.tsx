@@ -48,6 +48,12 @@ export interface CanvasEditorOverlayProps {
   saveLabel?: string;
   /** Forwarded to <CanvasEditor isSaving>. */
   isSaving?: boolean;
+  /**
+   * Forwarded to <CanvasEditor onTemplateSwitched>. Fires when the user
+   * swaps templates inside Studio (Phase 4) so the parent's post-type /
+   * variant / format state can track the canvas.
+   */
+  onTemplateSwitched?: CanvasEditorProps["onTemplateSwitched"];
 }
 
 export default function CanvasEditorOverlay(
@@ -165,6 +171,7 @@ export default function CanvasEditorOverlay(
           onClose={props.onClose}
           saveLabel={props.saveLabel}
           isSaving={props.isSaving}
+          onTemplateSwitched={props.onTemplateSwitched}
         />
       </div>
     </div>

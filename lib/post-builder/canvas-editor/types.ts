@@ -618,4 +618,17 @@ export interface CanvasEditorProps {
    * The Save button shows a loading spinner and is unclickable.
    */
   isSaving?: boolean;
+  /**
+   * Phase 4 — called whenever the user swaps templates inside Studio (via the
+   * Templates panel). The parent uses this to keep its own state in sync
+   * (post-type chip / variant card / format selector should reflect what's
+   * actually on the canvas). Without this hook, the parent's state stays
+   * pinned to whatever the user clicked BEFORE entering Studio, and
+   * re-opening Studio from the same parent context would re-derive the old
+   * template via `findCanvasTemplate(staleTuple)`.
+   *
+   * The argument is the new active template — caller reads `.category`,
+   * `.variant`, and `.format` to update its own state.
+   */
+  onTemplateSwitched?: (template: CanvasTemplateSchema) => void;
 }

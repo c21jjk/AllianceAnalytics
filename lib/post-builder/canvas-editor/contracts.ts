@@ -22,7 +22,59 @@ import type { Canvas, FabricObject } from "fabric";
 
 import type { Database } from "@/lib/supabase/types";
 
-import type { CanvasLayer, MLSListingPayload } from "./types";
+import type {
+  CanvasLayer,
+  CanvasTemplateSchema,
+  MLSListingPayload,
+  PostFormat,
+} from "./types";
+
+// ===========================================================================
+// Phase 4 — Templates panel (in-editor template switcher)
+// ===========================================================================
+
+/**
+ * TemplatesPanel — grid of canvas-editor templates the user can swap to mid-edit.
+ *
+ * Renders inside the editor's left sidebar as a fourth tab alongside Brand /
+ * Agents / Photos. Clicking a tile asks the orchestrator to swap the active
+ * template. If the user has already made edits to the current template
+ * (`hasUnsavedEdits === true`), the panel surfaces a confirmation prompt
+ * before firing `onTemplatePicked` — switching templates is a "start over"
+ * action and silently discarding the user's work would be hostile.
+ *
+ * Filtering:
+ *   • Default = current format only. Switching aspect ratio mid-edit is
+ *     disorienting; we steer the user toward same-format swaps.
+ *   • Category filter chip strip — All / Just Listed / Just Sold / Under
+ *     Contract / Open House / Price Reduced. Defaults to the listing's
+ *     current post type for the obvious "show me more like this" path.
+ *   • Optional toggle to surface other formats — exposes the full set when
+ *     the user genuinely wants to switch to a different aspect ratio
+ *     (e.g., adapting a square design into a story).
+ */
+export interface TemplatesPanelProps {
+  /** All canvas-editor templates known to the registry. */
+  templates: readonly CanvasTemplateSchema[];
+  /** ID of the template currently loaded in the editor — drives the "Current" badge. */
+  currentTemplateId: string;
+  /**
+   * The active format. The panel filters to this format by default and uses
+   * it to compute card aspect ratios for the previews.
+   */
+  currentFormat: PostFormat;
+  /**
+   * When true, the user has made edits to the current template (history hook
+   * reports `canUndo === true`). The panel uses this to gate template
+   * swaps behind a `window.confirm` so the user doesn't lose work.
+   */
+  hasUnsavedEdits: boolean;
+  /**
+   * Called after the user has confirmed they want to swap to the chosen
+   * template. The orchestrator handles the actual canvas re-init.
+   */
+  onTemplatePicked: (template: CanvasTemplateSchema) => void;
+}
 
 // ===========================================================================
 // Phase 3 — Brand assets sidebar (Brand + Agents panels)

@@ -56,6 +56,7 @@ import {
   type CanvasEditorProps,
   type CanvasExportResult,
   type CanvasLayer,
+  type CanvasTemplateSchema,
   EXPORT_RESOLUTION_MULTIPLIER,
   type ImageBoundField,
   type ImageLayer,
@@ -89,6 +90,8 @@ import BrandPanel from "./panels/BrandPanel";
 import LayerListPanel from "./panels/LayerListPanel";
 import PhotosPanel from "./panels/PhotosPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
+import TemplatesPanel from "./panels/TemplatesPanel";
+import { CANVAS_TEMPLATES } from "./templates";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // why: fonts.css contains Google Fonts @import statements for the 9 fonts
@@ -637,7 +640,37 @@ interface EditorError {
 }
 
 export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
-  const { template, listing, onSave, onClose, saveLabel, isSaving } = props;
+  // why: keep the raw prop as `initialTemplate` and introduce a stateful
+  // `currentTemplate` underneath. This lets the in-editor Templates panel
+  // (Phase 4) swap the active template without the parent caring — the
+  // canvas re-initializes from the new schema while listing context is
+  // preserved. The `template` alias below means every existing reference
+  // in this file (template.width / template.layers / etc.) keeps working
+  // unchanged. Canva-mindset note: template swap is a destructive op (it
+  // discards the user's layer edits), so the handler below gates on the
+  // undo-history `canUndo` flag and prompts before swapping.
+  const {
+    template: initialTemplate,
+    listing,
+    onSave,
+    onClose,
+    saveLabel,
+    isSaving,
+    onTemplateSwitched,
+  } = props;
+  const [currentTemplate, setCurrentTemplate] =
+    useState<CanvasTemplateSchema>(initialTemplate);
+  // why: if the parent passes a new template prop (e.g., overlay closed and
+  // reopened with a different starting template), sync the internal state.
+  // Comparing by id avoids re-syncing on identical refs that happen to be
+  // new objects across renders.
+  useEffect(() => {
+    setCurrentTemplate(initialTemplate);
+  }, [initialTemplate]);
+  // why: keep the legacy `template` name in scope so every reference below
+  // (init useEffect, export handler, dimension warning, etc.) continues to
+  // work without a rename sweep. Identical reference to `currentTemplate`.
+  const template = currentTemplate;
 
   // -------------------------------------------------------------------------
   // Refs
@@ -684,7 +717,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // both reading from the new brand_assets Supabase table. Loaded once per
   // editor mount; cached locally. Empty/loading states render until the
   // first fetch resolves, so the panels never flash placeholder noise.
-  const [sidebarTab, setSidebarTab] = useState<"brand" | "agents" | "photos">("brand");
+  // why: Phase 4 — adds a "templates" tab as the first item in the strip so
+  // the user can swap templates mid-edit. Default-active stays "brand" so
+  // existing flow (Larissa lands on brand assets when opening Studio) is
+  // unchanged — Canva-mindset call: highlight the new affordance without
+  // disrupting the established opening behavior.
+  const [sidebarTab, setSidebarTab] = useState<
+    "templates" | "brand" | "agents" | "photos"
+  >("brand");
   const [brandAssets, setBrandAssets] = useState<readonly BrandAsset[]>([]);
   const [officesForFilter, setOfficesForFilter] = useState<readonly OfficeOption[]>([]);
   const [brandAssetsLoading, setBrandAssetsLoading] = useState<boolean>(true);
@@ -872,6 +912,45 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       }
     },
     [template.width, template.height, history],
+  );
+
+  // -------------------------------------------------------------------------
+  // Phase 4 — template swap handler (TemplatesPanel → here)
+  // -------------------------------------------------------------------------
+  // why: when the user clicks a tile in TemplatesPanel (after passing the
+  // panel's hasUnsavedEdits confirmation gate), we replace the active
+  // template. The init useEffect's `[template.id, listing.id]` dependency
+  // pair re-fires the entire canvas init pipeline — old Fabric canvas is
+  // disposed in cleanup, a new one is created, layers re-hydrate against
+  // the same listing. History auto-resets because the hook reads from
+  // fabricRef which is rebuilt.
+  //
+  // Canva-mindset note: the proper end-game here is that template swap is
+  // an undoable operation — Cmd+Z restores the prior canvas. That would
+  // require snapshotting the outgoing schema + layer state and feeding it
+  // back into the history stack, which is a meaningful refactor of the
+  // history hook. Tonight we ship the confirm-then-swap pattern; the
+  // undoable-swap is a follow-up worth queuing.
+  const handleTemplatePicked = useCallback(
+    (next: CanvasTemplateSchema): void => {
+      // why: no-op if the user clicked the already-active template. The
+      // panel filters this case too but defending in depth keeps the
+      // re-init path from firing on stale clicks.
+      if (next.id === currentTemplate.id) return;
+      setCurrentTemplate(next);
+      // why: the outgoing canvas's selection + error state belongs to the
+      // template we're leaving. Clear them so the new canvas opens clean.
+      setSelection({ layerId: null, isMulti: false });
+      setEditorError(null);
+      // why: notify the parent so its post-type / variant / format state
+      // tracks what's actually on the canvas. Without this, re-opening
+      // Studio from the same parent context after a swap would re-derive
+      // the OLD template via findCanvasTemplate(staleTuple), AND the row
+      // saved out of this session would carry mismatched metadata (template
+      // says Just Sold, parent state says Just Listed).
+      onTemplateSwitched?.(next);
+    },
+    [currentTemplate.id, onTemplateSwitched],
   );
 
   // -------------------------------------------------------------------------
@@ -1775,10 +1854,25 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             already has plenty of vertical space and the panels are the
             primary creation affordances. */}
         <aside className="flex w-72 flex-col border-r border-neutral-200 bg-white">
-          {/* Tab switcher — three tabs: Brand · Agents · Photos.
-              Photos was added on 2026-05-14 alongside the v4/v5 retirement
-              so users can compose multi-photo posts inside Studio. */}
+          {/* Tab switcher — four tabs: Templates · Brand · Agents · Photos.
+              Templates was added in Phase 4 (2026-05-15) as the leftmost tab
+              so the "is this the right design?" question is the most
+              discoverable affordance — matches Canva's left-side IA where
+              Templates is the front door to the editor. Default-active tab
+              remains Brand so existing flow is undisturbed. */}
           <div className="flex border-b border-neutral-200">
+            <button
+              type="button"
+              onClick={() => setSidebarTab("templates")}
+              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
+                sidebarTab === "templates"
+                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
+                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
+              }`}
+            >
+              <TemplatesTabIcon />
+              Templates
+            </button>
             <button
               type="button"
               onClick={() => setSidebarTab("brand")}
@@ -1816,9 +1910,19 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               Photos
             </button>
           </div>
-          {/* Active panel — Brand, Agents, or Photos. why: render only the
-              active one so we don't pay the load+render cost for all three. */}
-          {sidebarTab === "brand" ? (
+          {/* Active panel — Templates, Brand, Agents, or Photos. why: render
+              only the active one so we don't pay the load+render cost for
+              all four. TemplatesPanel is mostly memo-light but still benefits
+              from this pattern as the registry grows. */}
+          {sidebarTab === "templates" ? (
+            <TemplatesPanel
+              templates={CANVAS_TEMPLATES}
+              currentTemplateId={template.id}
+              currentFormat={template.format}
+              hasUnsavedEdits={history.canUndo}
+              onTemplatePicked={handleTemplatePicked}
+            />
+          ) : sidebarTab === "brand" ? (
             <BrandPanel
               assets={brandAssets.filter(
                 (a) => a.kind === "logo" || a.kind === "partner_logo",
@@ -2551,6 +2655,29 @@ function GroupIcon(): JSX.Element {
 }
 
 // why: Phase 3 — brand-tab icon. Abstract "building / brand mark" glyph.
+// why: Phase 4 — templates-tab icon. 2×2 grid glyph reads as "a set of
+// templates to choose from" — the canonical design-tool affordance, used
+// by Canva / Figma / Adobe Express for the same panel.
+function TemplatesTabIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+    </svg>
+  );
+}
+
 function BrandTabIcon(): JSX.Element {
   return (
     <svg

@@ -372,14 +372,21 @@ export default function PostBuilderClient({
         // why: single canonical path now — UPDATE if we already have an id
         // for this Studio session, INSERT otherwise. On UPDATE the server
         // also deletes the prior image_path from Storage (Option B cleanup).
+        //
+        // Phase 4 note: post_type / variant / format come from result.schema
+        // (not from parent state). When the user swaps templates inside
+        // Studio, parent state DOES track via onTemplateSwitched, but
+        // reading from the schema is defense-in-depth: it guarantees the
+        // saved row's metadata never disagrees with the template_id, even
+        // if some future consumer wires the editor without that callback.
         const upsertRes = await upsertGeneratedPostFromStudioAction({
           id: generatedPostId,
           mls_number: selectedListing.mls_number,
           source_mls: selectedListing.source_mls,
           property_id: selectedListing.id ?? null,
-          post_type: postType,
-          variant: variantId,
-          format,
+          post_type: result.schema.category,
+          variant: result.schema.variant,
+          format: result.schema.format,
           template_id: result.schema.id,
           image_url: uploadJson.image_url,
           image_path: uploadJson.image_path,
@@ -439,6 +446,28 @@ export default function PostBuilderClient({
   const handleStudioClose = useCallback((): void => {
     setStudioOpen(false);
   }, []);
+
+  // why: Phase 4 — when the user swaps templates inside Studio via the
+  // Templates panel, sync the parent's post-type / variant / format state
+  // to match the new template. Without this:
+  //   • The Post Builder chips at the top would lie about what's actually
+  //     on the canvas (user picked Just Sold inside Studio, parent still
+  //     says Just Listed).
+  //   • Re-opening Studio from the same variant card would call
+  //     findCanvasTemplate(staleTuple) and re-derive the OLD template,
+  //     overwriting the user's swap silently.
+  //   • Any post-close UI that reads parent state (preview pane label,
+  //     download filename) would carry mismatched metadata.
+  // The studioContext is also rebuilt so internal references stay clean.
+  const handleStudioTemplateSwitched = useCallback(
+    (template: CanvasTemplateSchema): void => {
+      setPostType(template.category);
+      setVariantId(template.variant);
+      setFormat(template.format);
+      setStudioContext((prev) => (prev ? { ...prev, template } : prev));
+    },
+    [],
+  );
 
   // The current set of photo URLs to send to the render API. For single-
   // photo variants this is a 1-element array; for v4 it's 2 elements
@@ -1559,6 +1588,7 @@ export default function PostBuilderClient({
         listing={studioContext?.listing ?? null}
         onSave={handleStudioSave}
         saveLabel="Save Post"
+        onTemplateSwitched={handleStudioTemplateSwitched}
       />
     </div>
   );
