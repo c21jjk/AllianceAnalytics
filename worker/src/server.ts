@@ -31,7 +31,7 @@ import { logger } from "./lib/logger.js";
 import { makeAuthMiddleware } from "./lib/auth.js";
 import { createJobStore } from "./jobs/store.js";
 import { makeHealthRouter } from "./routes/health.js";
-import { makeRenderRouter } from "./routes/render.js";
+import { makeRenderRouter, makeRenderImageRouter } from "./routes/render.js";
 
 function main(): void {
   // Throws on validation failure — leave to propagate so Fly logs the
@@ -70,6 +70,12 @@ function main(): void {
   // anyone smoke-testing the worker.
   const auth = makeAuthMiddleware(env);
   app.use("/render", auth, makeRenderRouter(store));
+  // why a separate mount path: Express's app.use("/render", ...) only
+  // matches "/render" as a whole path segment. "/render-image" with a
+  // hyphen is a SIBLING route, not a sub-route, so it needs its own mount.
+  // Same auth middleware (bearer token) so the security envelope is
+  // identical — the main app holds one token for both endpoints.
+  app.use("/render-image", auth, makeRenderImageRouter());
 
   // 404 for anything else under the worker — main app should only be
   // calling /health and /render*. Unauthenticated so it doesn't mask

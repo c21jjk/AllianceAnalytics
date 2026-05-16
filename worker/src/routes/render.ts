@@ -21,7 +21,12 @@ import { Router, type Request, type Response } from "express";
 import { logger } from "../lib/logger.js";
 import { runRenderJob } from "../jobs/render-job.js";
 import type { JobStore } from "../jobs/store.js";
-import { ReelRenderInputZ } from "../types.js";
+import {
+  renderSingleTemplate,
+  closeRenderBrowser,
+} from "../render/render-scene.js";
+import { uploadCanvasImageToStorage } from "../storage/upload-video.js";
+import { ReelRenderInputZ, RenderImageInputZ } from "../types.js";
 
 export function makeRenderRouter(store: JobStore): Router {
   const router = Router();
@@ -94,6 +99,106 @@ export function makeRenderRouter(store: JobStore): Router {
       return;
     }
     res.status(200).json(job);
+  });
+
+  return router;
+}
+
+// ---------------------------------------------------------------------------
+// /render-image router — synchronous single-template canvas render
+// ---------------------------------------------------------------------------
+//
+// why a separate router mounted at "/render-image" instead of folding into
+// the /render router: Express's app.use("/render", ...) only matches paths
+// where "/render" is a complete path segment. "/render-image" with a hyphen
+// is NOT a sub-path of "/render" — it's a sibling. Mounting a second
+// router (gated by the same auth middleware in server.ts) keeps the paths
+// honest.
+//
+// why it doesn't take a JobStore: single-template renders are synchronous,
+// so there's no job to track. The endpoint renders + uploads + returns the
+// public URL inline.
+
+/** Build the /render-image router. Mount in server.ts via
+ *  app.use("/render-image", auth, makeRenderImageRouter()). */
+export function makeRenderImageRouter(): Router {
+  const router = Router();
+
+  router.post("/", async (req: Request, res: Response) => {
+    const parsed = RenderImageInputZ.safeParse(req.body);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+        .join("; ");
+      res.status(400).json({
+        ok: false,
+        error: `Body validation failed: ${issues}`,
+      });
+      return;
+    }
+    const input = parsed.data;
+    const startedAt = Date.now();
+
+    logger.info("render_image.start", {
+      idempotency_key: input.idempotency_key,
+    });
+
+    try {
+      // why 1080×1920 hardcoded: same canonical dimensions the Reels
+      // pipeline uses. Future callers wanting different sizes (square IG,
+      // story 9:16, etc.) will pass dimensions through the body and a
+      // future version of renderSingleTemplate.
+      const png = await renderSingleTemplate(
+        input.template,
+        input.listing,
+        { width: 1080, height: 1920, fps: 30 },
+      );
+
+      const uploaded = await uploadCanvasImageToStorage(
+        png,
+        input.idempotency_key,
+      );
+
+      logger.info("render_image.succeeded", {
+        idempotency_key: input.idempotency_key,
+        url: uploaded.url,
+        bytes: uploaded.size,
+        duration_ms: Date.now() - startedAt,
+      });
+
+      res.status(200).json({
+        ok: true,
+        url: uploaded.url,
+        path: uploaded.path,
+      });
+    } catch (err) {
+      // why log + return 500 with the error message: this endpoint is
+      // synchronous, so failure surfaces directly to the caller. The
+      // structured error helps the main app distinguish "Chromium crashed"
+      // from "bucket misconfig" without an extra round-trip.
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("render_image.failed", {
+        idempotency_key: input.idempotency_key,
+        error: message,
+        duration_ms: Date.now() - startedAt,
+      });
+      res.status(500).json({ ok: false, error: message });
+    } finally {
+      // why: same browser-cleanup discipline as the video pipeline. Hold
+      // the browser open across the render+upload window; release once
+      // the response has been queued. If the worker handles a follow-up
+      // /render or /render-image immediately, the next call pays a
+      // ~500ms Chromium relaunch — acceptable in exchange for cleaner
+      // memory between requests.
+      try {
+        await closeRenderBrowser();
+      } catch (e) {
+        logger.warn("render_image.cleanup.failed", {
+          idempotency_key: input.idempotency_key,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
   });
 
   return router;

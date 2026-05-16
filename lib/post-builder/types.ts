@@ -636,6 +636,21 @@ export interface ReelRenderJob {
   video_path: string | null;
   /** Duration of the rendered MP4 in ms. Only set when status === "succeeded". */
   duration_ms: number | null;
+  /**
+   * Public Storage URL of the cover frame (first frame of the rendered
+   * video). Mirrors worker/src/types.ts's ReelRenderJob.cover_url. Set on
+   * "succeeded" when the worker extracted + uploaded a cover PNG; null
+   * when the cover upload was skipped or failed (degraded path — the
+   * caller falls back to the listing's hero photo).
+   *
+   * why: the Studio's generate flow reads this as the IG Reels grid
+   * cover so the thumbnail matches the actual first frame of the video
+   * (the designed hero card) instead of the listing's raw hero photo.
+   */
+  cover_url: string | null;
+  /** Internal Storage path of the cover PNG. Mirrors video_path. Null
+   *  whenever cover_url is null. */
+  cover_path: string | null;
   /** Error message. Only set when status === "failed". */
   error: string | null;
   /** ISO timestamp the job was submitted. */

@@ -242,6 +242,23 @@ export interface ReelRenderJob {
   video_path: string | null;
   /** MP4 duration in ms. Set only on "succeeded". */
   duration_ms: number | null;
+  /**
+   * Public Storage URL of the cover frame (first frame of the rendered
+   * video). Set only on "succeeded" when the worker successfully extracted
+   * and uploaded a cover PNG. Falls back to null when the per-scene frame
+   * buffer was empty (defensive — REEL_CAPS.minScenes >= 2 prevents this
+   * in practice) or the cover upload itself failed (logged, non-fatal —
+   * we don't want a flaky cover upload to fail the whole render).
+   *
+   * why: the main app uses this as `generated_posts.image_url` so the IG
+   * Reels grid cover matches the FIRST FRAME of the actual video instead
+   * of the listing's hero photo. Older flows fall back to the listing
+   * hero when this is null.
+   */
+  cover_url: string | null;
+  /** Internal Storage path of the cover PNG for future cleanup. Mirrors
+   *  video_path. Null whenever cover_url is null. */
+  cover_path: string | null;
   /** Error message. Set only on "failed". */
   error: string | null;
   /** ISO timestamp at job submission. */
@@ -362,5 +379,75 @@ export const VideoCompositionZ = z.object({
 
 export const ReelRenderInputZ = z.object({
   composition: VideoCompositionZ,
+  idempotency_key: z.string().uuid(),
+});
+
+// ---------------------------------------------------------------------------
+// /render-image — synchronous single-template canvas render
+// ---------------------------------------------------------------------------
+//
+// why a separate endpoint from /render:
+//   /render is an async job-queue API for VIDEOS (multi-scene, audio mix,
+//   ffmpeg compose, ~10-30s wall time). Polling is necessary because a
+//   single HTTP connection can't survive the latency.
+//
+//   /render-image is the same Fabric-in-Chromium machinery applied to a
+//   SINGLE canvas-editor template. It returns one PNG in ~2-3s — well
+//   inside Vercel's main-app server-action 60s budget. No job tracking,
+//   no polling, no idempotency dedupe (the caller can just retry on
+//   network failure; the cost is one extra render).
+//
+//   Sharing the worker (instead of bringing Playwright into Vercel's
+//   runtime) keeps Vercel's build small and lets us reuse the exact
+//   same Fabric render path that drives video frames — which is the
+//   point: this becomes the unified server-side canvas renderer for
+//   future Phase-6+ consumers (multi-OH wizard, batch property exports,
+//   etc.).
+
+/**
+ * Input shape for POST /render-image.
+ *
+ * `template` and `listing` are typed `unknown` because the worker doesn't
+ * import the main app's CanvasTemplateSchema or MLSListingPayload types
+ * (cross-package boundary, same as design-scene `template`). The browser-
+ * side render.js hydrates bound fields structurally at draw time.
+ *
+ * `idempotency_key` is used as the storage filename so a flaky-network
+ * retry of the same caller writes to the same path (idempotent overwrite
+ * is fine — the rendered output is deterministic from the same inputs).
+ */
+export interface RenderImageInput {
+  template: unknown;
+  listing: unknown;
+  idempotency_key: string;
+}
+
+export interface RenderImageOk {
+  ok: true;
+  /** Public Storage URL of the rendered PNG. */
+  url: string;
+  /** Internal Storage path of the PNG — used for future cleanup. */
+  path: string;
+}
+
+export interface RenderImageErr {
+  ok: false;
+  error: string;
+}
+
+/** Validate the /render-image body. Mirrors ReelRenderInputZ's pattern:
+ *  reject malformed payloads with a structured 400 instead of failing
+ *  later inside the render path. */
+export const RenderImageInputZ = z.object({
+  // why z.record(z.unknown()): the template is structurally a
+  // CanvasTemplateSchema but the worker doesn't depend on that type —
+  // pass it through as a generic object and let the page-side render.js
+  // validate the shape at draw time. Same trick as SceneContentZ design.
+  template: z.record(z.unknown()),
+  // why also z.record(z.unknown()): listing is structurally an
+  // MLSListingPayload (used for bound-field hydration); the worker is
+  // a structural consumer, not a typed one. The page-side bridge
+  // hydrates `${address}`, `${list_price}`, etc. by key.
+  listing: z.record(z.unknown()),
   idempotency_key: z.string().uuid(),
 });

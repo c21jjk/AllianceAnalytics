@@ -25,6 +25,16 @@ import { getSupabaseAdmin } from "./supabase-client.js";
 // `app/api/post-builder/canvas-save/route.ts`.
 const STORAGE_BUCKET = "post-builder-reels";
 
+/**
+ * Bucket where single-template canvas-editor PNG renders live. Created
+ * by the `create_post_builder_canvas_bucket` migration alongside the
+ * `widen_reel_bucket_for_covers` migration. Public, 10 MB cap, image/png
+ * only. Distinct from `post-builder-reels` (videos + cover frames) and
+ * `post-builder-renders` (V1 HTML-pipeline post images) so we can apply
+ * different lifecycle policies + cleanup sweeps per asset class.
+ */
+const CANVAS_BUCKET = "post-builder-canvas";
+
 /** Max acceptable MP4 size before we treat it as a broken render. */
 // why: 50 MB. Realistic Reels MP4s (9–60s at 1080×1920, h264 high) come
 // in well under 20 MB. IG Graph's hard ceiling is ~100 MB. Anything over
@@ -32,6 +42,19 @@ const STORAGE_BUCKET = "post-builder-reels";
 // (raw frames, wrong codec, etc.) — fail fast rather than burn upload
 // bandwidth and end up with a video Meta will reject anyway.
 const MAX_MP4_BYTES = 50 * 1024 * 1024;
+
+/** Max acceptable cover PNG size before we treat it as a broken render. */
+// why: 5 MB. The cover is one 1080×1920 PNG (first frame of the video) —
+// realistic values are 300 KB–2 MB depending on photo content. 5 MB
+// headroom covers a worst-case noisy photo + light text overlay; anything
+// bigger is almost certainly a misencoded buffer.
+const MAX_COVER_BYTES = 5 * 1024 * 1024;
+
+/** Max acceptable canvas-editor PNG size before we treat it as broken.
+ *  Same 5 MB cap as the cover — canvas-editor PNGs are usually 500 KB-2 MB,
+ *  matching the bucket's 10 MB file_size_limit with breathing room before
+ *  we even hit Supabase's side of the validation. */
+const MAX_CANVAS_PNG_BYTES = 5 * 1024 * 1024;
 
 /** 1-year browser cache. Paths are unique per render so it's safe. */
 const CACHE_CONTROL_SECONDS = "31536000";
@@ -163,6 +186,222 @@ export async function uploadVideoToStorage(
   logger.info("storage.upload.succeeded", {
     job_id: jobId,
     bucket: STORAGE_BUCKET,
+    path,
+    size_bytes: size,
+    duration_ms: durationMs,
+  });
+
+  return { url, path, size };
+}
+
+// ---------------------------------------------------------------------------
+// Cover PNG upload — first frame of the rendered Reel
+// ---------------------------------------------------------------------------
+
+/** Result shape for cover + canvas uploads. Identical shape to UploadVideoResult
+ *  on purpose — callers shouldn't have to branch on the file-kind. */
+export interface UploadPngResult {
+  /** Public URL of the uploaded PNG. */
+  url: string;
+  /** Internal Storage path — used for cleanup on row delete/replace. */
+  path: string;
+  /** Final byte size of the uploaded file. */
+  size: number;
+}
+
+/**
+ * Upload the Reel's cover frame PNG to Supabase Storage.
+ *
+ * Bucket: `post-builder-reels` (same as the MP4 — the
+ * `widen_reel_bucket_for_covers` migration added `image/png` to the
+ * allowed_mime_types so this bucket can hold both formats).
+ *
+ * Path: `covers/{job_id}.png` — distinct prefix from `reels/{job_id}.mp4`
+ * keeps the bucket organized and lets us run prefix-scoped lifecycle
+ * sweeps later (e.g., "delete every cover older than 90 days but keep
+ * the MP4 around"). Same job_id ties cover + video back together for
+ * cleanup-by-job operations.
+ *
+ * why a separate function instead of a generic uploader: the failure
+ * modes differ (cover too big means the listing photo was huge; MP4 too
+ * big means the encoder went wild), the error messages benefit from
+ * being specific, and the cover path is constructed by a different
+ * naming rule than the MP4 path.
+ *
+ * @param coverPng — PNG bytes of the first rendered frame.
+ * @param jobId — uuid of the render job; becomes the filename stem.
+ */
+export async function uploadReelCoverToStorage(
+  coverPng: Buffer,
+  jobId: string,
+): Promise<UploadPngResult> {
+  const size = coverPng.length;
+
+  if (size > MAX_COVER_BYTES) {
+    throw new Error(
+      `Rendered cover PNG is ${size} bytes (cap: ${MAX_COVER_BYTES}). ` +
+        `This usually means the first frame buffer wasn't a PNG — ` +
+        `check the render-scene step before re-uploading.`,
+    );
+  }
+  if (size === 0) {
+    throw new Error(
+      "Rendered cover PNG buffer is empty (0 bytes). The render pipeline " +
+        "produced no first-frame output — check the render-scene step.",
+    );
+  }
+
+  const path = `covers/${jobId}.png`;
+  const startedAt = Date.now();
+
+  logger.info("storage.cover_upload.start", {
+    job_id: jobId,
+    bucket: STORAGE_BUCKET,
+    path,
+    size_bytes: size,
+  });
+
+  const supabase = getSupabaseAdmin();
+
+  // why: upsert: false matches the MP4 upload — job_id uuids don't collide
+  // in practice, and a "this job already has a cover" condition would
+  // indicate a re-run we want to flag loudly, not silently overwrite.
+  const { error: uploadError } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(path, coverPng, {
+      contentType: "image/png",
+      upsert: false,
+      cacheControl: CACHE_CONTROL_SECONDS,
+    });
+
+  if (uploadError) {
+    const message = uploadError.message ?? String(uploadError);
+    const lowered = message.toLowerCase();
+    if (BUCKET_NOT_FOUND_SUBSTRINGS.some((s) => lowered.includes(s))) {
+      throw new Error(
+        `Storage bucket '${STORAGE_BUCKET}' does not exist. ` +
+          `Create it in the Supabase dashboard or apply a migration ` +
+          `that inserts into storage.buckets.`,
+      );
+    }
+    throw new Error(
+      `Supabase Storage cover upload failed: ${message}. ` +
+        `Path: ${path}. Bucket: ${STORAGE_BUCKET}. ` +
+        `If this is a MIME-type rejection, confirm the bucket's ` +
+        `allowed_mime_types includes 'image/png' (migration: ` +
+        `widen_reel_bucket_for_covers).`,
+    );
+  }
+
+  const { data: pub } = supabase.storage
+    .from(STORAGE_BUCKET)
+    .getPublicUrl(path);
+
+  const url = pub.publicUrl;
+  const durationMs = Date.now() - startedAt;
+
+  logger.info("storage.cover_upload.succeeded", {
+    job_id: jobId,
+    bucket: STORAGE_BUCKET,
+    path,
+    size_bytes: size,
+    duration_ms: durationMs,
+  });
+
+  return { url, path, size };
+}
+
+// ---------------------------------------------------------------------------
+// Canvas-editor single-template PNG upload — /render-image endpoint
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload a single-template canvas-editor render to the
+ * `post-builder-canvas` bucket. Used by POST /render-image (synchronous
+ * server-side canvas rendering — the future unified path for every
+ * canvas-editor PNG the platform produces).
+ *
+ * Path: `{idempotency_key}.png` — the caller-supplied idempotency key
+ * doubles as the filename so a network-retry of the same render writes
+ * to the same path (idempotent overwrite is fine; the render output is
+ * deterministic from the same template + listing inputs). No "covers/"
+ * prefix because this bucket is single-purpose — every object in it is
+ * a canvas render.
+ *
+ * @param png — PNG bytes from the Fabric renderer.
+ * @param idempotencyKey — caller-supplied uuid; becomes the filename.
+ */
+export async function uploadCanvasImageToStorage(
+  png: Buffer,
+  idempotencyKey: string,
+): Promise<UploadPngResult> {
+  const size = png.length;
+
+  if (size > MAX_CANVAS_PNG_BYTES) {
+    throw new Error(
+      `Rendered canvas PNG is ${size} bytes (cap: ${MAX_CANVAS_PNG_BYTES}). ` +
+        `Realistic canvas-editor PNGs are 500 KB-2 MB — this size ` +
+        `usually means the Fabric multiplier wasn't 1, or the canvas ` +
+        `was rendered at a much higher resolution than 1080×1920.`,
+    );
+  }
+  if (size === 0) {
+    throw new Error(
+      "Rendered canvas PNG buffer is empty (0 bytes). The render pipeline " +
+        "produced no output — check the render-scene step.",
+    );
+  }
+
+  const path = `${idempotencyKey}.png`;
+  const startedAt = Date.now();
+
+  logger.info("storage.canvas_upload.start", {
+    idempotency_key: idempotencyKey,
+    bucket: CANVAS_BUCKET,
+    path,
+    size_bytes: size,
+  });
+
+  const supabase = getSupabaseAdmin();
+
+  // why: upsert: true here (NOT false). Retrying the same idempotency_key
+  // intentionally overwrites — the render is deterministic from the
+  // inputs, so a retry that lands at the same path produces an identical
+  // file. This matches the contract documented on RenderImageInput.
+  const { error: uploadError } = await supabase.storage
+    .from(CANVAS_BUCKET)
+    .upload(path, png, {
+      contentType: "image/png",
+      upsert: true,
+      cacheControl: CACHE_CONTROL_SECONDS,
+    });
+
+  if (uploadError) {
+    const message = uploadError.message ?? String(uploadError);
+    const lowered = message.toLowerCase();
+    if (BUCKET_NOT_FOUND_SUBSTRINGS.some((s) => lowered.includes(s))) {
+      throw new Error(
+        `Storage bucket '${CANVAS_BUCKET}' does not exist. ` +
+          `Apply the create_post_builder_canvas_bucket migration ` +
+          `or create the bucket in the Supabase dashboard.`,
+      );
+    }
+    throw new Error(
+      `Supabase Storage canvas upload failed: ${message}. ` +
+        `Path: ${path}. Bucket: ${CANVAS_BUCKET}.`,
+    );
+  }
+
+  const { data: pub } = supabase.storage
+    .from(CANVAS_BUCKET)
+    .getPublicUrl(path);
+
+  const url = pub.publicUrl;
+  const durationMs = Date.now() - startedAt;
+
+  logger.info("storage.canvas_upload.succeeded", {
+    idempotency_key: idempotencyKey,
+    bucket: CANVAS_BUCKET,
     path,
     size_bytes: size,
     duration_ms: durationMs,

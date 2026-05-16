@@ -653,13 +653,248 @@
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Single-template render — unified path for /render-image
+  // -------------------------------------------------------------------------
+  //
+  // why this exists alongside renderSceneFrame: design-kind scenes in the
+  // video pipeline expect every layer to already be HYDRATED upstream —
+  // i.e., resolvedText / resolvedSrc are set by the main app before the
+  // composition is submitted. The new /render-image endpoint takes a RAW
+  // CanvasTemplateSchema (with boundField pointers but no resolved values)
+  // plus an MLSListingPayload, so this bridge function hydrates structurally
+  // before delegating to renderDesignScene.
+  //
+  // Keeping hydration here (not on the worker's Node side) makes the
+  // surface uniform: the page is the single place where templates become
+  // pixels, and every boundField-driven feature evolves in one file.
+  //
+  // The hydration MIRRORS lib/post-builder/canvas-editor/CanvasEditor.tsx's
+  // resolveTextBoundField / resolveImageBoundField. If a new TextBoundField
+  // or ImageBoundField is added to the main app's union, mirror it here.
+  // The drift would only matter for /render-image renders — the video
+  // pipeline path is unaffected because design scenes ship pre-hydrated.
+
+  /** Format a number as a US-locale price string. Empty when null. */
+  function formatPriceUSD(value) {
+    if (value == null || typeof value !== "number" || !isFinite(value)) {
+      return "";
+    }
+    // why Intl.NumberFormat over manual ",": same path the main app uses,
+    // so price strings round-trip identically between client preview and
+    // server render.
+    return "$" + new Intl.NumberFormat("en-US").format(Math.round(value));
+  }
+
+  /** "4 BR / 3 BA" — beds + (full + half/2) baths. Empty when both are null. */
+  function formatBedsBaths(beds, full, half) {
+    var bedsStr = typeof beds === "number" ? String(beds) + " BR" : "";
+    var totalBaths =
+      (typeof full === "number" ? full : 0) +
+      (typeof half === "number" ? half * 0.5 : 0);
+    var bathsStr = totalBaths > 0 ? String(totalBaths) + " BA" : "";
+    if (bedsStr && bathsStr) return bedsStr + " / " + bathsStr;
+    return bedsStr || bathsStr;
+  }
+
+  /** Mirror lib/post-builder/canvas-editor/CanvasEditor.tsx STATUS_LABEL_MAP. */
+  var STATUS_LABEL_MAP = {
+    active: "JUST LISTED",
+    pending: "UNDER CONTRACT",
+    sold: "JUST SOLD",
+    expired: "",
+    coming_soon: "COMING SOON",
+  };
+
+  /**
+   * Resolve a TextBoundField against an MLSListingPayload-shaped object.
+   * Returns empty string for unknown fields rather than throwing — keeps
+   * the render robust against client/server drift.
+   */
+  function resolveTextBoundField(field, listing) {
+    if (!listing) return "";
+    switch (field) {
+      case "price":
+        return formatPriceUSD(listing.priceList);
+      case "close_price":
+        return formatPriceUSD(listing.priceClose);
+      case "address_line1":
+        return listing.addressLine1 || "";
+      case "city_state_zip": {
+        var parts = [listing.city, listing.state, listing.zip].filter(Boolean);
+        if (parts.length < 2) return parts.join(" ");
+        var city = parts[0];
+        var state = parts[1];
+        var zip = parts[2];
+        return zip ? city + ", " + state + " " + zip : city + ", " + state;
+      }
+      case "city":
+        return listing.city || "";
+      case "state":
+        return listing.state || "";
+      case "zip":
+        return listing.zip || "";
+      case "beds":
+        return typeof listing.beds === "number" ? String(listing.beds) : "";
+      case "baths": {
+        var total =
+          (typeof listing.bathsFull === "number" ? listing.bathsFull : 0) +
+          (typeof listing.bathsHalf === "number"
+            ? listing.bathsHalf * 0.5
+            : 0);
+        return total > 0 ? String(total) : "";
+      }
+      case "beds_baths":
+        return formatBedsBaths(
+          listing.beds,
+          listing.bathsFull,
+          listing.bathsHalf,
+        );
+      case "property_type":
+        return listing.propertyType || "";
+      case "mls_number":
+        return listing.mlsNumber || "";
+      case "tagline":
+        return listing.tagline || "";
+      case "status_label":
+        return STATUS_LABEL_MAP[listing.status] || "";
+      case "agent_name":
+        return listing.agentName || "";
+      case "agent_phone":
+        return listing.agentPhone || "";
+      case "agent_email":
+        return listing.agentEmail || "";
+      case "agent_title":
+        return listing.agentTitle || "";
+      case "office_name":
+        return listing.officeName || "";
+      case "open_house_date":
+      case "open_house_time":
+        // why: full date / time formatting matches the main app's
+        // formatOpenHouseDate / formatOpenHouseTimeRange — those use the
+        // browser's Intl.DateTimeFormat. For server-side renders the
+        // raw ISO string is the safest fallback; richer formatting can
+        // be added if templates start using these fields.
+        return field === "open_house_date"
+          ? listing.openHouseStartUtc || ""
+          : listing.openHouseStartUtc || "";
+      default:
+        // why: warn-not-throw matches the layer-kind dispatch — an unknown
+        // field is recoverable (text just renders empty); a throw would
+        // blank the whole render.
+        console.warn("Unknown TextBoundField: " + field);
+        return "";
+    }
+  }
+
+  /**
+   * Resolve an ImageBoundField against an MLSListingPayload-shaped object.
+   * Returns null when the listing doesn't carry that asset; addImageLayer
+   * handles null by rendering a placeholder rect.
+   */
+  function resolveImageBoundField(field, listing) {
+    if (!listing) return null;
+    var photos = Array.isArray(listing.photos) ? listing.photos : [];
+    switch (field) {
+      case "hero_photo":
+        return photos[0] || null;
+      case "photo_2":
+        return photos[1] || null;
+      case "photo_3":
+        return photos[2] || null;
+      case "photo_4":
+        return photos[3] || null;
+      case "photo_5":
+        return photos[4] || null;
+      case "agent_photo":
+        return listing.agentPhotoUrl || null;
+      case "office_logo":
+        return listing.officeLogoUrl || null;
+      case "brokerage_logo":
+        return "/brand/c21-mark.svg";
+      default:
+        console.warn("Unknown ImageBoundField: " + field);
+        return null;
+    }
+  }
+
+  /**
+   * Walk a template's layers and produce a copy whose text/image layers
+   * carry resolvedText / resolvedSrc populated from the listing. Group
+   * layers recurse so nested templates hydrate too. Layers without a
+   * boundField are passed through unchanged.
+   *
+   * Pure function: never mutates the input. The video pipeline relies on
+   * the same property — design-scene templates are persisted by value in
+   * the composition and must remain stable across renders.
+   */
+  function hydrateTemplate(template, listing) {
+    if (!template || !Array.isArray(template.layers)) return template;
+    var hydratedLayers = template.layers.map(function (layer) {
+      if (!layer || typeof layer !== "object") return layer;
+      if (layer.kind === "text" && layer.boundField) {
+        var resolved = resolveTextBoundField(layer.boundField, listing);
+        // why: only inject resolvedText when the field resolves to a
+        // non-empty string; falling back to layer.text otherwise mirrors
+        // the editor's behavior (literal text is the fallback).
+        return Object.assign({}, layer, {
+          resolvedText: resolved !== "" ? resolved : layer.text,
+        });
+      }
+      if (layer.kind === "image" && layer.boundField) {
+        var src = resolveImageBoundField(layer.boundField, listing);
+        return Object.assign({}, layer, { resolvedSrc: src });
+      }
+      if (layer.kind === "group" && Array.isArray(layer.children)) {
+        return Object.assign({}, layer, {
+          children: hydrateTemplate(
+            { layers: layer.children },
+            listing,
+          ).layers,
+        });
+      }
+      return layer;
+    });
+    return Object.assign({}, template, { layers: hydratedLayers });
+  }
+
+  /**
+   * Render ONE canvas-editor template into a PNG dataURL. Called by the
+   * worker's POST /render-image endpoint via Playwright's page.evaluate.
+   *
+   * The flow is: hydrate boundField pointers → delegate to renderDesignScene
+   * (the same code path video design-scenes use) → toDataURL.
+   *
+   * @param {object} template — structurally a CanvasTemplateSchema.
+   * @param {object} listing — structurally an MLSListingPayload.
+   * @returns {Promise<string>} data URL.
+   */
+  function renderTemplateFrame(template, listing) {
+    return document.fonts.ready.then(function () {
+      if (!template || typeof template !== "object") {
+        throw new Error(
+          "renderTemplateFrame: template is required and must be an object",
+        );
+      }
+      var hydrated = hydrateTemplate(template, listing);
+      return renderDesignScene(hydrated).then(function () {
+        var canvas = getFabricCanvas();
+        return canvas.toDataURL({ format: "png", multiplier: 1 });
+      });
+    });
+  }
+
   // Expose the API the Playwright driver calls.
   globalScope.renderSceneFrame = renderSceneFrame;
+  globalScope.renderTemplateFrame = renderTemplateFrame;
   // Diagnostic helpers — useful when manually opening the page in a
   // browser tab to debug. Not part of the contract.
   globalScope.__alliance_render = {
     canvas: getFabricCanvas,
     lerpRect: lerpRect,
     EASING: EASING,
+    hydrateTemplate: hydrateTemplate,
+    resolveTextBoundField: resolveTextBoundField,
+    resolveImageBoundField: resolveImageBoundField,
   };
 })(window);

@@ -77,6 +77,12 @@ class InMemoryJobStore implements JobStore {
       video_url: null,
       video_path: null,
       duration_ms: null,
+      // why: cover_url/cover_path default null and stay null until the
+      // worker has extracted + uploaded the first-frame PNG. The /render
+      // route only sets them positive on "succeeded"; consumers (main app)
+      // fall back to the listing hero photo when cover_url is null.
+      cover_url: null,
+      cover_path: null,
       error: null,
       created_at: now,
       updated_at: now,

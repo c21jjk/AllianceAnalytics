@@ -105,8 +105,17 @@ function resolveRenderPageUrl(): string {
 
 /**
  * Launch (or return the cached) Chromium browser + page. The page has
- * already navigated to the render-page and `window.renderSceneFrame` is
- * available on the global scope.
+ * already navigated to the render-page; both `window.renderSceneFrame`
+ * (video pipeline) AND `window.renderTemplateFrame` (single-template
+ * pipeline added 2026-05-16) are available on the global scope.
+ *
+ * why a single shared launcher: every renderer in the worker (video
+ * scenes via renderScene; single PNGs via renderSingleTemplate) goes
+ * through the same Chromium tab. Sharing the page means the second
+ * call into the worker pays ~0ms warmup instead of ~500ms.
+ *
+ * Aliased as `getOrLaunchPage` below — the original name is retained
+ * so existing call sites compile unchanged.
  */
 async function getRenderPage(): Promise<Page> {
   if (cachedPage && cachedBrowser) {
@@ -370,4 +379,95 @@ export async function closeRenderBrowser(): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn("render.browser.close_failed", { error: message });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Single-template render — used by POST /render-image
+// ---------------------------------------------------------------------------
+
+/**
+ * Render ONE canvas-editor template into a PNG buffer (no video, no
+ * motion, no audio). Shares the cached Chromium handle with renderScene
+ * so the second call into the worker pays ~0ms warmup.
+ *
+ * Contract:
+ *   - `template` is structurally a CanvasTemplateSchema (worker doesn't
+ *     import the main app's type — passes through as `unknown` and lets
+ *     render.js validate at draw time, same trick design-kind scenes use).
+ *   - `listing` is structurally an MLSListingPayload (used by render.js
+ *     for `${address}` / `${list_price}` style bound-field hydration).
+ *   - Output is one 1080×1920 PNG (the canonical Reels / story size).
+ *
+ * why this shares render-scene.ts and not a sibling file: every step of
+ * the work — Chromium launch, page navigation, dataURL parsing, the
+ * "PNG suspiciously small" guard — is identical. Duplicating the file
+ * would mean two places to fix every Chromium-startup bug.
+ *
+ * why synchronous (returns Buffer instead of going through the JobStore):
+ * a single-template render is fast (~2-3s wall time) and the caller
+ * (Vercel server action) has a 60s budget. No need for polling. The
+ * caller can retry the same idempotency_key on network failure — the
+ * upload uses upsert: true so a retry overwrites cleanly.
+ *
+ * @throws if the page evaluate() rejects, or the returned dataURL fails
+ *   validation (see dataUrlToPngBuffer).
+ */
+export async function renderSingleTemplate(
+  template: unknown,
+  listing: unknown,
+  opts: RenderSceneOptions,
+): Promise<Buffer> {
+  // why: same dimensional contract as renderScene — Reels-shaped output.
+  // A future Phase 6+ caller may want square/portrait too; for now we
+  // reject anything that isn't 1080×1920 so a misconfigured caller fails
+  // loudly instead of producing an off-spec image.
+  if (opts.width !== 1080 || opts.height !== 1920) {
+    throw new Error(
+      `renderSingleTemplate: only 1080×1920 supported, got ${opts.width}×${opts.height}`,
+    );
+  }
+
+  const page = await getRenderPage();
+
+  // why JSON.parse(JSON.stringify(...)): Playwright requires a JSON-
+  // serializable evaluate arg. Both template and listing are JSON-safe
+  // by construction (every field is a primitive, plain object, or array
+  // — no Dates, no functions). The round-trip also strips any non-
+  // enumerable or symbol-keyed property a misbehaving caller might
+  // sneak in.
+  const templateJson = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+  const listingJson = JSON.parse(JSON.stringify(listing)) as Record<string, unknown>;
+
+  logger.info("render.template.start");
+
+  const result: unknown = await page.evaluate(
+    async (args: [Record<string, unknown>, Record<string, unknown>]) => {
+      const [tpl, lst] = args;
+      // why globalThis cast (and not `window`): this tsconfig omits the
+      // DOM lib so `window` is not a typed global. Same pattern as the
+      // renderScene call site above.
+      const bridge = globalThis as unknown as {
+        renderTemplateFrame?: (
+          template: Record<string, unknown>,
+          listing: Record<string, unknown>,
+        ) => Promise<string>;
+      };
+      const fn = bridge.renderTemplateFrame;
+      if (typeof fn !== "function") {
+        throw new Error("window.renderTemplateFrame missing");
+      }
+      return fn(tpl, lst);
+    },
+    [templateJson, listingJson] as [Record<string, unknown>, Record<string, unknown>],
+  );
+
+  // why we reuse dataUrlToPngBuffer with a synthetic sceneId/frameIndex:
+  // it's the same validation logic (data-URL prefix check, comma split,
+  // 1 KB floor). Synthesizing "template"/0 keeps the error messages
+  // grep-able without inventing a parallel helper.
+  const buf = dataUrlToPngBuffer(result, "template", 0);
+
+  logger.info("render.template.done", { bytes: buf.byteLength });
+
+  return buf;
 }

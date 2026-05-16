@@ -1348,7 +1348,16 @@ export async function getReelRenderStatusAction(
         error: "Worker returned an unexpected job shape",
       };
     }
-    return { ok: true, job: body };
+    // why: normalize cover_url/cover_path so the union type holds at the
+    // boundary. A worker version that pre-dates the cover-frame feature
+    // will omit these keys; coerce undefined → null so consumers read a
+    // consistent `string | null` instead of `string | null | undefined`.
+    const normalized: ReelRenderJob = {
+      ...body,
+      cover_url: body.cover_url ?? null,
+      cover_path: body.cover_path ?? null,
+    };
+    return { ok: true, job: normalized };
   } catch (e) {
     const message =
       e instanceof Error
@@ -1378,11 +1387,29 @@ function isReelRenderJob(value: unknown): value is ReelRenderJob {
     return false;
   }
   if (typeof v.progress_pct !== "number") return false;
-  // video_url / video_path / duration_ms / error are nullable; only check
-  // they exist as the right kind when non-null.
+  // video_url / video_path / duration_ms / cover_url / cover_path / error
+  // are nullable; only check they exist as the right kind when non-null.
   if (v.video_url !== null && typeof v.video_url !== "string") return false;
   if (v.video_path !== null && typeof v.video_path !== "string") return false;
   if (v.duration_ms !== null && typeof v.duration_ms !== "number") return false;
+  // why: cover_url + cover_path are tolerated as `undefined` too — a worker
+  // version that predates the cover-frame feature would simply omit the
+  // fields rather than send null. Both shapes narrow to ReelRenderJob's
+  // `string | null` because the persist action treats undefined like null.
+  if (
+    v.cover_url !== undefined &&
+    v.cover_url !== null &&
+    typeof v.cover_url !== "string"
+  ) {
+    return false;
+  }
+  if (
+    v.cover_path !== undefined &&
+    v.cover_path !== null &&
+    typeof v.cover_path !== "string"
+  ) {
+    return false;
+  }
   if (v.error !== null && typeof v.error !== "string") return false;
   if (typeof v.created_at !== "string") return false;
   if (typeof v.updated_at !== "string") return false;
@@ -1403,8 +1430,13 @@ export interface PersistRenderedReelInput {
   duration_ms: number;
   /**
    * Cover frame URL — used as image_url on the row + as the IG Reels cover.
-   * For MVP Larissa picks this from the listing's hero photo; future days
-   * may generate a proper cover frame server-side.
+   *
+   * As of 2026-05-16 the canonical source is the worker's `job.cover_url`
+   * (a PNG of the literal first frame of the rendered video). Callers
+   * SHOULD prefer that value when non-null. When the worker degrades —
+   * older worker version, cover upload failed, missing first frame — the
+   * caller falls back to the listing's hero photo so a Reel never
+   * persists without a cover.
    */
   cover_image_url: string;
   /** Optional caption draft. */
@@ -1530,4 +1562,185 @@ export async function persistRenderedReelAction(
   revalidatePath("/post-builder");
   revalidatePath("/saved-posts");
   return { ok: true, generated_post_id: data.id };
+}
+
+// ---------------------------------------------------------------------------
+// triggerCanvasImageRenderAction — server-side canvas-editor PNG render
+// ---------------------------------------------------------------------------
+//
+// why this action exists (2026-05-16):
+//   Today, canvas-editor templates render via Fabric in the BROWSER (Path C
+//   editor's onSave produces the PNG locally and uploads via canvas-save).
+//   The Reel worker has its own Fabric-in-Chromium renderer for video
+//   frames. The Multi-OH wizard uses the V1 Chromium HTML pipeline — a
+//   THIRD code path for the same conceptual operation.
+//
+//   This action calls the worker's NEW synchronous /render-image endpoint
+//   to unify everything onto the same Fabric machinery. The endpoint
+//   takes a CanvasTemplateSchema + an MLSListingPayload and returns a
+//   public Storage URL to the rendered PNG.
+//
+//   It's foundation work — none of the existing consumers (Path C editor,
+//   Multi-OH wizard) are migrated yet. Phase 6+ builds will switch them
+//   over one at a time so we can validate parity per consumer instead of
+//   risking a big-bang regression.
+//
+// Behavior contract:
+//   • requireUser() gate (same as every Studio mutation).
+//   • Reads REEL_WORKER_URL + REEL_WORKER_AUTH_TOKEN from env. Same vars
+//     as triggerReelRenderAction — one worker, two endpoints.
+//   • Generates a client-side idempotency_key (UUID).
+//   • POSTs to /render-image with bearer auth.
+//   • 60s timeout — longer than triggerReelRenderAction's 30s because the
+//     render itself runs synchronously on the worker (vs. fire-and-
+//     forget for video). The worker target is ~2-3s; 60s leaves headroom
+//     for cold-start and bucket upload latency.
+
+export interface TriggerCanvasImageRenderInput {
+  /**
+   * Structurally a CanvasTemplateSchema. Typed `unknown` because this
+   * action is the boundary into the worker, which doesn't share the
+   * main app's type graph. Server actions in Next 15 JSON-serialize
+   * args, so the runtime value must already be JSON-safe (no Dates,
+   * no functions, no symbols).
+   */
+  template: unknown;
+  /** Structurally an MLSListingPayload. Same boundary rationale as template. */
+  listing: unknown;
+}
+
+export interface TriggerCanvasImageRenderOk {
+  ok: true;
+  /** Public Storage URL of the rendered PNG. */
+  url: string;
+  /** Internal Storage path of the PNG — used by future cleanup paths. */
+  path: string;
+}
+
+export interface TriggerCanvasImageRenderErr {
+  ok: false;
+  error: string;
+}
+
+export type TriggerCanvasImageRenderResult =
+  | TriggerCanvasImageRenderOk
+  | TriggerCanvasImageRenderErr;
+
+/** Worker /render-image success response. Mirrors RenderImageOk in
+ *  worker/src/types.ts. */
+interface WorkerRenderImageResponse {
+  ok: true;
+  url: string;
+  path: string;
+}
+
+/**
+ * Submit a single canvas-editor template to the worker's synchronous
+ * /render-image endpoint. Returns the public Storage URL of the
+ * rendered PNG.
+ *
+ * Future migration path (Phase 6+ — do NOT change yet):
+ *   • Path C editor save: replace client-side toDataURL + canvas-save
+ *     route with this action. Avoids running Fabric in the user's
+ *     browser when the worker can do it in 2-3s.
+ *   • Multi-OH wizard hero + per-property renders: replace the V1
+ *     Chromium HTML pipeline with template-driven renders through this
+ *     action. Brings the wizard onto the same template authoring system
+ *     as every other post type.
+ *
+ * Today every consumer is unchanged — this action exists only so the
+ * migration can land incrementally without coordinating a big-bang cutover.
+ */
+export async function triggerCanvasImageRenderAction(
+  input: TriggerCanvasImageRenderInput,
+): Promise<TriggerCanvasImageRenderResult> {
+  await requireUser();
+
+  if (!input.template || typeof input.template !== "object") {
+    return { ok: false, error: "template is required and must be an object" };
+  }
+  if (!input.listing || typeof input.listing !== "object") {
+    return { ok: false, error: "listing is required and must be an object" };
+  }
+
+  const env = readReelWorkerEnv();
+  if (!env.ok) return { ok: false, error: env.error };
+
+  // why: same idempotency-key generation as triggerReelRenderAction. The
+  // worker uses this as the storage filename (overwrite-on-retry is safe;
+  // the render is deterministic from the inputs).
+  const idempotencyKey = crypto.randomUUID();
+
+  try {
+    const res = await fetch(`${env.baseUrl}/render-image`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.token}`,
+      },
+      body: JSON.stringify({
+        template: input.template,
+        listing: input.listing,
+        idempotency_key: idempotencyKey,
+      }),
+      // why: 60s — longer than triggerReelRenderAction's 30s because
+      // /render-image runs the full render synchronously inside the
+      // request (vs. /render which 202s immediately and runs async).
+      // Realistic target is ~2-3s; 60s allows for a cold Chromium
+      // launch + upload variance.
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!res.ok) {
+      let workerMessage = `HTTP ${res.status}`;
+      try {
+        const body: unknown = await res.json();
+        if (
+          body &&
+          typeof body === "object" &&
+          "error" in body &&
+          typeof (body as { error: unknown }).error === "string"
+        ) {
+          workerMessage = (body as { error: string }).error;
+        }
+      } catch {
+        // ignore — status code alone is enough context
+      }
+      return {
+        ok: false,
+        error: `Worker rejected the image render: ${workerMessage}`,
+      };
+    }
+
+    const body: unknown = await res.json();
+    if (!isWorkerRenderImageResponse(body)) {
+      return {
+        ok: false,
+        error: "Worker returned an unexpected /render-image response shape",
+      };
+    }
+
+    return { ok: true, url: body.url, path: body.path };
+  } catch (e) {
+    const message =
+      e instanceof Error
+        ? e.name === "TimeoutError" || e.name === "AbortError"
+          ? "Worker did not respond within 60 seconds — check that REEL_WORKER_URL points at a running worker."
+          : `Worker unreachable: ${e.message}`
+        : "Worker unreachable: unknown error";
+    return { ok: false, error: message };
+  }
+}
+
+/** Structural narrowing for the worker's /render-image success body. */
+function isWorkerRenderImageResponse(
+  value: unknown,
+): value is WorkerRenderImageResponse {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    v.ok === true &&
+    typeof v.url === "string" &&
+    typeof v.path === "string"
+  );
 }

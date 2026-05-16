@@ -879,15 +879,19 @@ export default function ReelStudioClient({
           return;
         }
         setGenerateState({ phase: "persisting" });
+        // why: prefer the worker's first-frame cover when available so the
+        // IG Reels grid thumbnail matches the designed hero card. Fall back
+        // to the listing's hero photo only when the worker degraded
+        // (older worker version, cover upload failed, missing first frame)
+        // so we never persist a Reel without a cover.
+        const coverImageUrl =
+          job.cover_url ?? selectedListing.hero_image_url!;
         const persist = await persistRenderedReelAction({
           composition,
           video_url: job.video_url,
           video_path: job.video_path,
           duration_ms: job.duration_ms,
-          // why: MVP cover frame = the listing's hero photo. This is what
-          // IG Reels uses as the grid thumbnail; a future day may render
-          // a proper "first frame of the MP4" cover server-side.
-          cover_image_url: selectedListing.hero_image_url!,
+          cover_image_url: coverImageUrl,
         });
         if (!persist.ok) {
           setGenerateState({

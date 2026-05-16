@@ -27,7 +27,10 @@
 import { logger } from "../lib/logger.js";
 import { renderScene, closeRenderBrowser } from "../render/render-scene.js";
 import { composeVideo } from "../render/compose-video.js";
-import { uploadVideoToStorage } from "../storage/upload-video.js";
+import {
+  uploadVideoToStorage,
+  uploadReelCoverToStorage,
+} from "../storage/upload-video.js";
 import type { JobStore } from "./store.js";
 import type { ReelRenderInput } from "../types.js";
 
@@ -131,6 +134,54 @@ export async function runRenderJob(
     }
     store.update(jobId, { progress_pct: 55 });
 
+    // ---- 55..58% — extract + upload the cover PNG (first frame) ----
+    // why: the IG Reels grid cover must match the first second of the
+    // rendered video (which is the designed hero card), NOT the listing's
+    // raw hero photo. We grab sceneBuffers[0][0] (the literal first frame
+    // of the first scene) and upload it as a separate PNG in the same
+    // bucket under a `covers/` prefix.
+    //
+    // Failure handling: a missing/empty first-frame buffer (shouldn't
+    // happen — REEL_CAPS.minScenes ≥ 2 — but guard defensively) skips the
+    // cover upload entirely. The main app's persist path treats a null
+    // cover_url as "fall back to listing hero photo", so a skipped cover
+    // degrades gracefully. A FAILED upload (network, bucket misconfig,
+    // size cap exceeded) is logged at warn and also produces a null
+    // cover — we explicitly do NOT fail the whole render for a cover
+    // upload glitch because the MP4 is the critical artifact.
+    let coverUrl: string | null = null;
+    let coverPath: string | null = null;
+    const firstFrame = sceneBuffers[0]?.[0];
+    if (firstFrame === undefined) {
+      // why warn-not-throw: the video render succeeded; missing the cover
+      // is a degraded path, not a failure. Surface in logs so we notice.
+      logger.warn("render.cover.skipped_missing_first_frame", {
+        job_id: jobId,
+        scene_buffers_len: sceneBuffers.length,
+        first_scene_frames: sceneBuffers[0]?.length ?? 0,
+      });
+    } else {
+      try {
+        const coverUpload = await uploadReelCoverToStorage(firstFrame, jobId);
+        coverUrl = coverUpload.url;
+        coverPath = coverUpload.path;
+        logger.info("render.cover.uploaded", {
+          job_id: jobId,
+          cover_url: coverUrl,
+          bytes: coverUpload.size,
+        });
+      } catch (coverErr) {
+        // why: same degraded-path rationale as the missing-frame branch.
+        // Don't bubble — the MP4 path is the user-visible value.
+        logger.warn("render.cover.upload_failed", {
+          job_id: jobId,
+          error:
+            coverErr instanceof Error ? coverErr.message : String(coverErr),
+        });
+      }
+    }
+    store.update(jobId, { progress_pct: 58 });
+
     // ---- 55..80% — ffmpeg composition ----
     // why: ffmpeg's progress events are not currently wired (would need a
     // separate parser of stderr or fluent-ffmpeg's `.on("progress")`). For
@@ -170,6 +221,11 @@ export async function runRenderJob(
       video_url: uploaded.url,
       video_path: uploaded.path,
       duration_ms: composition.totalDurationMs,
+      // why: cover_url/cover_path may be null (degraded path — see the
+      // cover upload block above). The main app's persist action falls
+      // back to the listing's hero photo when null.
+      cover_url: coverUrl,
+      cover_path: coverPath,
     });
     logger.info("render.succeeded", {
       job_id: jobId,
