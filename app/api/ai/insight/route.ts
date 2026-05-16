@@ -17,6 +17,7 @@ import { getPostById } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   generatePostInsight,
+  PROMPT_VERSION,
   type BaselineSnapshot,
   type InsightContext,
   type SiblingPostingSnapshot,
@@ -75,9 +76,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "post_id required" }, { status: 400 });
   }
 
-  // Cache check — by post id only, fine because metrics are aggregated and
-  // the 30-minute TTL bounds staleness anyway.
-  const cached = readCache(postId);
+  // Cache check — keyed by (PROMPT_VERSION, post_id). Bumping PROMPT_VERSION
+  // in lib/ai/insight.ts orphans every v1 entry without us having to walk the
+  // map; the next request regenerates against the new prompt and writes back
+  // under the new key. Old entries age out naturally via TTL.
+  const cacheKey = `${PROMPT_VERSION}:${postId}`;
+  const cached = readCache(cacheKey);
   if (cached) {
     return NextResponse.json({ insight: cached, configured: true, cached: true });
   }
@@ -145,7 +149,7 @@ export async function POST(request: Request) {
     const context = await buildInsightContext(supabase, post, postId);
 
     const insight = await generatePostInsight(post, office, context);
-    writeCache(postId, insight);
+    writeCache(cacheKey, insight);
     return NextResponse.json({ insight, configured: true });
   } catch (e) {
     console.error("[/api/ai/insight] failed:", e);

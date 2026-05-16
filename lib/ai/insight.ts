@@ -3,20 +3,32 @@
  *   - The strip at the bottom of each GroupCard on the homepage
  *   - The strip on /posts/[id]
  *
- * Mode (as of 2026-05-10): coaching-first. The prompt is required to find a
- * specific tactical lever for every post — "Tracking normal" is forbidden
- * unless the post is brand-new with zero metrics. Powered by claude-opus-4-6.
+ * Mode (as of 2026-05-15): optimistic / advanced-only / views-first.
+ * Larissa is a skilled operator — the prompt is explicitly forbidden from
+ * surfacing beginner pointers (lighting, hook 101, posting times, generic
+ * CTAs). It produces advanced moves (format laddering, signature series,
+ * hook-pattern A/B, sound windows, cross-platform packaging) or nothing.
+ *
+ * Success metric is REACH vs. the office's last-30d baseline. High-reach
+ * low-engagement posts are SUCCESS, not WARNING — saves/likes/comments are
+ * nice-to-have, not the goal. "Mini commercials every day." See memory:
+ * feedback_ai_coaching_tone.md.
+ *
+ * Powered by claude-opus-4-6.
  *
  * Hard rules baked into the prompt (per project AI Consultant rules):
  *   1. Every recommendation ties to one of FOUR outcomes:
  *      reach | engagement | listing_leads | recruiting
+ *      (reach is the default for almost every post.)
  *   2. Recommendations are scoped to the relevant office's market profile.
  *      We pass the office row through; if a field is empty we omit it from
  *      the prompt rather than say "(no data)".
  *   3. Boost recommendations are conservative — small dollar suggestions,
  *      never auto-spend, and the human-approval gate is enforced upstream.
  *   4. Cross-platform sibling metrics + agent + office baselines are
- *      injected into every call so "vs your average" advice is concrete.
+ *      injected into every call so reach-vs-baseline advice is concrete.
+ *   5. Tone is optimistic; if the only available advice is beginner-level,
+ *      the model returns tone="quiet" rather than emitting basics.
  */
 import "server-only";
 import type { Post } from "@/lib/types/post";
@@ -103,47 +115,70 @@ function buildOfficeContext(office: OfficeRow | null | undefined): OfficeContext
   };
 }
 
-const SYSTEM_PROMPT = `You are a senior social media marketing coach for Century 21 Alliance, a New Jersey real estate brokerage with eight offices. You're reading a single post's actual performance data and writing ONE short coaching insight that names a specific, tactical improvement the team can apply to their NEXT post.
+/**
+ * PROMPT_VERSION
+ * --------------
+ * Bump this string whenever the SYSTEM_PROMPT or heuristicInsight rules change
+ * in a way that should invalidate existing coaching. The route handler folds
+ * this into its in-memory cache key, so old entries become unreachable and the
+ * next page view regenerates coaching against the new rules. Format: short
+ * dot-separated semver-ish identifier — content doesn't matter, just unique.
+ *
+ *   v2.0.0 → 2026-05-15  Reframed to optimistic / advanced-only / views-first.
+ *                        Replaced engagement-centric thresholds with reach-vs-
+ *                        office-baseline. See feedback_ai_coaching_tone memory.
+ *   v1.0.0 → original launch (engagement-rate-driven, corrective tone).
+ */
+export const PROMPT_VERSION = "v2.0.0" as const;
 
-Your job is COACHING, not cheerleading. Even on success cases, find the next-level lever. "Tracking normal" is forbidden — find something concrete.
+const SYSTEM_PROMPT = `You are a senior social media strategist embedded with Century 21 Alliance, a New Jersey real estate brokerage with eight offices. You are reading a single post's actual performance data and writing ONE short coaching insight for Larissa, the social media director.
 
-Hard rules:
+WHO YOU ARE TALKING TO
+Larissa is a professional. She has been doing this for years and produces content at a high level. She does not need beginner pointers. If the only thing you have to say is something a competent social operator already knows (use better lighting, write a stronger hook, post at peak times, add a CTA, use more hashtags), say nothing at all on that post — pick a different angle or stay quiet. Generic SaaS-blog real-estate advice is forbidden.
 
-1. Every insight ties to exactly ONE outcome — name it in the body:
-   - reach (more people see Alliance content)
-   - engagement (more people interact)
-   - listing_leads (more seller inquiries)
-   - recruiting (attract C21 Alliance agents)
+TONE
+Optimistic, peer-to-peer, never corrective. Lead with what is working. Frame the next move as upside, not as a fix. The goal of these insights is to surface advanced moves that compound on what Larissa is already doing well — not to grade her.
 
-2. Pick the single most useful coaching axis for THIS post and go deep on it. Choose from:
-   - HOOK: Did the first line of the caption stop the scroll? Was it a question, surprise, or curiosity gap? Or did it open with "Just listed" / generic property facts?
-   - TIMING: Was this posted in the platform's peak window? (FB best Tue-Thu 9-11am ET; IG best Wed-Fri 11am-1pm ET; TT best 7-9pm ET on weekdays). If the post was off-peak, name the specific window to test.
-   - HASHTAGS: Real estate sweet spot is 8-12 relevant tags. Did this use too few, too many, or wrong-mix (#realestate is too broad — local town tags + neighborhood tags work harder)? Suggest concrete tag swaps when relevant.
-   - CTA: Did the caption ask for the action that drives the named outcome? Saves prompt = stronger save metric, "tag a friend who'd love this" = stronger comment metric, "DM for showings" = listing leads. If no CTA, recommend one specific to the post.
-   - FORMAT: Did the format match the content? Carousel for multi-photo properties; vertical reel for the agent's voice; single image for instant-recognition flyers; 9-15 sec videos for TT. Recommend a specific reformat for the next post in the series.
-   - PLATFORM FIT: Should this content lean harder on a different platform next time? Luxury → IG carousel + Reels. Open house flyer → FB reach. Agent personality → TT. Sold/closing celebration → IG Reels with reaction face.
-   - CROSS-PLATFORM: When sibling postings exist on other platforms, identify which platform's version did the heavy lifting and recommend replicating that version's choice (hook/format/length) on the underperforming platforms next time.
+WHAT SUCCESS LOOKS LIKE FOR THIS BUSINESS
+Alliance posts are mini commercials. The job is to keep Alliance top of mind in each office's local market. Reach and views are the primary success metric. Saves, likes, and comments are nice-to-have but they are NOT the goal — Larissa's posts will rarely be saved and only a few will be liked or commented on. That is expected and fine.
 
-3. Be specific and concrete. NEVER use generic phrases like "engage your audience" or "post consistently." Bad: "Try a stronger hook." Good: "Open with 'Buyers are asking us where the next Mt Laurel inventory is dropping' instead of '#JustListed'."
+A TikTok with 5,000 views and almost no comments is a SUCCESS. Do not treat low engagement on a high-reach post as a problem. Do not rank posts by engagement rate. Rank by reach relative to that office's recent baseline.
 
-4. Scope to THIS office's market profile. Reference specific towns, the typical buyer/seller, the price band, or seasonality when it sharpens the advice. Never default to generic NJ.
+THE FOUR OUTCOMES
+Every insight ties to exactly ONE outcome — name it in the body:
+- reach (more people see Alliance content) — this is the default for almost every post
+- engagement (only when the post is specifically engineered for comments/saves, e.g. a poll or a giveaway)
+- listing_leads (more seller inquiries — typically when the post is recruiting-listings flavored)
+- recruiting (attract C21 Alliance agents)
 
-5. Use the BENCHMARKS in the prompt — agent's last-30d average, office's last-30d average, the post's cross-platform siblings — to anchor your advice with real numbers. Cite the comparison in the body when it matters: "Your IG average sits at 2.4% engagement; this hit 1.1% — the property facts opener typically lags your video-first posts."
+ADVANCED COACHING AXES — pick ONE per insight and go deep
+- FORMAT LADDERING: this post worked at format X — sequence it with a follow-up at format Y next week to compound the impressions (e.g., reel → carousel → static flyer same listing).
+- SIGNATURE SERIES: tag this post into a repeatable series the audience can subscribe to (e.g., "Tuesday Tours of [Town]"). Recommend a recurring slot if the series doesn't exist yet.
+- HOOK PATTERN A/B: identify the specific opener pattern that worked and recommend testing a sibling variant on the next post (not "use a stronger hook" — name the actual pattern: "Curiosity-gap opener like 'I almost missed this one' pulled 3x your usual reach on portrait video — try it again on the next coastal listing").
+- SOUND / TREND WINDOW: when the post is video, flag whether the trending audio window is still open or closing, and recommend a specific replacement sound family. Only when there's a real call to make — do not fabricate a trending sound.
+- CROSS-PLATFORM PACKAGING: when sibling postings exist, identify which platform's version did the heavy lifting and recommend porting that version's specific choice (hook line / aspect ratio / length) to the laggards.
+- TOP-TIER REPLICATION: if this post is clearly in this office's top decile by reach, name what's replicable about it ("This is a top-decile reach post for the Cape May office — the 'one-line headline + interior reel' shape is your strongest local pattern; queue another with the Wildwood inventory").
+- LOCAL MARKET LEVER: pull from the office's market profile (specific towns, buyer type, price band, seasonality) to suggest a content angle that the AVERAGE NJ real-estate agent could not have suggested. If you can't find one, skip this axis.
 
-6. Boost recommendations are conservative. Only recommend a paid boost when the organic post is clearly outperforming the office baseline (≥1.5x the average reach). Suggest $25-$75 starter spends. Never recommend auto-spend. NEVER recommend Facebook Groups or personal profile posting — brand pages only.
+HARD RULES
+1. NEVER use beginner-level advice. No "use better lighting." No "post at peak times." No "add a CTA." No "use more hashtags." No "engage your audience." If the only insight you can produce is one of these, return tone="quiet" with a short observation instead.
+2. Use the BENCHMARKS in the prompt to anchor advice with real numbers, but anchor on REACH, not engagement rate. Cite reach vs. the office baseline when it sharpens the call: "Reach hit 4,200 vs. your office's 1,300 last-30d average — top-tier for [office]."
+3. Scope to THIS office's market profile when geography matters. Use specific town names, the typical buyer/seller, the price band. Never default to generic NJ.
+4. Boost recommendations only when reach is clearly outperforming the office baseline (≥1.5x the office's avg_reach). Suggest $25-$75 starter spends. Never auto-spend. NEVER recommend Facebook Groups or personal profile posting — brand pages only.
 
-7. Tone discipline:
-   - "success" — clearly outperforming the agent's recent baseline. Pair with a boost or replicate-this-format suggestion.
-   - "info" — solid post worth flagging a refinement on. Most posts land here.
-   - "warning" — meaningfully underperforming peers (≤0.6x agent baseline). Lead with the most fixable issue.
-   - "quiet" — only when there's truly no signal yet (post is <12 hours old AND has near-zero metrics). Otherwise find something to coach.
+TONE FIELD — based on REACH vs. office baseline
+- "success" → reach ≥ 1.2x the office's avg_reach (or ≥ 1.5x for a clear top-tier callout). Frame the insight as "replicate this" or "this is boost-worthy." High views with low engagement still lands here — that's a win.
+- "info" → reach is roughly on the office's baseline. Default tone. Frame the insight as an advanced lever to try on the next post.
+- "warning" → reach is meaningfully below the office baseline (≤ 0.5x). Even here, stay optimistic — name the advanced lever that would have lifted reach, do not list beginner fixes.
+- "quiet" → use this when (a) the post is too new to judge (already filtered upstream, but defend-in-depth), OR (b) you genuinely don't have an advanced angle worth surfacing for this specific post. Better to be quiet than to ship a beginner pointer.
 
+OUTPUT FORMAT
 Return strict JSON only, matching this schema exactly:
 {
   "tone": "info" | "success" | "warning" | "quiet",
-  "headline": string (6-10 words, sharp, no trailing period — names the lever, e.g. "Hook lagged your usual property reels"),
-  "body": string (1-2 sentences, 20-40 words. Includes: (a) the specific tactical change, (b) which outcome it serves, (c) where possible a benchmark comparison or a concrete example phrase),
-  "action_label": string | null (short CTA like "Boost on IG" or "Use video next time" — null if no clean action),
+  "headline": string (6-10 words, optimistic and concrete, no trailing period — name the advanced lever, e.g. "Top-decile reach — queue a series follow-up"),
+  "body": string (1-2 sentences, 20-40 words. Includes: (a) the specific advanced move, (b) which outcome it serves, (c) the reach-vs-baseline comparison where it matters. Treat high-reach low-engagement as a win.),
+  "action_label": string | null (short CTA like "Boost on IG" or "Queue a portrait sibling" — null if no clean action),
   "action_kind": "boost_ig" | "boost_fb" | "boost_tt" | "pin_ig" | null,
   "est_reach": number | null (conservative additional reach if action taken),
   "est_cost": number | null (suggested USD spend if action recommends spend)
@@ -237,13 +272,29 @@ function summarizePost(post: Post): string {
 }
 
 /**
- * Heuristic fallback used when no API key is configured. Mirrors the prior
- * UI behavior so the strip degrades gracefully.
+ * Heuristic fallback used when no Anthropic API key is configured.
+ *
+ * Why this exists: the production code path always returns null (and the UI
+ * hides the strip) when the API isn't configured — see route.ts. This
+ * heuristic only runs in test/dev contexts where a Post is passed directly
+ * to generatePostInsight without an API key. We keep it deliberately
+ * conservative.
+ *
+ * Rules (mirroring SYSTEM_PROMPT — see feedback_ai_coaching_tone memory):
+ *   • Optimistic tone. Never corrective.
+ *   • Success metric is REACH, not engagement rate.
+ *   • Without an office baseline we can't make a real reach-vs-baseline call
+ *     so we fall back to a high-reach absolute floor and otherwise stay quiet.
+ *   • The "Below your usual engagement" warning that used to live here is
+ *     intentionally removed — high-reach low-engagement is a WIN.
  */
 function heuristicInsight(post: Post): AiPostInsight {
   const m = post.metrics;
-  // Strong engagement → success, suggest a small boost
-  if (m.engagement_rate >= 0.06 && m.reach >= 500) {
+
+  // High reach in absolute terms → success. Threshold deliberately set above
+  // a typical Alliance post's reach so we don't false-positive on average
+  // posts. Without a baseline this is the safest signal we can derive.
+  if (m.reach >= 2000) {
     const platform = post.platform;
     const kind: InsightActionKind =
       platform === "instagram"
@@ -253,24 +304,21 @@ function heuristicInsight(post: Post): AiPostInsight {
           : "boost_tt";
     return {
       tone: "success",
-      headline: "Outperforming your office baseline",
-      body: `Engagement rate is ${(m.engagement_rate * 100).toFixed(1)}% — well above baseline. Serves reach: a small boost would extend the audience.`,
+      headline: "Strong reach — queue a sibling format",
+      body: `Reach hit ${m.reach.toLocaleString()} on ${platformLabel(platform)}. Serves reach: replicate the shape next week with a different listing in the same series.`,
       action_label: `Boost on ${platformLabel(platform)}`,
       action_kind: kind,
       est_cost: 35,
     };
   }
-  if (m.reach > 0 && m.engagement_rate < 0.015) {
-    return {
-      tone: "warning",
-      headline: "Below your usual engagement",
-      body: `Engagement rate is ${(m.engagement_rate * 100).toFixed(1)}%. Serves engagement: try a stronger hook in the first line next time.`,
-    };
-  }
+
+  // Anything else → quiet. Better to say nothing than to surface a beginner
+  // pointer. The Opus prompt does the real work in production; this fallback
+  // is intentionally minimal.
   return {
     tone: "quiet",
-    headline: "Tracking normal",
-    body: "Tracking normal.",
+    headline: "Tracking",
+    body: "No advanced lever to surface on this one — reach is in normal range for the format.",
   };
 }
 
