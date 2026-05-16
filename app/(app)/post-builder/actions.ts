@@ -11,6 +11,8 @@ import type {
   SaveGeneratedPostInput,
   SaveGeneratedPostResult,
   SaveGeneratedPostErrorResult,
+  ScheduledFor,
+  SchedulablePlatform,
   SourceMls,
 } from "@/lib/post-builder/types";
 
@@ -558,4 +560,257 @@ export async function syncBrandAssetsAction(): Promise<
       error: `threw: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled posting — Phase 5C (2026-05-16)
+// ---------------------------------------------------------------------------
+//
+// schedulePostAction merges the requested {platform: ISO} map into the row's
+// scheduled_for jsonb, validates each ISO is a real future timestamp, and
+// flips status to "scheduled" so the row shows up under the Scheduled chip
+// on /saved-posts. unschedulePostAction removes specific platform keys; if
+// the row has no remaining schedules AND no successful posts yet, status
+// drops back to "draft".
+
+export interface SchedulePostInput {
+  generated_post_id: string;
+  /**
+   * Map of platform → ISO 8601 UTC timestamp. Pass `undefined` for any
+   * platform you don't want to schedule. The action merges with whatever's
+   * already on the row, so passing only { instagram } leaves an existing
+   * { facebook } schedule alone.
+   */
+  scheduled_for: ScheduledFor;
+}
+
+export interface SchedulePostOk {
+  ok: true;
+  /** Merged scheduled_for after the write — the client uses this to update
+   *  its local row state without a re-fetch. */
+  scheduled_for: ScheduledFor;
+}
+
+export interface SchedulePostErr {
+  ok: false;
+  error: string;
+}
+
+export type SchedulePostResult = SchedulePostOk | SchedulePostErr;
+
+/**
+ * Schedule (or re-schedule) a generated_posts row to publish to one or more
+ * platforms at specific UTC timestamps. The cron route at
+ * /api/cron/publish-scheduled drains due rows every 5 minutes.
+ *
+ * Validation rules:
+ *   • Each ISO must parse to a real Date.
+ *   • Each timestamp must be at least 1 minute in the future. Anything in
+ *     the past or in the next 60s would race the cron tick and behave
+ *     surprisingly.
+ *   • Caller must own the row (created_by check).
+ *   • At least one platform key must be present (no-op schedules are
+ *     rejected so the UI button-state always reflects real intent).
+ */
+export async function schedulePostAction(
+  input: SchedulePostInput,
+): Promise<SchedulePostResult> {
+  const profile = await requireUser();
+  if (!input.generated_post_id) {
+    return { ok: false, error: "generated_post_id required" };
+  }
+
+  const incoming = input.scheduled_for ?? {};
+  const platformsRequested = (
+    Object.keys(incoming) as readonly SchedulablePlatform[]
+  ).filter((k) => k === "facebook" || k === "instagram" || k === "tiktok");
+  if (platformsRequested.length === 0) {
+    return { ok: false, error: "at least one platform must be scheduled" };
+  }
+
+  // why: validate every supplied ISO is parseable AND at least 60s in the
+  // future. The cron route runs every 5 minutes, so anything inside that
+  // window is effectively "post now"; force the user to either pick a real
+  // future window or use the Post Now button instead.
+  const now = Date.now();
+  const minFutureMs = 60_000;
+  const validated: ScheduledFor = {};
+  for (const platform of platformsRequested) {
+    const iso = incoming[platform];
+    if (!iso) continue;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) {
+      return {
+        ok: false,
+        error: `invalid timestamp for ${platform}: ${iso}`,
+      };
+    }
+    if (t - now < minFutureMs) {
+      return {
+        ok: false,
+        error: `scheduled time must be in the future (${platform})`,
+      };
+    }
+    // Re-serialize to canonical UTC ISO so the DB always stores normalized
+    // values regardless of what shape the client sent.
+    validated[platform] = new Date(t).toISOString();
+  }
+
+  const supabase = createAdminClient();
+
+  // why: pull the existing row to (a) ownership-check and (b) merge into the
+  // existing scheduled_for map instead of overwriting it. Larissa might
+  // schedule IG today, then later open the same row to ALSO schedule FB —
+  // we must not blow away the IG entry.
+  const { data: existing, error: fetchError } = await supabase
+    .from("generated_posts")
+    .select("id, created_by, status, scheduled_for")
+    .eq("id", input.generated_post_id)
+    .maybeSingle();
+  if (fetchError) {
+    return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+  }
+  if (!existing) {
+    return { ok: false, error: "row not found" };
+  }
+  if (existing.created_by !== profile.id) {
+    return { ok: false, error: "not owner" };
+  }
+
+  // why: existing.scheduled_for is Json (per supabase types). Narrow it to
+  // ScheduledFor defensively — any unrecognized key is preserved verbatim
+  // through the merge, but only platform keys make it onto the returned
+  // object the client uses to update its in-memory state.
+  const existingMap: ScheduledFor = isScheduledForObject(
+    existing.scheduled_for,
+  )
+    ? (existing.scheduled_for as ScheduledFor)
+    : {};
+  const merged: ScheduledFor = { ...existingMap, ...validated };
+
+  // Flip status to "scheduled" if the row was previously in a non-terminal
+  // state (draft / downloaded). Don't override "posted" — a row that's
+  // already gone out to one platform can still get future schedules for
+  // OTHER platforms, but we leave the status alone so the row remains in
+  // the "Posted" filter view.
+  const shouldFlipStatus =
+    existing.status === "draft" || existing.status === "downloaded";
+
+  const { error: updError } = await supabase
+    .from("generated_posts")
+    .update({
+      scheduled_for: merged as unknown as Json,
+      ...(shouldFlipStatus ? { status: "scheduled" as const } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+
+  if (updError) {
+    return { ok: false, error: `update_failed: ${updError.message}` };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return { ok: true, scheduled_for: merged };
+}
+
+export interface UnschedulePostInput {
+  generated_post_id: string;
+  /** Platforms to clear from scheduled_for. Other platform keys are left intact. */
+  platforms: readonly SchedulablePlatform[];
+}
+
+export interface UnschedulePostOk {
+  ok: true;
+  /** scheduled_for after the removal. Empty {} means fully unscheduled. */
+  scheduled_for: ScheduledFor;
+  /** True when the row's status was reverted to "draft" because no schedules remain. */
+  status_reverted: boolean;
+}
+
+export interface UnschedulePostErr {
+  ok: false;
+  error: string;
+}
+
+export type UnschedulePostResult = UnschedulePostOk | UnschedulePostErr;
+
+/**
+ * Remove specific platform keys from a row's scheduled_for. When the row
+ * has no remaining schedules AND status is "scheduled", revert status to
+ * "draft" so the row falls back into the regular drafts view. Used by the
+ * Studio "Unschedule" affordance + bulk actions on /saved-posts.
+ */
+export async function unschedulePostAction(
+  input: UnschedulePostInput,
+): Promise<UnschedulePostResult> {
+  const profile = await requireUser();
+  if (!input.generated_post_id) {
+    return { ok: false, error: "generated_post_id required" };
+  }
+  if (!input.platforms || input.platforms.length === 0) {
+    return { ok: false, error: "at least one platform required" };
+  }
+
+  const supabase = createAdminClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from("generated_posts")
+    .select("id, created_by, status, scheduled_for")
+    .eq("id", input.generated_post_id)
+    .maybeSingle();
+  if (fetchError) {
+    return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+  }
+  if (!existing) return { ok: false, error: "row not found" };
+  if (existing.created_by !== profile.id) {
+    return { ok: false, error: "not owner" };
+  }
+
+  const existingMap: ScheduledFor = isScheduledForObject(
+    existing.scheduled_for,
+  )
+    ? (existing.scheduled_for as ScheduledFor)
+    : {};
+  const next: ScheduledFor = { ...existingMap };
+  for (const p of input.platforms) {
+    delete next[p];
+  }
+
+  const noSchedulesLeft = Object.keys(next).length === 0;
+  const shouldRevertStatus =
+    noSchedulesLeft && existing.status === "scheduled";
+
+  const { error: updError } = await supabase
+    .from("generated_posts")
+    .update({
+      scheduled_for: next as unknown as Json,
+      ...(shouldRevertStatus ? { status: "draft" as const } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+
+  if (updError) {
+    return { ok: false, error: `update_failed: ${updError.message}` };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return {
+    ok: true,
+    scheduled_for: next,
+    status_reverted: shouldRevertStatus,
+  };
+}
+
+/**
+ * Narrow a jsonb-typed value into a plausible ScheduledFor map. Only the
+ * shape is checked — individual ISO strings are validated upstream when the
+ * map is consumed (e.g. in the cron route's filter pass).
+ */
+function isScheduledForObject(value: unknown): value is ScheduledFor {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  return true;
 }

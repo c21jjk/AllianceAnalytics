@@ -626,3 +626,99 @@ export const REEL_CAPS = {
   maxSceneDurationMs: 10_000,
   minSceneDurationMs: 500,
 } as const;
+
+// ---------------------------------------------------------------------------
+// Scheduled posting — Phase 5C (2026-05-16)
+// ---------------------------------------------------------------------------
+//
+// Larissa wants a single generated_posts row to publish to each platform at
+// THAT platform's optimal time — IG mid-morning, TikTok evenings, FB
+// mid-week. A "Post Now" still exists (parallel path, /api/post-builder/post)
+// for when she's already in the optimal window or just wants to ship.
+//
+// Schedule data lives on generated_posts.scheduled_for (jsonb, NOT NULL
+// default '{}'::jsonb). Keys are platform names, values are ISO 8601 UTC
+// strings. Missing key = not scheduled for that platform. The cron route at
+// /api/cron/publish-scheduled drains due timestamps every 5 minutes.
+
+/** Platform identifiers the scheduler understands. Mirrors PublishPlatform
+ *  from publish.ts but lives here so client code can import without pulling
+ *  the server-only publish module. */
+export type SchedulablePlatform = "facebook" | "instagram" | "tiktok";
+
+/**
+ * Per-platform scheduled publish times for a generated post. Each platform
+ * key is independently optional — Larissa can schedule IG for Wednesday at
+ * 11am and TikTok for Friday at 8pm with the same post row. Missing keys
+ * = not scheduled for that platform.
+ *
+ * Stored as jsonb on generated_posts.scheduled_for so the cron runner can
+ * query with jsonb path expressions for due timestamps.
+ *
+ * ISO 8601 UTC strings ONLY — the cron runner compares with NOW() in UTC.
+ */
+export interface ScheduledFor {
+  facebook?: string;
+  instagram?: string;
+  tiktok?: string;
+}
+
+/**
+ * Optimal posting windows per platform based on Meta + TikTok algorithm
+ * research (current as of 2026). The Schedule UI pre-fills the next
+ * available window from these defaults — Larissa can override per-post,
+ * but the default is the highest-probability good time.
+ *
+ * All times Eastern (America/New_York) — the project is NJ-based and every
+ * audience touchpoint runs in ET. The Schedule UI converts to/from local
+ * input controls; the cron route stores + compares in UTC.
+ */
+export const OPTIMAL_POSTING_WINDOWS: Readonly<
+  Record<
+    SchedulablePlatform,
+    {
+      /** Days of the week (0=Sun..6=Sat) when this platform performs best. */
+      preferredDays: readonly number[];
+      /** Local hour (0-23 ET) at the start of the optimal window. */
+      startHour: number;
+      /** Local hour (0-23 ET) at the end of the optimal window. */
+      endHour: number;
+      /** Display copy shown in the UI. */
+      label: string;
+    }
+  >
+> = {
+  facebook: {
+    preferredDays: [2, 3, 4], // Tue/Wed/Thu — feed peaks for FB Pages.
+    startHour: 9,
+    endHour: 11,
+    label: "Tue-Thu · 9-11am ET",
+  },
+  instagram: {
+    preferredDays: [3, 4, 5], // Wed/Thu/Fri — IG users skew later in the week.
+    startHour: 11,
+    endHour: 13,
+    label: "Wed-Fri · 11am-1pm ET",
+  },
+  tiktok: {
+    preferredDays: [1, 2, 3, 4], // Mon-Thu — TikTok evenings outperform weekends for real-estate content.
+    startHour: 19,
+    endHour: 21,
+    label: "Mon-Thu · 7-9pm ET",
+  },
+} as const;
+
+/**
+ * Per-platform error map written by the cron publisher when a scheduled
+ * publish fails. Cleared key-by-key on the next successful publish for
+ * that platform. Persisted to generated_posts.last_schedule_error (jsonb).
+ *
+ * Surface in the UI so Larissa can tell whether a scheduled post landed,
+ * is still queued, or hit a problem (e.g. token expired, image host not
+ * verified on TikTok).
+ */
+export interface LastScheduleError {
+  facebook?: { error: string; at: string };
+  instagram?: { error: string; at: string };
+  tiktok?: { error: string; at: string };
+}

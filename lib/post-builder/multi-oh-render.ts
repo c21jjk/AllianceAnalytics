@@ -656,16 +656,30 @@ function renderAgentBlock(input: MultiOHEventInput): string {
       `<span class="pair"><span class="pair-label">Call</span><span class="pair-value">${escapeHtml(phone)}</span></span>`,
     );
   }
+  // why: email row removed from the OH hero on 2026-05-16 per user request —
+  // the wizard always sends agent_email=null now, but we keep the defensive
+  // `if (email)` guard so an older /api/post-builder/multi-oh-generate
+  // caller that still sends an email doesn't crash; it just renders without
+  // the row, matching the new behavior.
   if (email) {
     pairs.push(
       `<span class="pair"><span class="pair-label">Email</span><span class="pair-value">${escapeHtml(email)}</span></span>`,
     );
   }
 
+  // why: office line was a duplicate of the brand-text below the gold rule
+  // — both said "Century 21 Alliance" since that's the only office. Only
+  // surface the office line when the input's office_name DIFFERS from the
+  // hardcoded brand, which would only happen on a future co-marketed event.
+  const officeIsRedundant =
+    !office ||
+    office.toLowerCase() === "century 21 alliance" ||
+    office.toLowerCase() === "c21 alliance";
+
   return `<div class="agent-block">
     <div class="agent-name">${escapeHtml(input.agent_name)}</div>
     ${pairs.length > 0 ? `<div class="agent-contact">${pairs.join("")}</div>` : ""}
-    ${office ? `<div class="office">${escapeHtml(office)}</div>` : ""}
+    ${!officeIsRedundant ? `<div class="office">${escapeHtml(office)}</div>` : ""}
     <div class="brand-rule"></div>
     <div class="brand-row">
       <div class="brand">

@@ -10,9 +10,12 @@ import type {
   CaptionErrorResponse,
   RenderResponse,
   RenderErrorResponse,
+  ScheduledFor,
 } from "@/lib/post-builder/types";
+import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
 import {
   saveGeneratedPostAction,
+  schedulePostAction,
   updateGeneratedPostImageAction,
   upsertGeneratedPostFromStudioAction,
 } from "./actions";
@@ -816,6 +819,64 @@ export default function PostBuilderClient({
       }
     } catch (e) {
       setError(`Post Now threw: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPostNowSending(false);
+    }
+  }
+
+  /**
+   * Schedule the current post for one or more platforms. Each platform's
+   * pick is a UTC ISO timestamp keyed by platform name; the modal builds
+   * this map from its native datetime-local inputs (which the modal
+   * converts from the user's local timezone to UTC).
+   *
+   * On success we close the modal and toast the earliest scheduled time so
+   * Larissa gets immediate feedback. The row's status flips to "scheduled"
+   * server-side, which means it'll surface in the /saved-posts "Scheduled"
+   * chip without any further client work.
+   */
+  async function submitSchedule(scheduledFor: ScheduledFor): Promise<void> {
+    if (Object.keys(scheduledFor).length === 0) return;
+    setPostNowSending(true);
+    try {
+      let id: string | null = generatedPostId;
+      if (!id) {
+        id = await ensureGeneratedPostId();
+        if (!id) {
+          setPostNowSending(false);
+          return;
+        }
+      }
+      const result = await schedulePostAction({
+        generated_post_id: id,
+        scheduled_for: scheduledFor,
+      });
+      if (!result.ok) {
+        setError(`Schedule failed: ${result.error}`);
+        return;
+      }
+      // why: surface the earliest scheduled time as a one-shot inline
+      // toast via the existing error-banner channel (no toast lib in
+      // this codebase yet — repurposing the error banner with a clear
+      // "Scheduled for…" prefix keeps scope tight).
+      const earliestIso = Object.values(result.scheduled_for)
+        .filter((v): v is string => typeof v === "string")
+        .sort()[0];
+      if (earliestIso) {
+        const localStr = new Date(earliestIso).toLocaleString(undefined, {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        setError(`Scheduled for ${localStr}`);
+      }
+      closePostNow();
+    } catch (e) {
+      setError(
+        `Schedule threw: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setPostNowSending(false);
     }
@@ -1672,6 +1733,7 @@ export default function PostBuilderClient({
           results={postNowResults}
           onCancel={closePostNow}
           onConfirm={submitPostNow}
+          onSchedule={submitSchedule}
         />
       ) : null}
       {/* === Canvas Editor (Path C) — overlay portal ===
@@ -1719,6 +1781,13 @@ interface PostNowModalProps {
   results: PostNowResult[] | null;
   onCancel: () => void;
   onConfirm: () => void;
+  /**
+   * Schedule callback. Receives a ScheduledFor map keyed by platform → ISO
+   * UTC timestamp. Only platforms the user has both selected AND given a
+   * valid future timestamp are present. Returns a Promise so the modal can
+   * disable the button while the action runs.
+   */
+  onSchedule: (scheduledFor: ScheduledFor) => Promise<void>;
 }
 
 const POST_NOW_ARM_MS = 2000;
@@ -1735,9 +1804,23 @@ function PostNowModal(props: PostNowModalProps) {
     results,
     onCancel,
     onConfirm,
+    onSchedule,
   } = props;
 
   const [, forceTick] = useState(0);
+  // why: tab between Post Now and Schedule. Defaults to "now" so the
+  // existing button-mash flow keeps working without an extra click. The
+  // user explicitly switches to "schedule" for the new path.
+  const [tab, setTab] = useState<"now" | "schedule">("now");
+
+  // Per-platform datetime-local strings. Native input type="datetime-local"
+  // gives "YYYY-MM-DDTHH:mm" in the user's LOCAL timezone. We hold them
+  // here exactly as the input produces them and only convert to UTC ISO
+  // on submit. Keys are platform names; missing key = empty input.
+  const [scheduleInputs, setScheduleInputs] = useState<
+    Partial<Record<PostPlatform, string>>
+  >({});
+
   // Tick every 50ms while arming so the progress bar animates smoothly.
   useEffect(() => {
     if (!armedAt || results) return;
@@ -1746,6 +1829,27 @@ function PostNowModal(props: PostNowModalProps) {
     const interval = setInterval(() => forceTick((n) => n + 1), 50);
     return () => clearInterval(interval);
   }, [armedAt, results]);
+
+  // why: when the user switches to the Schedule tab OR toggles a platform
+  // on while already in the Schedule tab, pre-fill that platform's input
+  // with its next optimal window. This is the "highest-probability good
+  // time" default — Larissa can override, but she shouldn't have to think
+  // about it on the happy path.
+  useEffect(() => {
+    if (tab !== "schedule") return;
+    setScheduleInputs((prev) => {
+      const next = { ...prev };
+      for (const p of platforms) {
+        if (next[p]) continue;
+        next[p] = computeDefaultScheduleInput(p);
+      }
+      // Remove inputs for platforms that have been unchecked.
+      for (const k of Object.keys(next) as PostPlatform[]) {
+        if (!platforms.has(k)) delete next[k];
+      }
+      return next;
+    });
+  }, [tab, platforms]);
 
   const armElapsed = armedAt ? Math.min(Date.now() - armedAt, POST_NOW_ARM_MS) : 0;
   const armed = armElapsed >= POST_NOW_ARM_MS;
@@ -1757,6 +1861,49 @@ function PostNowModal(props: PostNowModalProps) {
   const captionShort = captionPreview.length > 280
     ? captionPreview.slice(0, 280).trimEnd() + "…"
     : captionPreview;
+
+  // ---- Schedule tab derived state -------------------------------------
+  // why: For the Schedule tab we count platforms with valid FUTURE
+  // timestamps. We also flag any past timestamp so the button can show
+  // a clear "fix the past time first" disabled state.
+  const nowMs = Date.now();
+  const scheduleEntries: Array<{
+    platform: PostPlatform;
+    localValue: string;
+    iso: string | null;
+    isFuture: boolean;
+  }> = [...platforms].map((p) => {
+    const localValue = scheduleInputs[p] ?? "";
+    const parsed = localValue ? Date.parse(localValue) : NaN;
+    const iso = !Number.isNaN(parsed) ? new Date(parsed).toISOString() : null;
+    return {
+      platform: p,
+      localValue,
+      iso,
+      isFuture: iso !== null && parsed - nowMs > 60_000,
+    };
+  });
+  const validFutureCount = scheduleEntries.filter((e) => e.isFuture).length;
+  const anyPast = scheduleEntries.some(
+    (e) => e.localValue !== "" && !e.isFuture,
+  );
+
+  /**
+   * Build the ScheduledFor map from the current inputs and invoke the
+   * parent's onSchedule. Skips platforms with empty / past timestamps —
+   * the disabled button state should prevent the empty case, but we
+   * defend in depth here too.
+   */
+  async function handleSchedule(): Promise<void> {
+    const scheduledFor: ScheduledFor = {};
+    for (const entry of scheduleEntries) {
+      if (entry.isFuture && entry.iso) {
+        scheduledFor[entry.platform] = entry.iso;
+      }
+    }
+    if (Object.keys(scheduledFor).length === 0) return;
+    await onSchedule(scheduledFor);
+  }
 
   return (
     <div
@@ -1791,6 +1938,46 @@ function PostNowModal(props: PostNowModalProps) {
         </div>
 
         <div className="p-5 space-y-4">
+          {/* Tab toggle — Post Now vs Schedule. Hidden once results land
+              because by then the post-now flow is done. */}
+          {!results ? (
+            <div
+              className="grid grid-cols-2 rounded-lg bg-neutral-100 p-1"
+              role="tablist"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "now"}
+                onClick={() => setTab("now")}
+                disabled={sending}
+                className={[
+                  "px-3 py-1.5 rounded-md text-sm font-medium transition",
+                  tab === "now"
+                    ? "bg-white text-neutral-900 shadow-sm"
+                    : "text-neutral-600 hover:text-neutral-900",
+                ].join(" ")}
+              >
+                Post Now
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "schedule"}
+                onClick={() => setTab("schedule")}
+                disabled={sending}
+                className={[
+                  "px-3 py-1.5 rounded-md text-sm font-medium transition",
+                  tab === "schedule"
+                    ? "bg-white text-neutral-900 shadow-sm"
+                    : "text-neutral-600 hover:text-neutral-900",
+                ].join(" ")}
+              >
+                Schedule
+              </button>
+            </div>
+          ) : null}
+
           {/* Asset summary */}
           <div className="flex gap-3 items-start rounded-lg bg-neutral-50 ring-1 ring-neutral-200 p-3">
             {previewImageUrl ? (
@@ -1867,6 +2054,66 @@ function PostNowModal(props: PostNowModalProps) {
             </div>
           </div>
 
+          {/* Schedule pane — only when Schedule tab is active AND at least
+              one platform is selected. Each selected platform gets its own
+              datetime-local input pre-filled with its optimal window. */}
+          {tab === "schedule" && !results ? (
+            <div>
+              <div className="eyebrow mb-2">When to publish (ET)</div>
+              {platforms.size === 0 ? (
+                <div className="rounded-lg bg-amber-50 ring-1 ring-amber-200 p-3 text-xs text-amber-900">
+                  Pick at least one platform above to schedule it.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {scheduleEntries.map((entry) => {
+                    const window = OPTIMAL_POSTING_WINDOWS[entry.platform];
+                    const hasInput = entry.localValue !== "";
+                    const showPastWarning = hasInput && !entry.isFuture;
+                    return (
+                      <div
+                        key={entry.platform}
+                        className="rounded-lg ring-1 ring-neutral-200 bg-white p-3"
+                      >
+                        <div className="flex items-center justify-between gap-3 mb-1.5">
+                          <div className="text-sm font-semibold capitalize text-neutral-900">
+                            {entry.platform}
+                          </div>
+                          <div className="text-[11px] text-neutral-500">
+                            Optimal: {window.label}
+                          </div>
+                        </div>
+                        <input
+                          type="datetime-local"
+                          value={entry.localValue}
+                          min={getDateTimeLocalNow()}
+                          disabled={sending}
+                          onChange={(e) =>
+                            setScheduleInputs((prev) => ({
+                              ...prev,
+                              [entry.platform]: e.target.value,
+                            }))
+                          }
+                          className={[
+                            "w-full rounded-md border px-3 py-2 text-sm font-mono transition",
+                            showPastWarning
+                              ? "border-rose-300 bg-rose-50 text-rose-900"
+                              : "border-neutral-300 bg-white text-neutral-900 focus:border-gold-500 focus:ring-1 focus:ring-gold-500",
+                          ].join(" ")}
+                        />
+                        {showPastWarning ? (
+                          <div className="mt-1 text-[11px] text-rose-700">
+                            Pick a time at least 1 minute in the future.
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+
           {/* Caption preview */}
           <div>
             <div className="eyebrow mb-2">Caption</div>
@@ -1932,6 +2179,44 @@ function PostNowModal(props: PostNowModalProps) {
             >
               Close
             </button>
+          ) : tab === "schedule" ? (
+            // Schedule tab — primary action queues to /api/cron drain.
+            // No hold-to-confirm; scheduling is reversible (unschedule
+            // before the cron tick fires) so it doesn't need the same
+            // friction as Post Now.
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={sending}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleSchedule();
+                }}
+                disabled={sending || validFutureCount === 0 || anyPast}
+                className={[
+                  "flex-[1.4] rounded-lg px-4 py-2.5 text-sm font-semibold transition",
+                  sending || validFutureCount === 0 || anyPast
+                    ? "bg-neutral-200 text-neutral-500 cursor-not-allowed"
+                    : "bg-gold-600 text-white hover:bg-gold-700 shadow-sm",
+                ].join(" ")}
+              >
+                {sending
+                  ? "Scheduling…"
+                  : platforms.size === 0
+                    ? "Pick a platform"
+                    : anyPast
+                      ? "Fix past time(s)"
+                      : validFutureCount === 0
+                        ? "Set a future time"
+                        : `Schedule ${validFutureCount} post${validFutureCount === 1 ? "" : "s"}`}
+              </button>
+            </div>
           ) : (
             <div className="space-y-3">
               {/* Arming progress bar */}
@@ -1984,6 +2269,63 @@ function PostNowModal(props: PostNowModalProps) {
       </div>
     </div>
   );
+}
+
+/**
+ * Build the next-available optimal-window datetime-local string for a
+ * platform. "datetime-local" inputs expect "YYYY-MM-DDTHH:mm" in the
+ * user's LOCAL timezone — we generate exactly that shape so the value
+ * round-trips cleanly through the input.
+ *
+ * Algorithm:
+ *   1. Pick today + the next 7 days as candidates.
+ *   2. For each candidate, check if its weekday is in the platform's
+ *      preferredDays.
+ *   3. The first candidate where weekday matches AND the resulting
+ *      timestamp (window startHour today) is > now() wins.
+ *   4. Fallback: 24 hours from now at startHour (handles edge case where
+ *      preferredDays is empty for some future config change).
+ */
+function computeDefaultScheduleInput(platform: PostPlatform): string {
+  const window = OPTIMAL_POSTING_WINDOWS[platform];
+  const now = new Date();
+  for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
+    const candidate = new Date(now);
+    candidate.setDate(now.getDate() + dayOffset);
+    candidate.setHours(window.startHour, 0, 0, 0);
+    if (!window.preferredDays.includes(candidate.getDay())) continue;
+    // why: at least 60s in the future so submitting the pre-fill doesn't
+    // race the "must be in the future" validator in schedulePostAction.
+    if (candidate.getTime() - now.getTime() < 60_000) continue;
+    return toDateTimeLocalValue(candidate);
+  }
+  // Fallback — tomorrow at the start hour.
+  const fallback = new Date(now);
+  fallback.setDate(now.getDate() + 1);
+  fallback.setHours(window.startHour, 0, 0, 0);
+  return toDateTimeLocalValue(fallback);
+}
+
+/**
+ * Format a Date as "YYYY-MM-DDTHH:mm" in the user's LOCAL timezone, which
+ * is what `<input type="datetime-local">` expects and produces. We
+ * deliberately don't use toISOString — that returns UTC.
+ */
+function toDateTimeLocalValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+/**
+ * Min value for the datetime-local input — "right now" in local time.
+ * Native input enforcement is just a hint (Chrome ignores `min` for
+ * keyboard entry), so the parent submit handler validates again.
+ */
+function getDateTimeLocalNow(): string {
+  return toDateTimeLocalValue(new Date());
 }
 
 function EmptyPreview() {

@@ -36,8 +36,41 @@ interface EventDetailsForm {
   event_title: string;
   agent_name: string;
   agent_phone: string;
-  agent_email: string;
-  office_name: string;
+}
+
+/**
+ * Regex that detects a "Hosted by {Name}" / "Open by {Name}" / "Host: {Name}"
+ * pattern in an open-house listing's Notes / Remarks field. When the listing
+ * agent isn't the actual host of the open house, the host is typically
+ * called out in the OH notes — Larissa wants the wizard to auto-detect this
+ * so she doesn't have to manually retype the host name for every property.
+ *
+ * The capture group is intentionally tight (1-3 capitalized word tokens) so
+ * that random sentences ("Hosted by appointment only" / "Host the open house
+ * yourself") don't accidentally match. False negatives are fine — the user
+ * can manually override in the wizard. False positives would corrupt the
+ * rendered agent attribution on the hero card.
+ */
+const HOSTING_AGENT_NOTES_REGEX =
+  /(?:hosted\s+by|host(?:ed)?\s*:|open(?:ed)?\s+by)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z'-]+){0,2})/i;
+
+/**
+ * Pure helper — given a listing's notes/remarks text and the listing's own
+ * agent_name as fallback, returns the best-guess hosting agent name. Used
+ * in `toggleSelect` to seed the per-property hosting agent input.
+ *
+ * Returns the listing's own agent_name when the notes don't mention a host
+ * explicitly. Returns an empty string when neither is available.
+ */
+function resolveHostingAgent(
+  notes: string | null | undefined,
+  listingAgentName: string | null | undefined,
+): string {
+  if (notes) {
+    const m = notes.match(HOSTING_AGENT_NOTES_REGEX);
+    if (m && m[1]) return m[1].trim();
+  }
+  return (listingAgentName ?? "").trim();
 }
 
 /** Wizard step index. 1-based so the stepper UI and the state agree. */
@@ -123,14 +156,38 @@ export default function MultiOHWizardClient({
   /** mls_numbers in selection order; the carousel slide order follows this
    *  list 1:1. Drag-reorder on step 4 mutates this same array. */
   const [selectedMls, setSelectedMls] = useState<readonly string[]>([]);
+  /**
+   * Per-property hosting agent override, keyed by mls_number.
+   *
+   * why: a single multi-OH event can span homes hosted by different agents.
+   * The event hero shows ONE primary agent (event-level attribution), but the
+   * per-property card + the hero's "Hosted by" sub-line should reflect THAT
+   * property's hosting agent. This state holds the per-property override so
+   * the wizard can collect it in Step 1 and ship it through the payload.
+   *
+   * The default for each selected property is the listing's own `agent_name`
+   * (so the typical case — Larissa hosts everything — needs zero typing). The
+   * user can override per row when a different agent is covering that home.
+   *
+   * Keys are added when a property is selected and removed when deselected,
+   * so this map stays in sync with `selectedMls`. The values are stored as
+   * raw strings (not trimmed) while the user is typing; trimming happens at
+   * payload-construction time so the input feels natural mid-edit.
+   */
+  const [perPropertyHostingAgent, setPerPropertyHostingAgent] = useState<
+    Record<string, string>
+  >({});
 
   // ---- step 2 — event details ------------------------------------------
+  // why: agent_email and office_name were removed from the form on
+  // 2026-05-16. Agent email isn't useful on an OH event hero (Larissa's
+  // audience either calls or DMs — they don't read the email off a flyer).
+  // Office name is hardcoded to defaultOfficeName at payload time because
+  // there's only one office ("Century 21 Alliance") and it'll never change.
   const [eventForm, setEventForm] = useState<EventDetailsForm>({
     event_title: "",
     agent_name: "",
     agent_phone: "",
-    agent_email: "",
-    office_name: defaultOfficeName,
   });
   /** Did the user manually edit event_title? If so we stop auto-overwriting
    *  it when the picked set changes. Same idea for agent_name. */
@@ -220,6 +277,21 @@ export default function MultiOHWizardClient({
 
   const toggleSelect = useCallback(
     (mls: string): void => {
+      // why: capture the resolved hosting agent eagerly here so the
+      // selection branch below can seed the per-property hosting-agent map
+      // without re-resolving from the listings array inside the setter.
+      //
+      // resolveHostingAgent scans the listing's public_remarks for a
+      // "Hosted by {Name}" pattern first, falling back to the listing's
+      // own agent_name. Larissa often delegates open-house hosting to a
+      // different agent and notes it in the OH remarks — this auto-detect
+      // saves her from manually re-typing host names per property.
+      const listing = listingsByMls.get(mls);
+      const defaultAgent = resolveHostingAgent(
+        listing?.public_remarks,
+        listing?.agent_name,
+      );
+
       setSelectedMls((prev) => {
         const idx = prev.indexOf(mls);
         if (idx >= 0) {
@@ -229,6 +301,43 @@ export default function MultiOHWizardClient({
         // Adding — enforce the cap.
         if (prev.length >= MULTI_OH_MAX_PROPERTIES) return prev;
         return [...prev, mls];
+      });
+
+      // why: keep the hosting-agent map in lockstep with selection so a
+      // deselected mls doesn't leave a stale value hanging around that
+      // could leak into the payload if the user re-selects later. Selecting
+      // for the first time seeds the value with the listing's own agent so
+      // the input field doesn't appear empty when the typical case (Larissa
+      // hosts everything) is to just leave it as-is.
+      setPerPropertyHostingAgent((prev) => {
+        if (prev[mls] !== undefined) {
+          // Already had an entry → this toggle is a DESELECT; strip the key.
+          const next = { ...prev };
+          delete next[mls];
+          return next;
+        }
+        // First-time SELECT → seed the default. Empty string is fine; the
+        // input will render with a placeholder hint and the payload code
+        // will coerce empty → null.
+        return { ...prev, [mls]: defaultAgent };
+      });
+    },
+    [listingsByMls],
+  );
+
+  /**
+   * Update the hosting-agent value for a single selected property. No-op for
+   * un-selected mls keys — defensive against a stale callback firing after
+   * the user deselected (e.g., debounced input handlers).
+   *
+   * why: kept as a useCallback so the Step1 row inputs don't churn React's
+   * key map on every parent re-render.
+   */
+  const setHostingAgentForProperty = useCallback(
+    (mls: string, value: string): void => {
+      setPerPropertyHostingAgent((prev) => {
+        if (prev[mls] === undefined) return prev;
+        return { ...prev, [mls]: value };
       });
     },
     [],
@@ -294,31 +403,47 @@ export default function MultiOHWizardClient({
     try {
       // Build the wizard payload. Map each picked listing into the slim
       // MultiOHEventProperty shape the endpoint expects.
-      const properties: MultiOHEventProperty[] = selectedListings.map((l) => ({
-        mls_number: l.mls_number,
-        source_mls: l.source_mls,
-        listing_id: l.id,
-        address: l.address,
-        city: l.city,
-        state: l.state,
-        zip: l.zip,
-        list_price: l.list_price,
-        bedrooms: l.bedrooms,
-        bathrooms_full: l.bathrooms_full,
-        bathrooms_half: l.bathrooms_half,
-        property_type: l.property_type,
-        hero_image_url: l.hero_image_url,
-        oh_start_at: l.oh_start_at ?? null,
-        oh_end_at: l.oh_end_at ?? null,
-        hosting_agent_name: l.agent_name ?? null,
-      }));
+      //
+      // why: hosting_agent_name comes from the per-property state map (Step 1
+      // input). Trim + coerce empty → null so the renderer's "no Hosted by
+      // line" branch fires when the user clears the field. We DO NOT fall
+      // back to the listing's agent_name here — the state map was already
+      // seeded with that default at selection time, so an empty value at
+      // this point is the user explicitly asking to suppress the override.
+      const properties: MultiOHEventProperty[] = selectedListings.map((l) => {
+        const rawHost = perPropertyHostingAgent[l.mls_number] ?? "";
+        const trimmedHost = rawHost.trim();
+        return {
+          mls_number: l.mls_number,
+          source_mls: l.source_mls,
+          listing_id: l.id,
+          address: l.address,
+          city: l.city,
+          state: l.state,
+          zip: l.zip,
+          list_price: l.list_price,
+          bedrooms: l.bedrooms,
+          bathrooms_full: l.bathrooms_full,
+          bathrooms_half: l.bathrooms_half,
+          property_type: l.property_type,
+          hero_image_url: l.hero_image_url,
+          oh_start_at: l.oh_start_at ?? null,
+          oh_end_at: l.oh_end_at ?? null,
+          hosting_agent_name: trimmedHost.length > 0 ? trimmedHost : null,
+        };
+      });
 
       const payload: MultiOHEventInput = {
         event_title: eventForm.event_title.trim(),
         agent_name: eventForm.agent_name.trim(),
         agent_phone: eventForm.agent_phone.trim() || null,
-        agent_email: eventForm.agent_email.trim() || null,
-        office_name: eventForm.office_name.trim() || defaultOfficeName,
+        // why: agent_email + office_name were removed from the wizard form
+        // on 2026-05-16. Email isn't shown on the OH event hero anymore;
+        // office_name is hardcoded since Alliance has one office and it
+        // never changes. The MultiOHEventInput type still accepts both, so
+        // we send null/defaultOfficeName to keep the contract intact.
+        agent_email: null,
+        office_name: defaultOfficeName,
         format,
         per_property_variant: perPropertyVariant,
         properties,
@@ -362,6 +487,7 @@ export default function MultiOHWizardClient({
     format,
     perPropertyVariant,
     defaultOfficeName,
+    perPropertyHostingAgent,
     router,
   ]);
 
@@ -384,6 +510,8 @@ export default function MultiOHWizardClient({
             listings={listings}
             selectedMls={selectedMls}
             onToggle={toggleSelect}
+            perPropertyHostingAgent={perPropertyHostingAgent}
+            onHostingAgentChange={setHostingAgentForProperty}
           />
         ) : null}
         {step === 2 ? (
@@ -517,9 +645,22 @@ interface Step1Props {
   listings: readonly PostBuilderListing[];
   selectedMls: readonly string[];
   onToggle: (mls: string) => void;
+  /**
+   * Map of mls_number → current hosting agent override value. Keys exist
+   * only for currently-selected properties (kept in lockstep by the parent).
+   */
+  perPropertyHostingAgent: Record<string, string>;
+  /** Update one property's hosting agent override. */
+  onHostingAgentChange: (mls: string, value: string) => void;
 }
 
-function Step1Pick({ listings, selectedMls, onToggle }: Step1Props) {
+function Step1Pick({
+  listings,
+  selectedMls,
+  onToggle,
+  perPropertyHostingAgent,
+  onHostingAgentChange,
+}: Step1Props) {
   const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
 
   if (listings.length === 0) {
@@ -589,6 +730,11 @@ function Step1Pick({ listings, selectedMls, onToggle }: Step1Props) {
           const selectionIndex = selectedMls.indexOf(l.mls_number);
           const isSelected = selectionIndex >= 0;
           const isDisabled = !isSelected && atCap;
+          // why: read the current hosting-agent value from the parent map.
+          // Falls back to empty string when the key isn't present (i.e., the
+          // listing isn't selected) so the controlled input stays typed.
+          const hostingAgentValue =
+            perPropertyHostingAgent[l.mls_number] ?? "";
           return (
             <li key={l.mls_number}>
               <button
@@ -644,6 +790,17 @@ function Step1Pick({ listings, selectedMls, onToggle }: Step1Props) {
                 </div>
                 <SelectionChip selectionIndex={selectionIndex} />
               </button>
+              {/* Per-property hosting agent override — only on selected rows.
+                  why: keeps the picker list scannable when nothing is selected
+                  yet, and gives the user an obvious touchpoint to override the
+                  default exactly where the property lives in the list. */}
+              {isSelected ? (
+                <HostingAgentRow
+                  mls={l.mls_number}
+                  value={hostingAgentValue}
+                  onChange={onHostingAgentChange}
+                />
+              ) : null}
             </li>
           );
         })}
@@ -670,6 +827,55 @@ function SelectionChip({ selectionIndex }: SelectionChipProps) {
       ].join(" ")}
     >
       {isSelected ? selectionIndex + 1 : ""}
+    </div>
+  );
+}
+
+interface HostingAgentRowProps {
+  mls: string;
+  value: string;
+  onChange: (mls: string, value: string) => void;
+}
+
+/**
+ * Compact per-property hosting-agent override input. Slides in below a
+ * selected property row so it's visually anchored to the listing it belongs
+ * to — no separate "agents per property" panel later in the wizard, no
+ * extra step. The whole thing adds ~40px of height when present.
+ *
+ * why: the input uses the same gold-focus + neutral-border styling as the
+ * other text fields in the wizard, but at a smaller size so it reads as
+ * a sub-detail of the row above rather than an equally weighted new field.
+ * Keyboard focus + click events here intentionally do NOT bubble up to the
+ * row's select toggle — the wrapper has `onClick={stop}` so a user can
+ * click the input without inadvertently deselecting the row.
+ */
+function HostingAgentRow({ mls, value, onChange }: HostingAgentRowProps) {
+  return (
+    <div
+      className="mt-1.5 ml-3 mr-3 rounded-md border border-neutral-200 bg-white/70 px-3 py-2"
+      // why: stop clicks inside this strip from bubbling to the row's
+      // select-toggle button — a user fine-tuning the override shouldn't
+      // accidentally deselect the property.
+      onClick={(e) => e.stopPropagation()}
+    >
+      <label
+        htmlFor={`hosting-agent-${mls}`}
+        className="block text-[11px] font-semibold uppercase tracking-wider text-neutral-500 mb-1"
+      >
+        Hosting agent
+      </label>
+      <input
+        id={`hosting-agent-${mls}`}
+        type="text"
+        value={value}
+        onChange={(e) => onChange(mls, e.target.value)}
+        placeholder="Hosting agent name"
+        className="block w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+      />
+      <div className="mt-1 text-[10px] text-neutral-500">
+        Defaults to the listing agent. Override if a different agent is hosting this open house.
+      </div>
     </div>
   );
 }
@@ -727,37 +933,20 @@ function Step2Details({ eventForm, onChange, propertyCount }: Step2Props) {
           />
         </Field>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field id="agent_phone" label="Agent phone" hint="Optional.">
-            <input
-              id="agent_phone"
-              type="tel"
-              className="input"
-              value={eventForm.agent_phone}
-              onChange={(e) => onChange({ agent_phone: e.target.value })}
-              placeholder="(609) 555-0123"
-            />
-          </Field>
-          <Field id="agent_email" label="Agent email" hint="Optional.">
-            <input
-              id="agent_email"
-              type="email"
-              className="input"
-              value={eventForm.agent_email}
-              onChange={(e) => onChange({ agent_email: e.target.value })}
-              placeholder="agent@c21alliance.com"
-            />
-          </Field>
-        </div>
-
-        <Field id="office_name" label="Office name" hint="Footer of the event hero card.">
+        {/* why: phone-only contact row. Email was removed from the OH event
+            details on 2026-05-16 per user — agent email isn't worth the
+            real-estate on the hero card for open house events. Office name
+            was also removed; it's hardcoded to "Century 21 Alliance" in
+            the payload below (defaultOfficeName) since that's the only
+            office and it'll never change. */}
+        <Field id="agent_phone" label="Agent phone" hint="Optional.">
           <input
-            id="office_name"
-            type="text"
+            id="agent_phone"
+            type="tel"
             className="input"
-            value={eventForm.office_name}
-            onChange={(e) => onChange({ office_name: e.target.value })}
-            placeholder="Century 21 Alliance"
+            value={eventForm.agent_phone}
+            onChange={(e) => onChange({ agent_phone: e.target.value })}
+            placeholder="(609) 555-0123"
           />
         </Field>
       </div>

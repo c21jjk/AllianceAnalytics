@@ -289,6 +289,7 @@ export type Database = {
           image_path: string | null
           image_url: string | null
           last_post_error: string | null
+          last_schedule_error: Json
           layer_tree: Json | null
           media_type: string
           mls_hashtag: string | null
@@ -302,6 +303,7 @@ export type Database = {
           posted_to: string[]
           property_id: string | null
           reel_duration_ms: number | null
+          scheduled_for: Json
           source_mls: string | null
           status: string
           template_id: string
@@ -331,6 +333,7 @@ export type Database = {
           image_path?: string | null
           image_url?: string | null
           last_post_error?: string | null
+          last_schedule_error?: Json
           layer_tree?: Json | null
           media_type?: string
           mls_hashtag?: string | null
@@ -344,6 +347,7 @@ export type Database = {
           posted_to?: string[]
           property_id?: string | null
           reel_duration_ms?: number | null
+          scheduled_for?: Json
           source_mls?: string | null
           status?: string
           template_id: string
@@ -373,6 +377,7 @@ export type Database = {
           image_path?: string | null
           image_url?: string | null
           last_post_error?: string | null
+          last_schedule_error?: Json
           layer_tree?: Json | null
           media_type?: string
           mls_hashtag?: string | null
@@ -386,6 +391,7 @@ export type Database = {
           posted_to?: string[]
           property_id?: string | null
           reel_duration_ms?: number | null
+          scheduled_for?: Json
           source_mls?: string | null
           status?: string
           template_id?: string
