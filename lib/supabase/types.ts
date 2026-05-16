@@ -1254,6 +1254,14 @@ export type Database = {
           report_token: string
           sent_at: string | null
           updated_at: string
+          // Phase C.3 — Chromium-rendered Owner Report PDF artifact
+          pdf_path: string | null
+          pdf_url: string | null
+          pdf_generated_at: string | null
+          pdf_posts_snapshot: Json
+          pdf_generated_by: string | null
+          pdf_first_viewed_at: string | null
+          pdf_view_count: number
         }
         Insert: {
           audience?: Json
@@ -1274,6 +1282,13 @@ export type Database = {
           report_token: string
           sent_at?: string | null
           updated_at?: string
+          pdf_path?: string | null
+          pdf_url?: string | null
+          pdf_generated_at?: string | null
+          pdf_posts_snapshot?: Json
+          pdf_generated_by?: string | null
+          pdf_first_viewed_at?: string | null
+          pdf_view_count?: number
         }
         Update: {
           audience?: Json
@@ -1294,6 +1309,13 @@ export type Database = {
           report_token?: string
           sent_at?: string | null
           updated_at?: string
+          pdf_path?: string | null
+          pdf_url?: string | null
+          pdf_generated_at?: string | null
+          pdf_posts_snapshot?: Json
+          pdf_generated_by?: string | null
+          pdf_first_viewed_at?: string | null
+          pdf_view_count?: number
         }
         Relationships: [
           {

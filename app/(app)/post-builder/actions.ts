@@ -1817,3 +1817,92 @@ function isWorkerRenderImageResponse(
     typeof v.path === "string"
   );
 }
+
+// ---------------------------------------------------------------------------
+// AI Magic Design — Phase C.1
+// ---------------------------------------------------------------------------
+//
+// One-click "let Claude design this post" entry point. The UI hands us a
+// listing + optional office profile + the listing's photo gallery; we hand
+// back a complete (post_type, variant, format, hero_photo_index, caption,
+// hashtags, rationale) recommendation. The Studio overlay opens with all of
+// that state pre-applied so Larissa can tweak + ship instead of building
+// from a blank picker.
+
+import { runMagicDesign } from "@/lib/post-builder/magic-design";
+import type {
+  MagicDesignInput as MagicDesignInternalInput,
+  MagicDesignOfficeProfile,
+  MagicDesignRecommendation,
+} from "@/lib/post-builder/magic-design";
+import { isAnthropicConfigured } from "@/lib/ai/anthropic";
+import type { PostBuilderListing } from "@/lib/post-builder/types";
+
+/**
+ * Server-action input shape — mirrors the internal runMagicDesign() input
+ * but is re-declared here to keep the action surface explicit (no
+ * server-only types leaking through internal renames).
+ */
+export interface MagicDesignInput {
+  listing: PostBuilderListing;
+  officeProfile?: MagicDesignOfficeProfile | null;
+  availablePhotos: string[];
+}
+
+export type MagicDesignResult =
+  | { ok: true; recommendation: MagicDesignRecommendation }
+  | { ok: false; error: string };
+
+/**
+ * Trigger AI Magic Design for a single listing. Auth-gated; safe to call
+ * from any client surface that already requires a signed-in user. Returns
+ * a complete post recommendation OR a typed error the UI can surface.
+ *
+ * Idempotent: each invocation produces a fresh recommendation. Larissa's
+ * "Re-roll" button just calls this again — Sonnet is non-deterministic so
+ * the second pass produces a different (post_type, variant, format,
+ * caption) bundle.
+ *
+ * Why this is a thin pass-through to runMagicDesign:
+ *   - Server actions need to live in `app/` directories per Next.js 15.
+ *   - The core logic + SYSTEM_PROMPT live in `lib/post-builder/magic-design.ts`
+ *     so they're reachable from non-action contexts (future API routes,
+ *     batch jobs, scripts) without dragging the entire actions.ts file in.
+ *   - Auth + the isAnthropicConfigured() probe belong at the action boundary
+ *     so the internal module stays free of Next.js-specific plumbing.
+ */
+export async function triggerMagicDesignAction(
+  input: MagicDesignInput,
+): Promise<MagicDesignResult> {
+  // why: requireUser() throws → upstream caller catches and renders a
+  // signed-out toast. Same gating contract as every other action here.
+  await requireUser();
+
+  // why: short-circuit BEFORE building the prompt or making any network
+  // call. Saves a couple hundred ms when Anthropic isn't configured (e.g.
+  // local dev without an API key paste in /settings) so the UI surfaces a
+  // clear "not configured" message instantly.
+  const configured = await isAnthropicConfigured();
+  if (!configured) {
+    return { ok: false, error: "Anthropic not configured" };
+  }
+
+  if (!input.listing || !input.listing.mls_number) {
+    return { ok: false, error: "missing listing" };
+  }
+  if (!Array.isArray(input.availablePhotos)) {
+    return { ok: false, error: "missing photos array" };
+  }
+
+  const internal: MagicDesignInternalInput = {
+    listing: input.listing,
+    officeProfile: input.officeProfile ?? null,
+    availablePhotos: input.availablePhotos,
+  };
+
+  return runMagicDesign(internal);
+}
+
+// Re-export the recommendation shape so client components can import it
+// from a single canonical location alongside the action they're calling.
+export type { MagicDesignRecommendation, MagicDesignOfficeProfile };

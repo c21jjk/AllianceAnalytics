@@ -36,6 +36,12 @@ import ReelPreview from "@/lib/post-builder/canvas-editor/panels/ReelPreview";
 // every edit.
 import MusicPicker from "@/lib/post-builder/canvas-editor/panels/MusicPicker";
 import type { ReelResumeRow } from "@/lib/data/created-posts-db";
+// Reel Template Library — picker overlay + manifest. Lets Larissa swap the
+// active composition for a pre-composed template (Cinematic Tour, Price Drop
+// Punch, etc.) without rebuilding scene-by-scene. See
+// `lib/post-builder/reel-templates/manifest.ts` for the 15-template catalog.
+import ReelTemplatesPanel from "./ReelTemplatesPanel";
+import type { ReelTemplate } from "@/lib/post-builder/reel-templates/types";
 
 // ---------------------------------------------------------------------------
 // Local types
@@ -401,6 +407,19 @@ export default function ReelStudioClient({
   const [composition, setComposition] = useState<VideoComposition | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
 
+  // ---- Reel Template Library state ------------------------------------
+  // why: tracks the template that LAST seeded the composition so the picker
+  // can highlight it as Current. Local state (not persisted on the
+  // composition itself) because resuming a saved row doesn't carry the
+  // template id, and the user may have mutated scenes since picking — the
+  // "Current" badge is informational only.
+  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
+  const [showTemplatesPicker, setShowTemplatesPicker] = useState<boolean>(false);
+  // why: tracks whether the user has mutated scenes since the last template
+  // pick / initial seed, so the picker can prompt before swapping. Set on
+  // every applySceneMutation; cleared on template-pick or listing-change.
+  const [hasUnsavedTemplateEdits, setHasUnsavedTemplateEdits] = useState<boolean>(false);
+
   // ---- photos state ----------------------------------------------------
   const [photosState, setPhotosState] = useState<PhotosFetchState>({
     photos: [],
@@ -479,6 +498,10 @@ export default function ReelStudioClient({
       setComposition(null);
       setSelectedSceneId(null);
       setPhotosState({ photos: [], isLoading: false, error: null });
+      // why: a listing-change resets the template-tracking state — the
+      // composition for the new listing wasn't seeded by any template.
+      setCurrentTemplateId(null);
+      setHasUnsavedTemplateEdits(false);
       return;
     }
 
@@ -583,8 +606,32 @@ export default function ReelStudioClient({
           updatedAt: new Date().toISOString(),
         };
       });
+      // why: any scene-level mutation invalidates the "this composition
+      // matches its template" invariant — flip the dirty flag so the
+      // template picker prompts before swapping.
+      setHasUnsavedTemplateEdits(true);
     },
     [],
+  );
+
+  // ---- template-pick handler -------------------------------------------
+  // why: applying a template replaces the entire scenes array with the
+  // factory's output. The dirty flag clears because the new composition
+  // IS the template's emission — no edits yet.
+  const handleTemplatePicked = useCallback(
+    (template: ReelTemplate) => {
+      if (!selectedListing) return;
+      const newComp = template.build(
+        selectedListing,
+        photosState.photos,
+      );
+      setComposition(newComp);
+      setSelectedSceneId(newComp.scenes[0]?.id ?? null);
+      setCurrentTemplateId(template.id);
+      setHasUnsavedTemplateEdits(false);
+      setShowTemplatesPicker(false);
+    },
+    [selectedListing, photosState.photos],
   );
 
   // ---- handlers wired into siblings -----------------------------------
@@ -996,35 +1043,80 @@ export default function ReelStudioClient({
           <h2 className="text-base font-semibold text-neutral-900">Reel Studio</h2>
           <p className="truncate text-xs text-neutral-600">{subtitle}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void handleGenerateReel();
-          }}
-          disabled={
-            !composition ||
-            generateState.phase === "submitting" ||
+        <div className="flex items-center gap-2">
+          {/* Templates button — opens the Reel Template Library picker.
+              Disabled until a listing is picked (no point browsing
+              templates with nothing to render against) and during an
+              in-flight render so the user can't swap mid-flight. */}
+          <button
+            type="button"
+            onClick={() => setShowTemplatesPicker(true)}
+            disabled={
+              !selectedListing ||
+              generateState.phase === "submitting" ||
+              generateState.phase === "polling" ||
+              generateState.phase === "persisting"
+            }
+            aria-label="Open the Reel template picker"
+            className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 shadow-sm transition hover:border-gold-400 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.75}
+              stroke="currentColor"
+              aria-hidden="true"
+              className="h-4 w-4"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M3.75 6.75A2.25 2.25 0 016 4.5h12a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0118 19.5H6a2.25 2.25 0 01-2.25-2.25V6.75zM3.75 9h16.5M9 4.5v15"
+              />
+            </svg>
+            Templates
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleGenerateReel();
+            }}
+            disabled={
+              !composition ||
+              generateState.phase === "submitting" ||
+              generateState.phase === "polling" ||
+              generateState.phase === "persisting"
+            }
+            aria-label={
+              isResume
+                ? "Re-generate Reel from current composition (saves as a new sibling row)"
+                : "Generate Reel from current composition"
+            }
+            className="inline-flex items-center rounded-md bg-gold-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-gold-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {generateState.phase === "submitting" ||
             generateState.phase === "polling" ||
             generateState.phase === "persisting"
-          }
-          aria-label={
-            isResume
-              ? "Re-generate Reel from current composition (saves as a new sibling row)"
-              : "Generate Reel from current composition"
-          }
-          className="inline-flex items-center rounded-md bg-gold-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-gold-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {generateState.phase === "submitting" ||
-          generateState.phase === "polling" ||
-          generateState.phase === "persisting"
-            ? isResume
-              ? "Re-generating..."
-              : "Generating..."
-            : isResume
-              ? "Re-generate Reel"
-              : "Generate Reel"}
-        </button>
+              ? isResume
+                ? "Re-generating..."
+                : "Generating..."
+              : isResume
+                ? "Re-generate Reel"
+                : "Generate Reel"}
+          </button>
+        </div>
       </header>
+
+      {/* ---- Reel Template Library picker overlay --------------------- */}
+      {showTemplatesPicker ? (
+        <ReelTemplatesPanel
+          currentTemplateId={currentTemplateId}
+          hasUnsavedEdits={hasUnsavedTemplateEdits}
+          onTemplatePicked={handleTemplatePicked}
+          onClose={() => setShowTemplatesPicker(false)}
+        />
+      ) : null}
 
       {/* ---- Render overlay (Day 6) ----------------------------------- */}
       {generateState.phase !== "idle" ? (

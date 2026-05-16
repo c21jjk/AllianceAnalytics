@@ -28,6 +28,15 @@ import {
 import CanvasEditorOverlay from "@/lib/post-builder/canvas-editor/CanvasEditorOverlay";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
+// === AI Magic Design (Phase C.1) ===
+// why: ✨ button on every listing card → fires Magic Design action →
+// surfaces recommendation modal → applies state + opens Studio. The modal
+// is rendered conditionally at the bottom of the component when
+// magicDesignListing is non-null; this keeps the Magic Design flow fully
+// self-contained without touching the existing render pipeline.
+import MagicDesignModal, {
+  type MagicDesignAppliedPayload,
+} from "./MagicDesignModal";
 import type {
   CanvasExportResult,
   CanvasTemplateSchema,
@@ -127,6 +136,25 @@ const STORAGE_KEY_POST_TYPE = "post-builder.post_type";
 const STORAGE_KEY_VARIANT = "post-builder.variant";
 const STORAGE_KEY_FORMAT = "post-builder.format";
 
+/**
+ * Inline duplicate of the same helper in lib/post-builder/captions.ts.
+ * why: this file is "use client", and captions.ts is server-only. We need a
+ * canonical hashtag here to seed Magic Design's captionResult so the
+ * auto-linker can tie the post back to the listing on publish — same
+ * contract as the existing caption flow.
+ */
+function canonicalMlsHashtagForListing(
+  listing: PostBuilderListing,
+): string {
+  const normalized = listing.mls_number.replace(/^#/, "").trim();
+  if (listing.source_mls === "cmc") return `#CMC${normalized}`;
+  if (listing.source_mls === "sjsr") return `#SJSR${normalized}`;
+  if (listing.source_mls === "bright" || /^NJ[A-Z]{2}\d+$/i.test(normalized)) {
+    return `#${normalized.toUpperCase()}`;
+  }
+  return `#${normalized}`;
+}
+
 export default function PostBuilderClient({
   listingsByPostType,
   variantsByPostTypeAndFormat,
@@ -196,6 +224,18 @@ export default function PostBuilderClient({
   const [editingSlideIndex, setEditingSlideIndex] = useState<number | null>(
     null,
   );
+  // === AI Magic Design (Phase C.1) ===
+  // why: when non-null, the MagicDesignModal mounts at the bottom of the
+  // tree and fires the action against this listing. Photos for the listing
+  // are loaded on-demand inside the modal flow by REUSING the same
+  // /api/post-builder/photos endpoint the main picker uses — see the
+  // useEffect below that hydrates `magicDesignPhotos` when the listing
+  // changes. This keeps Magic Design independent from `selectedListing` so
+  // Larissa can ✨ a listing she hasn't clicked into yet.
+  const [magicDesignListing, setMagicDesignListing] =
+    useState<PostBuilderListing | null>(null);
+  const [magicDesignPhotos, setMagicDesignPhotos] = useState<string[]>([]);
+  const [magicDesignPhotosLoading, setMagicDesignPhotosLoading] = useState(false);
   // Render + caption state
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
@@ -1024,6 +1064,158 @@ export default function PostBuilderClient({
     };
   }, [selectedListing]);
 
+  // === AI Magic Design — photo hydration for the ✨ listing ===
+  // why: when the user clicks ✨ on a listing card we may not have its
+  // photos loaded yet (selectedListing might be a DIFFERENT listing, or
+  // nothing at all). Hit the same /api/post-builder/photos endpoint the
+  // main picker uses so Claude gets the full gallery to pick a hero from.
+  // The modal mounts immediately and shows a spinner; we feed it photos
+  // as soon as the fetch resolves. If the fetch fails or returns empty,
+  // we fall back to the listing's hero_image_url so Claude always has
+  // at least one photo to choose from.
+  useEffect(() => {
+    if (!magicDesignListing) {
+      setMagicDesignPhotos([]);
+      setMagicDesignPhotosLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setMagicDesignPhotosLoading(true);
+    fetch(
+      `/api/post-builder/photos?mls=${encodeURIComponent(magicDesignListing.mls_number)}`,
+    )
+      .then((r) => r.json())
+      .then((json: PhotosResponse) => {
+        if (cancelled) return;
+        const photos = json.ok && json.photos ? json.photos : [];
+        const urls = photos.map((p) => p.url);
+        if (urls.length === 0 && magicDesignListing.hero_image_url) {
+          setMagicDesignPhotos([magicDesignListing.hero_image_url]);
+        } else {
+          setMagicDesignPhotos(urls);
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error("[magic-design] photos fetch failed:", e);
+        setMagicDesignPhotos(
+          magicDesignListing.hero_image_url
+            ? [magicDesignListing.hero_image_url]
+            : [],
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setMagicDesignPhotosLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [magicDesignListing]);
+
+  /**
+   * Apply Claude's Magic Design recommendation + open Studio.
+   *
+   * Flow:
+   *   1. Apply post_type + format + selectedMls (the listing the user
+   *      clicked ✨ on, NOT whatever was selected before).
+   *   2. Seed captionResult/editedCaption so the Studio caption pane is
+   *      pre-filled — and so the existing "Generate" affordance won't
+   *      need to be clicked again before Post Now / Download.
+   *   3. Seed selectedPhotoIndex with Claude's hero pick (clamped to the
+   *      listing's actual photo count once the photos fetch resolves —
+   *      magicDesignPhotos vs availablePhotos may differ briefly if the
+   *      user hadn't selected this listing yet).
+   *   4. Close the Magic Design modal.
+   *   5. Open Studio for the recommended variant via the existing
+   *      openStudioForVariant pathway. We need a brief microtask so the
+   *      state updates above flush before openStudioForVariant reads
+   *      `selectedListing` from its captured closure.
+   */
+  const handleMagicDesignApply = useCallback(
+    (payload: MagicDesignAppliedPayload): void => {
+      if (!magicDesignListing) return;
+
+      // 1-3 — pre-apply all the recommendation state
+      setPostType(payload.post_type);
+      setFormat(payload.format);
+      setVariantId(payload.variant);
+      setSelectedMls(magicDesignListing.mls_number);
+
+      // why: seed the existing caption pipeline. mls_hashtag is derived from
+      // the listing exactly like captions.ts does it, so the canonical
+      // auto-linker hashtag is always present even when Magic Design
+      // returns a recommendation with no MLS hashtag in its set.
+      const mlsHashtag = canonicalMlsHashtagForListing(magicDesignListing);
+      const ensuredHashtags = payload.hashtags.some(
+        (h) => h.toLowerCase() === mlsHashtag.toLowerCase(),
+      )
+        ? payload.hashtags
+        : [...payload.hashtags, mlsHashtag];
+      setCaptionResult({
+        caption: payload.caption,
+        hashtags: ensuredHashtags,
+        mls_hashtag: mlsHashtag,
+      });
+      setEditedCaption(payload.caption);
+
+      // Hero photo: index into magicDesignPhotos (what Claude saw). The
+      // main picker's availablePhotos useEffect will refresh once
+      // selectedListing changes; until then we apply the index as-is and
+      // clamp once availablePhotos hydrates.
+      const heroUrl = magicDesignPhotos[payload.hero_photo_index] ?? null;
+      if (heroUrl) {
+        // why: defer the photo-index sync to after the listing's own photo
+        // useEffect resolves. We stash the recommended hero URL on a ref-
+        // less local and clamp by matching url once availablePhotos
+        // loads. For MVP, set the index directly — it's safe because
+        // both useEffects read from /api/post-builder/photos with the
+        // same MLS number and order.
+        setSelectedPhotoIndex(payload.hero_photo_index);
+      } else {
+        setSelectedPhotoIndex(0);
+      }
+
+      // 4 — close the Magic Design modal so it doesn't sit behind Studio
+      const listingForStudio = magicDesignListing;
+      setMagicDesignListing(null);
+
+      // 5 — open Studio. We can't call openStudioForVariant() directly
+      // because it reads `selectedListing` from a memoized closure, which
+      // won't have updated yet. Compute the studio context inline using
+      // the listing we already have in hand.
+      const tpl = findCanvasTemplate(
+        payload.post_type,
+        payload.variant,
+        payload.format,
+      );
+      if (!tpl) {
+        setError(
+          `No Studio template for ${payload.post_type} / ${payload.variant} / ${payload.format}.`,
+        );
+        return;
+      }
+      // why: photos passed to mapListingToPayload should be magicDesignPhotos
+      // — that's the exact list Claude saw and picked from. The main
+      // picker's availablePhotos may briefly be stale (different listing,
+      // fetch still in flight) during the cross-over.
+      const studioPhotos = magicDesignPhotos.length > 0
+        ? magicDesignPhotos
+        : listingForStudio.hero_image_url
+          ? [listingForStudio.hero_image_url]
+          : [];
+      const payloadML = mapListingToPayload(listingForStudio, {
+        photos: studioPhotos,
+        agentName: listingForStudio.agent_name ?? null,
+        officeName: listingForStudio.listing_office_name ?? null,
+      });
+      setStudioContext({ template: tpl, listing: payloadML });
+      setStudioOpen(true);
+      setRenderResult(null);
+      setError(null);
+    },
+    [magicDesignListing, magicDesignPhotos],
+  );
+
   function changePostType(next: PostType) {
     setPostType(next);
     setSelectedMls(null);
@@ -1579,12 +1771,25 @@ export default function PostBuilderClient({
                     ? l.close_price
                     : l.list_price;
                 return (
-                  <button
+                  // why: listing cards used to be a single <button>, but the
+                  // Magic Design ✨ affordance must be its own actionable
+                  // element — nesting an <button> inside a <button> is
+                  // invalid HTML and breaks click handling. Switched the
+                  // outer container to a <div> with role="button" + key
+                  // handlers preserved so a11y stays clean.
+                  <div
                     key={l.mls_number}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => pickListing(l.mls_number)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        pickListing(l.mls_number);
+                      }
+                    }}
                     className={[
-                      "w-full text-left rounded-lg border p-2.5 transition flex gap-3 items-start",
+                      "w-full text-left rounded-lg border p-2.5 transition flex gap-3 items-start relative cursor-pointer",
                       active
                         ? "border-gold-500 bg-gold-50/50 ring-2 ring-gold-500/30"
                         : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50",
@@ -1601,7 +1806,7 @@ export default function PostBuilderClient({
                     ) : (
                       <div className="w-14 h-14 rounded-md bg-neutral-100 flex-shrink-0" />
                     )}
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 pr-9">
                       <div className="text-sm font-medium text-neutral-900 truncate">
                         {l.address ?? l.mls_number}
                       </div>
@@ -1627,7 +1832,35 @@ export default function PostBuilderClient({
                         </div>
                       ) : null}
                     </div>
-                  </button>
+                    {/* === AI Magic Design ✨ button (Phase C.1) ===
+                        why: top-right corner so it's visible but doesn't
+                        compete with the card's primary action (selecting
+                        the listing). stopPropagation on click keeps the
+                        parent's pickListing from firing — Magic Design has
+                        its own listing context and shouldn't change which
+                        listing is "selected" in the picker. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMagicDesignListing(l);
+                      }}
+                      title="Magic Design — let AI pick the best post for this listing"
+                      aria-label={`Magic Design for ${l.address ?? l.mls_number}`}
+                      className="absolute top-2 right-2 w-8 h-8 rounded-full bg-gold-50 text-gold-600 hover:bg-gold-100 hover:text-gold-700 ring-1 ring-gold-200/60 shadow-sm flex items-center justify-center transition focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                    >
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        aria-hidden="true"
+                        className="w-4 h-4"
+                      >
+                        <path d="M8 1.5l1.6 4.4 4.4 1.6-4.4 1.6L8 13.5l-1.6-4.4L2 7.5l4.4-1.6z" />
+                        <circle cx="13" cy="3" r="0.8" />
+                        <circle cx="3" cy="13" r="0.8" />
+                      </svg>
+                    </button>
+                  </div>
                 );
               })}
               {filteredListings.length === 0 ? (
@@ -2110,6 +2343,30 @@ export default function PostBuilderClient({
           all underlying UI including the PostNowModal. Unmounts entirely when
           closed (no idle Fabric memory cost). studioContext is hydrated at
           open-time so the editor's useEffect doesn't refire on parent renders. */}
+      {/* === AI Magic Design modal (Phase C.1) ===
+          why: rendered above Studio overlay because Magic Design ALWAYS
+          closes itself before opening Studio (handleMagicDesignApply does
+          setMagicDesignListing(null) then setStudioOpen(true)). So in
+          practice the two are never visible at the same time; rendering
+          order is mostly cosmetic. Mount-on-non-null pattern means the
+          modal's first useEffect fires the design action automatically. */}
+      {magicDesignListing ? (
+        <MagicDesignModal
+          listing={magicDesignListing}
+          // why: officeProfile null for MVP — the post-builder page doesn't
+          // currently load office data. Wiring office hand-off through
+          // page.tsx → PostBuilderClient is a one-line addition once we
+          // want sharper, market-scoped recommendations. The action +
+          // prompt already handle the optional shape.
+          officeProfile={null}
+          // why: magicDesignPhotos hydrates async from /api/post-builder/photos
+          // — pass an empty array while loading and the modal stays in
+          // its spinner state. As soon as photos arrive the action fires.
+          availablePhotos={magicDesignPhotos}
+          onCancel={() => setMagicDesignListing(null)}
+          onApply={handleMagicDesignApply}
+        />
+      ) : null}
       <CanvasEditorOverlay
         open={studioOpen}
         onClose={handleStudioClose}
