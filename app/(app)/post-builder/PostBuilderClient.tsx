@@ -281,8 +281,11 @@ export default function PostBuilderClient({
   // === Canvas Editor (Path C) — template lookup + open/save/close handlers ===
   // why: lookup is by (postType, variantId, format) tuple — if no canvas-editor
   // template exists for the current selection, `studioTemplate` is null and the
-  // "Edit in Studio" button is disabled. Step 2 ships just_listed × v1 across
-  // all 3 formats; everything else returns null until later phases author them.
+  // "Edit in Studio" button is disabled. As of 2026-05-15, canvas-editor ships
+  // v1 Hero Editorial, v2 Bold Stats, and v3 Side-by-Side across all 5 post
+  // types × 3 formats (45 templates total). v6 Magazine Cover, v7 Polaroid,
+  // and v8 Minimal Frame variant cards still return null and hide the button
+  // until those factories are ported from the V1 HTML primitives.
   const studioTemplate = useMemo<CanvasTemplateSchema | null>(
     () => findCanvasTemplate(postType, variantId, format),
     [postType, variantId, format],
@@ -1199,9 +1202,10 @@ export default function PostBuilderClient({
                           : [];
                       // why: "Edit in Studio" only renders under the active card
                       // AND only when a canvas-editor template exists for the
-                      // current (postType, variant, format) tuple. Step 2 ships
-                      // just_listed × v1 across 3 formats; other combinations
-                      // hide the affordance until later phases add templates.
+                      // current (postType, variant, format) tuple. As of
+                      // 2026-05-15, v1/v2/v3 are covered across all post types
+                      // × formats; v6/v7/v8 cards still hide the button until
+                      // their factories are ported.
                       const studioAvailable =
                         active &&
                         !disabled &&
