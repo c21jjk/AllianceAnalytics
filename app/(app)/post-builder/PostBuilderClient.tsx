@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PostBuilderListing,
@@ -193,6 +195,20 @@ export default function PostBuilderClient({
     template: CanvasTemplateSchema;
     listing: MLSListingPayload;
   } | null>(null);
+
+  // Part 2 (Phase D) — Make-a-Reel follow-up prompt state. Populated by a
+  // successful Studio save; when non-null, surfaces a modal asking the user
+  // whether they want to also create a Reel version of the post they just
+  // saved. The mls field deep-links into /post-builder/reel; gpId is kept
+  // for future "open the saved post's Reel sibling" wiring (Phase D+).
+  const [makeReelPromptState, setMakeReelPromptState] = useState<{
+    mls: string;
+    gpId: string | null;
+  } | null>(null);
+
+  // Next.js router — used by the Make-a-Reel and "+ Reel" entry points to
+  // navigate from Post Builder → Reel Studio without a full page reload.
+  const router = useRouter();
   // Phase 5 — carousel slides (slide 0 is the hero render; these are 1..N
   // supporting photos that will publish alongside it as an IG/FB carousel).
   // Lives at PostBuilder level — not inside the editor — because the slides
@@ -756,6 +772,24 @@ export default function PostBuilderClient({
 
         // ---- 4. Close the overlay ----
         setStudioOpen(false);
+
+        // ---- 5. Part 2 (Phase D) — Make-a-Reel follow-up prompt ----
+        // why: connect the canvas Studio flow to the Reel flow. Larissa
+        // should see one natural pathway: "saved a post → want a Reel
+        // version too?" — instead of two disconnected entry points.
+        // Skipped on per-slide saves (editingSlideIndex non-null) since
+        // the user is in the middle of editing a carousel, not finishing
+        // a full post.
+        if (
+          editingSlideIndex === null &&
+          selectedListing?.mls_number &&
+          upsertRes.ok
+        ) {
+          setMakeReelPromptState({
+            mls: selectedListing.mls_number,
+            gpId: upsertRes.id ?? generatedPostId ?? null,
+          });
+        }
       } catch (e) {
         setError(
           `Studio save threw: ${e instanceof Error ? e.message : String(e)}`,
@@ -781,6 +815,29 @@ export default function PostBuilderClient({
     // pencil to re-enter slide-edit mode.
     setEditingSlideIndex(null);
   }, []);
+
+  // Part 2 (Phase D) — pivot from Post Builder to Reel Studio. Closes the
+  // canvas overlay (if open), dismisses any pending Make-a-Reel prompt,
+  // and navigates to /post-builder/reel?mls=<mls> so Reel Studio mounts
+  // with the listing already selected. Used by BOTH the in-Studio "+
+  // Reel" button AND the post-save prompt's "Make a Reel" action.
+  const navigateToReelStudio = useCallback(
+    (mls: string): void => {
+      setStudioOpen(false);
+      setEditingSlideIndex(null);
+      setMakeReelPromptState(null);
+      router.push(`/post-builder/reel?mls=${encodeURIComponent(mls)}`);
+    },
+    [router],
+  );
+
+  // why: bind the +Reel button to the currently-selected listing. Returns
+  // undefined when there's no listing, which makes CanvasEditor hide the
+  // button entirely (a +Reel without a listing has nothing to seed).
+  const handleMakeReelFromStudio = useMemo<(() => void) | undefined>(() => {
+    if (!selectedListing) return undefined;
+    return () => navigateToReelStudio(selectedListing.mls_number);
+  }, [selectedListing, navigateToReelStudio]);
 
   // why: Phase 4 — when the user swaps templates inside Studio via the
   // Templates panel, sync the parent's post-type / variant / format state
@@ -1744,6 +1801,54 @@ export default function PostBuilderClient({
       <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
         {/* Left: Listing picker */}
         <section className="card p-4">
+          {/* Phase D — Multi-property Open House entry point.
+              Lives at the top of the listings column ONLY when the active
+              post type is Open House. Moved here from the page header so
+              the affordance is co-located with the workflow it belongs to
+              (Larissa is already deciding "OH single vs OH multi" when she
+              picks the Open House chip — the choice should be visible
+              right there, not behind a separate header button).
+              Surfaces 2+ open houses as an active link with a count;
+              below the 2-listing minimum it renders a muted hint so the
+              feature stays discoverable without offering a no-op. */}
+          {postType === "open_house" ? (
+            listings.length >= 2 ? (
+              <Link
+                href="/post-builder/multi-oh"
+                className="mb-3 flex items-center justify-between gap-2 rounded-md border border-gold-300 bg-gold-50 px-3 py-2 text-sm font-medium text-gold-800 transition hover:border-gold-500 hover:bg-gold-100"
+              >
+                <span className="flex items-center gap-2">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    {/* why: 4-house glyph reads as "multiple properties" at
+                        a glance — different from the single-house implication
+                        of the standard picker rows below. */}
+                    <path d="M2 14h12" />
+                    <path d="M3 14V9l2-1.5L7 9v5" />
+                    <path d="M9 14V9l2-1.5L13 9v5" />
+                  </svg>
+                  Multi-property OH
+                </span>
+                <span className="rounded-full bg-gold-200/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold-900">
+                  {listings.length}
+                </span>
+              </Link>
+            ) : (
+              <div className="mb-3 rounded-md border border-dashed border-neutral-300 bg-neutral-50/60 px-3 py-2 text-[12px] leading-snug text-neutral-500">
+                Hosting more than one this weekend? Schedule a 2nd open
+                house and a Multi-property OH option will appear here.
+              </div>
+            )
+          ) : null}
           <div className="eyebrow mb-2">Step 1 · Pick a listing</div>
           <input
             type="search"
@@ -1959,31 +2064,24 @@ export default function PostBuilderClient({
                           type="button"
                           onClick={() => {
                             if (disabled) return;
-                            // why: when Studio is available, the click both
-                            // activates the variant and opens Studio — one
-                            // motion. When Studio isn't available (no canvas
-                            // template, or no listing selected yet), fall
-                            // back to plain variant activation so the user
-                            // can still see the preview render.
-                            if (studioAvailable) {
-                              openStudioForVariant(v.variant as PostVariant);
-                            } else {
-                              changeVariant(v.variant as PostVariant);
-                            }
+                            // Part 3 (Phase D) — variant card click ONLY
+                            // activates the variant. It no longer auto-
+                            // enters Studio, because doing so skipped
+                            // caption + hashtag generation entirely
+                            // (Studio doesn't run that pipeline). The
+                            // user now has to click "Generate" below to
+                            // produce caption + hashtags + render, and
+                            // can optionally enter Studio raw via the
+                            // hover-Edit affordance on top-right.
+                            changeVariant(v.variant as PostVariant);
                           }}
                           disabled={disabled}
                           title={
                             insufficient
                               ? `Needs ${v.photo_count} photos — this listing only has ${photosAvailable}.`
-                              : studioAvailable
-                                ? `Open ${v.display_name} in Studio`
-                                : v.description
+                              : v.description
                           }
-                          aria-label={
-                            studioAvailable
-                              ? `Open ${v.display_name} in Studio`
-                              : `Activate ${v.display_name}`
-                          }
+                          aria-label={`Activate ${v.display_name}`}
                           className={[
                             "group text-left rounded-xl border p-2.5 transition relative flex flex-col",
                             disabled
@@ -2003,15 +2101,34 @@ export default function PostBuilderClient({
                               disabled={disabled}
                               size="large"
                             />
-                            {/* Hover-revealed "Edit" pill — only when Studio
-                                is available. Sits on top of the preview so
-                                the user knows the click does more than just
-                                activate. Hidden by default to keep cards
-                                clean; fades in on hover. */}
+                            {/* Part 3 — explicit "Edit in Studio" affordance
+                                on top of the preview. Now a real button (not
+                                a decorative span) — opens Studio for THIS
+                                variant directly, skipping the
+                                caption/hashtag pipeline for users who just
+                                want to design first. stopPropagation
+                                prevents the outer card-click from also
+                                activating the variant a second time. */}
                             {studioAvailable ? (
                               <span
-                                className="pointer-events-none absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-gold-500/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-900 opacity-0 shadow-md backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100"
-                                aria-hidden="true"
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openStudioForVariant(v.variant as PostVariant);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    openStudioForVariant(
+                                      v.variant as PostVariant,
+                                    );
+                                  }
+                                }}
+                                aria-label={`Edit ${v.display_name} in Studio (skip caption)`}
+                                title={`Edit ${v.display_name} in Studio (skip caption)`}
+                                className="absolute top-2 right-2 inline-flex cursor-pointer items-center gap-1 rounded-full bg-gold-500/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-900 opacity-0 shadow-md backdrop-blur-sm transition-opacity duration-150 hover:bg-gold-500 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-500 group-hover:opacity-100"
                               >
                                 <svg
                                   width="10"
@@ -2022,6 +2139,7 @@ export default function PostBuilderClient({
                                   strokeWidth="2"
                                   strokeLinecap="round"
                                   strokeLinejoin="round"
+                                  aria-hidden="true"
                                 >
                                   <path d="M11 2l3 3-9 9H2v-3l9-9z" />
                                   <path d="M9.5 3.5l3 3" />
@@ -2167,7 +2285,7 @@ export default function PostBuilderClient({
                   disabled={generating}
                   className="btn-primary"
                 >
-                  {generating ? "Generating…" : renderResult ? "Regenerate" : "Generate Post"}
+                  {generating ? "Generating…" : renderResult ? "Regenerate" : "Generate"}
                 </button>
               </div>
 
@@ -2376,6 +2494,7 @@ export default function PostBuilderClient({
         saveLabel="Save Post"
         onTemplateSwitched={handleStudioTemplateSwitched}
         onResize={handleStudioResize}
+        onMakeReel={handleMakeReelFromStudio}
         carousel={{
           slides: carouselSlides,
           onSlidesChanged: setCarouselSlides,
@@ -2399,6 +2518,19 @@ export default function PostBuilderClient({
             slideMetadata.length > 0 ? handleSlideEditClick : undefined,
         }}
       />
+      {/* Part 2 (Phase D) — Make-a-Reel follow-up prompt. Renders only
+          when a Studio save just completed for a real listing. The user
+          dismisses by clicking either button; "Skip" closes the prompt
+          while "Make a Reel" navigates to Reel Studio with the listing
+          pre-selected. Non-blocking modal — backdrop click dismisses to
+          Skip. */}
+      {makeReelPromptState ? (
+        <MakeReelPromptModal
+          mls={makeReelPromptState.mls}
+          onMakeReel={() => navigateToReelStudio(makeReelPromptState.mls)}
+          onSkip={() => setMakeReelPromptState(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2959,6 +3091,110 @@ function toDateTimeLocalValue(d: Date): string {
  */
 function getDateTimeLocalNow(): string {
   return toDateTimeLocalValue(new Date());
+}
+
+/**
+ * Part 2 (Phase D) — Make-a-Reel follow-up prompt.
+ *
+ * Non-blocking modal that surfaces after a successful Studio save asking
+ * whether the user wants to also create a Reel version of the post they
+ * just saved. Connects the canvas Studio flow to Reel Studio so the two
+ * stop feeling disconnected.
+ *
+ * Why a modal (not a toast): The choice is consequential ("do I want to
+ * spend another 2 minutes making a Reel?"), and toasts auto-dismiss on
+ * timer — bad for an ADHD user who might miss the prompt entirely. The
+ * modal stays until explicitly resolved.
+ *
+ * Three resolution paths, all equivalent dismissals:
+ *   • Click "Make a Reel" — navigates to Reel Studio, mls pre-selected.
+ *   • Click "Skip" — closes the prompt; the saved post stays as-is.
+ *   • Click the backdrop / ESC — same as Skip.
+ */
+interface MakeReelPromptModalProps {
+  mls: string;
+  onMakeReel: () => void;
+  onSkip: () => void;
+}
+
+function MakeReelPromptModal(props: MakeReelPromptModalProps) {
+  // ESC dismisses to Skip — standard modal contract.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.onSkip();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props]);
+
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="make-reel-prompt-title"
+      onClick={(e) => {
+        // Backdrop click → Skip. Inner card stops propagation below.
+        if (e.target === e.currentTarget) props.onSkip();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/60 backdrop-blur-sm animate-fade-in-up"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="mx-4 w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 shadow-2xl"
+      >
+        <div className="mb-4 flex items-center gap-3">
+          {/* Film/play glyph — visual cue that we're talking about Reels. */}
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold-100 text-gold-700">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+              <path d="M7 6.5l3 1.5-3 1.5z" fill="currentColor" />
+            </svg>
+          </span>
+          <div>
+            <h3
+              id="make-reel-prompt-title"
+              className="text-base font-semibold text-neutral-900"
+            >
+              Make a Reel from this post?
+            </h3>
+            <p className="mt-0.5 text-xs text-neutral-600">
+              Reels get a fraction of the reach static posts do on IG and
+              FB. Same listing, ~7 seconds of motion, ready in a minute.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={props.onSkip}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+          >
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={props.onMakeReel}
+            className="rounded-md bg-gold-500 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gold-600"
+          >
+            Make a Reel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function EmptyPreview() {

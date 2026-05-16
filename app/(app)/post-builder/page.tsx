@@ -154,72 +154,18 @@ export default async function PostBuilderPage({
         phaseTag="Phase 3"
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {/* why: surface the multi-property OH wizard only when there are
-                actually 2+ open houses to pick from — below that minimum, the
-                wizard would land on its empty state which is a confusing
-                affordance. Mirrors the wizard's own MULTI_OH_MIN_PROPERTIES gate. */}
-            {/* why: Reel Studio entry. Static still-property posts get a
-                fraction of the reach Reels do on IG/FB — the algorithm
-                heavily favors video. Reel Studio composes a 7-second
-                motion video from the listing's hero design + photos so
-                "still" content lands as Reels-tier distribution.
-                Currently surfaced regardless of listing inventory; the
-                Reel page itself shows an empty state when there's nothing
-                to compose. */}
-            <Link
-              href="/post-builder/reel"
-              className="inline-flex items-center gap-2 rounded-md border border-gold-300 bg-gold-50 px-3 py-1.5 text-sm font-medium text-gold-800 transition hover:border-gold-500 hover:bg-gold-100"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                {/* why: play-arrow inside a film frame — reads as "video"
-                    without competing visually with the camera glyph. */}
-                <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-                <path d="M7 6.5l3 1.5-3 1.5z" fill="currentColor" />
-              </svg>
-              Reel Studio
-              <span className="rounded-full bg-gold-200/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold-900">
-                Beta
-              </span>
-            </Link>
-            {openHouse.length >= 2 ? (
-              <Link
-                href="/post-builder/multi-oh"
-                className="inline-flex items-center gap-2 rounded-md border border-gold-300 bg-gold-50 px-3 py-1.5 text-sm font-medium text-gold-800 transition hover:border-gold-500 hover:bg-gold-100"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  {/* why: 4-house glyph reads as "multiple properties" at a
-                      glance — different from the single-house implication of
-                      the standard post builder. */}
-                  <path d="M2 14h12" />
-                  <path d="M3 14V9l2-1.5L7 9v5" />
-                  <path d="M9 14V9l2-1.5L13 9v5" />
-                </svg>
-                Multi-property OH
-                <span className="rounded-full bg-gold-200/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold-900">
-                  {openHouse.length}
-                </span>
-              </Link>
-            ) : null}
+            {/* Part 2 (Phase D, 2026-05-16) — Reel Studio is no longer
+                accessed via this standalone header button. Reels are now
+                offered as a follow-up to any Save Post via the "Make a
+                Reel?" prompt, and from a "+ Reel" affordance inside
+                Studio's header. The /post-builder/reel route still
+                exists for deep-links and scheduled-task triggers, but it
+                doesn't deserve a header-level entry point that competes
+                with the canvas-Studio flow. */}
+            {/* Phase D — Multi-property OH affordance moved from the page
+                header into the Post Builder's "Pick a listing" column,
+                where it only surfaces when the active post type is
+                Open House. See PostBuilderClient.tsx. */}
             <Link
               href="/saved-posts"
               className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"

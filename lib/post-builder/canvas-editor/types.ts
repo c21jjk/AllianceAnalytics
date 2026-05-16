@@ -951,4 +951,16 @@ export interface CanvasEditorProps {
    * + emits change events.
    */
   carousel?: CanvasEditorCarouselProps;
+  /**
+   * Part 2 (Phase D) — "+ Reel" header affordance. When provided, the
+   * editor renders a small button in the top-right cluster alongside
+   * Save Post / Close. Clicking it asks the parent to transition the
+   * user from the canvas (still-image) Studio into Reel Studio for the
+   * same listing. The parent is responsible for the navigation +
+   * Studio-overlay cleanup; this prop is purely a UI hook.
+   *
+   * Omit on consumers that don't have a Reel companion flow (template-
+   * author mode, /properties detail Studio embeds, etc).
+   */
+  onMakeReel?: () => void;
 }

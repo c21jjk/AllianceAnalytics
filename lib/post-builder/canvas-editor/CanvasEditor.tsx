@@ -794,6 +794,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     onTemplateSwitched,
     onResize,
     carousel,
+    onMakeReel,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -2539,6 +2540,37 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               )}
               onPick={handleResizePicked}
             />
+          ) : null}
+          {/* Part 2 (Phase D) — "+ Reel" companion entry point. Sits left
+              of Save Post so the user's eye reaches it on the way to the
+              save action — and so the cluster reads as "Save OR also
+              make a Reel from this." Hidden when the parent didn't wire
+              `onMakeReel` (e.g., template-author embeds). */}
+          {onMakeReel ? (
+            <button
+              type="button"
+              onClick={onMakeReel}
+              disabled={effectiveSaving}
+              aria-label="Make a Reel from this listing"
+              title="Open Reel Studio for this listing"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+                <path d="M7 6.5l3 1.5-3 1.5z" fill="currentColor" />
+              </svg>
+              + Reel
+            </button>
           ) : null}
           <button
             type="button"
