@@ -143,7 +143,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   const { data: rows, error: queryError } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by",
+      // Phase D — captions_by_platform added so the scheduled publisher
+      // reads the same per-platform caption variants as the manual Post
+      // Now route. Falls back to legacy `caption` when the map is empty.
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by",
     )
     .neq("scheduled_for", "{}")
     .or(orPredicate)
@@ -256,6 +259,11 @@ async function processRow(
   }
 
   // Resolve caption + image array — same shape the Post Now route builds.
+  // Phase D — `caption` is the legacy fallback used for the "no caption at
+  // all" guard. Each platform's actual publish call reads its own variant
+  // from captions_by_platform via resolvePerPlatformCaption (defined
+  // below) so the scheduled tick respects the per-platform edits Larissa
+  // made in Studio.
   const caption = (row.caption ?? "").trim();
   if (!caption) {
     // No caption = nothing useful to post. Mark all due platforms as failed
@@ -266,6 +274,24 @@ async function processRow(
   if (!row.image_url) {
     return await failAndClear(supabase, row, duePlatforms, "missing image_url");
   }
+
+  const captionByPlatform = {
+    facebook: resolvePerPlatformCaption(
+      row.caption,
+      row.captions_by_platform,
+      "facebook",
+    ),
+    instagram: resolvePerPlatformCaption(
+      row.caption,
+      row.captions_by_platform,
+      "instagram",
+    ),
+    tiktok: resolvePerPlatformCaption(
+      row.caption,
+      row.captions_by_platform,
+      "tiktok",
+    ),
+  } as const;
 
   // why: additional_images is jsonb array of { url, ... } slides. Mirror
   // the validation from app/api/post-builder/post/route.ts so the publish
@@ -304,7 +330,11 @@ async function processRow(
             };
           }
           if (platform === "facebook") {
-            return await publishToFBPage({ creds, image_urls: imageUrls, caption });
+            return await publishToFBPage({
+              creds,
+              image_urls: imageUrls,
+              caption: captionByPlatform.facebook,
+            });
           }
           if (!creds.ig_business_account_id) {
             return {
@@ -313,7 +343,11 @@ async function processRow(
               error: "Instagram Business account ID not configured",
             };
           }
-          return await publishToIG({ creds, image_urls: imageUrls, caption });
+          return await publishToIG({
+            creds,
+            image_urls: imageUrls,
+            caption: captionByPlatform.instagram,
+          });
         })(),
       );
     } else if (platform === "tiktok") {
@@ -330,7 +364,7 @@ async function processRow(
           return await publishToTikTok({
             creds,
             image_urls: imageUrls,
-            caption,
+            caption: captionByPlatform.tiktok,
           });
         })(),
       );
@@ -487,4 +521,33 @@ async function failAndClear(
     succeeded: [],
     failed: duePlatforms,
   };
+}
+
+/**
+ * Phase D — resolve the platform-specific caption for the scheduled
+ * publisher. Mirrors the helper of the same name in /api/post-builder/
+ * post/route.ts — see that file for the full rationale. Kept duplicated
+ * (small + pure) rather than moved to a shared helper to keep the cron
+ * route self-contained for ops debugging.
+ */
+function resolvePerPlatformCaption(
+  legacy: string | null,
+  captionsByPlatform: unknown,
+  platform: "facebook" | "instagram" | "tiktok",
+): string {
+  if (captionsByPlatform && typeof captionsByPlatform === "object") {
+    const map = captionsByPlatform as Record<string, unknown>;
+    const entry = map[platform];
+    if (entry && typeof entry === "object") {
+      const e = entry as { caption?: unknown; hashtags?: unknown };
+      const cap = typeof e.caption === "string" ? e.caption.trim() : "";
+      if (cap) {
+        const tags = Array.isArray(e.hashtags)
+          ? e.hashtags.filter((t): t is string => typeof t === "string")
+          : [];
+        return tags.length > 0 ? `${cap}\n\n${tags.join(" ")}` : cap;
+      }
+    }
+  }
+  return (legacy ?? "").trim();
 }

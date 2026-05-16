@@ -22,6 +22,10 @@ const VALID_POST_TYPES: readonly PostType[] = [
   "just_sold",
   "under_contract",
   "open_house",
+  // Phase D — was missing from the allowlist. Without this, calling
+  // /api/post-builder/caption for a price_reduction post returned 400
+  // and the UI fell through to a deterministic caption only.
+  "price_reduction",
 ] as const;
 
 interface CaptionRequestBody {
@@ -76,8 +80,12 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
+    // Phase D — both shapes returned so legacy callers reading the
+    // top-level caption/hashtags continue to work. New per-platform
+    // consumers read `captions[platform]`.
     caption: result.caption,
     hashtags: result.hashtags,
     mls_hashtag: result.mls_hashtag,
+    captions: result.captions,
   });
 }

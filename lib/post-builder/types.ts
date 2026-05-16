@@ -181,11 +181,30 @@ export interface CaptionRequest {
   post_type: PostType;
 }
 
-export interface CaptionResponse {
-  ok: true;
+/**
+ * Phase D — per-platform caption variant. Each platform (IG, FB, TikTok)
+ * gets its own caption + hashtag list tuned to that platform's audience
+ * and algorithm. Persisted on `generated_posts.captions_by_platform`.
+ */
+export interface PlatformCaptionVariant {
   caption: string;
   hashtags: string[];
+}
+
+export type CaptionsByPlatform = Record<
+  SchedulablePlatform,
+  PlatformCaptionVariant
+>;
+
+export interface CaptionResponse {
+  ok: true;
+  /** Legacy single-caption field — mirrors `captions.instagram.caption`. */
+  caption: string;
+  /** Legacy hashtags — mirrors `captions.instagram.hashtags`. */
+  hashtags: string[];
   mls_hashtag: string;
+  /** Phase D — per-platform variants. */
+  captions: CaptionsByPlatform;
 }
 
 export interface CaptionErrorResponse {
@@ -210,6 +229,13 @@ export interface SaveGeneratedPostInput {
   mls_hashtag: string;
   /** Path A — user customizations applied to this render. Empty object = defaults. */
   customizations?: PostCustomizations;
+  /**
+   * Phase D — per-platform caption variants. Optional; when omitted the
+   * action writes `{}` which makes the publish-side helper fall back to
+   * the legacy single `caption` column. Set this when the user has
+   * tuned the IG / FB / TikTok tabs before clicking Download/Save.
+   */
+  captions_by_platform?: CaptionsByPlatform;
 }
 
 // FBBundle* types removed on 2026-05-14 — the FB multi-photo bundle path

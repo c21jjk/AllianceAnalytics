@@ -59,6 +59,10 @@ export async function saveGeneratedPostAction(
       caption: input.caption,
       hashtags: input.hashtags,
       mls_hashtag: input.mls_hashtag,
+      // Phase D — per-platform caption variants. Empty object when the
+      // caller didn't pass any; the publish route then falls back to the
+      // legacy `caption` column for every platform.
+      captions_by_platform: (input.captions_by_platform ?? {}) as unknown as Json,
       // Path A — store the user-applied customizations so we can rebuild
       // an editor session from this row later. Empty object when defaults.
       customizations: (input.customizations ?? {}) as Json,
@@ -206,6 +210,16 @@ export interface UpsertStudioPostInput {
    * undefined/null and the action coerces to `[]`.
    */
   slide_metadata?: Json | null;
+  /**
+   * Phase D — per-platform caption variants. Shape:
+   *   { instagram: { caption, hashtags }, facebook: {...}, tiktok: {...} }
+   * Passed verbatim into the `captions_by_platform` jsonb column.
+   * Optional because not every save path has been updated to pass it
+   * (e.g. download-PNG path uses the legacy single-caption save action).
+   * Action body coerces null/undefined to '{}' so the column NOT NULL
+   * DEFAULT '{}' constraint is always satisfied.
+   */
+  captions_by_platform?: Json | null;
 }
 
 export interface UpsertStudioPostOk {
@@ -292,6 +306,10 @@ export async function upsertGeneratedPostFromStudioAction(
         // column is parallel to it; legacy / single-image posts simply carry
         // an empty array here.
         slide_metadata: input.slide_metadata ?? [],
+        // Phase D — per-platform caption variants. Empty object means
+        // "use the legacy `caption` column for every platform". The publish
+        // route's resolvePerPlatformCaption helper handles that fallback.
+        captions_by_platform: input.captions_by_platform ?? {},
         updated_at: nowIso,
       })
       .eq("id", input.id)
@@ -365,6 +383,11 @@ export async function upsertGeneratedPostFromStudioAction(
       // carousels start with an empty array; multi-OH wizard posts fill
       // this via the multi-oh-generate route (NOT via this action).
       slide_metadata: input.slide_metadata ?? [],
+      // Phase D — see UPDATE branch for rationale. Fresh drafts almost
+      // always pass {} here (the user hits Save before running Generate
+      // for captions); when Generate has run, the client passes the
+      // per-platform map and we persist it.
+      captions_by_platform: input.captions_by_platform ?? {},
       // status='draft' so the user knows it hasn't been posted yet. The
       // existing Post Now flow can flip this to 'posted' or 'scheduled'.
       status: "draft",

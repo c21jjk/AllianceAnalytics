@@ -275,6 +275,7 @@ export type Database = {
           bundle_path: string | null
           bundle_url: string | null
           caption: string | null
+          captions_by_platform: Json
           composition_json: Json | null
           confirmed_platforms: string[] | null
           created_at: string
@@ -320,6 +321,7 @@ export type Database = {
           bundle_path?: string | null
           bundle_url?: string | null
           caption?: string | null
+          captions_by_platform?: Json
           composition_json?: Json | null
           confirmed_platforms?: string[] | null
           created_at?: string
@@ -365,6 +367,7 @@ export type Database = {
           bundle_path?: string | null
           bundle_url?: string | null
           caption?: string | null
+          captions_by_platform?: Json
           composition_json?: Json | null
           confirmed_platforms?: string[] | null
           created_at?: string

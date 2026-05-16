@@ -153,6 +153,24 @@ export interface CreatedPostResumeRow {
    * that pre-date the slide_metadata column.
    */
   slide_metadata: unknown | null;
+  /**
+   * Phase D — legacy single caption (mirrors what FB/IG/TikTok used to
+   * publish before per-platform variants). Surfaced on resume so the
+   * client can seed editedCaptions when captions_by_platform is empty.
+   */
+  caption: string | null;
+  /**
+   * Phase D — legacy hashtags array. Same role as `caption`: seeds the
+   * fallback when no per-platform variants exist on the row.
+   */
+  hashtags: string[] | null;
+  /**
+   * Phase D — per-platform caption variants. Shape:
+   *   { instagram: { caption, hashtags }, facebook: {...}, tiktok: {...} }
+   * Empty object `{}` on rows that pre-date the migration; client narrows
+   * to its own `CaptionsByPlatform` shape before use.
+   */
+  captions_by_platform: unknown | null;
 }
 
 export async function fetchCreatedPostResume(
@@ -164,7 +182,9 @@ export async function fetchCreatedPostResume(
   const { data, error } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, created_by",
+      // Phase D — caption / hashtags / captions_by_platform added so the
+      // client can re-seed the three caption tabs on resume.
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, caption, hashtags, captions_by_platform, created_by",
     )
     .eq("id", id)
     .maybeSingle();
@@ -191,6 +211,9 @@ export async function fetchCreatedPostResume(
     layer_tree: data.layer_tree,
     additional_images: data.additional_images,
     slide_metadata: data.slide_metadata,
+    caption: data.caption,
+    hashtags: data.hashtags,
+    captions_by_platform: data.captions_by_platform,
   };
 }
 

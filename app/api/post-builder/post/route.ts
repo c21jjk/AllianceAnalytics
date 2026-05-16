@@ -133,7 +133,10 @@ export async function POST(request: Request) {
     .select(
       // why: media_type + video_url added Day 1; reel_duration_ms kept on
       // the SELECT for future analytics even though publish doesn't use it.
-      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms",
+      // Phase D — captions_by_platform added so each platform receives
+      // its tuned caption variant; falls back to the legacy `caption`
+      // when a platform's entry is missing.
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -144,10 +147,31 @@ export async function POST(request: Request) {
     );
   }
 
-  // Resolve the caption (caption + hashtags joined, since the FB body wants
-  // the full text). Hashtags are already part of caption at download/save
-  // time; the param is kept for forward-compat.
+  // Phase D — per-platform captions. Each platform reads its tuned
+  // variant from `captions_by_platform`, falling back to the legacy
+  // single `caption` column when the per-platform map is empty or
+  // missing the requested platform (older rows, or rows saved before
+  // this migration). `captionBody` keeps the legacy variable name as
+  // the IG default so non-platform-specific paths (outbox row, error
+  // message) read the same value they did before.
   const captionBody = resolveCaption(gp.caption, gp.hashtags);
+  const captionByPlatform = {
+    facebook: resolvePerPlatformCaption(
+      gp.caption,
+      gp.captions_by_platform,
+      "facebook",
+    ),
+    instagram: resolvePerPlatformCaption(
+      gp.caption,
+      gp.captions_by_platform,
+      "instagram",
+    ),
+    tiktok: resolvePerPlatformCaption(
+      gp.caption,
+      gp.captions_by_platform,
+      "tiktok",
+    ),
+  } as const;
   if (!captionBody) {
     return NextResponse.json(
       { ok: false, error: "generated_post has no caption" } satisfies ErrorResponse,
@@ -187,7 +211,7 @@ export async function POST(request: Request) {
           publishVideoToFB({
             creds,
             video_url: gp.video_url,
-            caption: captionBody,
+            caption: captionByPlatform.facebook,
           }),
         );
       }
@@ -220,7 +244,7 @@ export async function POST(request: Request) {
             creds,
             video_url: gp.video_url,
             cover_url: gp.image_url,
-            caption: captionBody,
+            caption: captionByPlatform.instagram,
           }),
         );
       }
@@ -305,12 +329,20 @@ export async function POST(request: Request) {
 
     if (platforms.includes("facebook") && creds) {
       tasks.push(
-        publishToFBPage({ creds, image_urls: imageUrls, caption: captionBody }),
+        publishToFBPage({
+          creds,
+          image_urls: imageUrls,
+          caption: captionByPlatform.facebook,
+        }),
       );
     }
     if (platforms.includes("instagram") && creds) {
       tasks.push(
-        publishToIG({ creds, image_urls: imageUrls, caption: captionBody }),
+        publishToIG({
+          creds,
+          image_urls: imageUrls,
+          caption: captionByPlatform.instagram,
+        }),
       );
     }
     if (platforms.includes("tiktok") && ttCreds) {
@@ -318,7 +350,7 @@ export async function POST(request: Request) {
         publishToTikTok({
           creds: ttCreds,
           image_urls: imageUrls,
-          caption: captionBody,
+          caption: captionByPlatform.tiktok,
         }),
       );
     }
@@ -395,4 +427,43 @@ function resolveCaption(caption: string | null, hashtags: string[] | null): stri
   // is kept for forward-compat (e.g. per-platform hashtag tweaks later).
   return cap;
   void hashtags;
+}
+
+/**
+ * Phase D — resolve the platform-specific caption to publish. Reads
+ * `captions_by_platform[platform]` and joins its caption + hashtags
+ * fields into a single string the publisher consumes. Falls back to the
+ * legacy `caption` column when:
+ *   • the captions_by_platform map is absent or empty (older rows
+ *     written before this migration)
+ *   • the requested platform key isn't present (e.g. Larissa cleared
+ *     the FB tab to use the legacy default)
+ *   • the platform entry's caption is empty
+ *
+ * Returns "" only when both the per-platform value AND the legacy
+ * caption are empty. The publish flow gates on the legacy value
+ * upstream, so this function is safe to call without further checks.
+ */
+function resolvePerPlatformCaption(
+  legacy: string | null,
+  captionsByPlatform: unknown,
+  platform: "facebook" | "instagram" | "tiktok",
+): string {
+  if (captionsByPlatform && typeof captionsByPlatform === "object") {
+    const map = captionsByPlatform as Record<string, unknown>;
+    const entry = map[platform];
+    if (entry && typeof entry === "object") {
+      const e = entry as { caption?: unknown; hashtags?: unknown };
+      const cap = typeof e.caption === "string" ? e.caption.trim() : "";
+      if (cap) {
+        const tags = Array.isArray(e.hashtags)
+          ? e.hashtags.filter((t): t is string => typeof t === "string")
+          : [];
+        return tags.length > 0 ? `${cap}\n\n${tags.join(" ")}` : cap;
+      }
+    }
+  }
+  // Fallback: the legacy single caption column. Already includes any
+  // hashtags that were baked in at save time (joinCaptionAndTags).
+  return (legacy ?? "").trim();
 }

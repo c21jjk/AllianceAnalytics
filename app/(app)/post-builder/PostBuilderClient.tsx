@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CaptionsByPlatform,
   PostBuilderListing,
   PostFormat,
   PostType,
@@ -13,6 +14,7 @@ import type {
   RenderResponse,
   RenderErrorResponse,
   ScheduledFor,
+  SchedulablePlatform,
   SlideMetadata,
 } from "@/lib/post-builder/types";
 import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
@@ -107,9 +109,44 @@ interface RenderResult {
 }
 
 interface CaptionResult {
+  /** Legacy single-caption field — mirrors `captions.instagram.caption`. */
   caption: string;
+  /** Legacy hashtags — mirrors `captions.instagram.hashtags`. */
   hashtags: string[];
   mls_hashtag: string;
+  /**
+   * Phase D — per-platform variants. Present when the response includes
+   * the captions map; absent on older code paths (Magic Design's manual
+   * stub seeding) where we synthesize a single-platform set on read.
+   */
+  captions?: CaptionsByPlatform;
+}
+
+/**
+ * Phase D — schedulable platforms list. Pinned here so the captions UI
+ * iterates the same set the publisher does. Order matters: it drives the
+ * tab order in the caption pane (IG first since it's still the dominant
+ * platform for property posts).
+ */
+const CAPTION_PLATFORMS: readonly SchedulablePlatform[] = [
+  "instagram",
+  "facebook",
+  "tiktok",
+] as const;
+
+const CAPTION_PLATFORM_LABELS: Record<SchedulablePlatform, string> = {
+  instagram: "Instagram",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+};
+
+/**
+ * Build a fresh empty per-platform caption map. Used as the initial state
+ * for `editedCaptions` so every platform key always exists (TS narrows
+ * `editedCaptions[platform]` to `string`, not `string | undefined`).
+ */
+function emptyCaptionsByPlatform(): Record<SchedulablePlatform, string> {
+  return { instagram: "", facebook: "", tiktok: "" };
 }
 
 interface PhotoOption {
@@ -255,7 +292,30 @@ export default function PostBuilderClient({
   // Render + caption state
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
-  const [editedCaption, setEditedCaption] = useState<string>("");
+  // Phase D — per-platform caption editor state. Each value is the user's
+  // edited "caption\n\nhashtags" string for that platform. Always carries
+  // all three keys; pre-Generate they're empty strings. The active tab
+  // (`activeCaptionPlatform`) drives which value the textarea shows.
+  const [editedCaptions, setEditedCaptions] = useState<
+    Record<SchedulablePlatform, string>
+  >(emptyCaptionsByPlatform);
+  const [activeCaptionPlatform, setActiveCaptionPlatform] =
+    useState<SchedulablePlatform>("instagram");
+  // why: derived view of the active platform's text. Single read site so a
+  // future refactor (per-tab textareas instead of one + state swap) only
+  // touches this line.
+  const editedCaption = editedCaptions[activeCaptionPlatform];
+  // why: legacy single-string setter, retained for paths that don't know
+  // about platforms (Magic Design seed, clear-on-listing-change). Writes
+  // to ALL three platform tabs so they stay in sync with the legacy
+  // caption value. Per-tab edits use the inline setEditedCaptions call.
+  const setEditedCaption = useCallback((next: string): void => {
+    setEditedCaptions({
+      instagram: next,
+      facebook: next,
+      tiktok: next,
+    });
+  }, []);
   const [generating, setGenerating] = useState(false);
   const [regeneratingCaption, setRegeneratingCaption] = useState(false);
   const [downloadSaving, setDownloadSaving] = useState(false);
@@ -364,6 +424,15 @@ export default function PostBuilderClient({
           hero_image_source_url: initialResume.hero_image_source_url ?? "",
         });
       }
+      // Phase D — rehydrate the three caption tabs. Prefer the per-
+      // platform variants when present (rows saved post-migration);
+      // otherwise mirror the legacy single caption across all three
+      // tabs so the user can still edit + the publish flow has data.
+      hydrateCaptionsFromResume(
+        initialResume,
+        setCaptionResult,
+        setEditedCaptions,
+      );
       return;
     }
     if (initialPick) {
@@ -734,6 +803,20 @@ export default function PostBuilderClient({
           additional_images: carouselSlides as unknown as Parameters<
             typeof upsertGeneratedPostFromStudioAction
           >[0]["additional_images"],
+          // Phase D — persist per-platform caption edits. Each tab's
+          // text is re-parsed back into {caption, hashtags} via
+          // parsePlatformText so a round-trip stays clean (hashtag
+          // tokens reliably separated from prose regardless of how the
+          // user rearranged the text in the textarea). Empty strings
+          // produce empty {caption:"", hashtags:[]} entries which the
+          // publish-side helper treats as "fall back to legacy".
+          captions_by_platform: {
+            instagram: parsePlatformText(editedCaptions.instagram),
+            facebook: parsePlatformText(editedCaptions.facebook),
+            tiktok: parsePlatformText(editedCaptions.tiktok),
+          } as unknown as Parameters<
+            typeof upsertGeneratedPostFromStudioAction
+          >[0]["captions_by_platform"],
         });
         if (!upsertRes.ok) {
           // Non-fatal for the in-memory preview — image is uploaded, the
@@ -1570,7 +1653,7 @@ export default function PostBuilderClient({
       const captionError = await safelyHandleCaption(
         captionRes,
         setCaptionResult,
-        setEditedCaption,
+        setEditedCaptions,
       );
       if (captionError && !renderError) setError(captionError);
     } catch (e) {
@@ -1622,7 +1705,7 @@ export default function PostBuilderClient({
   async function safelyHandleCaption(
     settled: PromiseSettledResult<Response>,
     onSuccess: (c: CaptionResult) => void,
-    onCaptionText: (s: string) => void,
+    onPlatformTexts: (texts: Record<SchedulablePlatform, string>) => void,
   ): Promise<string | null> {
     if (settled.status === "rejected") {
       return `Caption request failed (network): ${settled.reason}`;
@@ -1641,9 +1724,13 @@ export default function PostBuilderClient({
       caption: json.caption,
       hashtags: json.hashtags,
       mls_hashtag: json.mls_hashtag,
+      captions: json.captions,
     };
     onSuccess(cap);
-    onCaptionText(joinCaptionAndTags(cap.caption, cap.hashtags));
+    // Phase D — fan out into all three platform tabs. Falls back to the
+    // legacy single caption for any platform the API didn't fill (defends
+    // against partial responses + older API versions).
+    onPlatformTexts(buildPlatformTextsFromCaption(cap));
     return null;
   }
 
@@ -1676,9 +1763,12 @@ export default function PostBuilderClient({
           caption: json.caption,
           hashtags: json.hashtags,
           mls_hashtag: json.mls_hashtag,
+          captions: json.captions,
         };
         setCaptionResult(cap);
-        setEditedCaption(joinCaptionAndTags(cap.caption, cap.hashtags));
+        // Phase D — regenerate refreshes ALL three platform tabs in one
+        // pass so the user gets a fresh set of variants to pick from.
+        setEditedCaptions(buildPlatformTextsFromCaption(cap));
       } else {
         setError(`Caption regen failed: ${json.error}`);
       }
@@ -1720,6 +1810,15 @@ export default function PostBuilderClient({
         hashtags: captionResult?.hashtags ?? [],
         mls_hashtag: captionResult?.mls_hashtag ?? "",
         // why: customizations omitted intentionally — Path A is deprecated.
+        // Phase D — write the per-platform captions Larissa has been
+        // editing in the three tabs. The user's edits go to Storage even
+        // on a Download PNG save, because the publish flow downstream
+        // reads from the persisted row.
+        captions_by_platform: {
+          instagram: parsePlatformText(editedCaptions.instagram),
+          facebook: parsePlatformText(editedCaptions.facebook),
+          tiktok: parsePlatformText(editedCaptions.tiktok),
+        },
       });
       if (!save.ok) {
         setError(`Saved-to-table failed: ${save.error}`);
@@ -2385,7 +2484,7 @@ export default function PostBuilderClient({
                   ) : null}
                 </div>
 
-                {/* Caption pane */}
+                {/* Caption pane — Phase D: per-platform tabs */}
                 <div className="flex flex-col">
                   <div className="flex items-center justify-between mb-2">
                     <div className="eyebrow">Caption + hashtags</div>
@@ -2396,9 +2495,9 @@ export default function PostBuilderClient({
                           onClick={regenerateCaption}
                           disabled={regeneratingCaption}
                           className="text-xs text-neutral-600 font-medium hover:text-neutral-900 disabled:opacity-50"
-                          title="Re-write the caption with AI (keeps the image)"
+                          title="Re-write all three platform captions with AI (keeps the image)"
                         >
-                          {regeneratingCaption ? "Rewriting…" : "↻ Regenerate"}
+                          {regeneratingCaption ? "Rewriting…" : "↻ Regenerate all"}
                         </button>
                         <button
                           type="button"
@@ -2410,24 +2509,82 @@ export default function PostBuilderClient({
                       </div>
                     ) : null}
                   </div>
+
+                  {/* Phase D — platform tabs. IG / FB / TikTok each have
+                      independent edits. Tabs render even pre-Generate so
+                      the structure is consistent (the textarea below
+                      shows the platform-specific placeholder). */}
+                  <div
+                    role="tablist"
+                    aria-label="Caption platform"
+                    className="mb-2 flex gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-1"
+                  >
+                    {CAPTION_PLATFORMS.map((p) => {
+                      const active = activeCaptionPlatform === p;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          onClick={() => setActiveCaptionPlatform(p)}
+                          className={`flex-1 rounded text-xs font-semibold uppercase tracking-wider transition-colors py-1.5 ${
+                            active
+                              ? "bg-white text-neutral-900 shadow-sm"
+                              : "text-neutral-500 hover:text-neutral-800"
+                          }`}
+                        >
+                          {CAPTION_PLATFORM_LABELS[p]}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   <textarea
-                    className="input flex-1 min-h-[280px] font-mono text-[13px] leading-relaxed resize-y"
+                    className="input flex-1 min-h-[260px] font-mono text-[13px] leading-relaxed resize-y"
                     placeholder={
                       generating
                         ? "Generating caption…"
-                        : "Caption + hashtags will appear here after Generate."
+                        : `${CAPTION_PLATFORM_LABELS[activeCaptionPlatform]} caption + hashtags will appear here after Generate.`
                     }
-                    value={editedCaption}
-                    onChange={(e) => setEditedCaption(e.target.value)}
+                    value={editedCaptions[activeCaptionPlatform]}
+                    onChange={(e) =>
+                      setEditedCaptions((prev) => ({
+                        ...prev,
+                        [activeCaptionPlatform]: e.target.value,
+                      }))
+                    }
                   />
+
+                  {/* Phase D — Copy-from-IG bootstrap. Surfaces only on
+                      the FB / TikTok tabs so the user can jump-start a
+                      variant from the IG version when the AI's take
+                      isn't quite right. Hidden on the IG tab itself
+                      (would be a no-op). */}
+                  {captionResult && activeCaptionPlatform !== "instagram" ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditedCaptions((prev) => ({
+                          ...prev,
+                          [activeCaptionPlatform]: prev.instagram,
+                        }))
+                      }
+                      className="mt-2 self-start text-[11px] font-medium text-neutral-500 hover:text-gold-700"
+                    >
+                      ← Copy from Instagram
+                    </button>
+                  ) : null}
+
                   {captionResult ? (
                     <div className="mt-3 text-xs text-neutral-500 leading-relaxed">
                       The MLS hashtag{" "}
                       <code className="font-mono text-neutral-700 bg-neutral-100 px-1 rounded">
                         {captionResult.mls_hashtag}
                       </code>{" "}
-                      is baked in so once Larissa posts this to FB or IG, the
-                      auto-linker ties it back to this listing automatically.
+                      is baked into every platform tab so once Larissa
+                      posts, the auto-linker ties it back to this listing
+                      automatically.
                     </div>
                   ) : null}
                 </div>
@@ -3253,6 +3410,161 @@ function PreviewSkeleton() {
 function joinCaptionAndTags(caption: string, hashtags: string[]): string {
   if (hashtags.length === 0) return caption;
   return `${caption.trim()}\n\n${hashtags.join(" ")}`;
+}
+
+/**
+ * Phase D — turn a CaptionResult into the per-platform edited-text map
+ * the textarea reads from. Uses the response's `captions` map when
+ * available, falls back to mirroring the legacy single caption across
+ * all three platforms when an older API version omitted the per-
+ * platform field. The fallback keeps the UI usable but produces
+ * identical text across tabs (the user can then edit each tab manually).
+ */
+function buildPlatformTextsFromCaption(
+  cap: CaptionResult,
+): Record<SchedulablePlatform, string> {
+  const legacy = joinCaptionAndTags(cap.caption, cap.hashtags);
+  if (!cap.captions) {
+    return { instagram: legacy, facebook: legacy, tiktok: legacy };
+  }
+  return {
+    instagram: joinCaptionAndTags(
+      cap.captions.instagram.caption,
+      cap.captions.instagram.hashtags,
+    ),
+    facebook: joinCaptionAndTags(
+      cap.captions.facebook.caption,
+      cap.captions.facebook.hashtags,
+    ),
+    tiktok: joinCaptionAndTags(
+      cap.captions.tiktok.caption,
+      cap.captions.tiktok.hashtags,
+    ),
+  };
+}
+
+/**
+ * Phase D — seed captionResult + editedCaptions on resume. Reads the
+ * row's `captions_by_platform` jsonb when present and narrows
+ * defensively (the column is `unknown` at the data layer). Falls back
+ * to the legacy single `caption`/`hashtags` columns when the per-
+ * platform map is empty or missing entries.
+ *
+ * Why a helper (not inline): the resume useEffect already touches a
+ * dozen setters; isolating the caption-rehydration math into one named
+ * function keeps the effect body readable.
+ */
+function hydrateCaptionsFromResume(
+  resume: {
+    caption: string | null;
+    hashtags: string[] | null;
+    mls_hashtag?: string | null;
+    captions_by_platform: unknown | null;
+  },
+  onSetCaptionResult: (c: CaptionResult | null) => void,
+  onSetEditedCaptions: (next: Record<SchedulablePlatform, string>) => void,
+): void {
+  const legacyCaption = (resume.caption ?? "").trim();
+  const legacyHashtags = Array.isArray(resume.hashtags)
+    ? resume.hashtags
+    : [];
+  const legacyJoined = legacyCaption
+    ? joinCaptionAndTags(legacyCaption, legacyHashtags)
+    : "";
+
+  // Empty row — no caption ever generated. Leave the captionResult null
+  // so the textarea shows its "click Generate" placeholder.
+  if (!legacyCaption && !resume.captions_by_platform) {
+    onSetCaptionResult(null);
+    onSetEditedCaptions(emptyCaptionsByPlatform());
+    return;
+  }
+
+  // Narrow the per-platform map defensively. A row from before the
+  // migration has captions_by_platform = '{}' (or null), which we
+  // treat as "no variants — use the legacy single caption."
+  const cbpRaw = resume.captions_by_platform;
+  const cbp =
+    cbpRaw && typeof cbpRaw === "object" && !Array.isArray(cbpRaw)
+      ? (cbpRaw as Record<string, unknown>)
+      : null;
+
+  const readPlatform = (
+    platform: SchedulablePlatform,
+  ): { caption: string; hashtags: string[] } | null => {
+    if (!cbp) return null;
+    const entry = cbp[platform];
+    if (!entry || typeof entry !== "object") return null;
+    const e = entry as { caption?: unknown; hashtags?: unknown };
+    if (typeof e.caption !== "string" || e.caption.trim().length === 0) {
+      return null;
+    }
+    const tags = Array.isArray(e.hashtags)
+      ? e.hashtags.filter((t): t is string => typeof t === "string")
+      : [];
+    return { caption: e.caption, hashtags: tags };
+  };
+
+  const ig = readPlatform("instagram");
+  const fb = readPlatform("facebook");
+  const tt = readPlatform("tiktok");
+
+  // Seed captionResult so the regenerate / copy buttons surface.
+  // mls_hashtag falls back to the legacy column or the canonical MLS
+  // hashtag we can recover from the legacy hashtags list.
+  onSetCaptionResult({
+    caption: ig?.caption ?? legacyCaption,
+    hashtags: ig?.hashtags ?? legacyHashtags,
+    mls_hashtag:
+      (resume.mls_hashtag ?? null) ??
+      legacyHashtags.find((t) => /^#(CMC|SJSR|NJ)/i.test(t)) ??
+      "",
+    captions: ig && fb && tt
+      ? {
+          instagram: ig,
+          facebook: fb,
+          tiktok: tt,
+        }
+      : undefined,
+  });
+
+  // Per-platform textarea state. Each tab gets its variant if present;
+  // missing platforms fall back to the legacy joined string so the user
+  // has something to start from rather than an empty box.
+  onSetEditedCaptions({
+    instagram: ig ? joinCaptionAndTags(ig.caption, ig.hashtags) : legacyJoined,
+    facebook: fb ? joinCaptionAndTags(fb.caption, fb.hashtags) : legacyJoined,
+    tiktok: tt ? joinCaptionAndTags(tt.caption, tt.hashtags) : legacyJoined,
+  });
+}
+
+/**
+ * Phase D — opposite direction of buildPlatformTextsFromCaption: takes
+ * the user's edited per-platform strings and parses each one back into
+ * a {caption, hashtags} pair so we can persist `captions_by_platform`
+ * on save. Hashtags are anything in the string that looks like `#word`;
+ * everything else is treated as caption prose. why a single function:
+ * keeps save + publish in sync about what counts as caption vs hashtag
+ * in the user-edited string (the textarea shows "caption\n\nhashtags",
+ * but the user can rearrange freely — we re-parse rather than assume
+ * structure).
+ */
+function parsePlatformText(text: string): {
+  caption: string;
+  hashtags: string[];
+} {
+  const tokens = text.match(/#[A-Za-z0-9_]+/g) ?? [];
+  // why: remove just the hashtag tokens from the prose. We do NOT collapse
+  // whitespace beyond trimming because the user's line breaks are likely
+  // intentional (paragraph structure in IG captions).
+  let prose = text;
+  for (const t of tokens) {
+    prose = prose.replace(t, "");
+  }
+  // Collapse trailing whitespace + the standard "\n\n" separator we
+  // emit from joinCaptionAndTags so a round-trip stays clean.
+  prose = prose.replace(/\s+$/g, "");
+  return { caption: prose, hashtags: tokens };
 }
 
 /**
