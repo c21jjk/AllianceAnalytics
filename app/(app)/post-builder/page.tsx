@@ -153,26 +153,61 @@ export default async function PostBuilderPage({
         description="Pick a post type, listing, format, and variant. Square for IG / FB feed, Portrait for IG feed preferred, Story 9:16 for IG/FB Stories — each format renders brand-perfect with the MLS hashtag baked in for auto-attribution."
         phaseTag="Phase 3"
         actions={
-          <Link
-            href="/saved-posts"
-            className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+          <div className="flex flex-wrap items-center gap-2">
+            {/* why: surface the multi-property OH wizard only when there are
+                actually 2+ open houses to pick from — below that minimum, the
+                wizard would land on its empty state which is a confusing
+                affordance. Mirrors the wizard's own MULTI_OH_MIN_PROPERTIES gate. */}
+            {openHouse.length >= 2 ? (
+              <Link
+                href="/post-builder/multi-oh"
+                className="inline-flex items-center gap-2 rounded-md border border-gold-300 bg-gold-50 px-3 py-1.5 text-sm font-medium text-gold-800 transition hover:border-gold-500 hover:bg-gold-100"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  {/* why: 4-house glyph reads as "multiple properties" at a
+                      glance — different from the single-house implication of
+                      the standard post builder. */}
+                  <path d="M2 14h12" />
+                  <path d="M3 14V9l2-1.5L7 9v5" />
+                  <path d="M9 14V9l2-1.5L13 9v5" />
+                </svg>
+                Multi-property OH
+                <span className="rounded-full bg-gold-200/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold-900">
+                  {openHouse.length}
+                </span>
+              </Link>
+            ) : null}
+            <Link
+              href="/saved-posts"
+              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
             >
-              <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
-              <path d="M5.5 6.5h5M5.5 9h3" />
-            </svg>
-            Saved posts
-          </Link>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
+                <path d="M5.5 6.5h5M5.5 9h3" />
+              </svg>
+              Saved posts
+            </Link>
+          </div>
         }
       />
       <PostBuilderClient

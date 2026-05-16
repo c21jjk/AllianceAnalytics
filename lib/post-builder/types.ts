@@ -226,3 +226,127 @@ export interface SaveGeneratedPostErrorResult {
   ok: false;
   error: string;
 }
+
+// ---------------------------------------------------------------------------
+// Multi-property Open House event posts (Phase 5+, 2026-05-16)
+// ---------------------------------------------------------------------------
+//
+// The standard Open House post is single-property: one designed graphic + the
+// listing's MLS data bound in. When Larissa is hosting multiple open houses
+// on the same day/weekend, the audience-facing pattern is different: she
+// posts ONE event-overview card listing every property's address + time +
+// agent contact, then a separate per-property card for each home — published
+// as a single carousel.
+//
+// The carousel plumbing we shipped in Phase 5 already handles N+1 images
+// (one hero + N supporting images in `additional_images`). What changes here:
+//   • Hero is a NEW template (multi-property aggregate, not single-listing
+//     bound).
+//   • Supporting slides are pre-rendered per-property cards (using the
+//     existing v1/v2/v3 Open House templates), not raw listing photos.
+//
+// MultiOHEventInput is the wizard's output and the multi-render endpoint's
+// input. It carries everything the server needs to generate hero + N
+// per-property PNGs and produce a single generated_posts row.
+
+/**
+ * One property's data inside a multi-property OH event. A slim subset of
+ * PostBuilderListing — only the fields the event hero needs to list
+ * (address + time + price) plus enough context to render the per-property
+ * card via the existing V1 pipeline (mls_number, hero photo, beds/baths).
+ */
+export interface MultiOHEventProperty {
+  /** Unique key for ordering + dedupe inside the carousel. */
+  mls_number: string;
+  source_mls: SourceMls;
+  /** Internal listings.id from AllianceAnalytics Supabase. Used for the
+   *  generated_posts.property_id FK if the event is anchored to one main
+   *  property (typically the first in the list). */
+  listing_id: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  list_price: number | null;
+  bedrooms: number | null;
+  bathrooms_full: number | null;
+  bathrooms_half: number | null;
+  property_type: string | null;
+  hero_image_url: string | null;
+  /** ISO 8601 UTC timestamps for the OH window. The hero formats these
+   *  per-property as "Sat · 11:00 AM – 1:00 PM"-style strings. */
+  oh_start_at: string | null;
+  oh_end_at: string | null;
+  /** Optional per-property hosting agent override. Useful when a single
+   *  event spans homes hosted by different agents. */
+  hosting_agent_name?: string | null;
+}
+
+/**
+ * The complete wizard payload. The wizard collects this, the multi-render
+ * endpoint consumes it.
+ */
+export interface MultiOHEventInput {
+  /** Display title rendered at the top of the event hero card. e.g.,
+   *  "Open House This Weekend" / "Saturday Open Houses" / "Beach Block
+   *  Tour — Sunday 11–3". Wizard pre-fills based on the picked
+   *  properties' dates; the user can override. */
+  event_title: string;
+  /** Primary agent attribution on the event hero (one name shown big).
+   *  When properties have different hosting agents, individual cards still
+   *  show the per-property host; this is the event-level contact. */
+  agent_name: string;
+  agent_phone?: string | null;
+  agent_email?: string | null;
+  /** Office shown on the footer of the event hero. Mirrors how the
+   *  single-property templates bind office_name. */
+  office_name: string;
+  /** Format Larissa selected for the post. All slides in the carousel
+   *  render at this format — IG/FB enforce uniform aspect ratios across
+   *  carousel slides. */
+  format: PostFormat;
+  /** Variant for the PER-PROPERTY cards (the supporting slides). v1/v2/v3
+   *  are supported; v4-v8 not yet ported into the multi-OH flow. */
+  per_property_variant: "v1" | "v2" | "v3";
+  /** Properties to feature, in carousel order (slide 1 = properties[0],
+   *  slide 2 = properties[1], etc.). Minimum 2 (1 makes a single-listing
+   *  post, use the standard Post Builder for that). Maximum 9 — leaves
+   *  one slot for the event hero to fit under IG's 10-slide carousel cap. */
+  properties: readonly MultiOHEventProperty[];
+}
+
+/** Max properties allowed in a single multi-OH event post. Capped so that
+ *  hero + N properties stays under IG's 10-slide carousel limit. */
+export const MULTI_OH_MAX_PROPERTIES = 9 as const;
+/** Minimum — below this, use the standard single-property OH flow. */
+export const MULTI_OH_MIN_PROPERTIES = 2 as const;
+
+/**
+ * Response from `/api/post-builder/multi-oh-generate` on success. The
+ * caller redirects to `/post-builder?gp=<generated_post_id>` to land in
+ * the standard resume flow, where the carousel pre-populated from
+ * additional_images will render.
+ */
+export interface MultiOHGenerateOk {
+  ok: true;
+  /** id of the inserted generated_posts row. */
+  generated_post_id: string;
+  /** URL of the rendered event-overview hero (also the row's image_url). */
+  hero_image_url: string;
+  /** URLs of the per-property cards, in carousel slide order. */
+  per_property_urls: string[];
+}
+
+export interface MultiOHGenerateErr {
+  ok: false;
+  error: string;
+  /** Optional partial progress — useful if some properties rendered before
+   *  the overall flow failed. Lets a future retry resume rather than
+   *  re-render everything. */
+  partial?: {
+    hero_image_url?: string;
+    per_property_urls?: string[];
+  };
+}
+
+export type MultiOHGenerateResult = MultiOHGenerateOk | MultiOHGenerateErr;
