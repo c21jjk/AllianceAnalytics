@@ -351,6 +351,34 @@ export interface MultiOHGenerateErr {
 
 export type MultiOHGenerateResult = MultiOHGenerateOk | MultiOHGenerateErr;
 
+/**
+ * Per-slide source metadata for a Multi-OH carousel post. Stored as a
+ * parallel array to additional_images on the generated_posts row — index N
+ * here corresponds to slide N+1 in the carousel (slide 0 is the hero).
+ *
+ * Enables "edit each individual property card" workflow: when Larissa
+ * clicks Edit on a slide thumbnail, the editor uses this metadata to
+ * resolve the slide's template + listing payload and re-open it. The
+ * layer_tree field, when present, takes precedence over the factory
+ * template so prior edits are preserved.
+ */
+export interface SlideMetadata {
+  /** MLS number of the listing this slide was generated from. */
+  listing_mls: string;
+  /** The variant that originally produced this slide (v1/v2/v3). */
+  variant: "v1" | "v2" | "v3";
+  /** Format — same as the hero's format; carousel slides share aspect ratio. */
+  format: PostFormat;
+  /** Optional per-property hosting agent override from the wizard. */
+  hosting_agent_name?: string | null;
+  /**
+   * Saved canvas-editor schema from the user's edits to this slide. Null
+   * until the user has opened + saved the slide in Studio at least once.
+   * Same role as generated_posts.layer_tree plays for the hero.
+   */
+  layer_tree?: unknown | null;
+}
+
 // ---------------------------------------------------------------------------
 // Native video / Reels — Phase 6 (started 2026-05-15)
 // ---------------------------------------------------------------------------

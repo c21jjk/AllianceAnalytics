@@ -377,6 +377,254 @@ function classifyFBError(
 }
 
 /* ----------------------------------------------------------------------- *
+ *  Reels / Video — Day 6 native video build
+ *
+ *  Two new publish surfaces:
+ *
+ *    publishReelToIG   — IG Reels (3-step: container → poll status → publish)
+ *    publishVideoToFB  — FB Page video (single POST; publishes immediately)
+ *
+ *  Both pull from public HTTPS URLs (Supabase Storage in practice).
+ *  Meta rejects http:// outright, so we validate up front.
+ *
+ *  TikTok video posting lives elsewhere (Day 7+) — publishToTikTok above
+ *  is PHOTO-mode only. The orchestrator surfaces a clear "coming soon"
+ *  for tiktok on Reel rows for now.
+ * ----------------------------------------------------------------------- */
+
+/** Shape of an IG container status response. */
+interface IGContainerStatus {
+  status_code?: string;
+  error?: { message?: string; code?: number; error_subcode?: number };
+}
+
+/**
+ * Publish an Instagram Reel via the Meta Graph API.
+ *
+ * Reels are a 3-step flow:
+ *   1) POST /{ig-id}/media with media_type=REELS, video_url, cover_url,
+ *      caption, share_to_feed=true  →  returns creation_id (the container)
+ *   2) Poll GET /{creation_id}?fields=status_code every 2s until FINISHED
+ *      (or ERROR / EXPIRED). Max ~120s — video transcode can be slow.
+ *   3) POST /{ig-id}/media_publish with creation_id  →  returns media_id
+ *
+ * After publish, fetch the permalink (best-effort, never fatal).
+ *
+ * `share_to_feed=true`: per project memory, max distribution is the goal —
+ * post to both the Reels tab AND the main feed grid. This is the default
+ * users expect anyway; the only reason to skip the feed is if you want a
+ * "vertical-only" account aesthetic, which doesn't apply here.
+ *
+ * why: video_url must be HTTPS — Meta returns a 400 for http:// URLs and
+ * we'd rather catch it client-side with a clean error than wait for the
+ * Graph round-trip.
+ */
+export async function publishReelToIG(args: {
+  creds: MetaCredentials;
+  video_url: string;
+  cover_url: string;
+  caption: string;
+}): Promise<PublishResult> {
+  const { creds, video_url, cover_url, caption } = args;
+
+  if (!creds.ig_business_account_id) {
+    return {
+      ok: false,
+      platform: "instagram",
+      error: "Instagram Business account not configured in api_credentials",
+    };
+  }
+  // why: Meta strictly requires https for media URLs — fail fast with a
+  // clear message instead of waiting for the Graph error.
+  if (!video_url.startsWith("https://")) {
+    return {
+      ok: false,
+      platform: "instagram",
+      error: `Reel video_url must be https:// (got ${video_url.slice(0, 32)}...). Meta rejects plain http URLs.`,
+    };
+  }
+  if (cover_url && !cover_url.startsWith("https://")) {
+    return {
+      ok: false,
+      platform: "instagram",
+      error: `Reel cover_url must be https:// (got ${cover_url.slice(0, 32)}...). Meta rejects plain http URLs.`,
+    };
+  }
+
+  const igId = creds.ig_business_account_id;
+
+  try {
+    // 1) Create the Reels container.
+    const containerUrl = `${GRAPH}/${igId}/media`;
+    const containerBody = new URLSearchParams({
+      media_type: "REELS",
+      video_url,
+      cover_url,
+      caption,
+      // why: share_to_feed=true posts to both Reels tab AND main feed for
+      // max reach — aligns with project priority on views/exposure.
+      share_to_feed: "true",
+      access_token: creds.page_access_token,
+    });
+    const containerRes = await fetch(containerUrl, {
+      method: "POST",
+      body: containerBody,
+    });
+    const containerJson = (await containerRes.json()) as {
+      id?: string;
+      error?: { message?: string; code?: number; error_subcode?: number };
+    };
+    if (!containerRes.ok || !containerJson.id) {
+      return classifyFBError(containerJson, "instagram");
+    }
+    const creationId = String(containerJson.id);
+
+    // 2) Poll status until FINISHED (or ERROR/EXPIRED).
+    // why: 2s interval × 60 iterations = 120s max. Reel transcode for
+    // a 9:16 30s clip typically lands in 10–30s; we want headroom for
+    // longer clips without holding the route forever (route maxDuration
+    // is 60s — caller should treat a 60s+ wait as a timeout).
+    const POLL_INTERVAL_MS = 2_000;
+    const MAX_POLLS = 60;
+    let status = "IN_PROGRESS";
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      const statusRes = await fetch(
+        `${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(creds.page_access_token)}`,
+      );
+      const statusJson = (await statusRes.json()) as IGContainerStatus;
+      if (!statusRes.ok && statusJson.error) {
+        return classifyFBError(statusJson, "instagram");
+      }
+      status = statusJson.status_code ?? "IN_PROGRESS";
+      if (status === "FINISHED" || status === "PUBLISHED") break;
+      if (status === "ERROR" || status === "EXPIRED") {
+        return {
+          ok: false,
+          platform: "instagram",
+          error: `IG Reels container ${status} during processing. The video may be too long, wrong codec, or the URL became unreachable.`,
+        };
+      }
+    }
+    if (status !== "FINISHED" && status !== "PUBLISHED") {
+      return {
+        ok: false,
+        platform: "instagram",
+        error: `IG Reels container did not finish in ${(POLL_INTERVAL_MS * MAX_POLLS) / 1000}s (last status: ${status}). Try again — Meta may still be transcoding.`,
+      };
+    }
+
+    // 3) Publish the container.
+    const publishUrl = `${GRAPH}/${igId}/media_publish`;
+    const publishBody = new URLSearchParams({
+      creation_id: creationId,
+      access_token: creds.page_access_token,
+    });
+    const publishRes = await fetch(publishUrl, {
+      method: "POST",
+      body: publishBody,
+    });
+    const publishJson = (await publishRes.json()) as {
+      id?: string;
+      error?: { message?: string; code?: number; error_subcode?: number };
+    };
+    if (!publishRes.ok || !publishJson.id) {
+      return classifyFBError(publishJson, "instagram");
+    }
+    const mediaId = String(publishJson.id);
+
+    // Fetch the permalink (best-effort, failure is not fatal).
+    let permalink: string | null = null;
+    try {
+      const permRes = await fetch(
+        `${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(creds.page_access_token)}`,
+      );
+      const permJson = (await permRes.json()) as { permalink?: string };
+      if (permRes.ok && typeof permJson.permalink === "string") {
+        permalink = permJson.permalink;
+      }
+    } catch {
+      // ignore — permalink is a nice-to-have
+    }
+
+    return {
+      ok: true,
+      platform: "instagram",
+      platform_post_id: mediaId,
+      permalink,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      platform: "instagram",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/**
+ * Publish a video to a Facebook Page.
+ *
+ * Unlike IG Reels, FB Page videos publish immediately on a single POST —
+ * no container/poll/publish handshake. The endpoint accepts `file_url`
+ * for the source MP4 and `description` for the caption text.
+ *
+ * Permalink format is well-known and constructable from page_id + video_id,
+ * so we don't need a follow-up Graph call to fetch it.
+ *
+ * why: video_url must be HTTPS (same Meta restriction as Reels).
+ */
+export async function publishVideoToFB(args: {
+  creds: MetaCredentials;
+  video_url: string;
+  caption: string;
+}): Promise<PublishResult> {
+  const { creds, video_url, caption } = args;
+
+  if (!video_url.startsWith("https://")) {
+    return {
+      ok: false,
+      platform: "facebook",
+      error: `FB video_url must be https:// (got ${video_url.slice(0, 32)}...). Meta rejects plain http URLs.`,
+    };
+  }
+
+  try {
+    const url = `${GRAPH}/${creds.page_id}/videos`;
+    const body = new URLSearchParams({
+      file_url: video_url,
+      description: caption,
+      access_token: creds.page_access_token,
+    });
+    const res = await fetch(url, { method: "POST", body });
+    const json = (await res.json()) as {
+      id?: string;
+      error?: { message?: string; code?: number; error_subcode?: number };
+    };
+    if (!res.ok || !json.id) {
+      return classifyFBError(json, "facebook");
+    }
+    const videoId = String(json.id);
+    // why: FB doesn't surface a /post_id for video uploads the same way it
+    // does for /photos. The canonical public URL is /{page_id}/videos/{id}
+    // and is what shows in the Page's video tab — that's the right link
+    // for the user to share / verify the post.
+    return {
+      ok: true,
+      platform: "facebook",
+      platform_post_id: videoId,
+      permalink: `https://www.facebook.com/${creds.page_id}/videos/${videoId}`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      platform: "facebook",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/* ----------------------------------------------------------------------- *
  *  TikTok — Phase 6 publish parity
  *
  *  Uses Content Posting API → Direct Post (PHOTO mode, PULL_FROM_URL).

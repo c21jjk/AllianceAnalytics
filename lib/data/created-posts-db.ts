@@ -127,6 +127,15 @@ export interface CreatedPostResumeRow {
    * to defensively cover any legacy / hand-mutated rows.
    */
   additional_images: unknown | null;
+  /**
+   * Parallel array to `additional_images`. Each entry is a `SlideMetadata`
+   * (see `lib/post-builder/types.ts`) carrying the source metadata
+   * (listing_mls, variant, format, optional layer_tree) needed to re-open
+   * an individual slide in Studio. Same `unknown | null` typing rationale
+   * as `additional_images` — narrowed by the client. Empty array on rows
+   * that pre-date the slide_metadata column.
+   */
+  slide_metadata: unknown | null;
 }
 
 export async function fetchCreatedPostResume(
@@ -138,7 +147,7 @@ export async function fetchCreatedPostResume(
   const { data, error } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, created_by",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, created_by",
     )
     .eq("id", id)
     .maybeSingle();
@@ -164,6 +173,7 @@ export async function fetchCreatedPostResume(
     hero_image_source_url: data.hero_image_source_url,
     layer_tree: data.layer_tree,
     additional_images: data.additional_images,
+    slide_metadata: data.slide_metadata,
   };
 }
 

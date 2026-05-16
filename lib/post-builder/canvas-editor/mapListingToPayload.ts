@@ -128,11 +128,24 @@ export function mapListingToPayload(
 ): MLSListingPayload {
   // why: build photos array with explicit precedence — caller's explicit
   // array wins, then hero_image_url as a single-entry fallback, then empty.
+  //
+  // Subtle bug fix 2026-05-16: treat an EMPTY caller-provided array
+  // (`ctx.photos = []`) the same as undefined — fall through to the
+  // hero_image_url fallback. Previously empty was treated as authoritative,
+  // which silently produced templates with no hero photo when Studio
+  // opened before the listing's photos endpoint had returned. Multi-OH
+  // posts hit this race regularly because the resume flow auto-opens
+  // Studio as soon as photosLoading resolves, but if the listing has no
+  // listing_photos rows the endpoint returns []. With this change, the
+  // hero_image_url synth on the listing row becomes the cover.
   // We never silently concatenate the two because the caller's `photos` is
   // assumed to be the authoritative ordered list from listing_photos table.
   const photos: string[] =
-    ctx.photos ??
-    (listing.hero_image_url ? [listing.hero_image_url] : []);
+    ctx.photos && ctx.photos.length > 0
+      ? ctx.photos
+      : listing.hero_image_url
+        ? [listing.hero_image_url]
+        : [];
 
   return {
     id: listing.id,

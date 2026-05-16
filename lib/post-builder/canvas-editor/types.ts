@@ -562,6 +562,20 @@ export interface CanvasEditorCarouselProps {
    * (e.g., for TikTok which DOES accept Story-format photo carousels).
    */
   enabledOnStory?: boolean;
+  /**
+   * Phase 5 — per-slide edit affordance. When provided, each thumbnail
+   * in the strip surfaces a pencil "Edit" button (hover-revealed)
+   * alongside the X. Clicking it fires this callback with the slide's
+   * index inside `slides` — the parent (PostBuilderClient) uses that
+   * index to look up the slide's source metadata, swap Studio's
+   * `studioContext` to that slide, and branch the next Save to
+   * `updateGeneratedPostSlideAction` instead of the hero upsert.
+   *
+   * Omit on consumer flows where slides are raw listing photos (nothing
+   * to edit) — the per-slide editor only makes sense for designed
+   * graphics like the multi-OH per-property cards.
+   */
+  onSlideEditClick?: (slideIndex: number) => void;
 }
 
 // ---------------------------------------------------------------------------

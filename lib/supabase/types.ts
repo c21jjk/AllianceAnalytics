@@ -304,6 +304,7 @@ export type Database = {
           property_id: string | null
           reel_duration_ms: number | null
           scheduled_for: Json
+          slide_metadata: Json
           source_mls: string | null
           status: string
           template_id: string
@@ -348,6 +349,7 @@ export type Database = {
           property_id?: string | null
           reel_duration_ms?: number | null
           scheduled_for?: Json
+          slide_metadata?: Json
           source_mls?: string | null
           status?: string
           template_id: string
@@ -392,6 +394,7 @@ export type Database = {
           property_id?: string | null
           reel_duration_ms?: number | null
           scheduled_for?: Json
+          slide_metadata?: Json
           source_mls?: string | null
           status?: string
           template_id?: string

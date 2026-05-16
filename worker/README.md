@@ -171,6 +171,34 @@ fly ssh console --app alliance-reel-render -C "printenv WORKER_AUTH_TOKEN"
 
 ---
 
+### After deploy: connect Vercel to the worker
+
+Once the worker is deployed and you have its `WORKER_AUTH_TOKEN` (from
+`fly ssh console --app alliance-reel-render -C "printenv WORKER_AUTH_TOKEN"`),
+set the matching env vars on the main Vercel project so the Reel Studio's
+Generate button can authenticate:
+
+```bash
+vercel env add REEL_WORKER_URL production
+# Enter: https://alliance-reel-render.fly.dev
+
+vercel env add REEL_WORKER_AUTH_TOKEN production
+# Enter: <the token from fly ssh>
+
+# Redeploy main app so the new vars take effect.
+vercel --prod
+```
+
+Local dev: copy the same values into `.env.local` (gitignored). The Reel
+Studio's Generate button will hit your locally-running worker
+(`npm run dev` from `worker/`) when `REEL_WORKER_URL = http://localhost:8080`.
+
+The main app's `triggerReelRenderAction` server action surfaces a clear
+error if either env var is missing — so if you see "REEL_WORKER_URL is
+not set" in the Studio overlay, that's the cause.
+
+---
+
 ## Project layout
 
 ```

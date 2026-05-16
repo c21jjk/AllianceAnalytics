@@ -99,6 +99,7 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
     onAddSlideClick,
     onPreviewClick,
     maxSlides = DEFAULT_MAX_SLIDES,
+    onSlideEditClick,
   } = props;
 
   // -------------------------------------------------------------------------
@@ -327,6 +328,12 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
                 onDrop={handleDrop}
                 onRemove={() => removeAt(idx)}
                 onKeyDown={(e) => handleThumbKeyDown(e, idx)}
+                // why: forward the parent's per-slide edit hook (only when
+                // provided). The thumb conditionally renders the pencil
+                // affordance based on this prop being defined.
+                onEdit={
+                  onSlideEditClick ? () => onSlideEditClick(idx) : undefined
+                }
               />
               {/* Indicator for "drop AFTER this thumb" boundary */}
               <DropIndicator visible={dropTarget?.index === idx + 1} />
@@ -427,6 +434,13 @@ interface SlideThumbProps {
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   onRemove: () => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void;
+  /**
+   * Phase 5 — Multi-OH per-slide edit. When defined, the thumbnail renders
+   * a pencil-icon Edit button next to the X (hover-revealed). When
+   * undefined, no Edit affordance shows (matches the prior contract for
+   * non-editable user-photo carousels).
+   */
+  onEdit?: () => void;
 }
 
 function SlideThumb(props: SlideThumbProps): JSX.Element {
@@ -442,6 +456,7 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
     onDrop,
     onRemove,
     onKeyDown,
+    onEdit,
   } = props;
 
   // why: visual numbering uses "Slide N+2" — slide 0 is the hero (which the
@@ -486,6 +501,31 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
       >
         {visibleSlideNumber}
       </span>
+
+      {/* Top-right action cluster — Edit (when supported) + Remove. Both
+          hover-revealed; both stopPropagation so the thumbnail's role=button
+          activation paths don't fire alongside the action. */}
+      {onEdit ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            // why: stopPropagation so the click doesn't bubble to the
+            // thumbnail's role=button activation (which would re-open the
+            // standalone preview / fire focus side-effects).
+            e.stopPropagation();
+            onEdit();
+          }}
+          // why: positioned to the LEFT of the X — width 5 (20px) + gap 1
+          // (4px) = 24px offset. Same hover-reveal pattern as X for visual
+          // consistency. Uses the gold accent so it reads as "primary"
+          // action ("edit this slide") vs the X's destructive role.
+          className="absolute right-7 top-1 inline-flex h-5 w-5 translate-y-[-2px] items-center justify-center rounded-full bg-gold-500 text-neutral-900 opacity-0 shadow transition-all duration-150 hover:bg-gold-400 group-hover:translate-y-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gold-300"
+          aria-label={`Edit slide ${visibleSlideNumber} in Studio`}
+          title={`Edit slide ${visibleSlideNumber} in Studio`}
+        >
+          <PencilIcon />
+        </button>
+      ) : null}
 
       {/* Top-right remove button — hover/focus reveal */}
       <button
@@ -601,6 +641,29 @@ function XIcon(): JSX.Element {
       aria-hidden="true"
     >
       <path d="M3 3l6 6M9 3l-6 6" />
+    </svg>
+  );
+}
+
+function PencilIcon(): JSX.Element {
+  // why: 12×12 viewBox to match the X size — visually balanced when the
+  // two buttons sit next to each other. Stroke-based glyph reads cleanly
+  // at small sizes; the Lucide-style pencil shape is the project norm
+  // (per memory: project uses Lucide for icons).
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 1.5l1.5 1.5-7 7H2v-1.5l7-7z" />
+      <path d="M7.5 3L9 4.5" />
     </svg>
   );
 }

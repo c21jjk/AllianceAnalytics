@@ -59,6 +59,7 @@ import {
   type MultiOHGenerateOk,
   type PostBuilderListing,
   type PostFormat,
+  type SlideMetadata,
   type SourceMls,
 } from "@/lib/post-builder/types";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -459,6 +460,36 @@ function buildAdditionalImages(
 }
 
 /**
+ * Build the slide_metadata JSON column payload — a parallel array to
+ * additional_images. Each entry carries the source metadata Studio needs
+ * to re-open a per-slide design for editing: listing_mls, variant, format,
+ * and optional hosting agent override.
+ *
+ * The `layer_tree` field is intentionally omitted on first generation —
+ * it gets populated only after the user has opened + saved the slide in
+ * Studio via `updateGeneratedPostSlideAction`. Until then, opening a slide
+ * for edit resolves the factory template via `findCanvasTemplate(...)`.
+ */
+function buildSlideMetadata(
+  input: MultiOHEventInput,
+  successes: readonly PerPropertyRenderResult[],
+): Json {
+  // why: walk successes (not input.properties) so indexes line up exactly
+  // with additional_images. successes is already sorted by index above.
+  const out: SlideMetadata[] = successes.map((s) => {
+    const prop = input.properties[s.index];
+    return {
+      listing_mls: prop.mls_number,
+      variant: input.per_property_variant,
+      format: input.format,
+      hosting_agent_name: prop.hosting_agent_name ?? null,
+      layer_tree: null,
+    };
+  });
+  return out as unknown as Json;
+}
+
+/**
  * The handler. Wraps the whole flow in try/catch so any unexpected throw
  * surfaces as a clean 500 with a `MultiOHGenerateErr` envelope rather than
  * a Next.js stack trace dump.
@@ -589,6 +620,10 @@ export async function POST(request: Request): Promise<Response> {
         // synthesize a tree from the hero's HTML, but that's not scope here.
         layer_tree: null,
         additional_images: buildAdditionalImages(successes),
+        // why: parallel array enabling per-slide edit. Index N here maps to
+        // additional_images[N]. Re-opening a slide in Studio reads variant +
+        // format + hosting agent here to resolve the source template.
+        slide_metadata: buildSlideMetadata(input, successes),
         status: "draft",
         created_by: profile.id,
       })

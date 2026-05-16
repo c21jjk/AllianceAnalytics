@@ -595,7 +595,8 @@ export function createSideBySideTemplate(
       visible: true,
       locked: false,
       text: cfg.eyebrow,
-      boundField: "status_label",
+      // why: NO boundField — status_label hydrates from listing.status,
+      // not the POST category. Literal cfg.eyebrow is the source of truth.
       fontFamily: ALLIANCE_FONTS.bodySans,
       fontSize: layout.photoEyebrow.labelFontSize,
       fontWeight: 700,
@@ -722,7 +723,7 @@ export function createSideBySideTemplate(
     visible: true,
     locked: false,
     text: cfg.eyebrow,
-    boundField: "status_label",
+    // why: NO boundField — see hero-editorial-factory note.
     fontFamily: ALLIANCE_FONTS.bodySans,
     fontSize: layout.dataEyebrow.fontSize,
     fontWeight: 700,

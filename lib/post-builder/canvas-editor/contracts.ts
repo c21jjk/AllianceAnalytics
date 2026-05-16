@@ -29,6 +29,7 @@ import type {
   MLSListingPayload,
   PostFormat,
 } from "./types";
+import type { Scene, TransitionType } from "../types";
 
 // ===========================================================================
 // Phase 5 — Carousel (multi-image post) UI surfaces
@@ -76,6 +77,17 @@ export interface CarouselStripProps {
    * reserved for the hero in mental accounting, or 35 for TikTok-only).
    */
   maxSlides?: number;
+  /**
+   * Phase 5 — Multi-OH per-slide edit. When provided, each thumbnail
+   * surfaces a pencil-icon "Edit" affordance next to the X (hover-revealed).
+   * Clicking it fires `onSlideEditClick(index)` so the parent can swap
+   * Studio's context to that slide's source template + listing.
+   *
+   * Omit on consumer flows that don't have a per-slide schema (the
+   * Add-photos-to-a-single-listing flow — those slides are raw listing
+   * photos, not designed graphics, so there's nothing to edit).
+   */
+  onSlideEditClick?: (slideIndex: number) => void;
 }
 
 /**
@@ -150,6 +162,126 @@ export interface CarouselPreviewProps {
   heroFormat: PostFormat;
   /** Called when the user closes via ESC, X, or backdrop click. */
   onClose: () => void;
+}
+
+// ===========================================================================
+// Phase 6 — Reel Studio (native video editor)
+// ===========================================================================
+
+/**
+ * Horizontal timeline of scene blocks shown at the bottom of Reel Studio.
+ * Each block represents a Scene in the VideoComposition; width is
+ * proportional to durationMs so the timeline reads as a time scrubber.
+ *
+ * Visual shape (Day 3 MVP):
+ *   ╔══════════════════════════════════════════════════════════════════╗
+ *   ║  ┌────┐  ⟿fade⟿  ┌──────┐  ⟿dissolve⟿  ┌────┐  [+ Scene]      ║
+ *   ║  │  1 │           │  2   │              │  3 │                   ║
+ *   ║  │1.0s│           │1.5s  │              │1.0s│                   ║
+ *   ║  └────┘           └──────┘              └────┘                    ║
+ *   ╚══════════════════════════════════════════════════════════════════╝
+ *
+ * Interactions (MVP):
+ *   • Click a scene block → select it (its properties appear in the side panel)
+ *   • Hover → reveal X to remove
+ *   • Drag a block → reorder (HTML5 drag/drop with gap indicator)
+ *   • Click "+ Scene" → add a new scene (parent decides what kind)
+ *   • Transitions render as small icon-glyphs BETWEEN blocks; click to cycle types
+ *
+ * Day 4+ adds: precise duration slider on hover, transition-duration on click,
+ * a scrub head that drags along the timeline for preview.
+ */
+export interface TimelineStripProps {
+  /** All scenes in playback order. */
+  scenes: readonly Scene[];
+  /**
+   * Which scene block is currently selected (so ScenePropertiesPanel can
+   * show that scene's editors). Null when nothing is selected; the strip
+   * still renders all blocks, but none are highlighted.
+   */
+  selectedSceneId: string | null;
+  /** Clicked a scene block → parent updates `selectedSceneId`. */
+  onSelectScene: (sceneId: string) => void;
+  /**
+   * Drag-reordered the scenes. The argument is the new array of scene ids
+   * in left-to-right order. Parent reconstructs the composition's scenes
+   * array by mapping these ids to their full Scene objects.
+   */
+  onReorderScenes: (newOrder: readonly string[]) => void;
+  /**
+   * Clicked the "+ Scene" tile. Parent decides what kind of scene to add
+   * (typically a photo scene with the next available listing photo, or
+   * a design scene with a copy of the current hero template).
+   */
+  onAddScene: () => void;
+  /** Hover-X click on a scene block. */
+  onRemoveScene: (sceneId: string) => void;
+  /**
+   * Clicked a transition glyph between two scenes — cycles the type
+   * (cut → fade → dissolve → slide_left → zoom_blur → cut). The argument
+   * is the id of the scene whose `transitionIn` should change.
+   */
+  onCycleTransition: (sceneId: string) => void;
+  /**
+   * When false (default), the timeline does NOT allow removing the LAST
+   * remaining scene (a composition must have ≥1 scene). Set true if the
+   * consumer wants to allow empty compositions (e.g., a fresh-start state).
+   */
+  allowEmpty?: boolean;
+  /**
+   * Hard cap on scenes (from REEL_CAPS.maxScenes — 8). The "+ Scene" tile
+   * is disabled when scenes.length >= maxScenes.
+   */
+  maxScenes?: number;
+}
+
+/**
+ * Right-side panel that surfaces the SELECTED scene's editable properties:
+ * motion preset (for photo scenes), duration slider, transition-in type +
+ * duration. When `scene` is null (nothing selected), renders an empty state.
+ *
+ * Visual shape (Day 3 MVP):
+ *   ┌─────────────────────────────┐
+ *   │  Scene properties           │
+ *   │  ─────────────────────────  │
+ *   │  TYPE   Photo               │
+ *   │                              │
+ *   │  MOTION                      │
+ *   │   ○ Static                   │
+ *   │   ● Zoom in                  │
+ *   │   ○ Zoom out                 │
+ *   │   ○ Pan left                 │
+ *   │   ○ Pan right                │
+ *   │                              │
+ *   │  DURATION                    │
+ *   │   ━━━●━━━━━━━━  1.5s         │
+ *   │                              │
+ *   │  TRANSITION IN               │
+ *   │   [Cut][Fade][Diss][Slide]   │
+ *   │                              │
+ *   │  TRANSITION LENGTH           │
+ *   │   ━━●━━━━━━━━━━  0.3s        │
+ *   └─────────────────────────────┘
+ */
+export interface ScenePropertiesPanelProps {
+  /** The selected scene, or null. */
+  scene: Scene | null;
+  /**
+   * Patch the scene's fields. The parent merges the patch into the
+   * scene's full object, updating the composition's scenes array.
+   * Patch shape mirrors Scene's optional fields — any subset can be
+   * passed and only those fields are updated.
+   */
+  onSceneChanged: (
+    sceneId: string,
+    patch: Partial<{
+      durationMs: number;
+      transitionIn: TransitionType;
+      transitionMs: number;
+      /** Motion preset name for photo scenes. Maps to MOTION_PRESETS in types.ts. */
+      motionPreset: "static" | "zoom_in" | "zoom_out" | "pan_left" | "pan_right";
+    }>,
+  ) => void;
 }
 
 // ===========================================================================

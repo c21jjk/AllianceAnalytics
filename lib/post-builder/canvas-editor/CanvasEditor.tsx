@@ -2179,6 +2179,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           onSlidesChanged={carousel.onSlidesChanged}
           onAddSlideClick={() => setCarouselPickerOpen(true)}
           onPreviewClick={() => setCarouselPreviewOpen(true)}
+          // why: forward Multi-OH per-slide-edit hook through to the strip.
+          // Strip renders the pencil affordance only when this is defined,
+          // so non-multi-OH posts (single-listing carousels) still show
+          // just the X-to-remove.
+          onSlideEditClick={carousel.onSlideEditClick}
         />
       ) : null}
 

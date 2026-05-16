@@ -361,7 +361,12 @@ export function createHeroEditorialTemplate(
       visible: true,
       locked: false,
       text: cfg.eyebrow,
-      boundField: "status_label",
+      // why: NO boundField. The status_label resolver derives from the
+      // LISTING's status (active → "JUST LISTED") not the POST's category,
+      // so binding here would override "OPEN HOUSE" / "UNDER CONTRACT" /
+      // "PRICE REDUCED" with "JUST LISTED" any time the underlying listing
+      // is still active. The literal cfg.eyebrow from POST_TYPE_CONFIGS is
+      // the post-category source of truth.
       fontFamily: ALLIANCE_FONTS.bodySans,
       fontSize: layout.eyebrow.labelFontSize,
       fontWeight: 700,

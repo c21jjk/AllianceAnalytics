@@ -8,12 +8,15 @@ import type {
   PostFormat,
   PostType,
   PostVariant,
+  ReelRenderJob,
+  ReelRenderStatus,
   SaveGeneratedPostInput,
   SaveGeneratedPostResult,
   SaveGeneratedPostErrorResult,
   ScheduledFor,
   SchedulablePlatform,
   SourceMls,
+  VideoComposition,
 } from "@/lib/post-builder/types";
 
 // Mirrors STORAGE_BUCKET in app/api/post-builder/canvas-save/route.ts +
@@ -195,6 +198,14 @@ export interface UpsertStudioPostInput {
    * Tighten to `Json | null` (required) once every caller passes it.
    */
   additional_images?: Json | null;
+  /**
+   * Parallel array to additional_images. Each entry carries the per-slide
+   * source metadata Studio needs to re-open an individual slide for edit —
+   * see `SlideMetadata` in lib/post-builder/types.ts. Only multi-OH posts
+   * currently populate this; single-image and user-composed carousels pass
+   * undefined/null and the action coerces to `[]`.
+   */
+  slide_metadata?: Json | null;
 }
 
 export interface UpsertStudioPostOk {
@@ -277,6 +288,10 @@ export async function upsertGeneratedPostFromStudioAction(
         // constraint and downstream readers (publish route, resume) never
         // have to null-branch — empty array always means "single-image post".
         additional_images: input.additional_images ?? [],
+        // why: same NOT NULL DEFAULT '[]' rule as additional_images — the
+        // column is parallel to it; legacy / single-image posts simply carry
+        // an empty array here.
+        slide_metadata: input.slide_metadata ?? [],
         updated_at: nowIso,
       })
       .eq("id", input.id)
@@ -346,6 +361,10 @@ export async function upsertGeneratedPostFromStudioAction(
       // NOT NULL, and a fresh draft starts as a single-image post until the
       // user adds carousel slides in Studio.
       additional_images: input.additional_images ?? [],
+      // why: parallel to additional_images. Single-image / user-composed
+      // carousels start with an empty array; multi-OH wizard posts fill
+      // this via the multi-oh-generate route (NOT via this action).
+      slide_metadata: input.slide_metadata ?? [],
       // status='draft' so the user knows it hasn't been posted yet. The
       // existing Post Now flow can flip this to 'posted' or 'scheduled'.
       status: "draft",
@@ -369,6 +388,246 @@ export async function upsertGeneratedPostFromStudioAction(
     inserted: true,
     prior_storage_cleaned: false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Per-slide edit save — Multi-OH carousel "Edit slide N in Studio"
+// ---------------------------------------------------------------------------
+
+/**
+ * Input for `updateGeneratedPostSlideAction`. Called when the user clicks
+ * Edit on an individual slide thumbnail in the Studio carousel strip,
+ * edits the slide in Studio, and saves.
+ *
+ * Behavior contract — see action body for the why on each step:
+ *   1. Auth-gate + ownership check on the row.
+ *   2. Validate `slide_index` is in bounds for the row's additional_images.
+ *   3. Replace additional_images[slide_index].url with new_image_url and
+ *      preserve the slide's other CarouselSlide fields (id, source,
+ *      listingPhotoSequence) so React keys remain stable.
+ *   4. Replace slide_metadata[slide_index].layer_tree with new_layer_tree.
+ *   5. Persist both columns atomically (one UPDATE statement).
+ *   6. Best-effort delete the OLD slide image from Storage. Failure is
+ *      logged but non-fatal — the row already points at the new image.
+ */
+export interface UpdateGeneratedPostSlideInput {
+  generated_post_id: string;
+  /** 0-based index into the row's additional_images array. */
+  slide_index: number;
+  /** Public URL of the newly-rendered slide PNG (from canvas-save). */
+  new_image_url: string;
+  /** Storage path of the new slide PNG — used for delete cleanup later. */
+  new_image_path: string;
+  /**
+   * The post-hydration canvas-editor schema for the edited slide. Written
+   * to slide_metadata[slide_index].layer_tree so re-opening the same slide
+   * later restores the user's edits rather than re-deriving the factory
+   * template.
+   */
+  new_layer_tree: Json | null;
+}
+
+export interface UpdateGeneratedPostSlideOk {
+  ok: true;
+  /** True when the prior slide image was cleaned up from Storage. */
+  prior_storage_cleaned: boolean;
+}
+
+export interface UpdateGeneratedPostSlideErr {
+  ok: false;
+  error: string;
+}
+
+/**
+ * Replace one slide's image + saved schema on a multi-OH carousel row.
+ *
+ * The hero (image_url / image_path / layer_tree) is left alone — that's
+ * the parent post's design and is edited via `upsertGeneratedPostFromStudioAction`.
+ * This action is exclusively for slide 1..N inside additional_images.
+ */
+export async function updateGeneratedPostSlideAction(
+  input: UpdateGeneratedPostSlideInput,
+): Promise<UpdateGeneratedPostSlideOk | UpdateGeneratedPostSlideErr> {
+  const profile = await requireUser();
+
+  if (
+    !input.generated_post_id ||
+    !input.new_image_url ||
+    !input.new_image_path
+  ) {
+    return { ok: false, error: "missing required fields" };
+  }
+  if (
+    typeof input.slide_index !== "number" ||
+    !Number.isInteger(input.slide_index) ||
+    input.slide_index < 0
+  ) {
+    return { ok: false, error: "slide_index must be a non-negative integer" };
+  }
+
+  const supabase = createAdminClient();
+
+  // why: fetch the row first so we can (a) ownership-check, (b) bounds-check
+  // slide_index, and (c) capture the prior slide image path for cleanup.
+  const { data: existing, error: fetchError } = await supabase
+    .from("generated_posts")
+    .select(
+      "id, created_by, additional_images, slide_metadata",
+    )
+    .eq("id", input.generated_post_id)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+  }
+  if (!existing) {
+    return { ok: false, error: "row not found" };
+  }
+  if (existing.created_by !== profile.id) {
+    return { ok: false, error: "not owner" };
+  }
+
+  // why: additional_images / slide_metadata are typed `Json` at the DB
+  // boundary — narrow to readable arrays defensively. A malformed row
+  // (manual edit, legacy data) should error cleanly, not throw on indexing.
+  const additionalImages = existing.additional_images;
+  if (!Array.isArray(additionalImages)) {
+    return {
+      ok: false,
+      error: "additional_images is not an array — row is malformed",
+    };
+  }
+  if (input.slide_index >= additionalImages.length) {
+    return {
+      ok: false,
+      error: `slide_index ${input.slide_index} out of bounds (additional_images length=${additionalImages.length})`,
+    };
+  }
+
+  // why: capture the OLD slide entry so we can preserve its CarouselSlide
+  // fields (id, source, listingPhotoSequence) while only swapping the url.
+  // Keeping id stable prevents the React key change that would otherwise
+  // cause a thumbnail re-mount + flicker after save.
+  const priorSlide = additionalImages[input.slide_index];
+  let priorImagePathFromUrl: string | null = null;
+  let priorSlideId: string | null = null;
+  let priorSource: "listing" | "upload" = "listing";
+  let priorSequence: number | undefined = undefined;
+  if (
+    priorSlide &&
+    typeof priorSlide === "object" &&
+    !Array.isArray(priorSlide)
+  ) {
+    const p = priorSlide as Record<string, unknown>;
+    if (typeof p.id === "string") priorSlideId = p.id;
+    if (p.source === "upload") priorSource = "upload";
+    if (typeof p.listingPhotoSequence === "number") {
+      priorSequence = p.listingPhotoSequence;
+    }
+    if (typeof p.url === "string") {
+      // why: derive the Storage path from the prior public URL so we can
+      // delete it after the update. Same trick used in the canvas-save
+      // route — the Storage public URL embeds the path after the bucket
+      // segment. Failure to derive is non-fatal; we just skip cleanup.
+      priorImagePathFromUrl = extractStoragePathFromPublicUrl(p.url);
+    }
+  }
+
+  // why: build the new slide entry. Preserve id/source/sequence so the
+  // thumbnail's React key + provenance survive the edit.
+  const nextSlide = {
+    id: priorSlideId ?? crypto.randomUUID(),
+    url: input.new_image_url,
+    source: priorSource,
+    ...(priorSequence !== undefined
+      ? { listingPhotoSequence: priorSequence }
+      : {}),
+  };
+
+  // why: build the new additional_images array. Avoid in-place mutation —
+  // the DB column is jsonb and we want a clean replacement value.
+  const nextAdditionalImages = additionalImages.slice();
+  nextAdditionalImages[input.slide_index] = nextSlide as unknown as Json;
+
+  // why: build the new slide_metadata array. If the row's slide_metadata
+  // is missing / malformed (e.g., a pre-migration row), back-fill an empty
+  // entry up to slide_index so the indexes line up with additional_images.
+  const existingMetadata = Array.isArray(existing.slide_metadata)
+    ? (existing.slide_metadata as unknown[])
+    : [];
+  const nextSlideMetadata: unknown[] = existingMetadata.slice();
+  while (nextSlideMetadata.length < additionalImages.length) {
+    // why: pad with empty objects rather than null so consumers can read
+    // `entry.layer_tree` without a null check. The shape mirrors
+    // SlideMetadata's optional fields — all undefined.
+    nextSlideMetadata.push({});
+  }
+  const priorMeta = nextSlideMetadata[input.slide_index];
+  const mergedMeta =
+    priorMeta && typeof priorMeta === "object" && !Array.isArray(priorMeta)
+      ? { ...(priorMeta as Record<string, unknown>) }
+      : {};
+  mergedMeta.layer_tree = input.new_layer_tree;
+  nextSlideMetadata[input.slide_index] = mergedMeta;
+
+  // ---- Atomic update: additional_images + slide_metadata in one statement ----
+  const { error: updError } = await supabase
+    .from("generated_posts")
+    .update({
+      additional_images: nextAdditionalImages as unknown as Json,
+      slide_metadata: nextSlideMetadata as unknown as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+
+  if (updError) {
+    return { ok: false, error: `update_failed: ${updError.message}` };
+  }
+
+  // ---- Best-effort Storage cleanup of the prior slide image ----
+  let priorStorageCleaned = false;
+  if (priorImagePathFromUrl && priorImagePathFromUrl !== input.new_image_path) {
+    const { error: delError } = await supabase.storage
+      .from(POST_RENDER_STORAGE_BUCKET)
+      .remove([priorImagePathFromUrl]);
+    if (delError) {
+      // why: same non-fatal contract as the hero swap — the row is correct,
+      // the user's edit is saved; a stale file is just disk usage. Log so
+      // the orphan rate stays visible in prod logs.
+      console.warn(
+        "[updateGeneratedPostSlideAction] storage cleanup failed:",
+        delError.message,
+      );
+    } else {
+      priorStorageCleaned = true;
+    }
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return { ok: true, prior_storage_cleaned: priorStorageCleaned };
+}
+
+/**
+ * Extract the Storage object path from a Supabase public URL. Supabase
+ * public URLs look like:
+ *
+ *   https://<project>.supabase.co/storage/v1/object/public/<bucket>/<path>
+ *
+ * We split on `/object/public/<bucket>/` and return whatever follows. If
+ * the URL doesn't match that shape (e.g., a third-party CDN URL), return
+ * null so the caller skips the cleanup attempt.
+ */
+function extractStoragePathFromPublicUrl(url: string): string | null {
+  const marker = `/object/public/${POST_RENDER_STORAGE_BUCKET}/`;
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  const tail = url.slice(idx + marker.length);
+  // why: strip any querystring (cache-busting params, signed-url tokens)
+  // before returning — Storage.remove() takes the bare path only.
+  const q = tail.indexOf("?");
+  return q === -1 ? tail : tail.slice(0, q);
 }
 
 // ---------------------------------------------------------------------------
@@ -813,4 +1072,462 @@ function isScheduledForObject(value: unknown): value is ScheduledFor {
   if (value === null || typeof value !== "object") return false;
   if (Array.isArray(value)) return false;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Reel render — Phase 6, Day 6 (2026-05-16)
+// ---------------------------------------------------------------------------
+//
+// Three actions wrap the Reel render worker (Fly.io service in worker/) so
+// the Studio's Generate button can submit a composition, poll for status,
+// and persist the resulting MP4 to generated_posts.
+//
+// Why server actions vs. an /api route: keeps the worker auth token off the
+// client (it's a server-only env var) and lets the actions share the same
+// requireUser() gate every other Studio mutation uses. The Reel Studio
+// client invokes these directly via Next 15's server-action calling
+// convention — no fetch boilerplate.
+//
+// Env vars consumed:
+//   REEL_WORKER_URL          — base URL of the worker, e.g. https://alliance-reel-render.fly.dev
+//   REEL_WORKER_AUTH_TOKEN   — bearer token matching the worker's WORKER_AUTH_TOKEN
+//
+// Both are required. Missing values surface a clear error from the action
+// itself so a misconfigured deploy points at the actual cause instead of a
+// generic "fetch failed" further down the stack.
+
+/**
+ * Pull the worker's base URL + auth token out of the environment. Returns
+ * a tagged result so the calling action can early-return with a descriptive
+ * error message before any fetch is attempted.
+ *
+ * why this lives in a helper: both triggerReelRenderAction and
+ * getReelRenderStatusAction need the same two env vars + the same error
+ * shape, and we want one place to fix if the var names change.
+ */
+function readReelWorkerEnv():
+  | { ok: true; baseUrl: string; token: string }
+  | { ok: false; error: string } {
+  const baseUrl = process.env.REEL_WORKER_URL;
+  const token = process.env.REEL_WORKER_AUTH_TOKEN;
+  if (!baseUrl || baseUrl.length === 0) {
+    return {
+      ok: false,
+      error:
+        "REEL_WORKER_URL is not set — configure it in Vercel (production) or .env.local (dev) before generating Reels.",
+    };
+  }
+  if (!token || token.length === 0) {
+    return {
+      ok: false,
+      error:
+        "REEL_WORKER_AUTH_TOKEN is not set — configure it in Vercel (production) or .env.local (dev) before generating Reels.",
+    };
+  }
+  // why: strip trailing slash so concatenations like `${baseUrl}/render` never
+  // produce a double-slashed URL (some hosting providers normalize, others
+  // don't — safer to canonicalize here).
+  const normalized = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return { ok: true, baseUrl: normalized, token };
+}
+
+// ---- triggerReelRenderAction ---------------------------------------------
+
+export interface TriggerReelRenderOk {
+  ok: true;
+  job_id: string;
+  /** Echo of the idempotency key — the client can stash this for retry/debug. */
+  idempotency_key: string;
+}
+
+export interface TriggerReelRenderErr {
+  ok: false;
+  error: string;
+}
+
+export type TriggerReelRenderResult =
+  | TriggerReelRenderOk
+  | TriggerReelRenderErr;
+
+/**
+ * Worker's POST /render response shape (success). Mirrors the body in
+ * worker/src/routes/render.ts — the worker returns 202 with this body.
+ */
+interface WorkerRenderSubmitResponse {
+  job_id: string;
+  status: ReelRenderStatus;
+  poll_url: string;
+}
+
+/**
+ * Submit a VideoComposition to the render worker. Returns the job_id the
+ * client polls with getReelRenderStatusAction.
+ *
+ * Error contract: distinguishes worker-down (network throw, AbortError) from
+ * worker-rejected (HTTP 4xx/5xx with a body) so the UI can render a useful
+ * message instead of "fetch failed".
+ *
+ * @param composition - The composition document the worker will render. We
+ *   trust the client's shape here — the worker re-validates with zod and
+ *   400s on drift, so any malformed payload surfaces as a worker-rejected
+ *   error rather than a silent miss.
+ */
+export async function triggerReelRenderAction(
+  composition: VideoComposition,
+): Promise<TriggerReelRenderResult> {
+  await requireUser();
+
+  const env = readReelWorkerEnv();
+  if (!env.ok) return { ok: false, error: env.error };
+
+  // why: client-generated idempotency key. The worker dedupes by this within
+  // a 24h window, so a flaky network retry of the same Generate click can't
+  // burn a second render-pass-worth of CPU.
+  const idempotencyKey = crypto.randomUUID();
+
+  try {
+    const res = await fetch(`${env.baseUrl}/render`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.token}`,
+      },
+      body: JSON.stringify({
+        composition,
+        idempotency_key: idempotencyKey,
+      }),
+      // why: 30s is generous for a submit-only call — the worker should
+      // 202 nearly instantly since the actual render is fire-and-forget.
+      // Cap exists so a hung worker doesn't pin the action indefinitely.
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) {
+      // why: try to surface the worker's structured error body first
+      // (zod issues, auth failures); fall back to status text if the body
+      // isn't JSON. Either way we get a message that points at the real
+      // problem instead of a generic "submit failed".
+      let workerMessage = `HTTP ${res.status}`;
+      try {
+        const body: unknown = await res.json();
+        if (
+          body &&
+          typeof body === "object" &&
+          "error" in body &&
+          typeof (body as { error: unknown }).error === "string"
+        ) {
+          workerMessage = (body as { error: string }).error;
+        }
+      } catch {
+        // why: ignore JSON parse failures — the status code alone is
+        // enough context for the user when the body isn't structured.
+      }
+      return {
+        ok: false,
+        error: `Worker rejected the render: ${workerMessage}`,
+      };
+    }
+
+    const body: unknown = await res.json();
+    if (!isWorkerSubmitResponse(body)) {
+      return {
+        ok: false,
+        error: "Worker returned an unexpected response shape",
+      };
+    }
+
+    return {
+      ok: true,
+      job_id: body.job_id,
+      idempotency_key: idempotencyKey,
+    };
+  } catch (e) {
+    // why: AbortError lands here when the timeout fires. Network errors
+    // (DNS, TCP, TLS) also throw from fetch — we treat all of these as
+    // "worker unreachable" so the UI message points at infrastructure
+    // rather than implying a bad request was sent.
+    const message =
+      e instanceof Error
+        ? e.name === "TimeoutError" || e.name === "AbortError"
+          ? "Worker did not respond within 30 seconds — check that REEL_WORKER_URL points at a running worker."
+          : `Worker unreachable: ${e.message}`
+        : "Worker unreachable: unknown error";
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Narrow the worker's submit response. The worker returns extra fields like
+ * `deduped` on idempotency hits — we ignore those here but accept any shape
+ * that has the three required fields.
+ */
+function isWorkerSubmitResponse(
+  value: unknown,
+): value is WorkerRenderSubmitResponse {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.job_id === "string" &&
+    typeof v.status === "string" &&
+    typeof v.poll_url === "string"
+  );
+}
+
+// ---- getReelRenderStatusAction -------------------------------------------
+
+export interface GetReelRenderStatusOk {
+  ok: true;
+  job: ReelRenderJob;
+}
+
+export interface GetReelRenderStatusErr {
+  ok: false;
+  error: string;
+}
+
+export type GetReelRenderStatusResult =
+  | GetReelRenderStatusOk
+  | GetReelRenderStatusErr;
+
+/**
+ * Poll the worker for the current state of a render job. Called repeatedly
+ * by the Studio's Generate flow at ~1.5s intervals until status is
+ * "succeeded" or "failed".
+ *
+ * 10s timeout — a single poll should resolve almost instantly; if the
+ * worker is so loaded it can't return a status in 10s, treat that as an
+ * error so the client can surface it (and potentially keep polling).
+ */
+export async function getReelRenderStatusAction(
+  jobId: string,
+): Promise<GetReelRenderStatusResult> {
+  await requireUser();
+
+  if (!jobId || typeof jobId !== "string") {
+    return { ok: false, error: "jobId required" };
+  }
+
+  const env = readReelWorkerEnv();
+  if (!env.ok) return { ok: false, error: env.error };
+
+  try {
+    const res = await fetch(
+      `${env.baseUrl}/render/${encodeURIComponent(jobId)}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${env.token}` },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+
+    if (!res.ok) {
+      let workerMessage = `HTTP ${res.status}`;
+      try {
+        const body: unknown = await res.json();
+        if (
+          body &&
+          typeof body === "object" &&
+          "error" in body &&
+          typeof (body as { error: unknown }).error === "string"
+        ) {
+          workerMessage = (body as { error: string }).error;
+        }
+      } catch {
+        // ignore
+      }
+      return {
+        ok: false,
+        error: `Worker rejected the status poll: ${workerMessage}`,
+      };
+    }
+
+    const body: unknown = await res.json();
+    if (!isReelRenderJob(body)) {
+      return {
+        ok: false,
+        error: "Worker returned an unexpected job shape",
+      };
+    }
+    return { ok: true, job: body };
+  } catch (e) {
+    const message =
+      e instanceof Error
+        ? e.name === "TimeoutError" || e.name === "AbortError"
+          ? "Status poll timed out after 10s"
+          : `Worker unreachable: ${e.message}`
+        : "Worker unreachable: unknown error";
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Structurally narrow an unknown payload into a ReelRenderJob. Defensive —
+ * the worker is our own code so drift is unlikely, but treating it like an
+ * external API means a future worker change can't crash the client.
+ */
+function isReelRenderJob(value: unknown): value is ReelRenderJob {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.job_id !== "string") return false;
+  if (
+    v.status !== "queued" &&
+    v.status !== "processing" &&
+    v.status !== "succeeded" &&
+    v.status !== "failed"
+  ) {
+    return false;
+  }
+  if (typeof v.progress_pct !== "number") return false;
+  // video_url / video_path / duration_ms / error are nullable; only check
+  // they exist as the right kind when non-null.
+  if (v.video_url !== null && typeof v.video_url !== "string") return false;
+  if (v.video_path !== null && typeof v.video_path !== "string") return false;
+  if (v.duration_ms !== null && typeof v.duration_ms !== "number") return false;
+  if (v.error !== null && typeof v.error !== "string") return false;
+  if (typeof v.created_at !== "string") return false;
+  if (typeof v.updated_at !== "string") return false;
+  return true;
+}
+
+// ---- persistRenderedReelAction -------------------------------------------
+
+export interface PersistRenderedReelInput {
+  /** The composition that was rendered — persisted verbatim so re-edit
+   *  rehydrates the exact document the user submitted. */
+  composition: VideoComposition;
+  /** Public Storage URL of the rendered MP4 (from the succeeded job). */
+  video_url: string;
+  /** Internal Storage path of the MP4 (used for later cleanup / re-render). */
+  video_path: string;
+  /** MP4 duration in ms. Persisted so the UI can read it without parsing the video. */
+  duration_ms: number;
+  /**
+   * Cover frame URL — used as image_url on the row + as the IG Reels cover.
+   * For MVP Larissa picks this from the listing's hero photo; future days
+   * may generate a proper cover frame server-side.
+   */
+  cover_image_url: string;
+  /** Optional caption draft. */
+  caption?: string | null;
+  /** Optional hashtags. */
+  hashtags?: string[] | null;
+}
+
+export interface PersistRenderedReelOk {
+  ok: true;
+  generated_post_id: string;
+}
+
+export interface PersistRenderedReelErr {
+  ok: false;
+  error: string;
+}
+
+export type PersistRenderedReelResult =
+  | PersistRenderedReelOk
+  | PersistRenderedReelErr;
+
+/**
+ * Insert a NEW generated_posts row for a freshly-rendered Reel.
+ *
+ * why always INSERT (never update): Reel re-generations create siblings,
+ * never overwrite the previous version. The previous Reel may already be
+ * scheduled or posted; the user re-rendering is producing a NEW asset, not
+ * editing the old one. Studio surfaces both rows under the listing.
+ *
+ * Required fields derived from the composition:
+ *   • mls_number — from composition.sourceListingMls (must be set)
+ *
+ * Fixed-value fields for Reels in MVP:
+ *   • media_type = "reel"
+ *   • template_id = "reel_v1" (synthetic — future versions can carry variants)
+ *   • post_type = "just_listed" (Reels default; future: derive from listing status)
+ *   • variant = "v1"
+ *   • format = "story_9x16" (Reels are always 9:16)
+ *   • status = "draft"
+ *   • image_path = null (cover is a source URL, not a path we own)
+ */
+export async function persistRenderedReelAction(
+  input: PersistRenderedReelInput,
+): Promise<PersistRenderedReelResult> {
+  const profile = await requireUser();
+
+  // why: pre-validate so the user sees the real cause if the composition
+  // is missing its source listing — without this they'd get a generic
+  // NOT NULL violation from Postgres.
+  if (!input.composition.sourceListingMls) {
+    return {
+      ok: false,
+      error: "composition.sourceListingMls is required to persist a Reel",
+    };
+  }
+  if (!input.video_url || !input.video_path) {
+    return { ok: false, error: "video_url and video_path are required" };
+  }
+  if (typeof input.duration_ms !== "number" || input.duration_ms <= 0) {
+    return { ok: false, error: "duration_ms must be a positive number" };
+  }
+  if (!input.cover_image_url) {
+    return { ok: false, error: "cover_image_url is required" };
+  }
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("generated_posts")
+    .insert({
+      mls_number: input.composition.sourceListingMls,
+      // why: source_mls / property_id are unknown at this layer — the Reel
+      // wizard works off the slim PostBuilderListing on the client. The
+      // listing row joins on mls_number, so leaving these null is safe;
+      // downstream readers fall through to listings.source_mls.
+      source_mls: null,
+      property_id: null,
+      post_type: "just_listed",
+      variant: "v1",
+      format: "story_9x16",
+      template_id: "reel_v1",
+      media_type: "reel",
+      // why: image_url doubles as the Reels cover/thumbnail. IG's Reels API
+      // requires a cover frame URL on publish; reusing the listing's hero
+      // photo for MVP keeps the path uniform with static posts. A future
+      // day may render a proper "first frame of the MP4" cover.
+      image_url: input.cover_image_url,
+      // why: the cover image isn't a Storage path we own — it's the source
+      // listing photo URL — so we don't have a path to clean up later.
+      image_path: null,
+      // why: hero_image_source_url mirrors the same source the cover came
+      // from. Useful for diagnostics ("which photo became the cover?").
+      hero_image_source_url: input.cover_image_url,
+      video_url: input.video_url,
+      video_path: input.video_path,
+      // why: cast through `unknown` because the schema's `template: unknown`
+      // discriminated-union member doesn't structurally line up with Json's
+      // recursive shape. The runtime value is JSON-serializable (the worker
+      // already parsed it from JSON), so the cast is safe.
+      composition_json: input.composition as unknown as Json,
+      reel_duration_ms: input.duration_ms,
+      // why: empty template_props + customizations — those are Path A
+      // concepts that don't apply to Reels. Caption / hashtags default to
+      // null until the user generates them in Studio.
+      template_props: {} as Json,
+      customizations: {} as Json,
+      caption: input.caption ?? null,
+      hashtags: input.hashtags ?? null,
+      mls_hashtag: null,
+      status: "draft",
+      created_by: profile.id,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error: `insert_failed: ${error.message}` };
+  }
+  if (!data || typeof data.id !== "string") {
+    return { ok: false, error: "insert returned no row" };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return { ok: true, generated_post_id: data.id };
 }

@@ -20,9 +20,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   loadMetaCredentials,
   loadTikTokCredentials,
+  publishReelToIG,
   publishToFBPage,
   publishToIG,
   publishToTikTok,
+  publishVideoToFB,
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
@@ -129,7 +131,9 @@ export async function POST(request: Request) {
   const { data: gp, error: gpErr } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids, property_id, additional_images",
+      // why: media_type + video_url added Day 1; reel_duration_ms kept on
+      // the SELECT for future analytics even though publish doesn't use it.
+      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -151,81 +155,175 @@ export async function POST(request: Request) {
     );
   }
 
-  // why: every post in the system is now a single designed image — the
-  // fb_multi bundle path was removed on 2026-05-14. Legacy bundle rows
-  // (image_url null but bundle_url populated) error out here; the user
-  // can rebuild as a single-image post from Studio if they want to repost.
-  if (!gp.image_url) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error:
-          "generated_post has no image_url — looks like a legacy FB bundle. Rebuild as a single-image post in Studio before publishing.",
-      } satisfies ErrorResponse,
-      { status: 412 },
-    );
-  }
-  // why: Build the full carousel image array — slide 0 is always the
-  // designed hero (gp.image_url), slides 1..N come from
-  // gp.additional_images (jsonb array of CarouselSlide objects, see
-  // lib/post-builder/canvas-editor/types.ts). Each element is shape
-  // `{ id: string, url: string, source: "listing" | "upload",
-  //    listingPhotoSequence?: number }`, but we only need `url` here.
+  // why: Build publish task list. Branching depends on media_type:
+  //   - 'reel' → use publishReelToIG / publishVideoToFB (Day 6 native video)
+  //   - 'image' (default) → use the image/carousel path (unchanged)
+  // TikTok video posting is NOT yet implemented (publishToTikTok above is
+  // PHOTO-mode only). On Reel rows, the TT branch surfaces a clear "coming
+  // soon" result instead of silently dropping the platform.
   //
-  // Validation is defensive: bad rows (missing url, malformed entry) are
-  // skipped with a console.warn rather than failing the whole publish —
-  // one bad slide should not block a successful post. The total slide
-  // count is capped at IG's limit of 10 (publish.ts publishToIG enforces
-  // the same ceiling, but logging a warning here is friendlier when the
-  // mistake is in the saved row, not the publish flow).
-  const IG_MAX_SLIDES = 10;
-  const validatedAdditionalUrls: string[] = [];
-  const rawAdditional: unknown = gp.additional_images;
-  if (Array.isArray(rawAdditional)) {
-    for (let i = 0; i < rawAdditional.length; i++) {
-      const entry: unknown = rawAdditional[i];
-      if (
-        entry !== null &&
-        typeof entry === "object" &&
-        "url" in entry &&
-        typeof (entry as { url: unknown }).url === "string" &&
-        (entry as { url: string }).url.trim().length > 0
-      ) {
-        validatedAdditionalUrls.push((entry as { url: string }).url);
-      } else {
-        console.warn(
-          `[post] skipping invalid additional_images[${i}] on gp ${gp.id}:`,
-          entry,
-        );
-      }
-    }
-  }
-  const imageUrls: string[] = [gp.image_url, ...validatedAdditionalUrls];
-  if (imageUrls.length > IG_MAX_SLIDES) {
-    console.warn(
-      `[post] gp ${gp.id} has ${imageUrls.length} slides; IG accepts at most ${IG_MAX_SLIDES} — publishToIG will trim. Consider trimming before save.`,
-    );
-  }
-
-  // Fire publish calls in parallel — each platform is independent. The TT
+  // Each platform call is independent; we await all in parallel. The TT
   // call uses its own access token; Meta uses the page token. Calls that
   // weren't requested are skipped before this point via the `needs*` flags.
   const tasks: Promise<PublishResult>[] = [];
-  if (platforms.includes("facebook") && creds) {
-    tasks.push(publishToFBPage({ creds, image_urls: imageUrls, caption: captionBody }));
+
+  if (gp.media_type === "reel") {
+    // ============ Reel branch — video publishing ============
+
+    // why: FB Page videos only require the MP4 URL. No cover required —
+    // FB pulls a poster automatically (and we don't expose a cover picker
+    // for FB videos anyway).
+    if (platforms.includes("facebook") && creds) {
+      if (!gp.video_url) {
+        tasks.push(
+          Promise.resolve({
+            ok: false,
+            platform: "facebook" as const,
+            error: "Reel row has no video_url — render may have failed.",
+          }),
+        );
+      } else {
+        tasks.push(
+          publishVideoToFB({
+            creds,
+            video_url: gp.video_url,
+            caption: captionBody,
+          }),
+        );
+      }
+    }
+
+    // why: IG Reels require both video_url AND cover_url. The cover is
+    // gp.image_url (the rendered cover frame produced by the worker on
+    // Day 2). Without it Meta will pull frame[0] which is usually a
+    // blank / black frame for ours.
+    if (platforms.includes("instagram") && creds) {
+      if (!gp.video_url) {
+        tasks.push(
+          Promise.resolve({
+            ok: false,
+            platform: "instagram" as const,
+            error: "Reel row has no video_url.",
+          }),
+        );
+      } else if (!gp.image_url) {
+        tasks.push(
+          Promise.resolve({
+            ok: false,
+            platform: "instagram" as const,
+            error: "Reel row has no cover image_url.",
+          }),
+        );
+      } else {
+        tasks.push(
+          publishReelToIG({
+            creds,
+            video_url: gp.video_url,
+            cover_url: gp.image_url,
+            caption: captionBody,
+          }),
+        );
+      }
+    }
+
+    // why: TikTok video publishing requires a separate API path (the
+    // existing publishToTikTok handles PHOTO mode only). For Day 6 MVP
+    // we surface a clear "not yet implemented" tagged result; Day 7+
+    // adds publishVideoToTikTok. The TT credential lookup already ran;
+    // if it's null we just skip silently like the other branches.
+    if (platforms.includes("tiktok") && ttCreds) {
+      tasks.push(
+        Promise.resolve({
+          ok: false,
+          platform: "tiktok" as const,
+          error:
+            "TikTok video publishing not yet implemented for Reels — coming soon.",
+        }),
+      );
+    }
+  } else {
+    // ============ Image / carousel branch — UNCHANGED ============
+
+    // why: every image-mode post in the system is now a single designed
+    // image — the fb_multi bundle path was removed on 2026-05-14. Legacy
+    // bundle rows (image_url null but bundle_url populated) error out
+    // here; the user can rebuild as a single-image post from Studio if
+    // they want to repost. This check only applies to image media — the
+    // Reel branch above does its own per-platform image_url validation.
+    if (!gp.image_url) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "generated_post has no image_url — looks like a legacy FB bundle. Rebuild as a single-image post in Studio before publishing.",
+        } satisfies ErrorResponse,
+        { status: 412 },
+      );
+    }
+
+    // why: Build the full carousel image array — slide 0 is always the
+    // designed hero (gp.image_url), slides 1..N come from
+    // gp.additional_images (jsonb array of CarouselSlide objects, see
+    // lib/post-builder/canvas-editor/types.ts). Each element is shape
+    // `{ id: string, url: string, source: "listing" | "upload",
+    //    listingPhotoSequence?: number }`, but we only need `url` here.
+    //
+    // Validation is defensive: bad rows (missing url, malformed entry) are
+    // skipped with a console.warn rather than failing the whole publish —
+    // one bad slide should not block a successful post. The total slide
+    // count is capped at IG's limit of 10 (publish.ts publishToIG enforces
+    // the same ceiling, but logging a warning here is friendlier when the
+    // mistake is in the saved row, not the publish flow).
+    const IG_MAX_SLIDES = 10;
+    const validatedAdditionalUrls: string[] = [];
+    const rawAdditional: unknown = gp.additional_images;
+    if (Array.isArray(rawAdditional)) {
+      for (let i = 0; i < rawAdditional.length; i++) {
+        const entry: unknown = rawAdditional[i];
+        if (
+          entry !== null &&
+          typeof entry === "object" &&
+          "url" in entry &&
+          typeof (entry as { url: unknown }).url === "string" &&
+          (entry as { url: string }).url.trim().length > 0
+        ) {
+          validatedAdditionalUrls.push((entry as { url: string }).url);
+        } else {
+          console.warn(
+            `[post] skipping invalid additional_images[${i}] on gp ${gp.id}:`,
+            entry,
+          );
+        }
+      }
+    }
+    const imageUrls: string[] = [gp.image_url, ...validatedAdditionalUrls];
+    if (imageUrls.length > IG_MAX_SLIDES) {
+      console.warn(
+        `[post] gp ${gp.id} has ${imageUrls.length} slides; IG accepts at most ${IG_MAX_SLIDES} — publishToIG will trim. Consider trimming before save.`,
+      );
+    }
+
+    if (platforms.includes("facebook") && creds) {
+      tasks.push(
+        publishToFBPage({ creds, image_urls: imageUrls, caption: captionBody }),
+      );
+    }
+    if (platforms.includes("instagram") && creds) {
+      tasks.push(
+        publishToIG({ creds, image_urls: imageUrls, caption: captionBody }),
+      );
+    }
+    if (platforms.includes("tiktok") && ttCreds) {
+      tasks.push(
+        publishToTikTok({
+          creds: ttCreds,
+          image_urls: imageUrls,
+          caption: captionBody,
+        }),
+      );
+    }
   }
-  if (platforms.includes("instagram") && creds) {
-    tasks.push(publishToIG({ creds, image_urls: imageUrls, caption: captionBody }));
-  }
-  if (platforms.includes("tiktok") && ttCreds) {
-    tasks.push(
-      publishToTikTok({
-        creds: ttCreds,
-        image_urls: imageUrls,
-        caption: captionBody,
-      }),
-    );
-  }
+
   const results = await Promise.all(tasks);
 
   // Update generated_posts with what succeeded.

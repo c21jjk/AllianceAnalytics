@@ -11,12 +11,14 @@ import type {
   RenderResponse,
   RenderErrorResponse,
   ScheduledFor,
+  SlideMetadata,
 } from "@/lib/post-builder/types";
 import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
 import {
   saveGeneratedPostAction,
   schedulePostAction,
   updateGeneratedPostImageAction,
+  updateGeneratedPostSlideAction,
   upsertGeneratedPostFromStudioAction,
 } from "./actions";
 
@@ -173,6 +175,27 @@ export default function PostBuilderClient({
   const [carouselSlides, setCarouselSlides] = useState<readonly CarouselSlide[]>(
     [],
   );
+  // Phase 5 — per-slide source metadata (Multi-OH posts only).
+  // Parallel array to carouselSlides — index N here matches slide N in the
+  // carousel strip. Populated from initialResume.slide_metadata on a resume
+  // load. Drives the Edit-slide-in-Studio flow: when the user clicks Edit
+  // on a thumbnail, we look up that index here to know the source listing,
+  // variant, format, and prior layer_tree (if any).
+  //
+  // Stays in sync with carouselSlides — both are seeded from initialResume,
+  // and any subsequent save via updateGeneratedPostSlideAction patches BOTH
+  // arrays at the same index.
+  const [slideMetadata, setSlideMetadata] = useState<readonly SlideMetadata[]>(
+    [],
+  );
+  // When set, the next Studio save updates that slide's image + layer_tree
+  // (via updateGeneratedPostSlideAction) instead of the hero (via
+  // upsertGeneratedPostFromStudioAction). Reset to null on every Studio
+  // close so the next "Edit in Studio" click on the hero card lands on
+  // the hero path again.
+  const [editingSlideIndex, setEditingSlideIndex] = useState<number | null>(
+    null,
+  );
   // Render + caption state
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
@@ -223,6 +246,54 @@ export default function PostBuilderClient({
         setCarouselSlides(parsed);
       } else {
         setCarouselSlides([]);
+      }
+      // why: rehydrate the parallel slide_metadata array. Each entry maps
+      // 1:1 to a carousel slide. Narrow defensively — older rows (pre-
+      // 2026-05-16 migration) won't carry this column at all, so we
+      // tolerate null / non-array / sparse shapes and default to empty.
+      if (Array.isArray(initialResume.slide_metadata)) {
+        const parsedMeta: SlideMetadata[] = [];
+        for (const raw of initialResume.slide_metadata) {
+          if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+            const r = raw as Record<string, unknown>;
+            const variant =
+              r.variant === "v1" || r.variant === "v2" || r.variant === "v3"
+                ? r.variant
+                : "v1";
+            const format =
+              r.format === "square_1x1" ||
+              r.format === "portrait_4x5" ||
+              r.format === "story_9x16"
+                ? r.format
+                : initialResume.format;
+            parsedMeta.push({
+              listing_mls:
+                typeof r.listing_mls === "string"
+                  ? r.listing_mls
+                  : initialResume.mls_number,
+              variant,
+              format,
+              hosting_agent_name:
+                typeof r.hosting_agent_name === "string"
+                  ? r.hosting_agent_name
+                  : null,
+              layer_tree: r.layer_tree ?? null,
+            });
+          } else {
+            // why: pad with a sensible default so indexes still line up
+            // with carouselSlides even if one metadata entry is malformed.
+            parsedMeta.push({
+              listing_mls: initialResume.mls_number,
+              variant: "v1",
+              format: initialResume.format,
+              hosting_agent_name: null,
+              layer_tree: null,
+            });
+          }
+        }
+        setSlideMetadata(parsedMeta);
+      } else {
+        setSlideMetadata([]);
       }
       // why: also pre-fill renderResult so the preview pane shows the
       // saved image as soon as Studio closes — the user sees the same
@@ -366,6 +437,111 @@ export default function PostBuilderClient({
 
       setError(null);
 
+      // ===== Per-slide edit branch (Multi-OH) =====
+      // why: when editingSlideIndex is set, the user is editing slide N of
+      // a multi-OH carousel — NOT the hero. Save flow differs:
+      //   1. Same canvas-save upload (one PNG to Storage).
+      //   2. Different action: updateGeneratedPostSlideAction patches
+      //      additional_images[N] + slide_metadata[N].layer_tree, leaving
+      //      the hero (image_url / layer_tree) untouched.
+      //   3. Update LOCAL carouselSlides + slideMetadata so the strip
+      //      reflects the new image immediately (no re-fetch round-trip).
+      //   4. Close the overlay.
+      if (editingSlideIndex !== null) {
+        if (!generatedPostId) {
+          setError(
+            "Can't save slide — no generated_posts row to update. Open the multi-OH post first.",
+          );
+          return;
+        }
+        try {
+          // Upload the edited slide PNG.
+          const form = new FormData();
+          form.append("file", result.file);
+          form.append("template_id", result.schema.id);
+          form.append("mls_number", selectedListing.mls_number);
+          const uploadRes = await fetch("/api/post-builder/canvas-save", {
+            method: "POST",
+            body: form,
+          });
+          const rawText = await uploadRes.text();
+          type SaveResponse =
+            | { ok: true; image_url: string; image_path: string; saved_at: string }
+            | { ok: false; error: string };
+          let parsed: SaveResponse | null = null;
+          try {
+            parsed = JSON.parse(rawText) as SaveResponse;
+          } catch {
+            parsed = null;
+          }
+          if (!parsed) {
+            const snippet =
+              rawText.replace(/\s+/g, " ").trim().slice(0, 140) ||
+              "empty response";
+            setError(
+              `Slide save failed (HTTP ${uploadRes.status}): ${snippet}`,
+            );
+            return;
+          }
+          if (!uploadRes.ok || !parsed.ok) {
+            const errMsg =
+              !parsed.ok ? parsed.error : `HTTP ${uploadRes.status}`;
+            setError(`Slide save failed: ${errMsg}`);
+            return;
+          }
+          const uploadJson = parsed;
+
+          // Patch the slide row server-side.
+          const updRes = await updateGeneratedPostSlideAction({
+            generated_post_id: generatedPostId,
+            slide_index: editingSlideIndex,
+            new_image_url: uploadJson.image_url,
+            new_image_path: uploadJson.image_path,
+            new_layer_tree: result.schema as unknown as Parameters<
+              typeof updateGeneratedPostSlideAction
+            >[0]["new_layer_tree"],
+          });
+          if (!updRes.ok) {
+            setError(`Slide row update failed: ${updRes.error}`);
+            return;
+          }
+
+          // why: patch local state so the carousel strip immediately
+          // reflects the new image (the next render of the strip reads
+          // from this array). Same parallel-index contract as the DB.
+          setCarouselSlides((prev) => {
+            const next = prev.slice();
+            const prior = next[editingSlideIndex];
+            if (!prior) return prev;
+            next[editingSlideIndex] = {
+              ...prior,
+              url: uploadJson.image_url,
+            };
+            return next;
+          });
+          setSlideMetadata((prev) => {
+            const next = prev.slice();
+            const prior = next[editingSlideIndex];
+            if (prior) {
+              next[editingSlideIndex] = {
+                ...prior,
+                layer_tree: result.schema as unknown,
+              };
+            }
+            return next;
+          });
+
+          // Close the overlay — the slide edit is done.
+          setStudioOpen(false);
+          setEditingSlideIndex(null);
+        } catch (e) {
+          setError(
+            `Slide save threw: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        return;
+      }
+
       try {
         // ---- 1. Upload edited image (JPEG q92 from Studio) ----
         const form = new FormData();
@@ -501,11 +677,17 @@ export default function PostBuilderClient({
       variantId,
       format,
       carouselSlides,
+      editingSlideIndex,
     ],
   );
 
   const handleStudioClose = useCallback((): void => {
     setStudioOpen(false);
+    // why: clear the slide-edit context on every close so the next
+    // "Edit in Studio" click on the hero card lands on the hero save
+    // path, not the slide save path. The user explicitly clicks a slide
+    // pencil to re-enter slide-edit mode.
+    setEditingSlideIndex(null);
   }, []);
 
   // why: Phase 4 — when the user swaps templates inside Studio via the
@@ -557,6 +739,113 @@ export default function PostBuilderClient({
       setRenderResult(null);
     },
     [],
+  );
+
+  // ===================================================================
+  // Phase 5 — Multi-OH per-slide edit handler
+  // ===================================================================
+  //
+  // Called when the user clicks the pencil button on a carousel slide
+  // thumbnail. Looks up that slide's source metadata (from slideMetadata,
+  // populated on resume from the row's slide_metadata column), resolves
+  // the template + listing payload, and opens Studio with that slide as
+  // the active context.
+  //
+  // why: per-slide editing is fundamentally a different mode from hero
+  // editing — same overlay, different save target. We stash the index in
+  // `editingSlideIndex` and the save handler branches on it. The studio
+  // overlay itself is the same component instance both ways.
+  const handleSlideEditClick = useCallback(
+    (slideIndex: number): void => {
+      // why: bounds-check defensively — the strip's click handler should
+      // already guarantee a valid index, but Studio is downstream of the
+      // user's last action and the carousel might have been mutated
+      // (remove, reorder) between the strip render and the click.
+      if (slideIndex < 0 || slideIndex >= carouselSlides.length) {
+        setError("Slide no longer exists. Refresh and try again.");
+        return;
+      }
+      const meta = slideMetadata[slideIndex];
+      if (!meta) {
+        setError(
+          "Slide source data missing. This post may pre-date per-slide editing — re-generate to enable.",
+        );
+        return;
+      }
+
+      // ---- Resolve the slide's listing ----
+      // why: the slide's source listing may live in a different post-type
+      // bucket than the parent's current `postType`. The slide_metadata
+      // stores the listing's MLS number; we search every bucket to find
+      // it. The wizard generates multi-OH posts with all properties from
+      // listingsByPostType.open_house, so that bucket is the common case,
+      // but we walk all buckets to be robust.
+      let slideListing: PostBuilderListing | null = null;
+      for (const pt of POST_TYPES) {
+        const candidate = (listingsByPostType[pt.id] ?? []).find(
+          (l) => l.mls_number === meta.listing_mls,
+        );
+        if (candidate) {
+          slideListing = candidate;
+          break;
+        }
+      }
+      if (!slideListing) {
+        setError(
+          `Couldn't find listing ${meta.listing_mls} for this slide. It may have been delisted.`,
+        );
+        return;
+      }
+
+      // ---- Resolve the slide's template ----
+      // why: prior edits win. If the user has previously saved this slide
+      // in Studio, `meta.layer_tree` is the post-hydration schema —
+      // re-use it directly so their edits stick. Otherwise fall through
+      // to the factory template that originally produced the slide
+      // (open_house + variant + format from slide_metadata, NOT from
+      // the parent's currently-selected variant).
+      let template: CanvasTemplateSchema | null = null;
+      if (meta.layer_tree && typeof meta.layer_tree === "object") {
+        template = meta.layer_tree as CanvasTemplateSchema;
+      } else {
+        // why: multi-OH slides are always open_house variants today. If
+        // a future producer creates non-open_house slides, widen this by
+        // adding a `category` field to SlideMetadata and reading it here.
+        template = findCanvasTemplate("open_house", meta.variant, meta.format);
+      }
+      if (!template) {
+        setError(
+          `Couldn't load template for slide ${slideIndex + 1}. The format may have been removed.`,
+        );
+        return;
+      }
+
+      // ---- Build the slide's listing payload ----
+      // why: the per-property card was generated with the wizard's
+      // hosting_agent_name override (when set), NOT the listing's
+      // agent_name. Preserve that override here so re-opening produces
+      // the same card the user originally rendered.
+      const payload = mapListingToPayload(slideListing, {
+        // why: availablePhotos is loaded for the PARENT listing, not the
+        // slide's listing. For correctness we should fetch the slide
+        // listing's photos here — but that introduces async + a loading
+        // state into a previously sync handler. The single hero photo
+        // (from the listing row's `hero_image_url`) is what the V1 OH
+        // template actually binds to anyway, and that's already on the
+        // listing. Leaving photos empty falls through to that hero in
+        // mapListingToPayload, which is the right outcome for the
+        // visual-fidelity priority. If/when the slide template grows
+        // photo_2 / photo_3 bindings, revisit this with an async fetch.
+        photos: [],
+        agentName: meta.hosting_agent_name ?? slideListing.agent_name ?? null,
+        officeName: slideListing.listing_office_name ?? null,
+      });
+
+      setStudioContext({ template, listing: payload });
+      setEditingSlideIndex(slideIndex);
+      setStudioOpen(true);
+    },
+    [carouselSlides, slideMetadata, listingsByPostType],
   );
 
   // The current set of photo URLs to send to the render API. For single-
@@ -697,6 +986,8 @@ export default function PostBuilderClient({
     // previous carousel slides don't apply (often a different listing
     // category, different framing).
     setCarouselSlides([]);
+    setSlideMetadata([]);
+    setEditingSlideIndex(null);
     setGeneratedPostId(null);
   }
 
@@ -724,6 +1015,8 @@ export default function PostBuilderClient({
     // Keeping old carousel slides would publish photos of someone else's
     // house — clear instead.
     setCarouselSlides([]);
+    setSlideMetadata([]);
+    setEditingSlideIndex(null);
     setGeneratedPostId(null);
     setError(null);
   }
@@ -1764,6 +2057,13 @@ export default function PostBuilderClient({
           // overlay's slide-0. Null when the user hasn't saved yet; Preview
           // surfaces a "Save first" placeholder in that case.
           heroImageUrl: renderResult?.image_url ?? null,
+          // why: Multi-OH per-slide edit. Only surface the pencil
+          // affordance on slides where we actually have source metadata
+          // to drive a re-open — otherwise (single-listing carousel
+          // where slides are raw listing photos) clicking pencil would
+          // open Studio with nothing meaningful to edit.
+          onSlideEditClick:
+            slideMetadata.length > 0 ? handleSlideEditClick : undefined,
         }}
       />
     </div>
