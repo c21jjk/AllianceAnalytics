@@ -2,17 +2,20 @@
 #
 # Multi-stage build for the AllianceAnalytics Reel render worker.
 #
-# why bookworm-slim and not alpine: Day 2 adds ffmpeg + Playwright /
-# headless Chromium, both of which ship glibc-based prebuilt binaries
-# and have well-known footguns on Alpine's musl libc. Choosing Debian
-# now saves a refactor next session.
+# Day 2 update (2026-05-16): runtime stage now uses Microsoft's official
+# Playwright image which ships Chromium + every system dep Playwright
+# needs (libnss3, libatk-bridge, libxcomposite, the works). Without it,
+# we'd be hunting `apt-get install` flags for two hours. The build stage
+# stays on node:22-bookworm-slim — it doesn't need Chromium, just tsc.
 #
-# why multi-stage: keeps the runtime image small. The build stage has
-# the TypeScript compiler + dev deps; the runtime stage has only what
-# `node dist/server.js` actually needs.
+# why we kept the multi-stage shape: build artifacts are isolated from
+# the Playwright base image's larger surface area. The final image is
+# ~2.5 GB which is large but Fly.io VMs handle it fine and the alternative
+# (installing Chromium ourselves) is fragile.
 #
-# Image tag pinning: use the exact node:22-bookworm-slim digest in CI
-# when we ship a real release pipeline. Day 1 the floating tag is OK.
+# why bookworm-slim and not alpine on build: glibc lines up cleanly with
+# the Playwright base, and the build deps (typescript/tsx) are 1MB total
+# in either base. Saves a `musl-dev` quirk later.
 
 # ---------- Stage 1: build ----------
 FROM node:22-bookworm-slim AS build
@@ -27,39 +30,47 @@ RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY render-page ./render-page
 RUN npm run build
 
 # ---------- Stage 2: runtime ----------
-FROM node:22-bookworm-slim AS runtime
+# why mcr.microsoft.com/playwright:v1.48.0-jammy: this image ships
+# Chromium + every system dep Playwright requires. Pinning to v1.48.0
+# matches the playwright npm package version in package.json — when we
+# bump the npm dep, bump this tag in lockstep. Mismatched versions cause
+# subtle "browser unexpectedly closed" errors.
+FROM mcr.microsoft.com/playwright:v1.48.0-jammy AS runtime
 WORKDIR /app
 
-# why ENV NODE_ENV=production: Express enables some prod-only fast-paths
-# (view cache etc.) under this flag, and any future dep that branches
-# on it gets the leaner code path.
 ENV NODE_ENV=production
 ENV PORT=8080
+# why PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: the base image already has the
+# browser binaries. Without this, `npm install` would try to re-download
+# them and fail (the base image's NPM cache is read-only).
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+# why PLAYWRIGHT_BROWSERS_PATH: tell Playwright where to find the
+# pre-installed browsers in the base image. /ms-playwright is the
+# standard location for the official image.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Pull in only the compiled output + production node_modules from the
-# build stage. We re-install with --omit=dev to drop tsx/typescript and
-# their transitive deps, shrinking the final image considerably.
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 COPY --from=build /app/dist ./dist
+# why copy the render-page directory into runtime: the frame renderer's
+# Playwright instance loads a static HTML page that has Fabric.js + our
+# frame-rendering bridge. The page is small (~10 KB total) but it's a
+# runtime artifact, not a build output.
+COPY --from=build /app/render-page ./render-page
 
-# why curl in runtime: HEALTHCHECK needs a real HTTP client. wget is
-# present in slim images too but curl is the universal default and is
-# only ~1 MB. Install + clean up apt cache in one layer.
+# curl for HEALTHCHECK. The Playwright base image already has it; this is
+# a no-op when not installing, fast when it is.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8080
 
-# why HEALTHCHECK on a relative URL: the worker only ever binds 8080
-# inside the container; the public hostname is Fly's concern. The
-# 30s/3s/3 retry shape is the Docker default — generous enough to
-# tolerate brief GC pauses, strict enough to catch a real hang.
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
   CMD curl --fail --silent --show-error http://localhost:8080/health || exit 1
 
 CMD ["node", "dist/server.js"]

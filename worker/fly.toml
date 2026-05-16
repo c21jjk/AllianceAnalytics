@@ -37,16 +37,19 @@ primary_region = "iad"
     timeout = "5s"
     path = "/health"
 
-# why shared-cpu-1x + 1024 MB: stub doesn't need it, but Day 2 ffmpeg
-# encode + headless Chromium will, and bumping a VM size mid-week
-# requires re-creating the machine. Start at "small enough to be cheap,
-# big enough we don't trip the wire next session" — Fly bills per-second
-# so a slightly-larger idle machine costs nothing while stopped.
+# why shared-cpu-2x + 2048 MB on Day 2: ffmpeg encoding of a 7s 1080×1920
+# H.264 video uses ~1-2 GB of RAM at peak (motion estimation buffers,
+# AAC audio encoder, our PNG frame queue) and finishes ~2x faster on 2
+# cores. Chromium also benefits from the extra core. The Day-1 sizing of
+# shared-cpu-1x / 1GB worked for the stub but would OOM on real encodes.
+# Cost: ~$0.005/hour while running, $0 while stopped (auto_stop_machines
+# = "stop" above). At Larissa's expected 100 reels/month, total Fly cost
+# lands around $2-4/mo of actual compute.
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "1024mb"
+  size = "shared-cpu-2x"
+  memory = "2048mb"
   cpu_kind = "shared"
-  cpus = 1
+  cpus = 2
   processes = ["app"]
 
 # Env vars set at the platform level (NON-secret). Secrets

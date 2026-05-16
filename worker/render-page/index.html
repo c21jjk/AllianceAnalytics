@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>Alliance Reel Frame Renderer</title>
+
+    <!--
+      why a static HTML page: the worker's render pipeline drives a single
+      headless Chromium tab via Playwright. The page lives entirely on disk
+      (loaded via file://) so there is no network dep on the worker host —
+      only the outbound fetches the page itself initiates (Fabric CDN +
+      photo URLs in the composition). If the network is flaky to the
+      Fabric CDN, an air-gapped self-host of the bundle could be dropped
+      next to this file with no code changes (the script tag just changes).
+    -->
+
+    <!--
+      Preload the two web fonts the canvas-editor templates use so the
+      first call to `document.fonts.ready` resolves quickly. Without
+      preload the first-frame text layer will render in the fallback
+      stack (sans-serif) for one frame, then snap to Inter / Playfair
+      mid-scene — a visible flicker.
+
+      crossorigin="anonymous" matches the @font-face declarations below;
+      omitting it would re-fetch the font as a non-CORS request and the
+      preload would not satisfy the @font-face request.
+    -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+      href="https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2"
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+      href="https://fonts.gstatic.com/s/playfairdisplay/v37/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFvUDQ.woff2"
+    />
+
+    <style>
+      /*
+       * Register Inter (400/600/700) and Playfair Display (400/700)
+       * via @font-face. These are the only two families the canvas-editor
+       * templates reference — see canvas-editor/templates/*-factory.ts.
+       * If a template uses a different family the renderer falls back to
+       * the browser's default sans-serif for that layer (and logs a
+       * warning via the bridge's console.warn).
+       */
+      @font-face {
+        font-family: "Inter";
+        font-style: normal;
+        font-weight: 400;
+        font-display: block;
+        src: url("https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Inter";
+        font-style: normal;
+        font-weight: 600;
+        font-display: block;
+        src: url("https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Inter";
+        font-style: normal;
+        font-weight: 700;
+        font-display: block;
+        src: url("https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Playfair Display";
+        font-style: normal;
+        font-weight: 400;
+        font-display: block;
+        src: url("https://fonts.gstatic.com/s/playfairdisplay/v37/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFvUDQ.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Playfair Display";
+        font-style: normal;
+        font-weight: 700;
+        font-display: block;
+        src: url("https://fonts.gstatic.com/s/playfairdisplay/v37/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFvUDQ.woff2") format("woff2");
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+        overflow: hidden;
+        /* why fixed dims on body: the headless tab launches at the default
+         * viewport (1280×720). We don't care about the viewport for the
+         * actual render — Fabric draws onto an offscreen <canvas> sized
+         * to 1080×1920 — but pinning the body keeps any layout-level
+         * scrollbars from appearing. */
+        width: 1080px;
+        height: 1920px;
+      }
+
+      /* The Fabric canvas lives inside this container. The container is
+       * present in the DOM but hidden offscreen — Fabric needs the canvas
+       * attached to the document to compute font metrics, but we never
+       * SHOW the canvas (we toDataURL it directly). */
+      #render-root {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+
+      canvas {
+        display: block;
+      }
+    </style>
+
+    <!--
+      Fabric.js v6.4.3 from jsDelivr. Pinned tag so a rogue upstream
+      "latest" can't change pixel output between renders. If the CDN is
+      down, swap to unpkg or vendor a copy under render-page/vendor/.
+    -->
+    <script
+      src="https://cdn.jsdelivr.net/npm/fabric@6.4.3/dist/index.min.js"
+      crossorigin="anonymous"
+    ></script>
+  </head>
+  <body>
+    <div id="render-root"></div>
+
+    <!--
+      Plain script (not module) so we can attach window.renderSceneFrame
+      directly without an ES export pipeline. The page is loaded via
+      file:// in the Playwright tab, which restricts module fetching in
+      some Chromium configs — a plain script tag avoids the surface area.
+    -->
+    <script src="./render.js"></script>
+  </body>
+</html>
