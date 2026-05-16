@@ -35,6 +35,7 @@ import ReelPreview from "@/lib/post-builder/canvas-editor/panels/ReelPreview";
 // reaches for less often live below the per-scene controls she reaches for
 // every edit.
 import MusicPicker from "@/lib/post-builder/canvas-editor/panels/MusicPicker";
+import type { ReelResumeRow } from "@/lib/data/created-posts-db";
 
 // ---------------------------------------------------------------------------
 // Local types
@@ -44,6 +45,18 @@ interface Props {
   listings: PostBuilderListing[];
   /** Optional MLS number to pre-select on mount (from `?mls=` deep link). */
   preSelectedMls?: string | null;
+  /**
+   * Optional saved-Reel resume row (from `?gp=<id>`). When present:
+   *   - The listing-picker step is skipped — we auto-select the row's
+   *     `mls_number` if the listing is in `listings`.
+   *   - The composition state is seeded from `composition_json` instead of
+   *     being built from `buildDefaultComposition`.
+   *   - The Generate button label flips to "Re-generate Reel" — re-renders
+   *     create a sibling row, NOT update the existing one, matching the
+   *     carousel + multi-OH pattern.
+   * Null on fresh-start navigations to /post-builder/reel.
+   */
+  initialResume?: ReelResumeRow | null;
 }
 
 /**
@@ -204,6 +217,37 @@ function pickPhotoCycling(
  * through above the algorithm's distribution threshold). Zoom-in/zoom-out/
  * pan-left alternation gives visual rhythm without being chaotic.
  */
+/**
+ * Narrow a `composition_json` JSONB value back into a `VideoComposition`.
+ *
+ * The DB layer types this as `unknown` because Supabase's jsonb column
+ * has no schema. Day 1 of the Reel build wrote the column from a
+ * type-checked VideoComposition source, so any row we INSERTED is
+ * structurally valid; this helper exists for defense-in-depth against
+ * a hand-mutated row or a future schema change.
+ *
+ * Returns null on any of:
+ *   - null / undefined input (fresh-start: no resume)
+ *   - non-object input (wrong jsonb shape)
+ *   - missing or non-array scenes
+ *   - empty scenes
+ *
+ * On null return, the caller falls back to buildDefaultComposition so the
+ * workspace still renders.
+ */
+function resumeCompositionFromJson(
+  raw: unknown,
+): VideoComposition | null {
+  if (!raw || typeof raw !== "object") return null;
+  // why: cast is structurally validated by the checks below — the runtime
+  // shape is what matters. The TS narrow won't catch all of it (jsonb is
+  // permissive) so we trust + verify.
+  const comp = raw as Partial<VideoComposition>;
+  if (!Array.isArray(comp.scenes) || comp.scenes.length === 0) return null;
+  if (typeof comp.totalDurationMs !== "number") return null;
+  return comp as VideoComposition;
+}
+
 function buildDefaultComposition(
   listing: PostBuilderListing,
   photos: AvailablePhotos,
@@ -334,11 +378,24 @@ function isPhotosApiResponse(value: unknown): value is PhotosApiResponse {
  * preview area. The actual video rendering pipeline is owned by the worker
  * (Day 6 wires the POST to it).
  */
-export default function ReelStudioClient({ listings, preSelectedMls }: Props) {
+export default function ReelStudioClient({
+  listings,
+  preSelectedMls,
+  initialResume,
+}: Props) {
   // ---- selection state -------------------------------------------------
+  // why: when resuming a saved Reel, auto-select its listing on mount. The
+  // listing-picker step is skipped entirely; the workspace renders directly.
   const [selectedListingMls, setSelectedListingMls] = useState<string | null>(
-    null,
+    initialResume?.mls_number ?? null,
   );
+
+  // why: track whether the user is editing a resumed Reel so the Generate
+  // button label flips to "Re-generate Reel" and downstream messaging is
+  // honest. The state is set once on mount from `initialResume` — flipping
+  // back to a fresh-start state requires a route change, not a state flip,
+  // because the listing-picker step relies on `selectedListingMls === null`.
+  const isResume = initialResume !== null && initialResume !== undefined;
 
   // ---- composition state ----------------------------------------------
   const [composition, setComposition] = useState<VideoComposition | null>(null);
@@ -425,15 +482,30 @@ export default function ReelStudioClient({ listings, preSelectedMls }: Props) {
       return;
     }
 
-    // Seed an immediate-render composition using only the hero photo. When
-    // the fetch completes we rebuild with the full photo set so the default
-    // 5-scene composition gets distinct photos in scenes 2/3/4.
-    const initialComp = buildDefaultComposition(
-      selectedListing,
-      selectedListing.hero_image_url ? [selectedListing.hero_image_url] : [],
-    );
-    setComposition(initialComp);
-    setSelectedSceneId(initialComp.scenes[0]?.id ?? null);
+    // why: when resuming a saved Reel, seed the composition from the row's
+    // composition_json instead of rebuilding the default. Defensive narrow
+    // because the column is typed `unknown` at the DB boundary — we accept
+    // any object with a scenes array (the worker validated structurally on
+    // generation, so this row was once-valid; structural drift is unlikely
+    // but possible if the user manually edited the DB).
+    const resumedComp = resumeCompositionFromJson(initialResume?.composition_json);
+    if (resumedComp) {
+      setComposition(resumedComp);
+      setSelectedSceneId(resumedComp.scenes[0]?.id ?? null);
+      // why: photos fetch still proceeds below so the picker / preview have
+      // the listing's gallery available for ADDING new scenes mid-edit. The
+      // existing scenes' photoUrls are baked into the saved composition.
+    } else {
+      // Seed an immediate-render composition using only the hero photo. When
+      // the fetch completes we rebuild with the full photo set so the default
+      // 5-scene composition gets distinct photos in scenes 2/3/4.
+      const initialComp = buildDefaultComposition(
+        selectedListing,
+        selectedListing.hero_image_url ? [selectedListing.hero_image_url] : [],
+      );
+      setComposition(initialComp);
+      setSelectedSceneId(initialComp.scenes[0]?.id ?? null);
+    }
 
     let cancelled = false;
     setPhotosState({ photos: [], isLoading: true, error: null });
@@ -467,7 +539,14 @@ export default function ReelStudioClient({ listings, preSelectedMls }: Props) {
         // 2/3/4 use photos[0..2] instead of all sharing the hero. We only
         // do this when photos.length > 0 — otherwise the hero-only seed is
         // already correct.
-        if (urls.length > 0) {
+        //
+        // Skip entirely on a resume — the saved composition's scenes
+        // already carry their photoUrls baked in, and blowing them away
+        // with the default 5-scene template would discard the user's
+        // prior edits (motion presets, durations, transitions, scene
+        // count). Day 8+ may add an explicit "Reset to defaults" button
+        // for the resume case.
+        if (urls.length > 0 && !resumedComp) {
           const refreshed = buildDefaultComposition(selectedListing, urls);
           setComposition(refreshed);
           setSelectedSceneId(refreshed.scenes[0]?.id ?? null);
@@ -924,14 +1003,22 @@ export default function ReelStudioClient({ listings, preSelectedMls }: Props) {
             generateState.phase === "polling" ||
             generateState.phase === "persisting"
           }
-          aria-label="Generate Reel from current composition"
+          aria-label={
+            isResume
+              ? "Re-generate Reel from current composition (saves as a new sibling row)"
+              : "Generate Reel from current composition"
+          }
           className="inline-flex items-center rounded-md bg-gold-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-gold-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {generateState.phase === "submitting" ||
           generateState.phase === "polling" ||
           generateState.phase === "persisting"
-            ? "Generating..."
-            : "Generate Reel"}
+            ? isResume
+              ? "Re-generating..."
+              : "Generating..."
+            : isResume
+              ? "Re-generate Reel"
+              : "Generate Reel"}
         </button>
       </header>
 

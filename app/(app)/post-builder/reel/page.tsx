@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
+import { fetchReelResume } from "@/lib/data/created-posts-db";
 import PageHeader from "@/components/PageHeader";
 import ReelStudioClient from "./ReelStudioClient";
 
@@ -25,6 +26,14 @@ export const dynamic = "force-dynamic";
 interface ReelPageSearchParams {
   /** Optional pre-selected listing MLS number (deep-link from a listing card). */
   mls?: string;
+  /**
+   * Optional saved-Reel id. When present, the page loads the row's
+   * composition_json from `generated_posts` and hands it to ReelStudioClient
+   * via `initialResume` — same resume pattern the image canvas-editor uses
+   * via `?gp=` on /post-builder. Routes here from Created Posts strip /
+   * /saved-posts when the row's media_type === "reel".
+   */
+  gp?: string;
 }
 
 export default async function ReelStudioPage({
@@ -33,13 +42,26 @@ export default async function ReelStudioPage({
   // why: Next.js 15 made searchParams a Promise. Multi-OH uses the same shape.
   searchParams?: Promise<ReelPageSearchParams>;
 }) {
-  await requireUser();
+  const profile = await requireUser();
 
   const params = (await searchParams) ?? {};
   const preSelectedMls =
     typeof params.mls === "string" && params.mls.trim().length > 0
       ? params.mls.trim()
       : null;
+  const gpId =
+    typeof params.gp === "string" && params.gp.trim().length > 0
+      ? params.gp.trim()
+      : null;
+
+  // why: when `?gp=<id>` is present, fetch the Reel row server-side so the
+  // client lands on a fully-hydrated workspace. Returns null when the row
+  // doesn't exist OR belongs to another user OR is an image post (the
+  // fetcher gates on media_type === "reel"). In any of those cases the
+  // workspace shows the fresh-start listing picker as if `?gp=` weren't set.
+  const initialResume = gpId
+    ? await fetchReelResume(gpId, profile.id)
+    : null;
 
   // why: same fetcher Post Builder uses for active inventory. Returns
   // status='active' listings with a hero photo — the minimum a Reel needs.
@@ -51,9 +73,13 @@ export default async function ReelStudioPage({
         eyebrow="Native 7-second Reel composer"
         title="Reel Studio"
         description="Compose a vertical 9:16 Reel from this listing's hero design plus its photos. Pick a listing, tune motion + transitions, then ship to IG / FB Reels."
-        phaseTag="Phase 6 · Day 3"
+        phaseTag="Phase 6 · Day 7"
       />
-      <ReelStudioClient listings={listings} preSelectedMls={preSelectedMls} />
+      <ReelStudioClient
+        listings={listings}
+        preSelectedMls={preSelectedMls}
+        initialResume={initialResume}
+      />
     </div>
   );
 }

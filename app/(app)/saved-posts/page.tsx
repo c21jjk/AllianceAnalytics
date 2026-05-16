@@ -34,6 +34,8 @@ interface SearchParamsShape {
   postType?: string | string[];
   status?: string | string[];
   sourceMls?: string | string[];
+  /** "image" or "reel" — added 2026-05-16 to filter Reels independently. */
+  mediaType?: string | string[];
   since?: string | string[];
   page?: string | string[];
 }
@@ -90,11 +92,20 @@ export default async function SavedPostsPage({ searchParams }: PageProps) {
   const pageRaw = Number.parseInt(asString(sp.page) ?? "0", 10);
   const page = Number.isFinite(pageRaw) && pageRaw >= 0 ? pageRaw : 0;
 
+  // why: validate the mediaType param against the known union — random
+  // strings in the URL shouldn't slip through to a Supabase eq() call.
+  const mediaTypeRaw = asString(sp.mediaType);
+  const mediaType: "image" | "reel" | undefined =
+    mediaTypeRaw === "image" || mediaTypeRaw === "reel"
+      ? mediaTypeRaw
+      : undefined;
+
   const query: CreatedPostsLibraryQuery = {
     q: asString(sp.q),
     postTypes: postTypes.length > 0 ? postTypes : undefined,
     statuses: statuses.length > 0 ? statuses : undefined,
     sourceMls: sourceMls.length > 0 ? sourceMls : undefined,
+    mediaType,
     updatedSince: asString(sp.since),
     page,
     pageSize: 24,

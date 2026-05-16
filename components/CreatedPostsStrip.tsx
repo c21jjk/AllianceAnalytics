@@ -44,6 +44,17 @@ const POST_TYPE_ORDER: PostType[] = [
   "just_sold",
 ];
 
+/**
+ * Format a Reel duration (ms) as "M:SS" — e.g., 7000 → "0:07". The cap is
+ * 90s (IG Reels limit) so we don't need to worry about minutes ≥ 2 digits.
+ */
+function formatReelDuration(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 function formatRelative(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
@@ -175,10 +186,18 @@ function CreatedPostThumb({ post, pending, onDelete }: CreatedPostThumbProps) {
   // why: card pinned to a 4:5 portrait box because that's the most common
   // social format and the visual variance across square/portrait/story is
   // small enough at thumbnail size that one container works for all three.
+  // why: Reels route to /post-builder/reel?gp= so Larissa lands in Reel
+  // Studio (timeline + motion + music) instead of the image canvas-editor.
+  // Image posts (single + carousel) continue to the standard /post-builder
+  // resume path which knows how to hydrate layer_tree.
+  const editHref =
+    post.media_type === "reel"
+      ? `/post-builder/reel?gp=${post.id}`
+      : `/post-builder?gp=${post.id}`;
   return (
     <div className="relative shrink-0 w-[160px]">
       <Link
-        href={`/post-builder?gp=${post.id}`}
+        href={editHref}
         className="block rounded-lg overflow-hidden border border-neutral-200 bg-white shadow-card hover:border-gold-300 hover:shadow-card-hover transition"
       >
         <div className="aspect-[4/5] bg-neutral-100 relative">
@@ -207,6 +226,34 @@ function CreatedPostThumb({ post, pending, onDelete }: CreatedPostThumbProps) {
           >
             {post.is_posted ? "Posted" : post.status === "scheduled" ? "Scheduled" : "Draft"}
           </span>
+          {/* Reel marker — gold play-button overlaid top-center so the
+              thumbnail reads as a VIDEO at a glance. Bottom-right pill
+              shows the rendered duration ("0:07") so Larissa knows
+              what's queued without opening it. Both render only when
+              the row is actually a Reel — image posts stay clean. */}
+          {post.media_type === "reel" ? (
+            <>
+              <span
+                className="absolute top-1.5 right-1.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-gold-500 text-neutral-900 shadow-md"
+                aria-label="Reel"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  aria-hidden="true"
+                >
+                  <path d="M3 2.5l6 3.5-6 3.5z" fill="currentColor" />
+                </svg>
+              </span>
+              {typeof post.reel_duration_ms === "number" &&
+              post.reel_duration_ms > 0 ? (
+                <span className="absolute bottom-1.5 right-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+                  {formatReelDuration(post.reel_duration_ms)}
+                </span>
+              ) : null}
+            </>
+          ) : null}
         </div>
         <div className="px-2 py-2">
           <div className="text-[11px] font-mono text-neutral-500">

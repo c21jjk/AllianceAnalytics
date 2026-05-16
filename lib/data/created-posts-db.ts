@@ -43,6 +43,18 @@ export interface CreatedPostRow {
    * drafts apart from live posts at a glance.
    */
   is_posted: boolean;
+  /**
+   * "image" (stills + carousels, image_url is the rendered design) or
+   * "reel" (video, video_url has the MP4 + image_url is the cover frame).
+   * UI uses this to overlay a play-button glyph on Reel thumbnails and
+   * to route the re-edit click to /post-builder/reel?gp=<id> instead of
+   * the standard Studio.
+   */
+  media_type: "image" | "reel";
+  /** Video URL for Reels; null for images. */
+  video_url: string | null;
+  /** Cached duration in ms — used to show "0:07" pill on Reel thumbnails. */
+  reel_duration_ms: number | null;
 }
 
 /**
@@ -60,7 +72,7 @@ export async function fetchCreatedPostsByMls(
   const { data, error } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms",
     )
     .eq("mls_number", mlsNumber)
     .order("updated_at", { ascending: false, nullsFirst: false })
@@ -87,6 +99,11 @@ export async function fetchCreatedPostsByMls(
     updated_at: row.updated_at ?? row.created_at,
     created_at: row.created_at,
     is_posted: Boolean(row.posted_at),
+    media_type: (row.media_type === "reel" ? "reel" : "image") as
+      | "image"
+      | "reel",
+    video_url: row.video_url,
+    reel_duration_ms: row.reel_duration_ms,
   }));
 }
 
@@ -178,6 +195,73 @@ export async function fetchCreatedPostResume(
 }
 
 /**
+ * Reel-specific resume row. Used by /post-builder/reel?gp=<id> to rehydrate
+ * Reel Studio with the saved composition. Separate from CreatedPostResumeRow
+ * because Reels persist composition_json + video_url instead of layer_tree,
+ * and the Reel Studio has a different state shape than the canvas-editor.
+ */
+export interface ReelResumeRow {
+  id: string;
+  mls_number: string;
+  property_id: string | null;
+  source_mls: SourceMls;
+  /**
+   * The full VideoComposition that produced the video, embedded by value.
+   * Typed `unknown` here — Reel Studio narrows to VideoComposition on the
+   * client. Empty/null for rows where the column wasn't populated.
+   */
+  composition_json: unknown | null;
+  /** Public Storage URL of the rendered MP4. */
+  video_url: string | null;
+  /** Internal Storage path of the MP4 (for future cleanup on delete). */
+  video_path: string | null;
+  /** Reel duration in ms — cached from the worker. */
+  reel_duration_ms: number | null;
+  /** Cover image URL — typically the listing's hero photo at render time. */
+  cover_image_url: string | null;
+  /** Optional caption draft saved with the Reel. */
+  caption: string | null;
+}
+
+export async function fetchReelResume(
+  id: string,
+  userId: string,
+): Promise<ReelResumeRow | null> {
+  if (!id || !userId) return null;
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("generated_posts")
+    .select(
+      "id, mls_number, property_id, source_mls, composition_json, video_url, video_path, reel_duration_ms, image_url, caption, media_type, created_by",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    console.error("[fetchReelResume] failed:", error.message);
+    return null;
+  }
+  if (!data) return null;
+  if (data.created_by !== userId) return null;
+  // why: only return as a Reel when the row's media_type confirms it.
+  // Otherwise the caller might try to hydrate an image post as a Reel and
+  // crash when composition_json is null.
+  if (data.media_type !== "reel") return null;
+
+  return {
+    id: data.id,
+    mls_number: data.mls_number,
+    property_id: data.property_id,
+    source_mls: data.source_mls as SourceMls,
+    composition_json: data.composition_json,
+    video_url: data.video_url,
+    video_path: data.video_path,
+    reel_duration_ms: data.reel_duration_ms,
+    cover_image_url: data.image_url,
+    caption: data.caption,
+  };
+}
+
+/**
  * Filter input for the global library page. All fields optional — the page
  * sends only the fields the user has actively picked, so omitting a filter
  * means "no constraint on this dimension". Pagination is offset/limit; not
@@ -193,6 +277,12 @@ export interface CreatedPostsLibraryQuery {
   statuses?: string[];
   /** Filter by source MLS (cmc / sjsr / bright / manual). */
   sourceMls?: SourceMls[];
+  /**
+   * Filter by media_type ("image" — stills + carousels — or "reel"). When
+   * omitted, both types are returned. Powers the "Reels" filter chip on
+   * /saved-posts.
+   */
+  mediaType?: "image" | "reel";
   /** ISO date string (inclusive lower bound on updated_at). */
   updatedSince?: string;
   /** Page size; default 24 (3 × 8 grid). */
@@ -231,7 +321,7 @@ export async function fetchCreatedPostsLibrary(
   let rowsQ = supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms",
     );
   let countQ = supabase
     .from("generated_posts")
@@ -257,6 +347,10 @@ export async function fetchCreatedPostsLibrary(
       rowsQ = rowsQ.in("source_mls", sm);
       countQ = countQ.in("source_mls", sm);
     }
+  }
+  if (query.mediaType) {
+    rowsQ = rowsQ.eq("media_type", query.mediaType);
+    countQ = countQ.eq("media_type", query.mediaType);
   }
   if (query.updatedSince) {
     rowsQ = rowsQ.gte("updated_at", query.updatedSince);
@@ -298,6 +392,11 @@ export async function fetchCreatedPostsLibrary(
     updated_at: row.updated_at ?? row.created_at,
     created_at: row.created_at,
     is_posted: Boolean(row.posted_at),
+    media_type: (row.media_type === "reel" ? "reel" : "image") as
+      | "image"
+      | "reel",
+    video_url: row.video_url,
+    reel_duration_ms: row.reel_duration_ms,
   }));
 
   return {

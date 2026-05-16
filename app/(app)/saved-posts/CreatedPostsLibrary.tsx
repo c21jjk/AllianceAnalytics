@@ -78,6 +78,7 @@ export default function CreatedPostsLibrary({
   const activeTypes = new Set(initialQuery.postTypes ?? []);
   const activeStatuses = new Set(initialQuery.statuses ?? []);
   const activeSources = new Set(initialQuery.sourceMls ?? []);
+  const activeMediaType = initialQuery.mediaType ?? null;
 
   function pushParams(mutate: (p: URLSearchParams) => void) {
     const params = new URLSearchParams(searchParams.toString());
@@ -264,6 +265,55 @@ export default function CreatedPostsLibrary({
             </button>
           ))}
         </FilterRow>
+
+        {/* Media-type filter — singular chip group (not toggle-multi like
+            post-type) because a row IS either image OR reel, never both.
+            Single-toggle UX: clicking an active chip clears it. */}
+        <FilterRow label="Type">
+          <button
+            type="button"
+            onClick={() =>
+              pushParams((p) => {
+                if (activeMediaType === "image") p.delete("mediaType");
+                else p.set("mediaType", "image");
+              })
+            }
+            className={[
+              filterChipBase,
+              activeMediaType === "image"
+                ? "bg-gold-100 ring-gold-400 text-gold-900"
+                : "bg-white ring-neutral-200 text-neutral-700 hover:bg-neutral-50",
+            ].join(" ")}
+          >
+            Images + carousels
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              pushParams((p) => {
+                if (activeMediaType === "reel") p.delete("mediaType");
+                else p.set("mediaType", "reel");
+              })
+            }
+            className={[
+              filterChipBase,
+              activeMediaType === "reel"
+                ? "bg-gold-100 ring-gold-400 text-gold-900"
+                : "bg-white ring-neutral-200 text-neutral-700 hover:bg-neutral-50",
+            ].join(" ")}
+          >
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 12 12"
+              aria-hidden="true"
+              className="mr-1.5"
+            >
+              <path d="M3 2.5l6 3.5-6 3.5z" fill="currentColor" />
+            </svg>
+            Reels
+          </button>
+        </FilterRow>
       </div>
 
       {/* Bulk action toolbar — appears when selection is non-empty */}
@@ -389,6 +439,7 @@ function initialQueryHasAnyFilter(q: CreatedPostsLibraryQuery): boolean {
       (q.postTypes && q.postTypes.length > 0) ||
       (q.statuses && q.statuses.length > 0) ||
       (q.sourceMls && q.sourceMls.length > 0) ||
+      q.mediaType ||
       q.updatedSince,
   );
 }
@@ -442,6 +493,13 @@ function LibraryCard({
 }: LibraryCardProps) {
   const [confirming, setConfirming] = useState(false);
   const relative = useMemo(() => relativeTime(post.updated_at), [post.updated_at]);
+  // why: Reels resume into Reel Studio (timeline + motion + music). Images
+  // resume into the canvas-editor via /post-builder?gp=. Same media_type
+  // routing pattern as the per-listing strip.
+  const editHref =
+    post.media_type === "reel"
+      ? `/post-builder/reel?gp=${post.id}`
+      : `/post-builder?gp=${post.id}`;
   return (
     <div
       className={[
@@ -451,7 +509,7 @@ function LibraryCard({
           : "border-neutral-200 hover:border-gold-300 hover:shadow-card-hover",
       ].join(" ")}
     >
-      <Link href={`/post-builder?gp=${post.id}`} className="block">
+      <Link href={editHref} className="block">
         <div className="aspect-[4/5] bg-neutral-100 relative">
           {post.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -466,6 +524,31 @@ function LibraryCard({
             </div>
           )}
           <StatusBadge post={post} />
+          {/* Reel marker — same shape as the per-listing strip's overlay
+              so the visual language reads as one app across surfaces. */}
+          {post.media_type === "reel" ? (
+            <>
+              <span
+                className="absolute top-1.5 right-9 inline-flex h-6 w-6 items-center justify-center rounded-full bg-gold-500 text-neutral-900 shadow-md"
+                aria-label="Reel"
+              >
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 12 12"
+                  aria-hidden="true"
+                >
+                  <path d="M3 2.5l6 3.5-6 3.5z" fill="currentColor" />
+                </svg>
+              </span>
+              {typeof post.reel_duration_ms === "number" &&
+              post.reel_duration_ms > 0 ? (
+                <span className="absolute bottom-1.5 right-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+                  {formatReelDurationMS(post.reel_duration_ms)}
+                </span>
+              ) : null}
+            </>
+          ) : null}
         </div>
         <div className="px-2.5 py-2 space-y-1">
           <div className="text-[11px] font-mono text-neutral-700 truncate">
@@ -576,6 +659,17 @@ function fmtFormat(f: CreatedPostRow["format"]): string {
   if (f === "square_1x1") return "1:1";
   if (f === "portrait_4x5") return "4:5";
   return "9:16";
+}
+
+/**
+ * Format a Reel duration (ms) as "M:SS" — e.g., 7000 → "0:07". Capped
+ * by IG's 90s Reel limit; we never see values where minutes ≥ 2 digits.
+ */
+function formatReelDurationMS(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function relativeTime(iso: string): string {
