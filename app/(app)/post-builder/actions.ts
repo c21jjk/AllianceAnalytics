@@ -182,6 +182,17 @@ export interface UpsertStudioPostInput {
    * of re-running the listing → template mapper.
    */
   layer_tree: Json | null;
+  /**
+   * Carousel slides 1..N (slide 0 is the hero image_url itself). Null or
+   * empty array = single-image post. Persisted to generated_posts.additional_images
+   * so the publish route can build the full image_urls array at post time.
+   *
+   * Optional in this interface because not every existing call site has
+   * been updated to pass it yet — the action body coerces null/undefined
+   * to an empty array, matching the DB column's NOT NULL DEFAULT '[]'.
+   * Tighten to `Json | null` (required) once every caller passes it.
+   */
+  additional_images?: Json | null;
 }
 
 export interface UpsertStudioPostOk {
@@ -260,6 +271,10 @@ export async function upsertGeneratedPostFromStudioAction(
         variant: input.variant,
         format: input.format,
         layer_tree: input.layer_tree ?? null,
+        // why: default to `[]` (not null) so the column matches its NOT NULL
+        // constraint and downstream readers (publish route, resume) never
+        // have to null-branch — empty array always means "single-image post".
+        additional_images: input.additional_images ?? [],
         updated_at: nowIso,
       })
       .eq("id", input.id)
@@ -325,6 +340,10 @@ export async function upsertGeneratedPostFromStudioAction(
       hashtags: null,
       mls_hashtag: null,
       layer_tree: input.layer_tree ?? null,
+      // why: same default-to-`[]` rule as the UPDATE path — the column is
+      // NOT NULL, and a fresh draft starts as a single-image post until the
+      // user adds carousel slides in Studio.
+      additional_images: input.additional_images ?? [],
       // status='draft' so the user knows it hasn't been posted yet. The
       // existing Post Now flow can flip this to 'posted' or 'scheduled'.
       status: "draft",

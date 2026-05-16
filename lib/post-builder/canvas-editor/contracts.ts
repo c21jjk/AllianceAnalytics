@@ -25,9 +25,132 @@ import type { Database } from "@/lib/supabase/types";
 import type {
   CanvasLayer,
   CanvasTemplateSchema,
+  CarouselSlide,
   MLSListingPayload,
   PostFormat,
 } from "./types";
+
+// ===========================================================================
+// Phase 5 — Carousel (multi-image post) UI surfaces
+// ===========================================================================
+
+/**
+ * The strip rendered under the hero canvas in Studio. Shows current slides
+ * as thumbnails in left-to-right order, with add/remove/reorder controls.
+ * Slide 0 is the hero (the canvas itself, not represented here); slides
+ * 1..N are managed by this component. Hides itself on Story 9:16 format
+ * unless `enabledOnStory` is set.
+ *
+ * Visual shape:
+ *   ╔══════════════════════════════════════════════════════════════════╗
+ *   ║  Carousel · 3 slides · max 10 on IG          [▶ Preview] [+ Add] ║
+ *   ║  ┌────┐  ┌────┐  ┌────┐  ┌────┐                                   ║
+ *   ║  │ 1  │  │ 2  │  │ 3  │  │ +  │                                   ║
+ *   ║  └────┘  └────┘  └────┘  └────┘                                   ║
+ *   ╚══════════════════════════════════════════════════════════════════╝
+ *
+ * Interactions:
+ *   • Hover a thumbnail → reveal an X in the upper-right (remove).
+ *   • Drag a thumbnail → reorder (HTML5 drag/drop with visual gap indicator).
+ *   • Click "+ Add" tile → fires `onAddSlideClick` (parent opens picker).
+ *   • Click "▶ Preview" → fires `onPreviewClick` (parent opens preview).
+ */
+export interface CarouselStripProps {
+  /** Slides in display order. */
+  slides: readonly CarouselSlide[];
+  /** Hero's aspect ratio — drives thumbnail proportions so the strip
+   *  matches the post's visual identity at a glance. */
+  heroFormat: PostFormat;
+  /** Called with the new ordered array after any add/remove/reorder. */
+  onSlidesChanged: (slides: readonly CarouselSlide[]) => void;
+  /** Fired when the user clicks "+ Add slide" — parent opens the picker. */
+  onAddSlideClick: () => void;
+  /**
+   * Fired when the user clicks "▶ Preview" — parent opens the full-screen
+   * preview overlay. The button is disabled when slides.length === 0.
+   */
+  onPreviewClick: () => void;
+  /**
+   * Hard cap on slide count (for UI disable + warning copy). Default 10
+   * (IG carousel max). Caller can override (e.g., 9 to keep one slot
+   * reserved for the hero in mental accounting, or 35 for TikTok-only).
+   */
+  maxSlides?: number;
+}
+
+/**
+ * Modal picker the user opens to ADD slides. Shows the listing's photo
+ * gallery as a multi-select grid with order labels (1, 2, 3 …) on selected
+ * tiles. Photos already in the carousel are visually marked "Added" and
+ * not selectable. Confirm button is labeled with the count ("Add 3 slides").
+ *
+ * Visual shape:
+ *   ┌────────────────────────────────────────────────────────────┐
+ *   │  Add slides from listing photos                       [X]  │
+ *   │  Choose up to 7 more (3 of 10 already added)               │
+ *   │  ─────────────────────────────────────────────────────────  │
+ *   │  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐           │
+ *   │  │ ✓ 1 │ │     │ │ ✓ 2 │ │ Added│ │     │ │     │  …       │
+ *   │  └─────┘ └─────┘ └─────┘ └─────┘ └─────┘ └─────┘           │
+ *   │                                                             │
+ *   │                          [Cancel]  [Add 2 slides ▸]         │
+ *   └────────────────────────────────────────────────────────────┘
+ */
+export interface CarouselSlidePickerProps {
+  /** Whether the picker is open. Parent controls visibility. */
+  open: boolean;
+  /** Listing photos available to add. Source of truth = PostBuilderClient. */
+  photos: readonly { url: string; sequence: number }[];
+  /**
+   * Slides already in the carousel. Used to mark their entries "Added"
+   * and gray them out (prevents duplicate slides — which would publish
+   * fine but is almost certainly user error).
+   */
+  existingSlides: readonly CarouselSlide[];
+  /**
+   * Total cap on slide count across hero + existing + new. Used to
+   * disable selection of additional photos once the remaining budget
+   * (max - existing) is hit.
+   */
+  maxSlides: number;
+  /** Called with the new slides to ADD (parent appends to existing). */
+  onAdd: (newSlides: readonly CarouselSlide[]) => void;
+  /** Called when the user dismisses the picker without confirming. */
+  onCancel: () => void;
+}
+
+/**
+ * Full-screen preview overlay that lets the user swipe through the
+ * carousel exactly as the audience would on IG. Slide 0 is the hero (the
+ * already-rendered design preview); slides 1..N are the listing photos.
+ *
+ * Visual shape:
+ *   ╔══════════════════════════════════════════════════════════════════╗
+ *   ║                                                              [X] ║
+ *   ║                      ┌─────────────────┐                         ║
+ *   ║              [◀]     │                 │     [▶]                 ║
+ *   ║                      │   slide image   │                         ║
+ *   ║                      │                 │                         ║
+ *   ║                      └─────────────────┘                         ║
+ *   ║                          • • ◯ • •  (3 of 5)                    ║
+ *   ╚══════════════════════════════════════════════════════════════════╝
+ */
+export interface CarouselPreviewProps {
+  /** Whether the overlay is open. Parent controls visibility. */
+  open: boolean;
+  /**
+   * URL of the hero (slide 0) — the rendered design out of Studio. May be
+   * null if the user hasn't saved a render yet; the preview falls back to
+   * a "Save your design first to preview the full carousel" placeholder.
+   */
+  heroUrl: string | null;
+  /** Slides 1..N. */
+  slides: readonly CarouselSlide[];
+  /** Hero aspect ratio — drives the preview frame's proportions. */
+  heroFormat: PostFormat;
+  /** Called when the user closes via ESC, X, or backdrop click. */
+  onClose: () => void;
+}
 
 // ===========================================================================
 // Phase 4 — Templates panel (in-editor template switcher)

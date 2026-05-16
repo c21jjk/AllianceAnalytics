@@ -61,6 +61,12 @@ export interface CanvasEditorOverlayProps {
    * update to the current row.
    */
   onResize?: CanvasEditorProps["onResize"];
+  /**
+   * Forwarded to <CanvasEditor carousel>. When present, the editor renders
+   * the carousel strip + picker + preview surfaces for managing supporting
+   * photos on IG/FB carousel posts.
+   */
+  carousel?: CanvasEditorProps["carousel"];
 }
 
 export default function CanvasEditorOverlay(
@@ -180,6 +186,7 @@ export default function CanvasEditorOverlay(
           isSaving={props.isSaving}
           onTemplateSwitched={props.onTemplateSwitched}
           onResize={props.onResize}
+          carousel={props.carousel}
         />
       </div>
     </div>

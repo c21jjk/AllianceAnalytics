@@ -481,6 +481,90 @@ export interface MLSListingPayload {
 export type { PostBuilderListing };
 
 // ---------------------------------------------------------------------------
+// Carousel slides — Phase 5 multi-image post support
+// ---------------------------------------------------------------------------
+
+/**
+ * A single supporting photo in an Instagram / Facebook / TikTok carousel.
+ *
+ * The hero image (the designed graphic out of Studio) is slide 0. These are
+ * slides 1..N — typically raw listing photos that swipe after the hero. The
+ * publish layer already supports up to 10 slides on IG, no cap on FB,
+ * up to 35 on TikTok; see `lib/post-builder/publish.ts`.
+ *
+ * Why not store these in the CanvasTemplateSchema:
+ *   CarouselSlides are post-level metadata, not design metadata. They don't
+ *   render onto the hero canvas; they're parallel photos. Keeping them
+ *   separate means re-opening Studio still works on older single-image
+ *   posts (where `slides: []`), and template-author mode (no listing yet)
+ *   can ignore them entirely.
+ */
+export interface CarouselSlide {
+  /**
+   * Stable client-side id for React keys + drag-reorder operations.
+   * Generate with `crypto.randomUUID()` at creation; persists with the row.
+   */
+  id: string;
+  /** Public URL of the photo — listing photo URL or future user-uploaded URL. */
+  url: string;
+  /**
+   * Where the photo came from. Used for analytics ("how often does Larissa
+   * add raw listing photos vs. branded extras?") and future swap-source
+   * affordances. Today only "listing" is wired.
+   */
+  source: "listing" | "upload";
+  /**
+   * When `source === "listing"`, the original photo's sequence number from
+   * the listing's photo array. Lets the UI surface "Photo 7 from listing"
+   * labels and detect duplicates when adding from the picker.
+   */
+  listingPhotoSequence?: number;
+}
+
+/**
+ * Carousel-management surface passed into the editor. Optional — when
+ * absent, the editor renders no carousel UI (template-author mode + any
+ * future consumer that just wants the design surface).
+ *
+ * Why a single grouped prop instead of 4 top-level props:
+ *   The four fields are tightly coupled — they're meaningless without each
+ *   other. Grouping them is friendlier in usage sites and makes "carousel
+ *   feature on/off" a single null-check.
+ */
+export interface CanvasEditorCarouselProps {
+  /** Current slides, in order. Slide 0 is the hero (the canvas itself); these are slides 1..N. */
+  slides: readonly CarouselSlide[];
+  /**
+   * Called when the user adds, removes, or reorders slides. The editor
+   * does NOT mutate the array in place — always passes a new array so the
+   * parent can store it directly with `setState`.
+   */
+  onSlidesChanged: (slides: readonly CarouselSlide[]) => void;
+  /**
+   * Listing photos available to add. The picker reads from here. Shape
+   * matches PostBuilderClient's `availablePhotos` state (sequence + url).
+   */
+  availableListingPhotos: readonly {
+    url: string;
+    sequence: number;
+  }[];
+  /**
+   * URL of the most recently saved hero render — the rendered PNG/JPEG
+   * out of Studio. The Preview overlay shows this as slide 0. Null when
+   * the user hasn't saved yet; Preview surfaces a "Save your design
+   * first to see it in the preview" placeholder in that case.
+   */
+  heroImageUrl: string | null;
+  /**
+   * When false (default), the carousel strip hides on Story 9:16 format —
+   * IG/FB Story carousels are a different UX from feed carousels and the
+   * publish layer doesn't currently support them. Set true to override
+   * (e.g., for TikTok which DOES accept Story-format photo carousels).
+   */
+  enabledOnStory?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Resolved layer types — what the editor sees AFTER hydration
 // ---------------------------------------------------------------------------
 
@@ -650,4 +734,16 @@ export interface CanvasEditorProps {
    * reads `.format` to update its own state.
    */
   onResize?: (template: CanvasTemplateSchema) => void;
+  /**
+   * Phase 5 (Carousel posts) — optional carousel-management surface. When
+   * provided, the editor renders a horizontal "slides" strip under the
+   * hero canvas with add/remove/reorder controls. When absent, no
+   * carousel UI renders (template-author mode, future single-image-only
+   * consumers).
+   *
+   * See CanvasEditorCarouselProps for the full contract. The parent owns
+   * the slides state; the editor is purely a UI surface that reads slides
+   * + emits change events.
+   */
+  carousel?: CanvasEditorCarouselProps;
 }

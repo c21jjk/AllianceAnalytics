@@ -129,7 +129,7 @@ export async function POST(request: Request) {
   const { data: gp, error: gpErr } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids, property_id",
+      "id, mls_number, caption, hashtags, image_url, posted_to, platform_post_ids, property_id, additional_images",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -165,7 +165,47 @@ export async function POST(request: Request) {
       { status: 412 },
     );
   }
-  const imageUrls: string[] = [gp.image_url];
+  // why: Build the full carousel image array — slide 0 is always the
+  // designed hero (gp.image_url), slides 1..N come from
+  // gp.additional_images (jsonb array of CarouselSlide objects, see
+  // lib/post-builder/canvas-editor/types.ts). Each element is shape
+  // `{ id: string, url: string, source: "listing" | "upload",
+  //    listingPhotoSequence?: number }`, but we only need `url` here.
+  //
+  // Validation is defensive: bad rows (missing url, malformed entry) are
+  // skipped with a console.warn rather than failing the whole publish —
+  // one bad slide should not block a successful post. The total slide
+  // count is capped at IG's limit of 10 (publish.ts publishToIG enforces
+  // the same ceiling, but logging a warning here is friendlier when the
+  // mistake is in the saved row, not the publish flow).
+  const IG_MAX_SLIDES = 10;
+  const validatedAdditionalUrls: string[] = [];
+  const rawAdditional: unknown = gp.additional_images;
+  if (Array.isArray(rawAdditional)) {
+    for (let i = 0; i < rawAdditional.length; i++) {
+      const entry: unknown = rawAdditional[i];
+      if (
+        entry !== null &&
+        typeof entry === "object" &&
+        "url" in entry &&
+        typeof (entry as { url: unknown }).url === "string" &&
+        (entry as { url: string }).url.trim().length > 0
+      ) {
+        validatedAdditionalUrls.push((entry as { url: string }).url);
+      } else {
+        console.warn(
+          `[post] skipping invalid additional_images[${i}] on gp ${gp.id}:`,
+          entry,
+        );
+      }
+    }
+  }
+  const imageUrls: string[] = [gp.image_url, ...validatedAdditionalUrls];
+  if (imageUrls.length > IG_MAX_SLIDES) {
+    console.warn(
+      `[post] gp ${gp.id} has ${imageUrls.length} slides; IG accepts at most ${IG_MAX_SLIDES} — publishToIG will trim. Consider trimming before save.`,
+    );
+  }
 
   // Fire publish calls in parallel — each platform is independent. The TT
   // call uses its own access token; Meta uses the page token. Calls that

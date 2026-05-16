@@ -270,6 +270,7 @@ export type Database = {
       }
       generated_posts: {
         Row: {
+          additional_images: Json
           asset_count: number
           bundle_path: string | null
           bundle_url: string | null
@@ -306,6 +307,7 @@ export type Database = {
           variant: string
         }
         Insert: {
+          additional_images?: Json
           asset_count?: number
           bundle_path?: string | null
           bundle_url?: string | null
@@ -342,6 +344,7 @@ export type Database = {
           variant: string
         }
         Update: {
+          additional_images?: Json
           asset_count?: number
           bundle_path?: string | null
           bundle_url?: string | null

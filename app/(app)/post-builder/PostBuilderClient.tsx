@@ -26,6 +26,7 @@ import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListing
 import type {
   CanvasExportResult,
   CanvasTemplateSchema,
+  CarouselSlide,
   MLSListingPayload,
 } from "@/lib/post-builder/canvas-editor/types";
 import type { CreatedPostResumeRow } from "@/lib/data/created-posts-db";
@@ -159,6 +160,16 @@ export default function PostBuilderClient({
     template: CanvasTemplateSchema;
     listing: MLSListingPayload;
   } | null>(null);
+  // Phase 5 — carousel slides (slide 0 is the hero render; these are 1..N
+  // supporting photos that will publish alongside it as an IG/FB carousel).
+  // Lives at PostBuilder level — not inside the editor — because the slides
+  // belong to the POST, not the design. Template swaps + resizes inside
+  // Studio keep the slides intact (same listing, same supporting photos
+  // still apply). Switching to a different listing OR a different post-type
+  // clears them via the matching reset paths below.
+  const [carouselSlides, setCarouselSlides] = useState<readonly CarouselSlide[]>(
+    [],
+  );
   // Render + caption state
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
@@ -182,6 +193,34 @@ export default function PostBuilderClient({
       setVariantId(initialResume.variant);
       setSelectedMls(initialResume.mls_number);
       setGeneratedPostId(initialResume.id);
+      // Phase 5 — rehydrate carousel slides from the saved row. The DB
+      // column is jsonb, typed as `unknown | null` in the resume row to
+      // keep the data layer lean; we narrow defensively here.
+      if (Array.isArray(initialResume.additional_images)) {
+        const parsed: CarouselSlide[] = [];
+        for (const raw of initialResume.additional_images) {
+          if (
+            raw &&
+            typeof raw === "object" &&
+            typeof (raw as { url?: unknown }).url === "string" &&
+            (raw as { url: string }).url.length > 0
+          ) {
+            const r = raw as Partial<CarouselSlide>;
+            parsed.push({
+              id: typeof r.id === "string" ? r.id : crypto.randomUUID(),
+              url: r.url as string,
+              source: r.source === "upload" ? "upload" : "listing",
+              listingPhotoSequence:
+                typeof r.listingPhotoSequence === "number"
+                  ? r.listingPhotoSequence
+                  : undefined,
+            });
+          }
+        }
+        setCarouselSlides(parsed);
+      } else {
+        setCarouselSlides([]);
+      }
       // why: also pre-fill renderResult so the preview pane shows the
       // saved image as soon as Studio closes — the user sees the same
       // thing they clicked in the strip, no "regenerate to see it" beat.
@@ -399,6 +438,15 @@ export default function PostBuilderClient({
           layer_tree: result.schema as unknown as Parameters<
             typeof upsertGeneratedPostFromStudioAction
           >[0]["layer_tree"],
+          // Phase 5 — supporting photos for the carousel post. Persisted
+          // alongside the hero so the publish route can build the full
+          // image_urls array (`[gp.image_url, ...gp.additional_images]`)
+          // at post time. Empty array on a single-image post — the action
+          // defaults `?? []` so passing `null` would also be fine, but
+          // sending the explicit serialized state keeps audit-trail trivial.
+          additional_images: carouselSlides as unknown as Parameters<
+            typeof upsertGeneratedPostFromStudioAction
+          >[0]["additional_images"],
         });
         if (!upsertRes.ok) {
           // Non-fatal for the in-memory preview — image is uploaded, the
@@ -443,7 +491,14 @@ export default function PostBuilderClient({
         );
       }
     },
-    [selectedListing, generatedPostId, postType, variantId, format],
+    [
+      selectedListing,
+      generatedPostId,
+      postType,
+      variantId,
+      format,
+      carouselSlides,
+    ],
   );
 
   const handleStudioClose = useCallback((): void => {
@@ -635,6 +690,11 @@ export default function PostBuilderClient({
     setSearch("");
     setAvailablePhotos([]);
     setSelectedPhotoIndex(0);
+    // why: a different post-type implies a different post entirely — the
+    // previous carousel slides don't apply (often a different listing
+    // category, different framing).
+    setCarouselSlides([]);
+    setGeneratedPostId(null);
   }
 
   function changeFormat(next: PostFormat) {
@@ -657,6 +717,11 @@ export default function PostBuilderClient({
     setRenderResult(null);
     setCaptionResult(null);
     setEditedCaption("");
+    // why: a different listing means a different set of supporting photos.
+    // Keeping old carousel slides would publish photos of someone else's
+    // house — clear instead.
+    setCarouselSlides([]);
+    setGeneratedPostId(null);
     setError(null);
   }
 
@@ -1623,6 +1688,21 @@ export default function PostBuilderClient({
         saveLabel="Save Post"
         onTemplateSwitched={handleStudioTemplateSwitched}
         onResize={handleStudioResize}
+        carousel={{
+          slides: carouselSlides,
+          onSlidesChanged: setCarouselSlides,
+          // why: availablePhotos is already loaded on listing-pick — same
+          // source the in-canvas Photos panel reads from. Mapped to the
+          // narrower {url, sequence} shape the picker expects.
+          availableListingPhotos: availablePhotos.map((p) => ({
+            url: p.url,
+            sequence: p.sequence,
+          })),
+          // why: most-recently-saved hero render — drives the Preview
+          // overlay's slide-0. Null when the user hasn't saved yet; Preview
+          // surfaces a "Save first" placeholder in that case.
+          heroImageUrl: renderResult?.image_url ?? null,
+        }}
       />
     </div>
   );

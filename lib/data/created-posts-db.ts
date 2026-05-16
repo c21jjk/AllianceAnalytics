@@ -117,6 +117,16 @@ export interface CreatedPostResumeRow {
    * Null for older rows that pre-date the layer_tree column being filled.
    */
   layer_tree: unknown | null;
+  /**
+   * Carousel slides 1..N (slide 0 is the row's image_url itself). Stored
+   * as jsonb on `generated_posts.additional_images` — an array of
+   * CarouselSlide objects. Typed `unknown` here because the editor narrows
+   * to its own CarouselSlide shape on the client (parallel to layer_tree).
+   * Empty array on rows that pre-date the carousel feature; never null at
+   * the DB layer (column is NOT NULL DEFAULT '[]'), but kept nullable here
+   * to defensively cover any legacy / hand-mutated rows.
+   */
+  additional_images: unknown | null;
 }
 
 export async function fetchCreatedPostResume(
@@ -128,7 +138,7 @@ export async function fetchCreatedPostResume(
   const { data, error } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, created_by",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, created_by",
     )
     .eq("id", id)
     .maybeSingle();
@@ -153,6 +163,7 @@ export async function fetchCreatedPostResume(
     image_path: data.image_path,
     hero_image_source_url: data.hero_image_source_url,
     layer_tree: data.layer_tree,
+    additional_images: data.additional_images,
   };
 }
 

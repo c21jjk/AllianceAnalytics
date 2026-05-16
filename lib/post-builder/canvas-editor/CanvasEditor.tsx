@@ -57,6 +57,7 @@ import {
   type CanvasExportResult,
   type CanvasLayer,
   type CanvasTemplateSchema,
+  type CarouselSlide,
   EXPORT_RESOLUTION_MULTIPLIER,
   type ImageBoundField,
   type ImageLayer,
@@ -91,6 +92,9 @@ import BrandPanel from "./panels/BrandPanel";
 import LayerListPanel from "./panels/LayerListPanel";
 import PhotosPanel from "./panels/PhotosPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
+import CarouselPreview from "./panels/CarouselPreview";
+import CarouselSlidePicker from "./panels/CarouselSlidePicker";
+import CarouselStrip from "./panels/CarouselStrip";
 import ResizeMenu, {
   type ResizeMenuOption,
 } from "./panels/ResizeMenu";
@@ -662,6 +666,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     isSaving,
     onTemplateSwitched,
     onResize,
+    carousel,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -1009,6 +1014,33 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       history.canUndo,
       onResize,
     ],
+  );
+
+  // -------------------------------------------------------------------------
+  // Phase 5 — Carousel modal state + handlers
+  // -------------------------------------------------------------------------
+  // why: the strip itself is a pure UI component; opening the picker /
+  // preview overlays is the editor's responsibility because they're modal
+  // surfaces that need to sit above the entire editor (including the
+  // sidebars). Tracking state at the editor level — rather than pushing it
+  // into the strip — keeps the strip self-contained and lets us add more
+  // entry points later (e.g., a "Preview" keyboard shortcut).
+  const [carouselPickerOpen, setCarouselPickerOpen] = useState(false);
+  const [carouselPreviewOpen, setCarouselPreviewOpen] = useState(false);
+
+  // why: merge the picker's "add these" output into the existing slides
+  // array. We append in the order the user picked (the picker already
+  // orders by pick order), then defer the dedupe + cap policy to the
+  // picker (which enforces both visually). The orchestrator's job is just
+  // to wire the wire.
+  const handleCarouselPickerAdd = useCallback(
+    (newSlides: readonly CarouselSlide[]): void => {
+      if (!carousel) return;
+      const merged = [...carousel.slides, ...newSlides];
+      carousel.onSlidesChanged(merged);
+      setCarouselPickerOpen(false);
+    },
+    [carousel],
   );
 
   // -------------------------------------------------------------------------
@@ -2128,6 +2160,50 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           />
         )}
       </div>
+
+      {/* === Phase 5 — Carousel strip ===
+          why: rendered below the main flex row (canvas + sidebars) so it
+          spans the full editor width as a fixed-height tray. The strip
+          mounts only when a parent has wired the `carousel` prop AND the
+          current format is feed-eligible (not Story 9:16, unless the
+          caller explicitly opted in via `enabledOnStory`).
+
+          Feed carousels are the IG/FB use case; Story carousels are a
+          different platform feature with a separate API path. We hide
+          the strip on Story to avoid surfacing an affordance that can't
+          publish through the existing `publish.ts` code path. */}
+      {carousel && (template.format !== "story_9x16" || carousel.enabledOnStory) ? (
+        <CarouselStrip
+          slides={carousel.slides}
+          heroFormat={template.format}
+          onSlidesChanged={carousel.onSlidesChanged}
+          onAddSlideClick={() => setCarouselPickerOpen(true)}
+          onPreviewClick={() => setCarouselPreviewOpen(true)}
+        />
+      ) : null}
+
+      {/* === Phase 5 — Carousel slide picker (modal) === */}
+      {carousel ? (
+        <CarouselSlidePicker
+          open={carouselPickerOpen}
+          photos={carousel.availableListingPhotos}
+          existingSlides={carousel.slides}
+          maxSlides={10}
+          onAdd={handleCarouselPickerAdd}
+          onCancel={() => setCarouselPickerOpen(false)}
+        />
+      ) : null}
+
+      {/* === Phase 5 — Carousel preview overlay === */}
+      {carousel ? (
+        <CarouselPreview
+          open={carouselPreviewOpen}
+          heroUrl={carousel.heroImageUrl}
+          slides={carousel.slides}
+          heroFormat={template.format}
+          onClose={() => setCarouselPreviewOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
