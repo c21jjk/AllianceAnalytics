@@ -54,6 +54,13 @@ export interface CanvasEditorOverlayProps {
    * variant / format state can track the canvas.
    */
   onTemplateSwitched?: CanvasEditorProps["onTemplateSwitched"];
+  /**
+   * Forwarded to <CanvasEditor onResize>. Fires when the user picks a new
+   * format via the Resize menu so the parent can sync its format state and
+   * treat the next Save as a SIBLING-row insert rather than an in-place
+   * update to the current row.
+   */
+  onResize?: CanvasEditorProps["onResize"];
 }
 
 export default function CanvasEditorOverlay(
@@ -172,6 +179,7 @@ export default function CanvasEditorOverlay(
           saveLabel={props.saveLabel}
           isSaving={props.isSaving}
           onTemplateSwitched={props.onTemplateSwitched}
+          onResize={props.onResize}
         />
       </div>
     </div>

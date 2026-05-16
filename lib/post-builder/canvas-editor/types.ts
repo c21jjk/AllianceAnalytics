@@ -631,4 +631,23 @@ export interface CanvasEditorProps {
    * `.variant`, and `.format` to update its own state.
    */
   onTemplateSwitched?: (template: CanvasTemplateSchema) => void;
+  /**
+   * Phase 4 (Smart Resize) — called when the user picks a different format
+   * for the current template (via the Resize menu next to Save). The
+   * canvas re-initializes at the new aspect ratio; the parent treats the
+   * resize as creating a SIBLING post rather than updating the existing
+   * row, so it nulls out `generatedPostId` and lets the next Save insert
+   * a new row.
+   *
+   * Distinct from `onTemplateSwitched` because the downstream semantics
+   * differ:
+   *   • Template switch (same listing, different design) → next Save
+   *     updates the existing row. The user is iterating on the same post.
+   *   • Resize (same listing, same design, different aspect ratio) → next
+   *     Save creates a new row. The user wants both versions to exist.
+   *
+   * The argument is the regenerated template at the new format — caller
+   * reads `.format` to update its own state.
+   */
+  onResize?: (template: CanvasTemplateSchema) => void;
 }

@@ -65,6 +65,7 @@ import {
   isTextLayer,
   type MLSListingPayload,
   PLATFORM_DIMENSIONS,
+  type PostFormat,
   type ShapeLayer,
   type TextBoundField,
   type TextLayer,
@@ -90,8 +91,11 @@ import BrandPanel from "./panels/BrandPanel";
 import LayerListPanel from "./panels/LayerListPanel";
 import PhotosPanel from "./panels/PhotosPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
+import ResizeMenu, {
+  type ResizeMenuOption,
+} from "./panels/ResizeMenu";
 import TemplatesPanel from "./panels/TemplatesPanel";
-import { CANVAS_TEMPLATES } from "./templates";
+import { CANVAS_TEMPLATES, findCanvasTemplate } from "./templates";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // why: fonts.css contains Google Fonts @import statements for the 9 fonts
@@ -657,6 +661,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     saveLabel,
     isSaving,
     onTemplateSwitched,
+    onResize,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -951,6 +956,59 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       onTemplateSwitched?.(next);
     },
     [currentTemplate.id, onTemplateSwitched],
+  );
+
+  // -------------------------------------------------------------------------
+  // Phase 4 — Smart Resize handler (ResizeMenu → here)
+  // -------------------------------------------------------------------------
+  // why: when the user picks a target format from the Resize menu, look up
+  // the sibling template via the registry (same category + variant, new
+  // format), then drive the same swap pipeline `handleTemplatePicked` uses.
+  // Difference is downstream: parent treats it as a new sibling post
+  // (nulls `generatedPostId`) so next Save inserts a row instead of
+  // updating the current one.
+  //
+  // Confirmation gate matches the template-swap pattern — `window.confirm`
+  // when the history has undo entries. The Canva-mindset follow-up here is
+  // "Save & Resize" as a combined operation; today's MVP keeps it simple
+  // and relies on the user to save first if they want to preserve current
+  // edits.
+  const handleResizePicked = useCallback(
+    (targetFormat: PostFormat): void => {
+      if (targetFormat === currentTemplate.format) return;
+      const target = findCanvasTemplate(
+        currentTemplate.category,
+        currentTemplate.variant,
+        targetFormat,
+      );
+      if (!target) {
+        // why: should be impossible because the menu disables unavailable
+        // options. Defend in depth — surface a clear toast rather than
+        // crashing if the registry drifts from the menu.
+        setEditorError({
+          kind: "init",
+          message: `No canvas template exists for ${currentTemplate.category} / ${currentTemplate.variant} at ${targetFormat}. The Resize option should not have been enabled.`,
+        });
+        return;
+      }
+      if (history.canUndo) {
+        const ok = window.confirm(
+          "Resize to a new aspect ratio? Your unsaved edits to this design will be discarded — save the current version first if you want to keep it.\n\nThe resized version will be saved as a separate post.",
+        );
+        if (!ok) return;
+      }
+      setCurrentTemplate(target);
+      setSelection({ layerId: null, isMulti: false });
+      setEditorError(null);
+      onResize?.(target);
+    },
+    [
+      currentTemplate.category,
+      currentTemplate.variant,
+      currentTemplate.format,
+      history.canUndo,
+      onResize,
+    ],
   );
 
   // -------------------------------------------------------------------------
@@ -1814,6 +1872,21 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Phase 4 — Smart Resize. Sits left of Save so the reading order
+              is "I want to change the format → I want to save." Renders only
+              when the parent has wired the onResize callback; non-resize
+              consumers (future template-author mode) hide the affordance. */}
+          {onResize ? (
+            <ResizeMenu
+              currentFormat={template.format}
+              options={buildResizeMenuOptions(
+                template.category,
+                template.variant,
+                template.format,
+              )}
+              onPick={handleResizePicked}
+            />
+          ) : null}
           <button
             type="button"
             onClick={handleExport}
@@ -2655,6 +2728,41 @@ function GroupIcon(): JSX.Element {
 }
 
 // why: Phase 3 — brand-tab icon. Abstract "building / brand mark" glyph.
+// why: Phase 4 — Smart Resize. Build the menu option list for the current
+// (category, variant) tuple, checking the registry to mark each target
+// format as available or disabled. Disabled = no canvas template exists
+// for the (category, variant, target format) tuple — typically because a
+// variant only ships at 2 of 3 formats during an in-progress factory port.
+// Keeps the menu honest: we never let the user pick an option that would
+// fail in `handleResizePicked`'s `findCanvasTemplate` lookup.
+function buildResizeMenuOptions(
+  category: CanvasTemplateSchema["category"],
+  variant: CanvasTemplateSchema["variant"],
+  currentFormat: PostFormat,
+): readonly ResizeMenuOption[] {
+  const allFormats: readonly PostFormat[] = [
+    "square_1x1",
+    "portrait_4x5",
+    "story_9x16",
+  ];
+  return allFormats.map((f) => {
+    if (f === currentFormat) {
+      // why: current format is omitted by the menu itself, but we include
+      // it in the array so the menu's filter is the single source of
+      // truth about "what's visible." Marking available=true keeps the
+      // shape uniform.
+      return { format: f, available: true };
+    }
+    const t = findCanvasTemplate(category, variant, f);
+    if (t) return { format: f, available: true };
+    return {
+      format: f,
+      available: false,
+      disabledReason: `No ${variant} template at this aspect ratio yet — port pending.`,
+    };
+  });
+}
+
 // why: Phase 4 — templates-tab icon. 2×2 grid glyph reads as "a set of
 // templates to choose from" — the canonical design-tool affordance, used
 // by Canva / Figma / Adobe Express for the same panel.

@@ -472,6 +472,35 @@ export default function PostBuilderClient({
     [],
   );
 
+  // why: Phase 4 — Smart Resize. When the user picks a new aspect ratio
+  // inside Studio, treat the resize as creating a SIBLING post, not
+  // updating the current one. Steps:
+  //   1. Update format chip (post_type + variant stay the same — resize
+  //      preserves the design's identity, just changes the canvas size).
+  //   2. Rebuild studioContext.template with the regenerated factory
+  //      output at the new format.
+  //   3. **Null out generatedPostId** — this is the key bit. The next
+  //      Save inserts a fresh row instead of updating the original.
+  //      Larissa ends up with two posts in the Created Posts strip:
+  //      the original at format A, the resized at format B, both linked
+  //      to the same listing via mls_number.
+  //
+  // Memory note: this differs from handleStudioTemplateSwitched, which
+  // updates the existing row. Same listing, different design = iterate
+  // in place. Same listing, same design, different format = sibling row.
+  const handleStudioResize = useCallback(
+    (template: CanvasTemplateSchema): void => {
+      setFormat(template.format);
+      setStudioContext((prev) => (prev ? { ...prev, template } : prev));
+      setGeneratedPostId(null);
+      // why: also clear the in-memory renderResult so the preview pane
+      // doesn't show the OLD format's image after Studio closes. The next
+      // Save populates renderResult fresh from the canvas-save response.
+      setRenderResult(null);
+    },
+    [],
+  );
+
   // The current set of photo URLs to send to the render API. For single-
   // photo variants this is a 1-element array; for v4 it's 2 elements
   // starting from selectedPhotoIndex (wrapping); for v5 it's 3 elements.
@@ -1593,6 +1622,7 @@ export default function PostBuilderClient({
         onSave={handleStudioSave}
         saveLabel="Save Post"
         onTemplateSwitched={handleStudioTemplateSwitched}
+        onResize={handleStudioResize}
       />
     </div>
   );
