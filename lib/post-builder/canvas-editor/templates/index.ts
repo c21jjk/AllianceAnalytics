@@ -9,16 +9,24 @@
  *     Builder uses to decide whether the "Edit in Studio" button is
  *     available for a given (category, variant, format) combination.
  *
- * Current coverage (2026-05-14):
- *   5 post types × v1 (Hero Editorial) × 3 formats = 15 templates, all
- *   generated programmatically by `createHeroEditorialTemplate`. The factory
- *   bakes in post-type-specific theming (eyebrow text, price mode, optional
- *   badge stamp, optional open-house date/time line) so adding a 6th post
- *   type is a config edit in `hero-editorial-factory.ts` — no new files.
+ * Current coverage (2026-05-15):
+ *   5 post types × 3 variants × 3 formats = 45 templates, all generated
+ *   programmatically by factories:
+ *     • v1 Hero Editorial    — buildAllHeroEditorialTemplates  (15)
+ *     • v2 Bold Stats        — buildAllBoldStatsTemplates      (15)
+ *     • v3 Side-by-Side      — buildAllSideBySideTemplates     (15)
  *
- * Future variants (v2 Bold Stats, v3 Side-by-Side, v4 Diptych, v5 Grid)
- * will get their own factory files following the same pattern, then this
- * registry will concatenate the per-variant arrays.
+ *   Each factory uses the same shape — POST_TYPE_CONFIGS table + per-format
+ *   LAYOUTS table — so adding a new post type is one row in three files.
+ *
+ * Still to port from the V1 HTML primitives:
+ *   • v6 Magazine Cover
+ *   • v7 Polaroid
+ *   • v8 Minimal Frame
+ *
+ *   (v4 Diptych + v5 Grid were retired on 2026-05-14 when the in-Studio
+ *   Photos panel shipped — Larissa composes multi-photo posts by dragging
+ *   additional photos onto the canvas instead of via dedicated variants.)
  */
 
 import type {
@@ -28,14 +36,19 @@ import type {
   PostVariant,
 } from "../types";
 import { buildAllHeroEditorialTemplates } from "./hero-editorial-factory";
+import { buildAllBoldStatsTemplates } from "./bold-stats-factory";
+import { buildAllSideBySideTemplates } from "./side-by-side-factory";
 
 /**
- * Source-of-truth array. Order doesn't matter for lookup but reading order
- * tracks how we'd present them in a future Templates panel: by category, then
- * variant, then format (square → portrait → story).
+ * Source-of-truth array. Order doesn't matter for lookup, but the array
+ * order DOES drive the default sort in the Templates panel (it groups by
+ * category first, then by variant within category) — so we concatenate
+ * by variant here so v1 cards come first, then v2, then v3.
  */
 export const CANVAS_TEMPLATES: readonly CanvasTemplateSchema[] = [
   ...buildAllHeroEditorialTemplates(),
+  ...buildAllBoldStatsTemplates(),
+  ...buildAllSideBySideTemplates(),
 ] as const;
 
 /**
