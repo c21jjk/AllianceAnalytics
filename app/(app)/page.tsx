@@ -342,24 +342,32 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       })()}
 
       {/* Section break + sort tabs — visually separates the "Recent listings
-          to action" zone above from the "Posts to review" zone below. The
-          tabs sit directly above the post stream so the sort control is
-          right where the user's eye lands when scanning posts.
+          to action" zone above from the "Posts to review" zone below.
 
-          why: social platform sync pills (FB / IG / TT) live on the right
-          edge of this row — they're the freshness signal that's relevant
-          while reviewing posts. MLS sync stays at the top because it's a
-          data-ingestion concern, not a content-review one. `hideAutoCaption`
-          is set so the "auto every 4h" caption doesn't render twice on the
-          page (it's already on the MLS bar up top). */}
+          Row layout (2026-05-15): social sync chips + a dedicated "Sync all
+          platforms" button on the LEFT, sort toggle on the RIGHT. Putting
+          the sync controls next to the post stream gives Larissa a one-
+          click refresh when she's scanning posts and notices the
+          timestamps are stale — without forcing a scroll back up to the
+          top of the page where the original sync button lives.
+
+          `hideAutoCaption` is set on the AccountSyncBar so the "auto every
+          4h" caption doesn't render twice (it's still on the MLS bar up
+          top). The new SyncNowButton is admin-gated identically to the top
+          one — both call the same idempotent `syncAll` server action, each
+          maintains its own local UI state (spinner + per-platform results)
+          so they don't interfere with one another. */}
       <div className="pt-2 border-t-2 border-neutral-200">
         <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
+            <AccountSyncBar
+              health={accountHealth}
+              hideAutoCaption
+              className="flex-shrink-0"
+            />
+            {profile.role === "admin" ? <SyncNowButton /> : null}
+          </div>
           <SortToggle value={currentSort} />
-          <AccountSyncBar
-            health={accountHealth}
-            hideAutoCaption
-            className="flex-shrink-0"
-          />
         </div>
       </div>
 
