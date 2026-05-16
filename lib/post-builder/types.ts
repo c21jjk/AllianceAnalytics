@@ -462,12 +462,18 @@ export type SceneContent =
   | {
       kind: "design";
       /**
-       * The canvas-editor template schema this scene renders. The
-       * composition references the schema by VALUE (inline) rather than
-       * by template_id so the Reel is self-contained — re-rendering the
-       * MP4 produces the same output even if the template factory changes.
+       * The canvas-editor template schema this scene renders, embedded by
+       * VALUE so the composition is self-contained — re-rendering the MP4
+       * produces the same output even if the underlying template factory
+       * changes over time.
+       *
+       * Stored as `unknown` here at the main-app boundary (the schema's
+       * full structural type lives in `lib/post-builder/canvas-editor/
+       * types.ts` as `CanvasTemplateSchema`). The worker's render.js
+       * interprets it structurally — width / height / layers[] / etc. —
+       * without depending on the editor module. Cast at the consumer.
        */
-      templateRef: string;
+      template: unknown;
     }
   | {
       kind: "photo";

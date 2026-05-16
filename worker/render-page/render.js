@@ -613,9 +613,19 @@
 
       var work;
       if (content.kind === "design") {
-        // Prefer an inline schema injected by the TS driver; fall back
-        // to anything the orchestrator stashed under .template.
-        var schema = content.schema || content.template;
+        // The unified contract (2026-05-16) is `content.template` — an
+        // inline CanvasTemplateSchema object embedded by VALUE so the
+        // composition is self-contained. Older drafts used `templateRef`
+        // (a string id); we accept `.schema` too for resilience against
+        // any in-flight pre-unification clients, but new code only sends
+        // `.template`.
+        var schema = content.template || content.schema;
+        if (!schema || typeof schema !== "object") {
+          throw new Error(
+            "design scene is missing `content.template` (a CanvasTemplateSchema object). " +
+            "Got: " + JSON.stringify(content),
+          );
+        }
         work = renderDesignScene(schema);
       } else if (content.kind === "photo") {
         work = renderPhotoScene(

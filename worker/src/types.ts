@@ -108,10 +108,19 @@ export const MOTION_PRESETS: Readonly<Record<string, MotionPath>> = {
 export type SceneContent =
   | {
       kind: "design";
-      /** Inline canvas-editor template id. Worker resolves by VALUE so a
-       *  re-render produces identical output even if the template
-       *  factory in the main app changes. Day 2 wires this up. */
-      templateRef: string;
+      /**
+       * Inline canvas-editor template SCHEMA, embedded by VALUE. The
+       * worker doesn't import the main app's CanvasTemplateSchema type
+       * (cross-package boundary); it interprets this structurally —
+       * width / height / layers[] / backgroundColor — at render time.
+       * Stored as `unknown` so consumers cast at the boundary.
+       *
+       * Reproducibility property: the composition is self-contained. A
+       * Reel saved today re-renders identically tomorrow even if the
+       * canvas-editor template factory has been updated, because the
+       * schema as it was at compose-time is preserved in the row.
+       */
+      template: unknown;
     }
   | {
       kind: "photo";
@@ -284,7 +293,11 @@ const MotionPathZ = z.object({
 const SceneContentZ = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("design"),
-    templateRef: z.string().min(1),
+    // why: the embedded schema is structurally a CanvasTemplateSchema but
+    // the worker doesn't depend on that type — pass it through as a
+    // generic object and let render.js validate the shape at draw time.
+    // z.record matches "any object" without requiring a closed shape.
+    template: z.record(z.unknown()),
   }),
   z.object({
     kind: z.literal("photo"),

@@ -1,35 +1,35 @@
 /**
- * Stub render function — Day 1 placeholder.
+ * Real render job (Day 2 — 2026-05-16).
  *
- * why a stub: today's deliverable is the SCAFFOLD, not the renderer.
- * Day 2 we replace the body of `runRenderJob` with real work
- * (Fabric server-side composition → ffmpeg encode → Supabase Storage
- * upload). The function SIGNATURE + the state-machine progression
- * stays the same so:
- *   - The /render route, the job store, and the main app's poll loop
- *     can be wired end-to-end TODAY against the stub.
- *   - Day 2 is a single-file change with no surface churn.
+ * The stub from Day 1 is gone. This function now drives the actual
+ * Playwright-based frame renderer, ffmpeg composer, and Supabase Storage
+ * uploader in sequence:
  *
- * State machine the real renderer will follow:
- *   queued → processing (0%)   — composing first frame
- *   processing (20%)           — Fabric scene 1 rendered
- *   processing (50%)           — all scenes composited
- *   processing (80%)           — ffmpeg encoded, awaiting upload
- *   succeeded                  — Storage URL written, duration_ms set
+ *   queued → processing
+ *   ├─  5%  preparing browser
+ *   ├─ 5-55% rendering frames per scene (incremental)
+ *   ├─ 60%  composing video with ffmpeg
+ *   ├─ 80%  ffmpeg done, uploading to Storage
+ *   ├─ 95%  upload done
+ *   └─ 100% succeeded — Storage URL written
  *
- * On throw → status=failed with error message. Never crashes the
- * worker — every failure is captured into the job record.
+ * Failures at any stage land in `status: "failed"` with a descriptive
+ * message. The Playwright browser is always closed in `finally` so a
+ * failed render doesn't leak a Chromium process across jobs.
+ *
+ * Why the orchestration lives here and not in the route handler:
+ *   The route returns the queued job to the client immediately so the
+ *   client's poll loop can drive the UI. The actual work is fire-and-
+ *   forget from the route's perspective — render-job.ts is what runs
+ *   in the background, single-file isolated.
  */
 
 import { logger } from "../lib/logger.js";
+import { renderScene, closeRenderBrowser } from "../render/render-scene.js";
+import { composeVideo } from "../render/compose-video.js";
+import { uploadVideoToStorage } from "../storage/upload-video.js";
 import type { JobStore } from "./store.js";
 import type { ReelRenderInput } from "../types.js";
-
-/** Sleep helper. Promise wrapper over setTimeout so async/await flows
- *  read cleanly. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Run a render job. Returns when the job has reached a terminal state
@@ -39,9 +39,8 @@ function sleep(ms: number): Promise<void> {
  *
  * @param jobId — id of the job to drive. The store row must already
  *   exist in status "queued" (created by the /render route).
- * @param input — the validated ReelRenderInput. Day 2 the stub starts
- *   reading composition.scenes etc. — for now the body is parameter-
- *   free; we accept the arg so the signature is Day-2-ready.
+ * @param input — the validated ReelRenderInput. Drives every scene
+ *   render + the ffmpeg composition + the upload path.
  * @param store — the JobStore the route also uses. Decoupled so this
  *   function is testable with a fake.
  */
@@ -50,43 +49,133 @@ export async function runRenderJob(
   input: ReelRenderInput,
   store: JobStore,
 ): Promise<void> {
+  const composition = input.composition;
+  const startedAt = Date.now();
+  // why: cache the dimensions + fps locally so each module call gets the
+  // same options object reference shape. The composition's schemaVersion
+  // pins these to (1080, 1920, 30) at the type level, so we don't need to
+  // re-validate them here.
+  const renderOpts = {
+    width: composition.width,
+    height: composition.height,
+    fps: composition.frameRate,
+  } as const;
+
   try {
     logger.info("render.start", {
       job_id: jobId,
-      scenes: input.composition.scenes.length,
-      total_duration_ms: input.composition.totalDurationMs,
+      scenes: composition.scenes.length,
+      total_duration_ms: composition.totalDurationMs,
+      has_audio: composition.audio !== null,
     });
 
-    // why: explicit transition out of "queued" so /render/:id callers
-    // see the work has been picked up even before the first sleep.
-    store.update(jobId, { status: "processing", progress_pct: 0 });
+    // ---- 0..5% — preparing ----
+    // why: the explicit "processing 0" transition lets /render/:id callers
+    // see the work has been picked up before the first scene renders. Some
+    // scenes (especially design-kind with many image layers) can take 1-2s
+    // for the first frame because Chromium has to fetch + decode the
+    // listing photo; the early progress update prevents the UI from
+    // looking frozen during that window.
+    store.update(jobId, { status: "processing", progress_pct: 5 });
 
-    await sleep(1000);
-    store.update(jobId, { status: "processing", progress_pct: 20 });
+    // ---- 5..55% — per-scene frame rendering ----
+    // why: render scenes sequentially even though they could conceptually
+    // be parallelized. The cached Playwright browser/page is single-
+    // threaded inside the worker — running two scenes in parallel would
+    // require two browser instances, doubling memory + slowing each by
+    // the GIL-ish single-CPU shared between them. Sequential is faster
+    // overall on the shared-cpu-2x VM size we picked.
+    const sceneBuffers: Buffer[][] = [];
+    const sceneCount = composition.scenes.length;
+    for (let i = 0; i < sceneCount; i++) {
+      const scene = composition.scenes[i];
+      // why: explicit guard for noUncheckedIndexedAccess. The loop bound is
+      // sceneCount === composition.scenes.length so this is impossible in
+      // practice — the guard satisfies the type system and surfaces a
+      // clear runtime error if some future refactor breaks the invariant.
+      if (!scene) {
+        throw new Error(
+          `Internal: scene at index ${i} is undefined despite being within sceneCount ${sceneCount}.`,
+        );
+      }
+      logger.info("render.scene.start", {
+        job_id: jobId,
+        scene_index: i,
+        scene_kind: scene.content.kind,
+        scene_duration_ms: scene.durationMs,
+      });
+      const frames = await renderScene(scene, {
+        ...renderOpts,
+        // why: per-frame progress callback wires into the JOB progress
+        // counter, NOT the SCENE counter. The math maps each scene's
+        // frame stream onto a slice of the 5..55% range.
+        onProgress: (frameIdx, totalFrames) => {
+          // Progress contribution: 50% total split across scenes.
+          const sceneSliceStart = 5 + (i / sceneCount) * 50;
+          const sceneSliceEnd = 5 + ((i + 1) / sceneCount) * 50;
+          const intraScenePct =
+            totalFrames > 0 ? frameIdx / totalFrames : 0;
+          const pct = Math.round(
+            sceneSliceStart +
+              (sceneSliceEnd - sceneSliceStart) * intraScenePct,
+          );
+          store.update(jobId, { progress_pct: pct });
+        },
+      });
+      sceneBuffers.push(frames);
+      logger.info("render.scene.done", {
+        job_id: jobId,
+        scene_index: i,
+        frames_rendered: frames.length,
+      });
+    }
+    store.update(jobId, { progress_pct: 55 });
 
-    await sleep(1000);
-    store.update(jobId, { status: "processing", progress_pct: 50 });
+    // ---- 55..80% — ffmpeg composition ----
+    // why: ffmpeg's progress events are not currently wired (would need a
+    // separate parser of stderr or fluent-ffmpeg's `.on("progress")`). For
+    // MVP we just bump to 60 at start, 80 at end. Encoding a 7-second
+    // 1080×1920 H.264 with our preset takes ~3-8s on the worker's
+    // shared-cpu-2x VM, so the "60→80" jump is visually fine even without
+    // intermediate progress.
+    store.update(jobId, { progress_pct: 60 });
+    logger.info("render.compose.start", {
+      job_id: jobId,
+      scene_frame_counts: sceneBuffers.map((f) => f.length),
+    });
+    const mp4 = await composeVideo(
+      { scenesFrames: sceneBuffers, composition },
+      renderOpts,
+    );
+    store.update(jobId, { progress_pct: 80 });
+    logger.info("render.compose.done", {
+      job_id: jobId,
+      mp4_bytes: mp4.length,
+    });
 
-    await sleep(1000);
-    store.update(jobId, { status: "processing", progress_pct: 80 });
+    // ---- 80..95% — Supabase Storage upload ----
+    store.update(jobId, { progress_pct: 85 });
+    const uploaded = await uploadVideoToStorage(mp4, jobId);
+    store.update(jobId, { progress_pct: 95 });
+    logger.info("render.upload.done", {
+      job_id: jobId,
+      video_url: uploaded.url,
+      bytes: uploaded.size,
+    });
 
-    await sleep(2000);
-
-    // Day 2 replaces these constants with the real upload result.
-    const fakeVideoUrl = "https://example.com/fake-reel.mp4";
-    const fakeDurationMs = 7000;
-
+    // ---- 100% — succeeded ----
     store.update(jobId, {
       status: "succeeded",
       progress_pct: 100,
-      video_url: fakeVideoUrl,
-      video_path: "stub/fake-reel.mp4",
-      duration_ms: fakeDurationMs,
+      video_url: uploaded.url,
+      video_path: uploaded.path,
+      duration_ms: composition.totalDurationMs,
     });
-
     logger.info("render.succeeded", {
       job_id: jobId,
-      duration_ms: fakeDurationMs,
+      duration_ms: composition.totalDurationMs,
+      total_elapsed_ms: Date.now() - startedAt,
+      bytes: uploaded.size,
     });
   } catch (err) {
     // why: any throw INSIDE the render pipeline must be captured here.
@@ -94,10 +183,31 @@ export async function runRenderJob(
     // and (in modern Node) terminate the process — taking every other
     // in-flight job down with it.
     const message = err instanceof Error ? err.message : String(err);
-    logger.error("render.failed", { job_id: jobId, error: message });
+    logger.error("render.failed", {
+      job_id: jobId,
+      error: message,
+      elapsed_ms: Date.now() - startedAt,
+    });
     store.update(jobId, {
       status: "failed",
       error: message,
     });
+  } finally {
+    // why: release Playwright resources between jobs. The cached browser
+    // instance is at module scope inside render-scene.ts so we explicitly
+    // close it here rather than letting it linger across job boundaries.
+    // Re-opening on the next job pays a ~500ms Chromium-startup cost; in
+    // exchange we get clean memory + no stale-page-state bugs that
+    // accumulate over a long-running worker.
+    try {
+      await closeRenderBrowser();
+    } catch (e) {
+      // Best-effort cleanup. Logging only — a failed close is not a job
+      // failure (the job's status is already terminal at this point).
+      logger.warn("render.cleanup.failed", {
+        job_id: jobId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 }
