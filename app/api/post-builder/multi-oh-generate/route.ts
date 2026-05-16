@@ -583,6 +583,14 @@ export async function POST(request: Request): Promise<Response> {
     const firstProp = input.properties[0];
     const formatShort = formatShortName(input.format);
 
+    // why: Phase D guard — without a caption, /api/post-builder/post 412s
+    // on "generated_post has no caption" the first time Larissa tries to
+    // publish a freshly-generated multi-OH row. We synthesize a
+    // deterministic multi-OH caption + per-platform map so Post Now
+    // always has something to publish. Larissa can override either in
+    // Studio's caption pane before publishing.
+    const synthesized = synthesizeMultiOHCaption(input);
+
     const { data: inserted, error: insertError } = await supabase
       .from("generated_posts")
       .insert({
@@ -611,9 +619,12 @@ export async function POST(request: Request): Promise<Response> {
         hero_image_source_url: null,
         template_props: {} as Json,
         customizations: {} as Json,
-        caption: null,
-        hashtags: null,
-        mls_hashtag: null,
+        // Phase D — synthesized deterministic caption + per-platform map.
+        // See synthesizeMultiOHCaption below.
+        caption: synthesized.legacy.caption,
+        hashtags: synthesized.legacy.hashtags,
+        mls_hashtag: synthesized.legacy.mls_hashtag,
+        captions_by_platform: synthesized.captions as unknown as Json,
         // why: no canvas-editor layer tree — the event hero isn't a Path C
         // template. The per-property cards are V1 renders, also without
         // layer trees. A future "edit hero in Studio" flow would need to
@@ -674,4 +685,111 @@ export async function POST(request: Request): Promise<Response> {
       { status: 500 },
     );
   }
+}
+
+/**
+ * Phase D — synthesize a caption + per-platform variants for a multi-OH
+ * event row at insert time. Deterministic (no AI call) because the
+ * multi-OH render path is already 30+ seconds of Chromium work and we
+ * shouldn't add another network round-trip on the critical path. The
+ * synthesized caption is intentionally short so Larissa is encouraged
+ * to edit it in Studio before publishing; the goal is to clear the
+ * "no caption" 412 in the publish route, not to write the final copy.
+ *
+ * Returns both the legacy single-caption fields (caption / hashtags /
+ * mls_hashtag) and the per-platform CaptionsByPlatform map. The publish
+ * routes read whichever is populated, with the per-platform map taking
+ * precedence — so writing both keeps every consumer happy.
+ */
+function synthesizeMultiOHCaption(input: MultiOHEventInput): {
+  legacy: { caption: string; hashtags: string[]; mls_hashtag: string };
+  captions: Record<
+    "instagram" | "facebook" | "tiktok",
+    { caption: string; hashtags: string[] }
+  >;
+} {
+  const count = input.properties.length;
+  const eventTitle = input.event_title?.trim() || "Open Houses This Weekend";
+  const agentName = input.agent_name?.trim() || "our team";
+
+  // Anchor the auto-linker on the first property's MLS. Multi-OH posts
+  // can only deep-link to one listing, so we pick the first by wizard
+  // order (which Larissa controls). The per-property cards in the
+  // carousel slides carry the other listings' MLS hashtags inside
+  // their image text — separate path.
+  const firstProp = input.properties[0];
+  const mlsHashtag = canonicalMlsHashtag(
+    firstProp?.mls_number ?? "",
+    firstProp?.source_mls ?? null,
+  );
+
+  // Per-platform caption bodies — lightly tuned for each platform's
+  // voice (matches the AI-prompt style guidance in captions.ts).
+  const igBody =
+    `${eventTitle}. ${count} homes open this weekend with ${agentName}. ` +
+    `Each slide has the address, time, and a quick look — swipe through and ` +
+    `DM if any of them are right for you.`;
+  const fbBody =
+    `${eventTitle}. ${count} open houses with ${agentName} this weekend — ` +
+    `addresses and times in the slides. Reach out if you want to see one.`;
+  const ttBody = `${count} open houses. One weekend. ${agentName} hosting.`;
+
+  // Brand + post-type tags. Per-platform caps mirror captions.ts.
+  const brand = ["#Century21Alliance", "#C21Alliance", "#SouthJerseyRealEstate"];
+  const postType = ["#OpenHouse", "#OpenHouseWeekend"];
+  const baseTags = [...postType, ...brand, mlsHashtag].filter(
+    (t) => t.length > 1,
+  );
+
+  // Per-platform cap with the canonical MLS hashtag preserved (matches
+  // ensuredMls logic in captions.ts).
+  const cap = (
+    tags: readonly string[],
+    limit: number,
+  ): string[] => {
+    const slice = tags.slice(0, limit);
+    return slice.includes(mlsHashtag)
+      ? slice
+      : [mlsHashtag, ...slice.slice(0, limit - 1)];
+  };
+
+  const igTags = cap(baseTags, 30);
+  const fbTags = cap(baseTags, 6);
+  const ttTags = cap(baseTags, 5);
+
+  return {
+    legacy: {
+      // why: legacy single-caption mirrors the IG variant — that's the
+      // platform the auto-linker and OG-tag preview both key on.
+      caption: igBody,
+      hashtags: igTags,
+      mls_hashtag: mlsHashtag,
+    },
+    captions: {
+      instagram: { caption: igBody, hashtags: igTags },
+      facebook: { caption: fbBody, hashtags: fbTags },
+      tiktok: { caption: ttBody, hashtags: ttTags },
+    },
+  };
+}
+
+/**
+ * Inline canonical MLS hashtag generator. Duplicated from captions.ts to
+ * keep this route self-contained (and avoid pulling the full AI module
+ * into a route that doesn't otherwise need it). If both copies drift,
+ * the auto-linker will silently miss multi-OH rows for one of the MLS
+ * conventions — keep them in sync.
+ */
+function canonicalMlsHashtag(
+  mls_number: string,
+  source_mls: SourceMls,
+): string {
+  const normalized = mls_number.replace(/^#/, "").trim();
+  if (!normalized) return "";
+  if (source_mls === "cmc") return `#CMC${normalized}`;
+  if (source_mls === "sjsr") return `#SJSR${normalized}`;
+  if (source_mls === "bright" || /^NJ[A-Z]{2}\d+$/i.test(normalized)) {
+    return `#${normalized.toUpperCase()}`;
+  }
+  return `#${normalized}`;
 }

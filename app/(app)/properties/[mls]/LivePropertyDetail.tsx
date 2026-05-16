@@ -602,12 +602,10 @@ function LegacyCompassReportFootnote({
           >
             View
           </a>
-          <a
-            href={existingReport.pdf_url_path}
-            className="inline-flex items-center rounded-md ring-1 ring-neutral-300 bg-white text-neutral-800 text-xs font-medium px-3 py-1.5 hover:ring-neutral-400 transition-colors"
-          >
-            Download PDF
-          </a>
+          {/* Phase D — "Download PDF" link removed (2026-05-16). The
+              /r/{token}/flyer.pdf route was deleted in the Owner Reports
+              rollback; clicking the button would have 404'd. Owner
+              Stories at /home/{token} is the canonical seller surface. */}
         </div>
       </div>
       <div className="mt-3 pt-3 border-t border-neutral-200 flex items-center justify-end">

@@ -1600,6 +1600,40 @@ export async function persistRenderedReelAction(
   }
 
   const supabase = createAdminClient();
+
+  // Phase D guard — synthesize a deterministic caption when the caller
+  // doesn't pass one. Without this, /api/post-builder/post 412s on
+  // "generated_post has no caption" the first time the user tries to
+  // publish a freshly-rendered Reel — and Reel Studio's Generate flow
+  // today doesn't pass a caption through. Look up the listing for its
+  // address (best-effort — if the join fails we still emit a generic
+  // caption so the publish path isn't blocked).
+  const mlsForCaption = input.composition.sourceListingMls;
+  let captionLegacy = input.caption ?? null;
+  let hashtagsLegacy = input.hashtags ?? null;
+  let mlsHashtag: string | null = null;
+  let captionsByPlatform: Record<
+    SchedulablePlatform,
+    { caption: string; hashtags: string[] }
+  > | null = null;
+  if (!captionLegacy) {
+    const { data: listing } = await supabase
+      .from("properties")
+      .select("address, city, source_mls")
+      .eq("mls_number", mlsForCaption)
+      .maybeSingle();
+    const synthesized = synthesizeReelCaption({
+      mls_number: mlsForCaption,
+      source_mls: (listing?.source_mls as SourceMls) ?? null,
+      address: listing?.address ?? null,
+      city: listing?.city ?? null,
+    });
+    captionLegacy = synthesized.legacy.caption;
+    hashtagsLegacy = synthesized.legacy.hashtags;
+    mlsHashtag = synthesized.legacy.mls_hashtag;
+    captionsByPlatform = synthesized.captions;
+  }
+
   const { data, error } = await supabase
     .from("generated_posts")
     .insert({
@@ -1639,9 +1673,13 @@ export async function persistRenderedReelAction(
       // null until the user generates them in Studio.
       template_props: {} as Json,
       customizations: {} as Json,
-      caption: input.caption ?? null,
-      hashtags: input.hashtags ?? null,
-      mls_hashtag: null,
+      // Phase D — caption + per-platform map. When the caller passed a
+      // caption, we trust it; otherwise the synthesized values above
+      // produce a usable default the user can edit in Studio.
+      caption: captionLegacy,
+      hashtags: hashtagsLegacy,
+      mls_hashtag: mlsHashtag,
+      captions_by_platform: (captionsByPlatform ?? {}) as unknown as Json,
       status: "draft",
       created_by: profile.id,
     })
@@ -1929,3 +1967,99 @@ export async function triggerMagicDesignAction(
 // Re-export the recommendation shape so client components can import it
 // from a single canonical location alongside the action they're calling.
 export type { MagicDesignRecommendation, MagicDesignOfficeProfile };
+
+// ---------------------------------------------------------------------------
+// synthesizeReelCaption — deterministic caption + per-platform fallback for
+// freshly-rendered Reels
+// ---------------------------------------------------------------------------
+//
+// Phase D — Reel Studio doesn't run the caption pipeline as part of its
+// Generate flow; the user lands back in Post Builder where they can hit
+// Generate to fill in captions. But if they try Post Now before that,
+// the publish route 412s on "no caption". This helper produces a
+// minimal usable caption + per-platform map so the publish path always
+// has something to publish. Users overwrite via the Studio caption pane
+// before posting.
+//
+// Mirrors the per-platform style + hashtag-cap rules from
+// `lib/post-builder/captions.ts` — IG long form, FB conversational
+// short, TikTok punchy hook, IG cap 30 / FB 6 / TT 5, canonical MLS
+// hashtag preserved on every platform.
+function synthesizeReelCaption(args: {
+  mls_number: string;
+  source_mls: SourceMls;
+  address: string | null;
+  city: string | null;
+}): {
+  legacy: { caption: string; hashtags: string[]; mls_hashtag: string };
+  captions: Record<
+    SchedulablePlatform,
+    { caption: string; hashtags: string[] }
+  >;
+} {
+  const addr = args.address?.trim() || "this listing";
+  const city = args.city?.trim();
+  const locationSuffix = city ? ` in ${city}` : "";
+  const mlsHashtag = canonicalMlsHashtag(args.mls_number, args.source_mls);
+
+  const igBody =
+    `Walk through ${addr}${locationSuffix} in this short Reel. ` +
+    `If anything catches your eye, DM for the full tour or to schedule a private showing.`;
+  const fbBody =
+    `Quick tour of ${addr}${locationSuffix}. Reach out if it's a fit and we'll set up a time to walk through in person.`;
+  const ttBody = `Inside ${addr}${locationSuffix}. Full tour — link in bio.`;
+
+  const brand = [
+    "#Century21Alliance",
+    "#C21Alliance",
+    "#SouthJerseyRealEstate",
+  ];
+  const postType = ["#JustListed", "#NewListing", "#ForSale"];
+  const baseTags = [...postType, ...brand, mlsHashtag].filter(
+    (t) => t.length > 1,
+  );
+
+  const cap = (tags: readonly string[], limit: number): string[] => {
+    const slice = tags.slice(0, limit);
+    return slice.includes(mlsHashtag)
+      ? slice
+      : [mlsHashtag, ...slice.slice(0, limit - 1)];
+  };
+
+  const igTags = cap(baseTags, 30);
+  const fbTags = cap(baseTags, 6);
+  const ttTags = cap(baseTags, 5);
+
+  return {
+    legacy: {
+      caption: igBody,
+      hashtags: igTags,
+      mls_hashtag: mlsHashtag,
+    },
+    captions: {
+      instagram: { caption: igBody, hashtags: igTags },
+      facebook: { caption: fbBody, hashtags: fbTags },
+      tiktok: { caption: ttBody, hashtags: ttTags },
+    },
+  };
+}
+
+/**
+ * Inline canonical MLS hashtag generator — duplicated from captions.ts
+ * to keep this action file self-contained (no AI module dep dragged in
+ * just to compute a hashtag). If the convention changes, sync both
+ * copies — the auto-linker keys on this.
+ */
+function canonicalMlsHashtag(
+  mls_number: string,
+  source_mls: SourceMls,
+): string {
+  const normalized = mls_number.replace(/^#/, "").trim();
+  if (!normalized) return "";
+  if (source_mls === "cmc") return `#CMC${normalized}`;
+  if (source_mls === "sjsr") return `#SJSR${normalized}`;
+  if (source_mls === "bright" || /^NJ[A-Z]{2}\d+$/i.test(normalized)) {
+    return `#${normalized.toUpperCase()}`;
+  }
+  return `#${normalized}`;
+}

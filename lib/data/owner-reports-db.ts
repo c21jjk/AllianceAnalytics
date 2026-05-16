@@ -40,10 +40,11 @@ export interface ExistingOwnerReport {
   share_url_path: string;
   /** Flyer view, e.g. "/r/{token}/flyer" */
   flyer_url_path: string;
-  /** PDF download, e.g. "/r/{token}/flyer.pdf" */
-  pdf_url_path: string;
   /** New story-format public view, e.g. "/home/{token}" */
   story_url_path: string;
+  // Phase D — `pdf_url_path` removed (2026-05-16). The /r/{token}/
+  // flyer.pdf route was deleted in the Owner Reports rollback; nothing
+  // in the app reads this field anymore.
   /** Subscriber cadence — "none" means manual-only. */
   cadence: OwnerReportCadence;
   /** When the next scheduled send is due (null when cadence is "none"). */
@@ -103,7 +104,6 @@ export async function fetchExistingOwnerReportForProperty(
     is_locked: data.is_locked,
     share_url_path: `/r/${token}`,
     flyer_url_path: `/r/${token}/flyer`,
-    pdf_url_path: `/r/${token}/flyer.pdf`,
     story_url_path: `/home/${token}`,
     cadence,
     next_send_at: data.next_send_at,

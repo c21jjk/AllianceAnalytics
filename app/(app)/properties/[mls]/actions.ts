@@ -74,8 +74,10 @@ export interface GenerateReportResult {
   error?: string;
   token?: string;
   flyer_url?: string;
-  pdf_url?: string;
   report_url?: string;
+  // Phase D — `pdf_url` removed (2026-05-16). The /r/{token}/flyer.pdf
+  // route was deleted in the Owner Reports rollback; nothing in the
+  // app reads this field anymore.
 }
 
 /**
@@ -222,7 +224,6 @@ export async function generateReportAction(
     ok: true,
     token,
     flyer_url: `/r/${encodeURIComponent(token)}/flyer`,
-    pdf_url: `/r/${encodeURIComponent(token)}/flyer.pdf`,
     report_url: `/r/${encodeURIComponent(token)}`,
   };
 }
