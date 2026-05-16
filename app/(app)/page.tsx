@@ -248,12 +248,13 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         officeShortCode={officeFilter}
       />
 
+      {/* why: top bar carries MLS feeds only (CMC / SJSR / Bright). The
+          social platform pills (FB / IG / TT) moved down to the post-stream
+          header on 2026-05-15 — they're the freshness signal that matters
+          when scanning posts, and they were taking up valuable real estate
+          alongside the metrics row up here. */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <AccountSyncBar
-          health={accountHealth}
-          mlsHealth={mlsHealth}
-          className="flex-1 min-w-0"
-        />
+        <AccountSyncBar mlsHealth={mlsHealth} className="flex-1 min-w-0" />
         {profile.role === "admin" ? <SyncNowButton /> : null}
       </div>
 
@@ -343,9 +344,23 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       {/* Section break + sort tabs — visually separates the "Recent listings
           to action" zone above from the "Posts to review" zone below. The
           tabs sit directly above the post stream so the sort control is
-          right where the user's eye lands when scanning posts. */}
+          right where the user's eye lands when scanning posts.
+
+          why: social platform sync pills (FB / IG / TT) live on the right
+          edge of this row — they're the freshness signal that's relevant
+          while reviewing posts. MLS sync stays at the top because it's a
+          data-ingestion concern, not a content-review one. `hideAutoCaption`
+          is set so the "auto every 4h" caption doesn't render twice on the
+          page (it's already on the MLS bar up top). */}
       <div className="pt-2 border-t-2 border-neutral-200">
-        <SortToggle value={currentSort} />
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <SortToggle value={currentSort} />
+          <AccountSyncBar
+            health={accountHealth}
+            hideAutoCaption
+            className="flex-shrink-0"
+          />
+        </div>
       </div>
 
       {currentView === "grouped" ? (
