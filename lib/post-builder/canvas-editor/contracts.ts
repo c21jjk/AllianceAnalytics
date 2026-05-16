@@ -518,6 +518,15 @@ export interface LayerListPanelProps {
    * calls.
    */
   onReorder: (newOrder: string[]) => void;
+  /**
+   * Phase B.4 — fired on row mouseEnter (with the row's layerId) and
+   * mouseLeave (with null). The orchestrator draws a temporary outline
+   * around the corresponding Fabric object so Larissa can identify what
+   * a row refers to without committing to selecting it.
+   *
+   * Optional — when omitted, the panel skips the hover-preview wiring.
+   */
+  onHoverEntry?: (layerId: string | null) => void;
 }
 
 // ===========================================================================

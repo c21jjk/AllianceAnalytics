@@ -141,6 +141,7 @@ export default function LayerListPanel(
                   onSelect={props.onSelect}
                   onToggleVisibility={props.onToggleVisibility}
                   onDelete={props.onDelete}
+                  onHoverEntry={props.onHoverEntry}
                 />
               ))}
             </SortableContext>
@@ -161,6 +162,8 @@ interface SortableLayerRowProps {
   onSelect: (layerId: string) => void;
   onToggleVisibility: (layerId: string) => void;
   onDelete: (layerId: string) => void;
+  /** Phase B.4 — hover-preview callback. Optional. */
+  onHoverEntry?: (layerId: string | null) => void;
 }
 
 function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
@@ -171,6 +174,7 @@ function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
     transform,
     transition,
     isDragging,
+    isOver,
   } = useSortable({ id: props.entry.id });
 
   // why: @dnd-kit emits transform + transition on every frame of the drag.
@@ -185,30 +189,48 @@ function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
   // why: composing the row className conditionally rather than via clsx —
   // project uses Tailwind utility strings directly and clsx import noise
   // isn't worth saving 12 characters here.
+  // Phase B.4 — `isOver && !isDragging` shows a crisp top border on the
+  // drop target so it's obvious WHERE a drag will land. Without this the
+  // shuffle animation reads as "things moved" but not "this is the slot."
   const rowClass = [
-    "group mb-1 flex items-center gap-2 rounded-lg px-2 py-2 transition-colors",
+    "group relative mb-1 flex items-center gap-2 rounded-lg px-2 py-2 transition-colors",
     props.isSelected
       ? "bg-gold-50 ring-1 ring-gold-200"
       : "hover:bg-neutral-50",
     isDragging
       ? "scale-[1.02] bg-white shadow-lg ring-1 ring-gold-500"
       : "",
+    isOver && !isDragging ? "border-t-2 border-gold-500" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <li ref={setNodeRef} style={style} className={rowClass}>
-      {/* why: drag listeners go ONLY on this handle, NOT on the <li> or the
-          row body. Spreading them on the outer element would hijack clicks
-          on the name/eye/trash and start drags instead of selects. */}
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={rowClass}
+      onMouseEnter={() => {
+        if (isDragging) return;
+        props.onHoverEntry?.(props.entry.id);
+      }}
+      onMouseLeave={() => {
+        if (isDragging) return;
+        props.onHoverEntry?.(null);
+      }}
+    >
+      {/* Phase B.4 — grip handle hidden until row hover (or focus-visible
+          for keyboard users). Removes the visual noise of a full column
+          of dots and matches Notion/Linear's pattern of "grip on hover."
+          The button stays in the DOM so dnd-kit's sensors can still
+          attach — just hidden via opacity transition. */}
       <button
         type="button"
         {...attributes}
         {...listeners}
         aria-label={`Reorder ${props.entry.name}`}
-        className={`flex h-6 w-3.5 shrink-0 items-center justify-center text-neutral-300 hover:text-neutral-500 focus:outline-none focus-visible:text-neutral-600 ${
-          isDragging ? "cursor-grabbing" : "cursor-grab"
+        className={`flex h-6 w-3.5 shrink-0 items-center justify-center text-neutral-300 opacity-0 transition-opacity hover:text-neutral-500 focus:outline-none focus-visible:text-neutral-600 focus-visible:opacity-100 group-hover:opacity-100 ${
+          isDragging ? "cursor-grabbing opacity-100" : "cursor-grab"
         }`}
       >
         <GripIcon />

@@ -307,11 +307,74 @@
     }
   }
 
+  // Phase B.3 — Text effect → Fabric props. MUST mirror
+  // lib/post-builder/canvas-editor/textEffects.ts exactly. If the two drift,
+  // the server-rendered Reel won't match what Larissa saw in Studio.
+  function textEffectToFabricProps(effect) {
+    if (!effect || effect.kind === "none") {
+      return { shadow: null, stroke: "", strokeWidth: 0, paintFirst: "fill" };
+    }
+    if (effect.kind === "shadow") {
+      return {
+        shadow: new fabric.Shadow({
+          color: effect.color,
+          offsetX: effect.offsetX,
+          offsetY: effect.offsetY,
+          blur: effect.blur,
+        }),
+        stroke: "",
+        strokeWidth: 0,
+        paintFirst: "fill",
+      };
+    }
+    if (effect.kind === "outline") {
+      return {
+        shadow: null,
+        stroke: effect.color,
+        strokeWidth: effect.width,
+        paintFirst: "stroke",
+      };
+    }
+    if (effect.kind === "lift") {
+      var clamped = Math.max(0, Math.min(1, effect.opacity));
+      var alpha = Math.round(clamped * 255).toString(16);
+      if (alpha.length < 2) alpha = "0" + alpha;
+      return {
+        shadow: new fabric.Shadow({
+          color: "#000000" + alpha,
+          offsetX: 0,
+          offsetY: 4,
+          blur: 12,
+        }),
+        stroke: "",
+        strokeWidth: 0,
+        paintFirst: "fill",
+      };
+    }
+    if (effect.kind === "splice") {
+      return {
+        shadow: new fabric.Shadow({
+          color: effect.outlineColor,
+          offsetX: effect.offsetX,
+          offsetY: effect.offsetY,
+          blur: 0,
+        }),
+        stroke: effect.outlineColor,
+        strokeWidth: effect.outlineWidth,
+        paintFirst: "stroke",
+      };
+    }
+    // Unknown effect kind — bail to "no effect" defaults rather than crashing.
+    return { shadow: null, stroke: "", strokeWidth: 0, paintFirst: "fill" };
+  }
+
   function addTextLayer(canvas, layer) {
     // why Textbox over IText: Textbox supports `width`-based wrapping
     // which mirrors the canvas-editor's `maxWidth` behaviour. IText
     // would honor newlines only.
     var text = layer.resolvedText != null ? layer.resolvedText : layer.text;
+    // Phase B.3 — resolve text effect before constructing the textbox.
+    var effectProps = textEffectToFabricProps(layer.effect);
     var t = new fabric.Textbox(text || "", {
       left: layer.left,
       top: layer.top,
@@ -328,6 +391,10 @@
       charSpacing: layer.charSpacing || 0,
       underline: !!layer.underline,
       linethrough: !!layer.linethrough,
+      shadow: effectProps.shadow,
+      stroke: effectProps.stroke,
+      strokeWidth: effectProps.strokeWidth,
+      paintFirst: effectProps.paintFirst,
       selectable: false,
       evented: false,
     });

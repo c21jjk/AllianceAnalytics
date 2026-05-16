@@ -196,6 +196,68 @@ export interface CanvasLayerBase {
  *   • The hydration code in CanvasEditor.tsx prefers `boundField` over `text`
  *     and only falls back if the resolved value is empty.
  */
+/**
+ * Phase B.3 — Text effects.
+ *
+ * Canva-style presets that layer shadows, outlines, and offset duplicates
+ * on top of a TextLayer. The schema captures the effect parameters; the
+ * editor's hydration path + the worker's render.js translate them into
+ * Fabric.js `shadow` / `stroke` / `paintFirst` props at render time.
+ *
+ * Discriminated union — `kind` selects the parameter shape. `"none"` is
+ * the default (renderer skips all effect props), and a missing `effect`
+ * field on a TextLayer is treated as `{ kind: "none" }`.
+ *
+ * Why a small fixed set (vs. an arbitrary shadow + stroke matrix):
+ *   Canva's presets are recognizable and predictable. Surfacing every
+ *   shadow knob (offset/blur/color/opacity/spread × per-side) is
+ *   overwhelming for a non-designer. Five preset chips with sane
+ *   defaults cover ~95% of usage; advanced tuning can come later.
+ */
+export type TextEffect =
+  | { kind: "none" }
+  | {
+      kind: "shadow";
+      /** Horizontal offset in px (positive = right). */
+      offsetX: number;
+      /** Vertical offset in px (positive = down). */
+      offsetY: number;
+      /** Gaussian blur radius in px. */
+      blur: number;
+      /** Shadow color as hex or rgba string. Renderer applies as-is. */
+      color: string;
+    }
+  | {
+      kind: "outline";
+      /** Stroke width in px — also the visual outline thickness. */
+      width: number;
+      /** Outline color as hex string. */
+      color: string;
+    }
+  | {
+      kind: "lift";
+      /** Soft drop shadow used to "lift" text off the background. Parametrized
+       *  only by opacity — offsets, blur, and color are fixed for visual
+       *  consistency (black, offsetY = 4px, blur = 12px). 0..1 range. */
+      opacity: number;
+    }
+  | {
+      kind: "splice";
+      /** Echo / splice — the outline + offset-duplicate effect. The main
+       *  text renders normally; an offset stroke-colored "shadow" trails
+       *  behind it, mimicking a duplicated outlined copy. */
+      offsetX: number;
+      offsetY: number;
+      /** Color of the outline + offset duplicate. */
+      outlineColor: string;
+      outlineWidth: number;
+    };
+
+/** Discriminator helper — treat a missing `effect` as "none". */
+export function getTextEffectKind(layer: TextLayer): TextEffect["kind"] {
+  return layer.effect?.kind ?? "none";
+}
+
 export interface TextLayer extends CanvasLayerBase {
   kind: "text";
   /** Literal text content. Used as fallback when boundField resolves to empty. */
@@ -224,6 +286,11 @@ export interface TextLayer extends CanvasLayerBase {
   editable: boolean;
   /** Optional max-width wrapping. When null, text wraps to the layer's `width`. */
   maxWidth?: number | null;
+  /**
+   * Phase B.3 — Canva-style text effect (shadow / outline / lift / splice).
+   * Optional — a missing field renders as "no effect" (kind: "none").
+   */
+  effect?: TextEffect;
 }
 
 /**

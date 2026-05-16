@@ -32,6 +32,7 @@
  */
 
 import {
+  ActiveSelection,
   Canvas,
   Circle,
   Ellipse,
@@ -72,8 +73,17 @@ import {
   type PostFormat,
   type ShapeLayer,
   type TextBoundField,
+  type TextEffect,
   type TextLayer,
 } from "./types";
+import { textEffectToFabricProps } from "./textEffects";
+import {
+  clearAutosave,
+  formatAutosaveAge,
+  readAutosave,
+  writeAutosave,
+  type AutosavePayload,
+} from "./autosave";
 
 // === Phase 2 panel integrations ===
 // why: imported here at the orchestrator so the integration surface is
@@ -96,6 +106,7 @@ import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AddLayerToolbar from "./panels/AddLayerToolbar";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
+import ContextualTopToolbar from "./panels/ContextualTopToolbar";
 import LayerListPanel from "./panels/LayerListPanel";
 import PhotosPanel from "./panels/PhotosPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
@@ -381,6 +392,10 @@ function createFabricTextbox(
   // why: use Textbox (not Text or IText). Textbox supports word-wrap within
   // a fixed `width` AND in-place editing on double-click — both required by
   // the editor UX. Text doesn't wrap; IText wraps but doesn't enforce width.
+  // Phase B.3 — resolve text effect to Fabric props (shadow/stroke/paintFirst)
+  // before construction so the effect is visible on first render, not on a
+  // later tick.
+  const effectProps = textEffectToFabricProps(layer.effect);
   const tb = new Textbox(resolvedText || layer.text, {
     left: layer.left,
     top: layer.top,
@@ -397,6 +412,13 @@ function createFabricTextbox(
     charSpacing: layer.charSpacing,
     underline: layer.underline,
     linethrough: layer.linethrough,
+    // why: Phase B.3 — text effect translates into shadow/stroke/paintFirst.
+    // Effect "none" (default) returns null/empty values, leaving the textbox
+    // looking identical to pre-Phase-B builds.
+    shadow: effectProps.shadow,
+    stroke: effectProps.stroke,
+    strokeWidth: effectProps.strokeWidth,
+    paintFirst: effectProps.paintFirst,
     editable: layer.editable && !layer.locked,
     selectable: !layer.locked,
     evented: !layer.locked,
@@ -734,6 +756,9 @@ interface SelectionState {
   layerId: string | null;
   /** When true, the selection covers multiple objects (Phase 2+ — not selectable in Phase 1 by default). */
   isMulti: boolean;
+  /** Number of currently-selected objects on the canvas. Drives the
+   *  Distribute buttons' enabled state in the footer (requires ≥3). */
+  count: number;
 }
 
 interface LayerEntry {
@@ -803,6 +828,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [selection, setSelection] = useState<SelectionState>({
     layerId: null,
     isMulti: false,
+    count: 0,
   });
   // why: a version counter that increments whenever Fabric's object list
   // mutates. The layer panel reads from Fabric's getObjects() inside a
@@ -1104,7 +1130,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       setCurrentTemplate(next);
       // why: the outgoing canvas's selection + error state belongs to the
       // template we're leaving. Clear them so the new canvas opens clean.
-      setSelection({ layerId: null, isMulti: false });
+      setSelection({ layerId: null, isMulti: false, count: 0 });
       setEditorError(null);
       // why: notify the parent so its post-type / variant / format state
       // tracks what's actually on the canvas. Without this, re-opening
@@ -1157,7 +1183,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         if (!ok) return;
       }
       setCurrentTemplate(target);
-      setSelection({ layerId: null, isMulti: false });
+      setSelection({ layerId: null, isMulti: false, count: 0 });
       setEditorError(null);
       onResize?.(target);
     },
@@ -1316,25 +1342,29 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     fabricCanvas.on("selection:created", (e) => {
       const target = e.selected?.[0];
       if (!target) {
-        setSelection({ layerId: null, isMulti: false });
+        setSelection({ layerId: null, isMulti: false, count: 0 });
         return;
       }
       const data = getLayerData(target);
+      const count = e.selected?.length ?? 0;
       setSelection({
         layerId: data?.layerId ?? null,
-        isMulti: (e.selected?.length ?? 0) > 1,
+        isMulti: count > 1,
+        count,
       });
     });
     fabricCanvas.on("selection:updated", (e) => {
       const target = e.selected?.[0];
       const data = target ? getLayerData(target) : null;
+      const count = e.selected?.length ?? 0;
       setSelection({
         layerId: data?.layerId ?? null,
-        isMulti: (e.selected?.length ?? 0) > 1,
+        isMulti: count > 1,
+        count,
       });
     });
     fabricCanvas.on("selection:cleared", () => {
-      setSelection({ layerId: null, isMulti: false });
+      setSelection({ layerId: null, isMulti: false, count: 0 });
     });
 
     // why: bump layer version on any object set mutation so the layer panel
@@ -1592,6 +1622,197 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     setLayerVersion((v) => v + 1);
   }, []);
 
+  // -------------------------------------------------------------------------
+  // Phase B.1 — Alignment + Distribute
+  // -------------------------------------------------------------------------
+  //
+  // Rules:
+  //   • Single selected object       → align to template/canvas bounds.
+  //   • Multi-selection (2+)          → align children within their shared
+  //                                     bounding rectangle (the bounding box
+  //                                     of all selected objects).
+  //   • Distribute h/v                → requires ≥3 objects. Keeps leftmost +
+  //                                     rightmost (or top/bottom) pinned and
+  //                                     evenly distributes the gaps between
+  //                                     interior objects.
+  //
+  // Implementation note (Fabric v6):
+  //   When objects sit inside an ActiveSelection, their `left`/`top` are
+  //   stored RELATIVE to the parent group's center. To keep the math
+  //   straightforward we `discardActiveObject()` first — that flushes each
+  //   child back to absolute canvas coords — apply the alignment, then
+  //   re-create the ActiveSelection so the user's selection is preserved.
+
+  /**
+   * The 8 directions the footer can dispatch. Single-object alignment uses
+   * canvas bounds; multi uses the selection bounding box; distribute is
+   * multi-only and rejects when fewer than 3 objects are selected.
+   */
+  type AlignDirection =
+    | "left"
+    | "center"
+    | "right"
+    | "top"
+    | "middle"
+    | "bottom"
+    | "distribute_horizontal"
+    | "distribute_vertical";
+
+  const handleAlign = useCallback(
+    (direction: AlignDirection): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const objs = canvas.getActiveObjects();
+      if (objs.length === 0) return;
+
+      const isDistribute =
+        direction === "distribute_horizontal" ||
+        direction === "distribute_vertical";
+
+      // Distribute requires 3 objects to be meaningful — guard here so a
+      // stale click doesn't shuffle a 2-object selection unexpectedly.
+      if (isDistribute && objs.length < 3) return;
+
+      const canvasW = currentTemplate.width;
+      const canvasH = currentTemplate.height;
+
+      // ---- Single-object alignment — align to canvas bounds ------------
+      if (objs.length === 1) {
+        const obj = objs[0]!;
+        if (isDistribute) return; // Distribute is multi-only.
+        const bb = obj.getBoundingRect();
+        let dx = 0;
+        let dy = 0;
+        switch (direction) {
+          case "left":
+            dx = 0 - bb.left;
+            break;
+          case "center":
+            dx = (canvasW - bb.width) / 2 - bb.left;
+            break;
+          case "right":
+            dx = canvasW - bb.width - bb.left;
+            break;
+          case "top":
+            dy = 0 - bb.top;
+            break;
+          case "middle":
+            dy = (canvasH - bb.height) / 2 - bb.top;
+            break;
+          case "bottom":
+            dy = canvasH - bb.height - bb.top;
+            break;
+        }
+        obj.set({
+          left: (obj.left ?? 0) + dx,
+          top: (obj.top ?? 0) + dy,
+        });
+        obj.setCoords();
+        canvas.fire("object:modified", { target: obj });
+        canvas.requestRenderAll();
+        setLayerVersion((v) => v + 1);
+        return;
+      }
+
+      // ---- Multi-selection alignment ----------------------------------
+      // Step 1: release the ActiveSelection so each child has absolute
+      // canvas coords in its own left/top.
+      canvas.discardActiveObject();
+      // why: snapshot each object's bounding rect AFTER the discard so the
+      // numbers reflect absolute canvas coords (not group-relative).
+      objs.forEach((o) => o.setCoords());
+
+      const boxes = objs.map((o) => ({ obj: o, bb: o.getBoundingRect() }));
+
+      if (isDistribute) {
+        const axis = direction === "distribute_horizontal" ? "x" : "y";
+        // Sort by leading edge along the distribution axis.
+        const sorted = boxes
+          .slice()
+          .sort((a, b) =>
+            axis === "x" ? a.bb.left - b.bb.left : a.bb.top - b.bb.top,
+          );
+        const first = sorted[0]!;
+        const last = sorted[sorted.length - 1]!;
+        // Total free space = (last leading edge) - (first trailing edge)
+        // minus the sum of the interior objects' span on the axis.
+        const firstTrailing =
+          axis === "x" ? first.bb.left + first.bb.width : first.bb.top + first.bb.height;
+        const lastLeading = axis === "x" ? last.bb.left : last.bb.top;
+        const interior = sorted.slice(1, -1);
+        const interiorSpan = interior.reduce(
+          (sum, item) => sum + (axis === "x" ? item.bb.width : item.bb.height),
+          0,
+        );
+        const totalGap = lastLeading - firstTrailing - interiorSpan;
+        // why: clamp negative gaps to 0 — if the interior objects overlap
+        // the leading/trailing edges, distribute degrades gracefully to
+        // a tight packing rather than producing nonsense placement.
+        const gap = Math.max(0, totalGap / (interior.length + 1));
+        let cursor = firstTrailing + gap;
+        interior.forEach((item) => {
+          const targetLeading = cursor;
+          const currentLeading = axis === "x" ? item.bb.left : item.bb.top;
+          const delta = targetLeading - currentLeading;
+          if (axis === "x") {
+            item.obj.set({ left: (item.obj.left ?? 0) + delta });
+          } else {
+            item.obj.set({ top: (item.obj.top ?? 0) + delta });
+          }
+          item.obj.setCoords();
+          cursor += (axis === "x" ? item.bb.width : item.bb.height) + gap;
+        });
+      } else {
+        // Align within the selection bounding box (union of all child bbs).
+        const minLeft = Math.min(...boxes.map((b) => b.bb.left));
+        const maxRight = Math.max(...boxes.map((b) => b.bb.left + b.bb.width));
+        const minTop = Math.min(...boxes.map((b) => b.bb.top));
+        const maxBottom = Math.max(...boxes.map((b) => b.bb.top + b.bb.height));
+        const selW = maxRight - minLeft;
+        const selH = maxBottom - minTop;
+
+        boxes.forEach(({ obj, bb }) => {
+          let dx = 0;
+          let dy = 0;
+          switch (direction) {
+            case "left":
+              dx = minLeft - bb.left;
+              break;
+            case "center":
+              dx = minLeft + (selW - bb.width) / 2 - bb.left;
+              break;
+            case "right":
+              dx = minLeft + selW - bb.width - bb.left;
+              break;
+            case "top":
+              dy = minTop - bb.top;
+              break;
+            case "middle":
+              dy = minTop + (selH - bb.height) / 2 - bb.top;
+              break;
+            case "bottom":
+              dy = minTop + selH - bb.height - bb.top;
+              break;
+          }
+          obj.set({
+            left: (obj.left ?? 0) + dx,
+            top: (obj.top ?? 0) + dy,
+          });
+          obj.setCoords();
+        });
+      }
+
+      // Step 2: recreate the ActiveSelection so the user's selection is
+      // preserved after the alignment lands.
+      const sel = new ActiveSelection(objs, { canvas });
+      canvas.setActiveObject(sel);
+      canvas.fire("object:modified", { target: sel });
+      canvas.requestRenderAll();
+      setLayerVersion((v) => v + 1);
+    },
+    [currentTemplate.width, currentTemplate.height],
+  );
+
   const handleToggleLock = useCallback((): void => {
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -1734,7 +1955,228 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     if (!canvas) return;
     canvas.discardActiveObject();
     canvas.requestRenderAll();
-    setSelection({ layerId: null, isMulti: false });
+    setSelection({ layerId: null, isMulti: false, count: 0 });
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Phase B.4 — Layers panel hover-preview
+  // -------------------------------------------------------------------------
+  //
+  // When the user hovers a row in LayerListPanel, draw a temporary outline
+  // rect around the corresponding Fabric object so they can visually
+  // identify what the row refers to without committing to selecting it
+  // (selecting auto-switches the right panel to SelectionPropertiesPanel,
+  // which is a context jump). The rect is non-interactive — `evented:
+  // false, selectable: false` — and lives only as long as the hover.
+  //
+  // Implementation: a ref holds the current hover Rect. On enter we add a
+  // new rect around the target object's bounding box; on leave we remove
+  // it. We never persist the rect to the canvas state — it's purely a
+  // visual artifact of the panel hover.
+
+  const hoverHighlightRef = useRef<Rect | null>(null);
+
+  // -------------------------------------------------------------------------
+  // Phase B.6 — Autosave to localStorage
+  // -------------------------------------------------------------------------
+  //
+  // Two halves:
+  //   1. Read on mount — if a (template, mls) autosave exists, surface a
+  //      banner offering to restore. The banner is non-blocking; the user
+  //      can ignore it and the autosave keeps writing.
+  //   2. Debounced write — every time layerVersion bumps, schedule a write
+  //      3s after the last bump. Cancels any pending write so we never
+  //      flood localStorage during a slider drag.
+  //
+  // Both halves are gated on the (template.id, listing.mlsNumber) pair so
+  // a listing or template switch resets the autosave channel cleanly.
+
+  const [pendingAutosave, setPendingAutosave] = useState<AutosavePayload | null>(
+    null,
+  );
+  // why: persist the banner-dismissed state per session so a user who
+  // declines the restore once doesn't see it re-appear on every layerVersion
+  // bump. Not stored in localStorage — a closed tab forgets the dismissal.
+  const [autosaveBannerDismissed, setAutosaveBannerDismissed] = useState<boolean>(false);
+  const autosaveWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Read on mount (and on template/listing change). The Fabric canvas may
+  // not be fully hydrated yet, but the read is sync from localStorage so
+  // it's fine to do early — the banner just shows while the hydration
+  // finishes in the background.
+  useEffect(() => {
+    const found = readAutosave(currentTemplate.id, listing.mlsNumber);
+    if (found) {
+      setPendingAutosave(found);
+      setAutosaveBannerDismissed(false);
+    } else {
+      setPendingAutosave(null);
+    }
+    // why: depend on the identity-pair, not on every prop bump. A listing
+    // detail change (e.g., agent name) shouldn't blow away the autosave.
+  }, [currentTemplate.id, listing.mlsNumber]);
+
+  // Debounced write. Triggers on every layerVersion bump; clears any
+  // pending timer first so we end up writing only once per 3s of silence.
+  useEffect(() => {
+    // why: skip the initial bump (layerVersion === 0) — writing an
+    // unmutated canvas state right after hydration is wasted work AND
+    // would mark a fresh canvas as "has an autosave," confusing the
+    // restore flow on a future open.
+    if (layerVersion === 0) return;
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    // Belt-and-suspenders: don't autosave the hover-preview rect. Filter
+    // it out by checking its layer-id marker before serializing.
+    if (autosaveWriteTimerRef.current) {
+      clearTimeout(autosaveWriteTimerRef.current);
+    }
+    autosaveWriteTimerRef.current = setTimeout(() => {
+      const current = fabricRef.current;
+      if (!current) return;
+      // Strip the hover-preview rect (if any) so it doesn't get persisted.
+      const hover = hoverHighlightRef.current;
+      if (hover) current.remove(hover);
+      try {
+        // why: Fabric v6 `toJSON()` takes no args; the supported way to
+        // include custom properties (our `data` metadata) is to call
+        // `toObject(propertiesToInclude)` directly. Mirrors the pattern
+        // in useUndoRedoHistory's captureSnapshot.
+        const propsToInclude: string[] = [
+          "data",
+          "selectable",
+          "evented",
+          "lockMovementX",
+          "lockMovementY",
+        ];
+        const json = current.toObject(propsToInclude);
+        writeAutosave(currentTemplate.id, listing.mlsNumber, json);
+      } catch {
+        // best-effort
+      } finally {
+        // Re-add the hover preview if we just removed it for the snapshot.
+        if (hover) {
+          current.add(hover);
+          current.bringObjectToFront(hover);
+        }
+      }
+    }, 3_000);
+
+    return () => {
+      if (autosaveWriteTimerRef.current) {
+        clearTimeout(autosaveWriteTimerRef.current);
+        autosaveWriteTimerRef.current = null;
+      }
+    };
+  }, [layerVersion, currentTemplate.id, listing.mlsNumber]);
+
+  /** Apply the pending autosave to the live Fabric canvas. */
+  const handleRestoreAutosave = useCallback((): void => {
+    const canvas = fabricRef.current;
+    if (!canvas || !pendingAutosave) return;
+    // why: defensive — re-verify the autosave matches the current
+    // (template, mls). The pendingAutosave state was set when the
+    // identifier pair last changed; if a race somehow lands a stale
+    // payload, we'd rather no-op than overwrite the canvas with
+    // unrelated data.
+    if (
+      pendingAutosave.templateId !== currentTemplate.id ||
+      pendingAutosave.mlsNumber !== listing.mlsNumber
+    ) {
+      setPendingAutosave(null);
+      return;
+    }
+    // Clear active selection + hover preview before reloading so they
+    // don't reference soon-to-be-stale Fabric objects.
+    canvas.discardActiveObject();
+    if (hoverHighlightRef.current) {
+      canvas.remove(hoverHighlightRef.current);
+      hoverHighlightRef.current = null;
+    }
+    // why: loadFromJSON returns a Promise<Canvas> in Fabric v6.
+    void canvas
+      .loadFromJSON(pendingAutosave.fabricJson as object)
+      .then(() => {
+        canvas.requestRenderAll();
+        setLayerVersion((v) => v + 1);
+      });
+    setPendingAutosave(null);
+  }, [pendingAutosave, currentTemplate.id, listing.mlsNumber]);
+
+  /** Discard the autosave entry and dismiss the banner. */
+  const handleDiscardAutosave = useCallback((): void => {
+    clearAutosave(currentTemplate.id, listing.mlsNumber);
+    setPendingAutosave(null);
+    setAutosaveBannerDismissed(true);
+  }, [currentTemplate.id, listing.mlsNumber]);
+
+  const handleHoverEntry = useCallback(
+    (layerId: string | null): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      // Always clear any prior highlight first — covers both leave and
+      // enter-on-a-different-row in one path.
+      if (hoverHighlightRef.current) {
+        canvas.remove(hoverHighlightRef.current);
+        hoverHighlightRef.current = null;
+      }
+      if (!layerId) {
+        canvas.requestRenderAll();
+        return;
+      }
+      const target = canvas
+        .getObjects()
+        .find((o) => getLayerData(o)?.layerId === layerId);
+      if (!target) {
+        canvas.requestRenderAll();
+        return;
+      }
+      // Use the target's absolute bounding rect so the highlight matches
+      // the object's true on-canvas footprint even when it's rotated/scaled.
+      const bb = target.getBoundingRect();
+      const highlight = new Rect({
+        left: bb.left,
+        top: bb.top,
+        width: bb.width,
+        height: bb.height,
+        fill: "transparent",
+        stroke: "#C9A961", // gold-500 — matches the selection ring
+        strokeWidth: 2,
+        strokeDashArray: [6, 4],
+        // why: skipTargetFind keeps the rect from intercepting clicks on
+        // the underlying object — the user can still click through to
+        // select what they're previewing.
+        evented: false,
+        selectable: false,
+        hoverCursor: "default",
+      });
+      // Stamp a marker on the rect's data so a defensive sweep can clean
+      // up stragglers (shouldn't be needed, but cheap insurance).
+      setLayerData(highlight, {
+        layerId: `__hover_preview__:${layerId}`,
+        layerKind: "shape",
+        displayName: "(hover preview)",
+      });
+      hoverHighlightRef.current = highlight;
+      canvas.add(highlight);
+      canvas.bringObjectToFront(highlight);
+      canvas.requestRenderAll();
+    },
+    [],
+  );
+
+  // why: clean up the hover highlight if the canvas unmounts or the
+  // active selection changes mid-hover (the panel might not get a
+  // mouseLeave event in those cases). Belt-and-suspenders.
+  useEffect(() => {
+    return () => {
+      const canvas = fabricRef.current;
+      if (canvas && hoverHighlightRef.current) {
+        canvas.remove(hoverHighlightRef.current);
+        hoverHighlightRef.current = null;
+        canvas.requestRenderAll();
+      }
+    };
   }, []);
 
   // why: when the user clicks a thumbnail in BrandPanel or AgentPanel, we
@@ -1938,6 +2380,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // why: await the parent's onSave so we can surface upload failures.
       // If onSave is sync (returns void, not Promise), `await` is a no-op.
       await Promise.resolve(onSave(exportResult));
+      // Phase B.6 — the DB row is now authoritative; the localStorage copy
+      // can be cleared so a future open of the same (template, mls) won't
+      // offer a stale restore. Only fired on a successful onSave —
+      // failures throw above and skip this line, preserving the autosave
+      // as a safety net.
+      clearAutosave(currentTemplate.id, listing.mlsNumber);
+      setPendingAutosave(null);
     } catch (err) {
       setEditorError({
         kind: "export",
@@ -1947,7 +2396,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       isExportingRef.current = false;
       setIsLocalSaving(false);
     }
-  }, [onSave, template]);
+  }, [onSave, template, currentTemplate.id, listing.mlsNumber]);
 
   // -------------------------------------------------------------------------
   // Display-scale calculation for the canvas viewport
@@ -2297,6 +2746,56 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               backgroundSize: "100% 100%, 24px 24px",
             }}
           >
+            {/* Phase B.6 — autosave restore banner. Renders only when we
+                detected a recent localStorage autosave for this (template,
+                mls) pair AND the user hasn't dismissed it yet. Non-blocking;
+                shown above the AddLayerToolbar so it's noticeable but not
+                in the canvas chrome. */}
+            {pendingAutosave && !autosaveBannerDismissed ? (
+              <div className="mb-3 flex w-full max-w-2xl items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 shadow-sm">
+                <div className="flex min-w-0 items-center gap-2">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.75}
+                    stroke="currentColor"
+                    aria-hidden="true"
+                    className="h-4 w-4 shrink-0"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span className="truncate">
+                    Unsaved changes from{" "}
+                    <strong className="font-semibold">
+                      {formatAutosaveAge(pendingAutosave.savedAt)}
+                    </strong>{" "}
+                    — restore them?
+                  </span>
+                </div>
+                <div className="ml-3 flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleRestoreAutosave}
+                    className="rounded-md bg-amber-900 px-2 py-1 text-[11px] font-semibold text-white hover:bg-amber-950"
+                  >
+                    Restore
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDiscardAutosave}
+                    className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             {/* Phase 2 — Add Layer Toolbar (always visible, top of canvas area).
                 why: primary creation affordance — adding text/shape layers is
                 one of the top-3 things Larissa will do once Phase 2 ships. */}
@@ -2308,21 +2807,46 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 recordHistory={history.record}
               />
             </div>
-            {/* Selection toolbar — floats above the canvas when something is selected */}
-            {selectedEntry && !selectedEntry.locked ? (
-              <SelectionToolbar
-                onDelete={handleDeleteSelection}
-                onBringForward={handleBringForward}
-                onSendBackward={handleSendBackward}
-                onToggleLock={handleToggleLock}
-                onDuplicate={() => void handleDuplicateSelection()}
-                layerName={selectedEntry.name}
-                layerKind={selectedEntry.kind}
-                canvas={fabricRef.current}
-                selectionVersion={layerVersion}
-                onOpacityCommit={history.record}
-                onCanvasMutated={() => setLayerVersion((v) => v + 1)}
-              />
+            {/* Phase B.2 — floating chrome above the canvas. Two stacked
+                bars: contextual content controls (top) + structural ops
+                (bottom). The wrapper owns positioning so both bars share
+                the same horizontal anchor; either child can be null
+                (image mode hides the contextual row; multi mode hides
+                the structural row since there's no single layer-name to
+                display). */}
+            {(selectedEntry && !selectedEntry.locked) ||
+            (selection.isMulti && selection.count > 0) ? (
+              <div className="absolute top-6 z-10 flex flex-col items-center gap-2">
+                {(selectionMode === "text" ||
+                  selectionMode === "shape" ||
+                  selectionMode === "multi") &&
+                fabricRef.current ? (
+                  <ContextualTopToolbar
+                    canvas={fabricRef.current}
+                    mode={selectionMode}
+                    selectionVersion={layerVersion}
+                    selectionCount={selection.count}
+                    onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+                    recordHistory={history.record}
+                    onAlign={handleAlign}
+                  />
+                ) : null}
+                {selectedEntry && !selectedEntry.locked ? (
+                  <SelectionToolbar
+                    onDelete={handleDeleteSelection}
+                    onBringForward={handleBringForward}
+                    onSendBackward={handleSendBackward}
+                    onToggleLock={handleToggleLock}
+                    onDuplicate={() => void handleDuplicateSelection()}
+                    layerName={selectedEntry.name}
+                    layerKind={selectedEntry.kind}
+                    canvas={fabricRef.current}
+                    selectionVersion={layerVersion}
+                    onOpacityCommit={history.record}
+                    onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+                  />
+                ) : null}
+              </div>
             ) : null}
 
             {/* Dimension warning — blocks export when template is malformed */}
@@ -2385,11 +2909,19 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
           {/* === Canvas footer — alignment / zoom / undo+redo === */}
           <CanvasFooter
-            // why: alignment cluster is purely visual UI for Phase A.4 —
-            // actual alignment math is Phase B work (per spec). Show only
-            // when something is selected so the empty-state footer stays
-            // clean.
-            showAlignment={selectedEntry !== null && !selectedEntry.locked}
+            // why: Phase B.1 — alignment is live. Show the cluster whenever
+            // any selection exists (single OR multi). A locked single
+            // object still hides alignment because moving a locked layer
+            // would silently violate the lock contract. Multi-selection
+            // shows the cluster even if individual children are locked;
+            // Fabric's per-object lockMovement guards prevent those rows
+            // from moving during the multi-align pass.
+            showAlignment={
+              selection.count > 0 &&
+              (selection.isMulti || (selectedEntry !== null && !selectedEntry.locked))
+            }
+            canDistribute={selection.count >= 3}
+            onAlign={handleAlign}
             zoom={zoom}
             onZoomIn={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
             onZoomOut={() =>
@@ -2442,6 +2974,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onToggleVisibility={handleToggleLayerVisibility}
                     onDelete={handleDeleteLayer}
                     onReorder={handleReorderLayers}
+                    onHoverEntry={handleHoverEntry}
                   />
                 ) : (
                   <SelectionPropertiesPanel
@@ -2550,8 +3083,11 @@ interface SelectionToolbarProps {
 }
 
 function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
+  // why: Phase B.2 — positioning moved to a parent wrapper that stacks
+  // SelectionToolbar below ContextualTopToolbar. This element is now a
+  // plain inline-flex bar; the wrapper handles top-6 / centering / z-10.
   return (
-    <div className="absolute top-6 z-10 flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1.5 shadow-elevated animate-fade-in-up">
+    <div className="flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1.5 shadow-elevated animate-fade-in-up">
       <span className="ml-2 mr-3 truncate text-xs font-medium text-neutral-600">
         {props.layerName}
       </span>
@@ -3316,8 +3852,30 @@ function SidebarRailButton(props: SidebarRailButtonProps): JSX.Element {
 // via title attribute (matches existing IconButton convention).
 // ---------------------------------------------------------------------------
 
+/**
+ * Direction tokens the alignment + distribute buttons dispatch. Matches
+ * the `AlignDirection` union inside `CanvasEditor.handleAlign` — kept
+ * loose-string here so the footer doesn't have to import the inner
+ * function-scoped type.
+ */
+type FooterAlignDirection =
+  | "left"
+  | "center"
+  | "right"
+  | "top"
+  | "middle"
+  | "bottom"
+  | "distribute_horizontal"
+  | "distribute_vertical";
+
 interface CanvasFooterProps {
   showAlignment: boolean;
+  /** Enables the two Distribute buttons. True when ≥3 objects selected. */
+  canDistribute: boolean;
+  /** Phase B.1 — invoked from each alignment button. No-op when nothing
+   *  is selected (parent guards) or for unsupported single-object
+   *  distribute calls. */
+  onAlign: (direction: FooterAlignDirection) => void;
   zoom: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -3336,58 +3894,72 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
   const zoomPct = Math.round(props.zoom * 100);
   return (
     <div className="flex h-10 shrink-0 items-center justify-between border-t border-neutral-200 bg-white px-3">
-      {/* === Left cluster — alignment buttons (UI-only) === */}
+      {/* === Left cluster — alignment + distribute (Phase B.1 — live) === */}
       <div className="flex items-center gap-0.5">
         {props.showAlignment ? (
           <>
             <FooterIconButton
               label="Align left"
-              onClick={() => {
-                /* Phase B */
-              }}
+              onClick={() => props.onAlign("left")}
             >
               <AlignLeftIcon />
             </FooterIconButton>
             <FooterIconButton
               label="Align center"
-              onClick={() => {
-                /* Phase B */
-              }}
+              onClick={() => props.onAlign("center")}
             >
               <AlignCenterIcon />
             </FooterIconButton>
             <FooterIconButton
               label="Align right"
-              onClick={() => {
-                /* Phase B */
-              }}
+              onClick={() => props.onAlign("right")}
             >
               <AlignRightIcon />
             </FooterIconButton>
             <span className="mx-1 h-4 w-px bg-neutral-200" />
             <FooterIconButton
               label="Align top"
-              onClick={() => {
-                /* Phase B */
-              }}
+              onClick={() => props.onAlign("top")}
             >
               <AlignTopIcon />
             </FooterIconButton>
             <FooterIconButton
               label="Align middle"
-              onClick={() => {
-                /* Phase B */
-              }}
+              onClick={() => props.onAlign("middle")}
             >
               <AlignMiddleIcon />
             </FooterIconButton>
             <FooterIconButton
               label="Align bottom"
-              onClick={() => {
-                /* Phase B */
-              }}
+              onClick={() => props.onAlign("bottom")}
             >
               <AlignBottomIcon />
+            </FooterIconButton>
+            <span className="mx-1 h-4 w-px bg-neutral-200" />
+            {/* Distribute — needs ≥3 objects. Disabled chip stays visible
+                so users can discover the feature; the tooltip explains
+                the threshold. */}
+            <FooterIconButton
+              label={
+                props.canDistribute
+                  ? "Distribute horizontally"
+                  : "Distribute horizontally (needs 3+ objects)"
+              }
+              onClick={() => props.onAlign("distribute_horizontal")}
+              disabled={!props.canDistribute}
+            >
+              <DistributeHorizontalIcon />
+            </FooterIconButton>
+            <FooterIconButton
+              label={
+                props.canDistribute
+                  ? "Distribute vertically"
+                  : "Distribute vertically (needs 3+ objects)"
+              }
+              onClick={() => props.onAlign("distribute_vertical")}
+              disabled={!props.canDistribute}
+            >
+              <DistributeVerticalIcon />
             </FooterIconButton>
           </>
         ) : null}
@@ -3729,6 +4301,48 @@ function AlignBottomIcon(): JSX.Element {
       <path d="M2 14h12" />
       <rect x="4" y="3" width="3" height="9" />
       <rect x="9" y="6" width="3" height="6" />
+    </svg>
+  );
+}
+
+// why: distribute icons match Canva's pattern — three small rectangles with
+// arrows below (horizontal) or beside (vertical) indicating the axis of
+// even spacing. Stroke only, currentColor so the disabled state inherits
+// neutral-300 from FooterIconButton.
+function DistributeHorizontalIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <rect x="1.5" y="4" width="2.5" height="8" />
+      <rect x="6.75" y="4" width="2.5" height="8" />
+      <rect x="12" y="4" width="2.5" height="8" />
+    </svg>
+  );
+}
+
+function DistributeVerticalIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <rect x="4" y="1.5" width="8" height="2.5" />
+      <rect x="4" y="6.75" width="8" height="2.5" />
+      <rect x="4" y="12" width="8" height="2.5" />
     </svg>
   );
 }
