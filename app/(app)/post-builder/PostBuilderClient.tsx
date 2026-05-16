@@ -422,6 +422,58 @@ export default function PostBuilderClient({
     setStudioOpen(true);
   }, [selectedListing, studioTemplate, availablePhotos]);
 
+  /**
+   * Phase A.1 — Click-to-Studio variant launcher.
+   *
+   * Before: clicking a variant card only ACTIVATED that variant. Opening
+   * Studio required a separate click on "Edit in Studio" under the active
+   * card, and that button was hidden on every other card. So switching
+   * variants was a two-step dance (click card → click button → repeat),
+   * and the standalone button only ever showed on the first-row variant
+   * the user happened to land on.
+   *
+   * After: every variant card whose canvas template exists is itself a
+   * Studio launcher. Click any card → variant activates AND Studio opens.
+   * One motion. Matches Canva's "every template tile is a launcher" model.
+   *
+   * Why a separate handler from `openStudio()`:
+   *   - `openStudio()` reads from `studioTemplate` (the memo on the CURRENT
+   *     variantId). Calling `setVariantId(next); openStudio()` in the same
+   *     tick uses the STALE studioTemplate because state updates batch.
+   *   - This handler resolves the template DIRECTLY for the clicked
+   *     variant via findCanvasTemplate, sidestepping the race.
+   *   - The downside is one extra registry lookup per click. Cheap.
+   */
+  const openStudioForVariant = useCallback(
+    (nextVariant: PostVariant): void => {
+      if (!selectedListing) return;
+      const tpl = findCanvasTemplate(postType, nextVariant, format);
+      if (!tpl) {
+        // Card was clickable in the UI but no template exists for the tuple
+        // — should be impossible (the disabled gate hides such cards), but
+        // surface a clear error rather than silently doing nothing.
+        setError(
+          `No Studio template for ${postType} / ${nextVariant} / ${format}. Try a different variant.`,
+        );
+        return;
+      }
+      // Activate the variant in parallel with opening Studio so the chip
+      // strip + photo-count badges reflect the user's pick when Studio
+      // closes.
+      setVariantId(nextVariant);
+      setRenderResult(null);
+      setError(null);
+      const payload = mapListingToPayload(selectedListing, {
+        photos: availablePhotos.map((p) => p.url),
+        agentName: selectedListing.agent_name ?? null,
+        officeName: selectedListing.listing_office_name ?? null,
+      });
+      setStudioContext({ template: tpl, listing: payload });
+      setStudioOpen(true);
+    },
+    [selectedListing, postType, format, availablePhotos],
+  );
+
   const handleStudioSave = useCallback(
     async (result: CanvasExportResult): Promise<void> => {
       // why: every Studio save now produces exactly ONE persistent
@@ -1648,42 +1700,68 @@ export default function PostBuilderClient({
                         : selectedListing?.hero_image_url
                           ? [selectedListing.hero_image_url]
                           : [];
-                      // why: "Edit in Studio" only renders under the active card
-                      // AND only when a canvas-editor template exists for the
-                      // current (postType, variant, format) tuple. As of
-                      // 2026-05-15, v1/v2/v3 are covered across all post types
-                      // × formats; v6/v7/v8 cards still hide the button until
-                      // their factories are ported.
+                      // Phase A.1 (2026-05-16): every variant card whose
+                      // canvas-editor template exists is itself a click-to-
+                      // Studio launcher. The old per-card "Edit in Studio"
+                      // button was removed — it only ever appeared under the
+                      // ACTIVE card, which left the other 5 cards in the
+                      // 2x3 grid as dead targets. Canva-model: tile = launcher.
+                      //
+                      // `cardCanvasTemplate` resolves per-card (not via the
+                      // shared `studioTemplate` memo which is keyed to the
+                      // CURRENTLY-active variantId). This lets each card know
+                      // its own Studio-availability state independently.
+                      const cardCanvasTemplate = findCanvasTemplate(
+                        postType,
+                        v.variant as PostVariant,
+                        format,
+                      );
                       const studioAvailable =
-                        active &&
                         !disabled &&
-                        studioTemplate !== null &&
-                        v.variant === studioTemplate.variant &&
+                        cardCanvasTemplate !== null &&
                         !!selectedListing;
                       return (
-                        <div key={v.template_id} className="flex flex-col gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (disabled) return;
+                        <button
+                          key={v.template_id}
+                          type="button"
+                          onClick={() => {
+                            if (disabled) return;
+                            // why: when Studio is available, the click both
+                            // activates the variant and opens Studio — one
+                            // motion. When Studio isn't available (no canvas
+                            // template, or no listing selected yet), fall
+                            // back to plain variant activation so the user
+                            // can still see the preview render.
+                            if (studioAvailable) {
+                              openStudioForVariant(v.variant as PostVariant);
+                            } else {
                               changeVariant(v.variant as PostVariant);
-                            }}
-                            disabled={disabled}
-                            title={
-                              insufficient
-                                ? `Needs ${v.photo_count} photos — this listing only has ${photosAvailable}.`
-                                : v.description
                             }
-                            className={[
-                              "text-left rounded-xl border p-2.5 transition relative flex flex-col",
-                              disabled
-                                ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
-                                : active
-                                  ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm"
-                                  : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
-                            ].join(" ")}
-                          >
-                            {/* Large preview on top */}
+                          }}
+                          disabled={disabled}
+                          title={
+                            insufficient
+                              ? `Needs ${v.photo_count} photos — this listing only has ${photosAvailable}.`
+                              : studioAvailable
+                                ? `Open ${v.display_name} in Studio`
+                                : v.description
+                          }
+                          aria-label={
+                            studioAvailable
+                              ? `Open ${v.display_name} in Studio`
+                              : `Activate ${v.display_name}`
+                          }
+                          className={[
+                            "group text-left rounded-xl border p-2.5 transition relative flex flex-col",
+                            disabled
+                              ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
+                              : active
+                                ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm cursor-pointer hover:ring-gold-500/50"
+                                : "border-neutral-200 bg-white cursor-pointer hover:border-gold-300 hover:ring-2 hover:ring-gold-300/40 hover:shadow-sm",
+                          ].join(" ")}
+                        >
+                          {/* Large preview on top */}
+                          <div className="relative">
                             <VariantPreviewThumb
                               templateId={v.template_id}
                               listing={selectedListing}
@@ -1692,73 +1770,71 @@ export default function PostBuilderClient({
                               disabled={disabled}
                               size="large"
                             />
-                            {/* Label row */}
-                            <div className="mt-2 flex items-center justify-between gap-1">
-                              <div
-                                className={[
-                                  "text-sm font-semibold truncate",
-                                  disabled
-                                    ? "text-neutral-500"
-                                    : active
-                                      ? "text-gold-800"
-                                      : "text-neutral-900",
-                                ].join(" ")}
-                              >
-                                {v.display_name}
-                              </div>
+                            {/* Hover-revealed "Edit" pill — only when Studio
+                                is available. Sits on top of the preview so
+                                the user knows the click does more than just
+                                activate. Hidden by default to keep cards
+                                clean; fades in on hover. */}
+                            {studioAvailable ? (
                               <span
-                                className={[
-                                  "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
-                                  disabled
-                                    ? "bg-rose-100 text-rose-700"
-                                    : v.photo_count > 1
-                                      ? "bg-gold-100 text-gold-800"
-                                      : "bg-neutral-100 text-neutral-600",
-                                ].join(" ")}
-                              >
-                                {v.photo_count}📷
-                              </span>
-                            </div>
-                            <div
-                              className={[
-                                "text-[11px] mt-1 leading-snug line-clamp-2",
-                                disabled ? "text-rose-700" : "text-neutral-500",
-                              ].join(" ")}
-                            >
-                              {insufficient
-                                ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
-                                : v.description}
-                            </div>
-                          </button>
-                          {/* === Canvas Editor (Path C) — Edit in Studio button === */}
-                          {/* why: only renders when the current variant card is active
-                              AND a canvas-editor template exists for this tuple. Full
-                              width per design spec. Gold styling matches brand. */}
-                          {studioAvailable ? (
-                            <button
-                              type="button"
-                              onClick={openStudio}
-                              className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gold-500 bg-white px-3 py-2 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
-                              title="Open this variant in the Studio editor for fine-tuning"
-                            >
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 16 16"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
+                                className="pointer-events-none absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-gold-500/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-900 opacity-0 shadow-md backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100"
                                 aria-hidden="true"
                               >
-                                <path d="M11 2l3 3-9 9H2v-3l9-9z" />
-                                <path d="M9.5 3.5l3 3" />
-                              </svg>
-                              Edit in Studio
-                            </button>
-                          ) : null}
-                        </div>
+                                <svg
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M11 2l3 3-9 9H2v-3l9-9z" />
+                                  <path d="M9.5 3.5l3 3" />
+                                </svg>
+                                Edit
+                              </span>
+                            ) : null}
+                          </div>
+                          {/* Label row */}
+                          <div className="mt-2 flex items-center justify-between gap-1">
+                            <div
+                              className={[
+                                "text-sm font-semibold truncate",
+                                disabled
+                                  ? "text-neutral-500"
+                                  : active
+                                    ? "text-gold-800"
+                                    : "text-neutral-900",
+                              ].join(" ")}
+                            >
+                              {v.display_name}
+                            </div>
+                            <span
+                              className={[
+                                "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
+                                disabled
+                                  ? "bg-rose-100 text-rose-700"
+                                  : v.photo_count > 1
+                                    ? "bg-gold-100 text-gold-800"
+                                    : "bg-neutral-100 text-neutral-600",
+                              ].join(" ")}
+                            >
+                              {v.photo_count}📷
+                            </span>
+                          </div>
+                          <div
+                            className={[
+                              "text-[11px] mt-1 leading-snug line-clamp-2",
+                              disabled ? "text-rose-700" : "text-neutral-500",
+                            ].join(" ")}
+                          >
+                            {insufficient
+                              ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
+                              : v.description}
+                          </div>
+                        </button>
                       );
                     })}
                   </div>

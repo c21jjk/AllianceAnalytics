@@ -85,7 +85,7 @@ export default function SelectionPropertiesPanel(
         <button
           type="button"
           onClick={props.onClearSelection}
-          className="mb-2 inline-flex items-center gap-1 rounded text-xs font-medium text-neutral-600 hover:text-gold-600"
+          className="mb-2 inline-flex items-center gap-1 rounded text-xs font-medium text-neutral-600 hover:text-neutral-900"
         >
           {/* why: inline SVG arrow — see CanvasEditor.tsx note on no lucide-react. */}
           <svg
@@ -105,7 +105,7 @@ export default function SelectionPropertiesPanel(
         </button>
         <div className="flex items-center gap-2">
           {modeLabel ? (
-            <span className="inline-flex items-center rounded bg-gold-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-600">
+            <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
               {modeLabel}
             </span>
           ) : null}

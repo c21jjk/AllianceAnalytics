@@ -53,6 +53,7 @@
 import { type JSX, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BrandAsset, BrandPanelProps, BrandSyncOutcome } from "../contracts";
+import SyncStatusPill from "./SyncStatusPill";
 
 // ===========================================================================
 // Constants
@@ -130,6 +131,12 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
   const isEmpty =
     !props.isLoading && totalLogos === 0 && totalPartners === 0;
 
+  // why: highlight the Sync button when the most recent run failed — gives
+  // the user a clear "click me to retry" affordance instead of just a red
+  // pill they could miss. Passed through to SyncButton as a prop so we don't
+  // have to query syncStatus inside that component.
+  const syncFailed: boolean = props.syncStatus?.lastSyncError != null;
+
   return (
     <aside className="flex h-full min-h-0 w-72 flex-col border-l border-neutral-200 bg-white">
       <header className="border-b border-neutral-200 px-4 py-3">
@@ -144,8 +151,19 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
               </span>
             ) : null}
           </div>
-          {props.onSync ? <SyncButton onSync={props.onSync} /> : null}
+          {props.onSync ? (
+            <SyncButton onSync={props.onSync} highlight={syncFailed} />
+          ) : null}
         </div>
+        {/* why: status pill row sits below the header line so it gets its own
+            vertical lane when the "Could be out of date" sibling chip is
+            present. At w-72 (288px) two pills in a row would crowd the title;
+            stacking keeps both readable. */}
+        {props.syncStatus ? (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            <SyncStatusPill status={props.syncStatus} />
+          </div>
+        ) : null}
       </header>
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
@@ -348,9 +366,15 @@ function EmptyState(): JSX.Element {
 
 interface SyncButtonProps {
   onSync: () => Promise<BrandSyncOutcome>;
+  /**
+   * When true, paints the button with the rose-50/rose-700 attention
+   * treatment so a user whose last sync FAILED has an obvious "retry"
+   * affordance. Defaults to the neutral hover-gold treatment.
+   */
+  highlight?: boolean;
 }
 
-function SyncButton({ onSync }: SyncButtonProps): JSX.Element {
+function SyncButton({ onSync, highlight = false }: SyncButtonProps): JSX.Element {
   // why: three-state machine — idle, syncing (spinner + disabled), result
   // (transient toast). The toast dismisses itself after 4s so Larissa
   // doesn't have to click it away mid-edit.
@@ -384,15 +408,28 @@ function SyncButton({ onSync }: SyncButtonProps): JSX.Element {
     }
   }
 
+  // why: derived class string so the `highlight` retry treatment composes
+  // cleanly with the hover/disabled states. Rose is the project's standard
+  // error palette; we use the 50/200/700 triple to match the toast.
+  const buttonClass = highlight
+    ? "inline-flex items-center justify-center rounded-md border border-rose-300 bg-rose-50 px-1.5 py-1 text-rose-700 transition-colors hover:bg-rose-100 hover:text-rose-800 disabled:opacity-60 disabled:cursor-not-allowed"
+    : "inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800 disabled:opacity-60 disabled:cursor-not-allowed";
+
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => void handleClick()}
         disabled={busy}
-        title={busy ? "Syncing from Google Drive…" : "Sync from Google Drive now"}
+        title={
+          busy
+            ? "Syncing from Google Drive…"
+            : highlight
+              ? "Last sync failed — click to retry"
+              : "Sync from Google Drive now"
+        }
         aria-label={busy ? "Syncing brand assets" : "Sync brand assets from Google Drive"}
-        className="inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800 disabled:opacity-60 disabled:cursor-not-allowed"
+        className={buttonClass}
       >
         <RefreshIcon spinning={busy} />
       </button>

@@ -36,7 +36,7 @@ import type {
   PostType,
   PostVariant,
 } from "../types";
-import { PLATFORM_DIMENSIONS } from "../types";
+import { isGradientFill, PLATFORM_DIMENSIONS } from "../types";
 import { buildAllHeroEditorialTemplates } from "./hero-editorial-factory";
 import { buildAllBoldStatsTemplates } from "./bold-stats-factory";
 import { buildAllSideBySideTemplates } from "./side-by-side-factory";
@@ -240,6 +240,73 @@ export function validateCanvasTemplates(
         "schema_version_current",
         `Got schemaVersion ${t.schemaVersion}, expected 1.`,
       );
+    }
+
+    // ---- Invariant 8: gradient ShapeLayer fills are well-formed ----
+    // why: TS narrows `ShapeLayer.fill` to `string | GradientFill` but the
+    // stop-array invariants (>=2 stops, ascending offsets in [0, 1], every
+    // stop has a non-empty color) cannot be expressed at the type level.
+    // Fabric tolerates a malformed gradient by rendering nothing — a silent
+    // visual failure. Reject loudly here so a template author sees the
+    // mistake at build time instead of opening Studio to a blank rect.
+    for (const layer of t.layers) {
+      if (layer.kind !== "shape") continue;
+      if (!isGradientFill(layer.fill)) continue;
+      const stops = layer.fill.stops;
+      if (stops.length < 2) {
+        throw new CanvasTemplateValidationError(
+          t.id,
+          "gradient_fill_valid",
+          `Shape layer "${layer.id}" gradient has ${stops.length} stop(s); minimum is 2.`,
+        );
+      }
+      let lastOffset = -Infinity;
+      for (let i = 0; i < stops.length; i++) {
+        const s = stops[i];
+        if (
+          typeof s.offset !== "number" ||
+          Number.isNaN(s.offset) ||
+          s.offset < 0 ||
+          s.offset > 1
+        ) {
+          throw new CanvasTemplateValidationError(
+            t.id,
+            "gradient_fill_valid",
+            `Shape layer "${layer.id}" gradient stop ${i} offset ${String(s.offset)} is out of [0, 1].`,
+          );
+        }
+        if (s.offset < lastOffset) {
+          throw new CanvasTemplateValidationError(
+            t.id,
+            "gradient_fill_valid",
+            `Shape layer "${layer.id}" gradient stops are not in ascending offset order (stop ${i} offset ${s.offset} < previous ${lastOffset}).`,
+          );
+        }
+        lastOffset = s.offset;
+        if (typeof s.color !== "string" || s.color.length === 0) {
+          throw new CanvasTemplateValidationError(
+            t.id,
+            "gradient_fill_valid",
+            `Shape layer "${layer.id}" gradient stop ${i} has empty/non-string color.`,
+          );
+        }
+      }
+      // why: spread is OPTIONAL on radial gradients (defaults to 1). When
+      // explicitly set, it must be > 0 — a zero or negative spread paints
+      // nothing at all. Linear has no spread field; this branch only fires
+      // for radial.
+      if (layer.fill.kind === "radial" && layer.fill.spread !== undefined) {
+        if (
+          typeof layer.fill.spread !== "number" ||
+          !(layer.fill.spread > 0)
+        ) {
+          throw new CanvasTemplateValidationError(
+            t.id,
+            "gradient_fill_valid",
+            `Shape layer "${layer.id}" radial gradient spread ${String(layer.fill.spread)} must be > 0.`,
+          );
+        }
+      }
     }
   }
 }

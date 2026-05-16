@@ -51,6 +51,7 @@
 import { type JSX, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentPanelProps, BrandAsset, BrandSyncOutcome } from "../contracts";
+import SyncStatusPill from "./SyncStatusPill";
 
 // ===========================================================================
 // Constants
@@ -102,6 +103,10 @@ export default function AgentPanel(props: AgentPanelProps): JSX.Element {
       : (props.offices.find((o) => o.id === activeOfficeId)?.name ??
           "this office");
 
+  // why: same drift visibility surface as BrandPanel — when the most recent
+  // sync failed, paint the Sync button rose to nudge the user to retry.
+  const syncFailed: boolean = props.syncStatus?.lastSyncError != null;
+
   return (
     <aside className="flex h-full min-h-0 w-72 flex-col border-l border-neutral-200 bg-white">
       <header className="border-b border-neutral-200 px-4 py-3">
@@ -114,8 +119,18 @@ export default function AgentPanel(props: AgentPanelProps): JSX.Element {
               <span className="text-xs text-neutral-400">({filtered.length})</span>
             ) : null}
           </div>
-          {props.onSync ? <SyncButton onSync={props.onSync} /> : null}
+          {props.onSync ? (
+            <SyncButton onSync={props.onSync} highlight={syncFailed} />
+          ) : null}
         </div>
+        {/* why: stacked under the header line for the same reason as
+            BrandPanel — w-72 is too narrow to fit "Synced 12m ago" +
+            "Could be out of date" + the title on one row. */}
+        {props.syncStatus ? (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            <SyncStatusPill status={props.syncStatus} />
+          </div>
+        ) : null}
       </header>
 
       <OfficeChipRow
@@ -305,9 +320,16 @@ function EmptyState({ officeName }: { officeName: string }): JSX.Element {
 
 interface SyncButtonProps {
   onSync: () => Promise<BrandSyncOutcome>;
+  /**
+   * When true, paints the button rose-50/rose-700 to call attention to a
+   * prior failure. Mirrors BrandPanel.SyncButton's prop of the same name —
+   * if a third panel needs this affordance, extract the SyncButton into a
+   * shared file.
+   */
+  highlight?: boolean;
 }
 
-function SyncButton({ onSync }: SyncButtonProps): JSX.Element {
+function SyncButton({ onSync, highlight = false }: SyncButtonProps): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BrandSyncOutcome | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -338,15 +360,25 @@ function SyncButton({ onSync }: SyncButtonProps): JSX.Element {
     }
   }
 
+  const buttonClass = highlight
+    ? "inline-flex items-center justify-center rounded-md border border-rose-300 bg-rose-50 px-1.5 py-1 text-rose-700 transition-colors hover:bg-rose-100 hover:text-rose-800 disabled:opacity-60 disabled:cursor-not-allowed"
+    : "inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800 disabled:opacity-60 disabled:cursor-not-allowed";
+
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => void handleClick()}
         disabled={busy}
-        title={busy ? "Syncing from Google Drive…" : "Sync from Google Drive now"}
+        title={
+          busy
+            ? "Syncing from Google Drive…"
+            : highlight
+              ? "Last sync failed — click to retry"
+              : "Sync from Google Drive now"
+        }
         aria-label={busy ? "Syncing brand assets" : "Sync brand assets from Google Drive"}
-        className="inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800 disabled:opacity-60 disabled:cursor-not-allowed"
+        className={buttonClass}
       >
         <RefreshIcon spinning={busy} />
       </button>

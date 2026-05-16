@@ -420,7 +420,94 @@
     });
   }
 
+  /**
+   * Structural runtime check — does `fill` look like a GradientFill?
+   *
+   * why inline: this file is plain JS loaded in headless Chromium and
+   * cannot import the TS `isGradientFill` type guard. The check below
+   * mirrors lib/post-builder/canvas-editor/types.ts → `isGradientFill`
+   * exactly. If the main-app guard changes shape, mirror the change
+   * here. Both sides MUST agree on the discriminator.
+   */
+  function isGradientFill(fill) {
+    if (!fill || typeof fill !== "object") return false;
+    if (fill.kind !== "linear" && fill.kind !== "radial") return false;
+    if (!Array.isArray(fill.stops) || fill.stops.length < 2) return false;
+    return true;
+  }
+
+  /**
+   * Build a Fabric Gradient instance from a structured GradientFill, in
+   * the LAYER's local coordinate space (0,0 → width,height). Mirrors
+   * `fabricGradientFromFill` in CanvasEditor.tsx — keep the math in sync.
+   *
+   * why duplicated math (and not a shared module): the worker is a
+   * separate npm project; CanvasEditor.tsx imports React + Fabric ESM.
+   * This file is plain ES5-ish JS loaded by Playwright via a page-eval
+   * shim that cannot resolve TS-built imports. The drift risk is small
+   * (the math is ~10 lines) and the inline copy keeps the worker's
+   * "browser bundle" zero-dependency.
+   *
+   * @param {object} gradient — GradientFillLinear | GradientFillRadial
+   * @param {{width:number,height:number}} bbox — layer dimensions
+   * @returns {fabric.Gradient}
+   */
+  function fabricGradientFromFill(gradient, bbox) {
+    var colorStops = gradient.stops.map(function (s) {
+      return { offset: s.offset, color: s.color };
+    });
+    if (gradient.kind === "linear") {
+      var angleRad = (gradient.angleDeg * Math.PI) / 180;
+      var dx = Math.cos(angleRad);
+      var dy = Math.sin(angleRad);
+      var cx = bbox.width / 2;
+      var cy = bbox.height / 2;
+      var halfExtent = (Math.abs(dx) * bbox.width + Math.abs(dy) * bbox.height) / 2;
+      return new fabric.Gradient({
+        type: "linear",
+        coords: {
+          x1: cx - dx * halfExtent,
+          y1: cy - dy * halfExtent,
+          x2: cx + dx * halfExtent,
+          y2: cy + dy * halfExtent,
+        },
+        colorStops: colorStops,
+      });
+    }
+    // radial
+    var spread = gradient.spread != null ? gradient.spread : 1;
+    var rcx = bbox.width / 2;
+    var rcy = bbox.height / 2;
+    var radius = (Math.max(bbox.width, bbox.height) * spread) / 2;
+    return new fabric.Gradient({
+      type: "radial",
+      coords: {
+        x1: rcx,
+        y1: rcy,
+        r1: 0,
+        x2: rcx,
+        y2: rcy,
+        r2: radius,
+      },
+      colorStops: colorStops,
+    });
+  }
+
   function addShapeLayer(canvas, layer) {
+    // why: resolve fill BEFORE building `common`. Gradients are constructed
+    // in the layer's local coordinate system; strings pass through. An
+    // empty / missing fill falls back to "" so Fabric paints nothing —
+    // matches the canvas-editor convention.
+    var resolvedFill;
+    if (isGradientFill(layer.fill)) {
+      resolvedFill = fabricGradientFromFill(layer.fill, {
+        width: layer.width,
+        height: layer.height,
+      });
+    } else {
+      resolvedFill = layer.fill || "";
+    }
+
     var common = {
       left: layer.left,
       top: layer.top,
@@ -428,7 +515,7 @@
       height: layer.height,
       angle: layer.angle || 0,
       opacity: layer.opacity != null ? layer.opacity : 1,
-      fill: layer.fill || "",
+      fill: resolvedFill,
       stroke: layer.stroke || "",
       strokeWidth: layer.strokeWidth || 0,
       strokeDashArray:
@@ -455,6 +542,16 @@
         // Fabric Line is positioned by its x1/y1/x2/y2 coords. We model
         // a line as a horizontal stroke inside the bounding box, then
         // let `angle` rotate it.
+        // why fallback to a string for the line stroke: lines paint via
+        // `stroke`, not `fill` — a gradient FILL on a line is invisible.
+        // If the only color the author provided is a gradient, we degrade
+        // gracefully to white so the line is still visible.
+        var lineStroke = layer.stroke;
+        if (!lineStroke) {
+          lineStroke = typeof layer.fill === "string" && layer.fill
+            ? layer.fill
+            : "#FFFFFF";
+        }
         obj = new fabric.Line(
           [
             layer.left,
@@ -462,7 +559,7 @@
             layer.left + layer.width,
             layer.top + layer.height / 2,
           ],
-          Object.assign({}, common, { stroke: layer.stroke || layer.fill || "#FFFFFF" }),
+          Object.assign({}, common, { stroke: lineStroke }),
         );
         break;
       case "rect":

@@ -37,6 +37,7 @@ import {
   Ellipse,
   FabricImage,
   type FabricObject,
+  Gradient,
   Line,
   Rect,
   Textbox,
@@ -59,8 +60,10 @@ import {
   type CanvasTemplateSchema,
   type CarouselSlide,
   EXPORT_RESOLUTION_MULTIPLIER,
+  type GradientFill,
   type ImageBoundField,
   type ImageLayer,
+  isGradientFill,
   isImageLayer,
   isShapeLayer,
   isTextLayer,
@@ -79,11 +82,15 @@ import {
 import type {
   BrandAsset,
   BrandSyncOutcome,
+  BrandSyncStatus,
   ListingPhoto,
   OfficeOption,
   SelectionMode,
 } from "./contracts";
-import { syncBrandAssetsAction } from "@/app/(app)/post-builder/actions";
+import {
+  getBrandSyncStatusAction,
+  syncBrandAssetsAction,
+} from "@/app/(app)/post-builder/actions";
 import { handlePhase2KeyDown } from "./history/keyboard-shortcuts";
 import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AddLayerToolbar from "./panels/AddLayerToolbar";
@@ -548,13 +555,108 @@ async function createFabricImage(
 // Shape layer factory
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a Fabric `Gradient` instance from a structured `GradientFill`.
+ *
+ * Coords are computed in the LAYER's local space (0,0 → width,height) because
+ * Fabric draws gradients in the object's own coordinate system by default —
+ * we don't set `gradientUnits: "percentage"` so coords are interpreted as
+ * pixels inside the shape's bounding box.
+ *
+ * Why a single helper (not two — one per kind):
+ *   The discriminated union narrows inside the switch and the construction
+ *   logic for both kinds is small. A single helper keeps the call site in
+ *   `createFabricShape` to ONE line and avoids exporting two near-identical
+ *   internal functions.
+ *
+ * Linear-coord math:
+ *   `angleDeg` is degrees clockwise from horizontal-right (CSS convention).
+ *   Convert to radians, then project a unit vector onto the bounding box
+ *   centered at (width/2, height/2). The result is two points (x1,y1) →
+ *   (x2,y2) spanning the diagonal of the box in the requested direction.
+ *
+ * Radial-coord math:
+ *   Center at (width/2, height/2). r1 = 0 (inner radius — gradient origin
+ *   is a point, not a ring). r2 = max(width, height) * (spread ?? 1) / 2 —
+ *   spread is fraction of the LONGER axis, halved because radius is half
+ *   the diameter.
+ */
+function fabricGradientFromFill(
+  gradient: GradientFill,
+  bbox: { width: number; height: number },
+): Gradient<"linear"> | Gradient<"radial"> {
+  // why map readonly stops to a fresh mutable array: Fabric's typedef wants
+  // `ColorStop[]` (mutable), and we don't want consumers' readonly arrays
+  // accidentally tied to Fabric's internal mutation surface.
+  const colorStops = gradient.stops.map((s) => ({
+    offset: s.offset,
+    color: s.color,
+  }));
+
+  if (gradient.kind === "linear") {
+    // why CSS-aligned angle math:
+    //   CSS linear-gradient(0deg) paints bottom-to-top, but our docblock
+    //   says 0° = left-to-right. We use 0° = left-to-right (sin/cos with
+    //   angle = 0 → (1, 0)) so authors can think in "where the gradient
+    //   points" without inverting Y. Stick with this convention everywhere.
+    const angleRad = (gradient.angleDeg * Math.PI) / 180;
+    const dx = Math.cos(angleRad);
+    const dy = Math.sin(angleRad);
+    const cx = bbox.width / 2;
+    const cy = bbox.height / 2;
+    // Project the diagonal half-extent onto the angle vector so the
+    // gradient spans the full bounding box in the requested direction.
+    const halfExtent = (Math.abs(dx) * bbox.width + Math.abs(dy) * bbox.height) / 2;
+    return new Gradient<"linear">({
+      type: "linear",
+      coords: {
+        x1: cx - dx * halfExtent,
+        y1: cy - dy * halfExtent,
+        x2: cx + dx * halfExtent,
+        y2: cy + dy * halfExtent,
+      },
+      colorStops,
+    });
+  }
+
+  // Radial branch.
+  const spread = gradient.spread ?? 1;
+  const cx = bbox.width / 2;
+  const cy = bbox.height / 2;
+  const radius = (Math.max(bbox.width, bbox.height) * spread) / 2;
+  return new Gradient<"radial">({
+    type: "radial",
+    coords: {
+      x1: cx,
+      y1: cy,
+      r1: 0,
+      x2: cx,
+      y2: cy,
+      r2: radius,
+    },
+    colorStops,
+  });
+}
+
 function createFabricShape(layer: ShapeLayer): FabricObject {
+  // why: narrow the fill once, here, so each shape branch below can pass
+  // `resolvedFill` directly to its Fabric constructor without re-checking
+  // the union. A Gradient | string is what Fabric Rect/Circle/Ellipse all
+  // accept on their `fill` property.
+  const resolvedFill: Gradient<"linear"> | Gradient<"radial"> | string | undefined =
+    isGradientFill(layer.fill)
+      ? fabricGradientFromFill(layer.fill, {
+          width: layer.width,
+          height: layer.height,
+        })
+      : layer.fill || undefined;
+
   const common = {
     left: layer.left,
     top: layer.top,
     angle: layer.angle,
     opacity: layer.opacity,
-    fill: layer.fill || undefined,
+    fill: resolvedFill,
     stroke: layer.stroke || undefined,
     strokeWidth: layer.strokeWidth,
     strokeDashArray: layer.strokeDashArray.length
@@ -735,9 +837,30 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [sidebarTab, setSidebarTab] = useState<
     "templates" | "brand" | "agents" | "photos"
   >("brand");
+  // why: Canva-style icon-rail UX — the left rail is always visible at 64px;
+  // the 280px expanded panel slides out next to it when a tab is active.
+  // Clicking the active tab's icon collapses the panel back to just the rail
+  // so Larissa can max out canvas space. Default-open at mount so the
+  // existing "land on Brand assets" flow is unchanged.
+  const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(true);
+  // why: right-side Layers/properties panel mirror — collapses to a 48px
+  // vertical rail showing a single Layers icon. Stays expanded by default.
+  const [layersExpanded, setLayersExpanded] = useState<boolean>(true);
+  // why: user-driven zoom on top of the fit-to-viewport `displayScale`. Range
+  // 0.25-2.0 mirrors Canva's bottom-bar zoom. "Fit" resets to 1 which means
+  // "use displayScale as-is" — the canvas always fits the viewport at zoom=1.
+  const [zoom, setZoom] = useState<number>(1);
   const [brandAssets, setBrandAssets] = useState<readonly BrandAsset[]>([]);
   const [officesForFilter, setOfficesForFilter] = useState<readonly OfficeOption[]>([]);
   const [brandAssetsLoading, setBrandAssetsLoading] = useState<boolean>(true);
+  // why: most-recent-sync metadata written by sync-brand-assets into
+  // api_credentials. Loaded once on mount + refreshed after every manual
+  // sync click so the "Synced 12m ago" pill stays accurate without a page
+  // reload. `undefined` while we haven't checked yet; the panel hides the
+  // pill in that state to avoid a "Never synced" flash.
+  const [brandSyncStatus, setBrandSyncStatus] = useState<BrandSyncStatus | undefined>(
+    undefined,
+  );
   // why: listing photos for the Photos sidebar tab. Loaded from the same
   // /api/post-builder/photos endpoint the picker uses; falls back to a
   // single-photo array using listing.photos[0] if the endpoint errors.
@@ -775,20 +898,41 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     }
   }, []);
 
+  // why: separate fetch for the last-sync metadata so we can refresh it
+  // independently after the Sync button runs (the timestamp changes; the
+  // asset list might not). Routes through the server action because the
+  // `api_credentials` table is service-role-only — a client-side query
+  // would return 0 rows under RLS.
+  const loadBrandSyncStatus = useCallback(async (): Promise<void> => {
+    try {
+      const result = await getBrandSyncStatusAction();
+      setBrandSyncStatus({
+        lastSyncedAt: result.lastSyncedAt,
+        lastSyncError: result.lastSyncError,
+      });
+    } catch (err) {
+      // why: a failed metadata fetch shouldn't break the editor — the
+      // panels just degrade to "no pill". Log it so we'd notice in dev.
+      console.error("[CanvasEditor] brand sync status fetch failed:", err);
+    }
+  }, []);
+
   useEffect(() => {
     // why: load brand assets + offices from Supabase on mount. Both tables
     // are small (<200 rows total), cheap to fetch in one shot. We use the
     // browser client; RLS lets any authenticated user read `status=active`
-    // rows so we don't need the admin client.
+    // rows so we don't need the admin client. The sync-status fetch runs
+    // in parallel (separate server action because api_credentials is
+    // service-role-only).
     let cancelled = false;
     (async () => {
-      await loadBrandAssets();
+      await Promise.all([loadBrandAssets(), loadBrandSyncStatus()]);
       if (!cancelled) setBrandAssetsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [loadBrandAssets]);
+  }, [loadBrandAssets, loadBrandSyncStatus]);
 
   // Manual sync handler — fired from BrandPanel or AgentPanel's Sync button.
   // Calls the server action that invokes the sync-brand-assets Edge Function,
@@ -797,23 +941,33 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const handleSyncBrandAssets = useCallback(async (): Promise<BrandSyncOutcome> => {
     const res = await syncBrandAssetsAction();
     if (!res.ok) {
+      // why: refresh status even on failure — the Edge Function writes its
+      // failure metadata to api_credentials before returning, so the panel
+      // pill should flip to "Last sync failed" right away.
+      await loadBrandSyncStatus();
       return { ok: false, summary: `Sync failed: ${res.error}` };
     }
-    // why: re-query brand_assets so the freshly-synced rows render without
-    // a manual refresh. Offices rarely change between syncs but we re-query
-    // both in one shot anyway — keeps the parallel query pattern intact.
-    await loadBrandAssets();
+    // why: re-query brand_assets + sync status so the freshly-synced rows
+    // render and the "Synced X ago" pill resets without a page reload.
+    // Offices rarely change between syncs but we re-query both in one shot
+    // anyway — keeps the parallel query pattern intact.
+    await Promise.all([loadBrandAssets(), loadBrandSyncStatus()]);
     const { added, updated, unchanged, errors } = res.report;
+    const archived = typeof res.report.archived === "number" ? res.report.archived : 0;
     const errCount = Array.isArray(errors) ? errors.length : 0;
     const seconds = Math.round(res.report.durationMs / 100) / 10;
+    // why: surface archived count when nonzero — that's how the user
+    // confirms the drift fix actually purged a stale row. Skip it otherwise
+    // to keep the toast terse.
+    const archivedFragment = archived > 0 ? `, ${archived} archived` : "";
     const summary =
       added + updated > 0
-        ? `Synced in ${seconds}s — ${added} added, ${updated} updated, ${unchanged} unchanged${
+        ? `Synced in ${seconds}s — ${added} added, ${updated} updated, ${unchanged} unchanged${archivedFragment}${
             errCount > 0 ? `, ${errCount} errors` : ""
           }`
-        : `Already up to date (${unchanged} unchanged in ${seconds}s)`;
+        : `Already up to date (${unchanged} unchanged${archivedFragment} in ${seconds}s)`;
     return { ok: true, summary };
-  }, [loadBrandAssets]);
+  }, [loadBrandAssets, loadBrandSyncStatus]);
 
   // -------------------------------------------------------------------------
   // Listing photos — load for the Photos sidebar tab
@@ -1892,18 +2046,36 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
   return (
     <div className="flex h-full w-full flex-col bg-neutral-50">
-      {/* ----- Header ----- */}
-      <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3 shadow-card">
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-semibold text-neutral-900">
+      {/* ----- Header — Canva-style 48px translucent compact bar -----
+          why: drop from the prior ~56-72px chunky header to a tight 48px
+          bar that feels closer to the Canva editor chrome. Title +
+          listing/dimensions live on one row, separated by a 4px dot. The
+          right cluster condenses to Resize / Save / Close with tighter
+          gaps. Translucent (bg-white/95 + backdrop-blur) gives a hint of
+          depth without competing with the canvas as the focal point. */}
+      <header className="relative flex h-12 shrink-0 items-center justify-between border-b border-neutral-200 bg-white/95 px-4 backdrop-blur-sm">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {/* why: small file-icon glyph anchors the title block — same visual
+              affordance Canva uses at the leftmost edge of its top bar. */}
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-neutral-500">
+            <FileGlyphIcon />
+          </span>
+          <span className="truncate text-[13px] font-semibold text-neutral-900">
             {template.name}
           </span>
-          <span className="truncate text-xs text-neutral-500">
-            {listing.addressLine1 ?? listing.mlsNumber} · {template.width}×
-            {template.height}
+          {/* why: 4px dot separator (Canva's pattern). The dot is neutral-300
+              so it reads as a passive separator, not a brand accent. */}
+          <span
+            aria-hidden="true"
+            className="inline-block h-1 w-1 shrink-0 rounded-full bg-neutral-300"
+          />
+          <span className="truncate text-[11px] text-neutral-500">
+            {listing.addressLine1 ?? listing.mlsNumber}
+            <span className="mx-1.5 text-neutral-300">·</span>
+            {template.width}×{template.height}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           {/* Phase 4 — Smart Resize. Sits left of Save so the reading order
               is "I want to change the format → I want to save." Renders only
               when the parent has wired the onResize callback; non-resize
@@ -1923,10 +2095,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             type="button"
             onClick={handleExport}
             disabled={effectiveSaving || dimensionWarning !== null}
-            className="inline-flex items-center gap-2 rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-white shadow-card transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-gold-500 px-3 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {effectiveSaving ? (
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5">
                 <SpinnerIcon />
                 Saving…
               </span>
@@ -1942,222 +2114,364 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               type="button"
               onClick={onClose}
               aria-label="Close editor"
-              className="rounded-lg border border-neutral-200 bg-white p-2 text-neutral-600 hover:bg-neutral-50"
+              title="Close editor"
+              className="ml-0.5 flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
             >
               <CloseIcon />
             </button>
           ) : null}
         </div>
+        {/* why: subtle inner shadow on the bottom edge sells the elevation —
+            cheap depth cue without a heavy shadow bleeding onto the canvas
+            area. Pure decorative span absolutely positioned at the bottom. */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-b from-transparent to-black/[0.04]"
+        />
       </header>
 
       {/* ----- Body ----- */}
       <div className="flex min-h-0 flex-1">
-        {/* === Phase 3 — Left sidebar (Brand + Agent panels) ===
-            why: pinned-open in this iteration. A future "collapse to icon
-            rail" mode is straightforward to add (state + className width
-            toggle) but isn't necessary for the v1 of Phase 3 — the editor
-            already has plenty of vertical space and the panels are the
-            primary creation affordances. */}
-        <aside className="flex w-72 flex-col border-r border-neutral-200 bg-white">
-          {/* Tab switcher — four tabs: Templates · Brand · Agents · Photos.
-              Templates was added in Phase 4 (2026-05-15) as the leftmost tab
-              so the "is this the right design?" question is the most
-              discoverable affordance — matches Canva's left-side IA where
-              Templates is the front door to the editor. Default-active tab
-              remains Brand so existing flow is undisturbed. */}
-          <div className="flex border-b border-neutral-200">
-            <button
-              type="button"
-              onClick={() => setSidebarTab("templates")}
-              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
-                sidebarTab === "templates"
-                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
-                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
-              }`}
-            >
-              <TemplatesTabIcon />
-              Templates
-            </button>
-            <button
-              type="button"
-              onClick={() => setSidebarTab("brand")}
-              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
-                sidebarTab === "brand"
-                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
-                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
-              }`}
-            >
-              <BrandTabIcon />
-              Brand
-            </button>
-            <button
-              type="button"
-              onClick={() => setSidebarTab("agents")}
-              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
-                sidebarTab === "agents"
-                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
-                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
-              }`}
-            >
-              <AgentTabIcon />
-              Agents
-            </button>
-            <button
-              type="button"
-              onClick={() => setSidebarTab("photos")}
-              className={`flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors ${
-                sidebarTab === "photos"
-                  ? "border-b-2 border-gold-500 bg-gold-50/50 text-gold-800"
-                  : "border-b-2 border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
-              }`}
-            >
-              <PhotosTabIcon />
-              Photos
-            </button>
-          </div>
-          {/* Active panel — Templates, Brand, Agents, or Photos. why: render
-              only the active one so we don't pay the load+render cost for
-              all four. TemplatesPanel is mostly memo-light but still benefits
-              from this pattern as the registry grows. */}
-          {sidebarTab === "templates" ? (
-            <TemplatesPanel
-              templates={CANVAS_TEMPLATES}
-              currentTemplateId={template.id}
-              currentFormat={template.format}
-              hasUnsavedEdits={history.canUndo}
-              onTemplatePicked={handleTemplatePicked}
+        {/* === Phase 3 — Left sidebar (icon rail + expanding panel) ===
+            why: Canva-style vertical icon dock — the 64px rail is always
+            visible; the 280px panel slides out next to it for the active
+            tab. Clicking the active tab's icon collapses the panel back
+            to just the rail so Larissa can reclaim canvas space. ADHD
+            principle: one decision per screen — the rail stays as the
+            navigation anchor, the panel content swaps without changing
+            the rest of the page. */}
+        <aside className="flex shrink-0 border-r border-neutral-200 bg-white">
+          {/* Icon rail — 64px wide, always visible. why: a constant
+              spatial anchor lets the user predict where their nav lives
+              regardless of which panel happens to be open or collapsed. */}
+          <nav
+            aria-label="Editor sidebar"
+            className="flex w-16 shrink-0 flex-col items-stretch border-r border-neutral-200 bg-white py-2"
+          >
+            <SidebarRailButton
+              label="Templates"
+              icon={<TemplatesTabIcon />}
+              active={sidebarExpanded && sidebarTab === "templates"}
+              onClick={() => {
+                if (sidebarExpanded && sidebarTab === "templates") {
+                  setSidebarExpanded(false);
+                } else {
+                  setSidebarTab("templates");
+                  setSidebarExpanded(true);
+                }
+              }}
             />
-          ) : sidebarTab === "brand" ? (
-            <BrandPanel
-              assets={brandAssets.filter(
-                (a) => a.kind === "logo" || a.kind === "partner_logo",
-              )}
-              isLoading={brandAssetsLoading}
-              onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
-              onSync={handleSyncBrandAssets}
+            <SidebarRailButton
+              label="Brand"
+              icon={<BrandTabIcon />}
+              active={sidebarExpanded && sidebarTab === "brand"}
+              onClick={() => {
+                if (sidebarExpanded && sidebarTab === "brand") {
+                  setSidebarExpanded(false);
+                } else {
+                  setSidebarTab("brand");
+                  setSidebarExpanded(true);
+                }
+              }}
             />
-          ) : sidebarTab === "agents" ? (
-            <AgentPanel
-              assets={brandAssets.filter((a) => a.kind === "agent_headshot")}
-              offices={officesForFilter}
-              defaultOfficeId={null}
-              isLoading={brandAssetsLoading}
-              onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
-              onSync={handleSyncBrandAssets}
+            <SidebarRailButton
+              label="Agents"
+              icon={<AgentTabIcon />}
+              active={sidebarExpanded && sidebarTab === "agents"}
+              onClick={() => {
+                if (sidebarExpanded && sidebarTab === "agents") {
+                  setSidebarExpanded(false);
+                } else {
+                  setSidebarTab("agents");
+                  setSidebarExpanded(true);
+                }
+              }}
             />
-          ) : (
-            <PhotosPanel
-              photos={listingPhotos}
-              isLoading={listingPhotosLoading}
-              onPhotoPicked={(p) => void handleListingPhotoPicked(p)}
+            <SidebarRailButton
+              label="Photos"
+              icon={<PhotosTabIcon />}
+              active={sidebarExpanded && sidebarTab === "photos"}
+              onClick={() => {
+                if (sidebarExpanded && sidebarTab === "photos") {
+                  setSidebarExpanded(false);
+                } else {
+                  setSidebarTab("photos");
+                  setSidebarExpanded(true);
+                }
+              }}
             />
-          )}
-        </aside>
+          </nav>
 
-        {/* Canvas area */}
-        <div className="relative flex flex-1 flex-col items-center justify-center overflow-auto bg-neutral-100 p-6">
-          {/* Phase 2 — Add Layer Toolbar (always visible, top of canvas area).
-              why: primary creation affordance — adding text/shape layers is
-              one of the top-3 things Larissa will do once Phase 2 ships. */}
-          <div className="mb-4 flex w-full justify-center">
-            <AddLayerToolbar
-              canvas={fabricRef.current}
-              listing={listing}
-              onLayerAdded={handleLayerAdded}
-              recordHistory={history.record}
-            />
-          </div>
-          {/* Selection toolbar — floats above the canvas when something is selected */}
-          {selectedEntry && !selectedEntry.locked ? (
-            <SelectionToolbar
-              onDelete={handleDeleteSelection}
-              onBringForward={handleBringForward}
-              onSendBackward={handleSendBackward}
-              onToggleLock={handleToggleLock}
-              onDuplicate={() => void handleDuplicateSelection()}
-              layerName={selectedEntry.name}
-              layerKind={selectedEntry.kind}
-              canvas={fabricRef.current}
-              selectionVersion={layerVersion}
-              onOpacityCommit={history.record}
-              onCanvasMutated={() => setLayerVersion((v) => v + 1)}
-            />
-          ) : null}
-
-          {/* Dimension warning — blocks export when template is malformed */}
-          {dimensionWarning ? (
-            <div className="absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 shadow-card">
-              {dimensionWarning}
-            </div>
-          ) : null}
-
-          {/* Non-blocking error toast */}
-          {editorError ? (
-            <div className="absolute bottom-6 left-1/2 z-20 max-w-[80%] -translate-x-1/2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700 shadow-elevated">
-              <div className="flex items-start gap-3">
-                <span className="font-semibold uppercase tracking-wide">
-                  {editorError.kind === "export" ? "Export" : "Warning"}
+          {/* Expanded panel — 280px wide, only when sidebarExpanded.
+              Existing panel components (TemplatesPanel / BrandPanel /
+              AgentPanel / PhotosPanel) render unmodified inside this
+              container — they were already authored for ~280px width. */}
+          {sidebarExpanded ? (
+            <div className="flex w-[280px] shrink-0 flex-col bg-white">
+              {/* Collapse cap — title of the active tab + « collapse button.
+                  why: the panel title doubles as a sense-of-place label
+                  for users who collapse + re-expand frequently. The «
+                  affordance mirrors the » on the right panel for
+                  symmetry. */}
+              <div className="flex h-10 shrink-0 items-center justify-between border-b border-neutral-200 px-3">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+                  {sidebarTab === "templates"
+                    ? "Templates"
+                    : sidebarTab === "brand"
+                      ? "Brand"
+                      : sidebarTab === "agents"
+                        ? "Agents"
+                        : "Photos"}
                 </span>
-                <span className="flex-1">{editorError.message}</span>
                 <button
                   type="button"
-                  onClick={() => setEditorError(null)}
-                  aria-label="Dismiss error"
-                  className="text-neutral-400 hover:text-neutral-700"
+                  onClick={() => setSidebarExpanded(false)}
+                  aria-label="Collapse panel"
+                  title="Collapse panel"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
                 >
-                  <CloseIcon />
+                  <ChevronDoubleLeftIcon />
                 </button>
+              </div>
+              {/* Active panel — render only the visible one. why: keeps
+                  per-render work + network fetch surface scoped to what
+                  the user is actually looking at. */}
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {sidebarTab === "templates" ? (
+                  <TemplatesPanel
+                    templates={CANVAS_TEMPLATES}
+                    currentTemplateId={template.id}
+                    currentFormat={template.format}
+                    hasUnsavedEdits={history.canUndo}
+                    onTemplatePicked={handleTemplatePicked}
+                  />
+                ) : sidebarTab === "brand" ? (
+                  <BrandPanel
+                    assets={brandAssets.filter(
+                      (a) => a.kind === "logo" || a.kind === "partner_logo",
+                    )}
+                    isLoading={brandAssetsLoading}
+                    onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
+                    onSync={handleSyncBrandAssets}
+                    syncStatus={brandSyncStatus}
+                  />
+                ) : sidebarTab === "agents" ? (
+                  <AgentPanel
+                    assets={brandAssets.filter(
+                      (a) => a.kind === "agent_headshot",
+                    )}
+                    offices={officesForFilter}
+                    defaultOfficeId={null}
+                    isLoading={brandAssetsLoading}
+                    onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
+                    onSync={handleSyncBrandAssets}
+                    syncStatus={brandSyncStatus}
+                  />
+                ) : (
+                  <PhotosPanel
+                    photos={listingPhotos}
+                    isLoading={listingPhotosLoading}
+                    onPhotoPicked={(p) => void handleListingPhotoPicked(p)}
+                  />
+                )}
               </div>
             </div>
           ) : null}
+        </aside>
 
-          {/* The actual canvas, scaled via CSS transform */}
+        {/* === Center column — canvas area + footer ===
+            why: stacked into its own flex-col so the canvas footer
+            (zoom + undo/redo + alignment) sits inside the same column
+            as the canvas itself, regardless of right-panel state. */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Canvas area — gets the soft radial background + dot pattern.
+              why: a barely-perceptible radial gradient draws the eye
+              inward to the canvas; the white-card-on-soft-gray pattern
+              is Canva's primary visual cue that "this is your canvas."
+              The dot-pattern SVG is rendered at 4% opacity so it adds
+              texture without competing for attention. */}
           <div
-            className="relative bg-white shadow-elevated"
+            className="relative flex flex-1 flex-col items-center justify-center overflow-auto p-6"
             style={{
-              width: template.width * displayScale,
-              height: template.height * displayScale,
+              backgroundImage: `radial-gradient(ellipse at center, #fafafa 0%, #f5f5f5 100%), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='1' cy='1' r='1' fill='%23a3a3a3' fill-opacity='0.04'/></svg>")`,
+              backgroundSize: "100% 100%, 24px 24px",
             }}
           >
+            {/* Phase 2 — Add Layer Toolbar (always visible, top of canvas area).
+                why: primary creation affordance — adding text/shape layers is
+                one of the top-3 things Larissa will do once Phase 2 ships. */}
+            <div className="mb-4 flex w-full justify-center">
+              <AddLayerToolbar
+                canvas={fabricRef.current}
+                listing={listing}
+                onLayerAdded={handleLayerAdded}
+                recordHistory={history.record}
+              />
+            </div>
+            {/* Selection toolbar — floats above the canvas when something is selected */}
+            {selectedEntry && !selectedEntry.locked ? (
+              <SelectionToolbar
+                onDelete={handleDeleteSelection}
+                onBringForward={handleBringForward}
+                onSendBackward={handleSendBackward}
+                onToggleLock={handleToggleLock}
+                onDuplicate={() => void handleDuplicateSelection()}
+                layerName={selectedEntry.name}
+                layerKind={selectedEntry.kind}
+                canvas={fabricRef.current}
+                selectionVersion={layerVersion}
+                onOpacityCommit={history.record}
+                onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+              />
+            ) : null}
+
+            {/* Dimension warning — blocks export when template is malformed */}
+            {dimensionWarning ? (
+              <div className="absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 shadow-card">
+                {dimensionWarning}
+              </div>
+            ) : null}
+
+            {/* Non-blocking error toast */}
+            {editorError ? (
+              <div className="absolute bottom-6 left-1/2 z-20 max-w-[80%] -translate-x-1/2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700 shadow-elevated">
+                <div className="flex items-start gap-3">
+                  <span className="font-semibold uppercase tracking-wide">
+                    {editorError.kind === "export" ? "Export" : "Warning"}
+                  </span>
+                  <span className="flex-1">{editorError.message}</span>
+                  <button
+                    type="button"
+                    onClick={() => setEditorError(null)}
+                    aria-label="Dismiss error"
+                    className="text-neutral-400 hover:text-neutral-700"
+                  >
+                    <CloseIcon />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* The actual canvas, scaled via CSS transform.
+                why: `displayScale` fits the canvas to the viewport;
+                `zoom` is the user's multiplier on top of that. We
+                multiply the two for the outer dimensions so the
+                container sizes correctly and the canvas stays
+                centered as zoom changes. Soft Canva-style drop
+                shadow (low + blurred) sells "this is a card on a
+                surface" without competing with the canvas content. */}
             <div
+              className="relative bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
               style={{
-                width: template.width,
-                height: template.height,
-                transform: `scale(${displayScale})`,
-                transformOrigin: "top left",
-                position: "absolute",
-                top: 0,
-                left: 0,
+                width: template.width * displayScale * zoom,
+                height: template.height * displayScale * zoom,
               }}
             >
-              <canvas ref={canvasRef} />
+              <div
+                style={{
+                  width: template.width,
+                  height: template.height,
+                  transform: `scale(${displayScale * zoom})`,
+                  transformOrigin: "top left",
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                }}
+              >
+                <canvas ref={canvasRef} />
+              </div>
             </div>
           </div>
+
+          {/* === Canvas footer — alignment / zoom / undo+redo === */}
+          <CanvasFooter
+            // why: alignment cluster is purely visual UI for Phase A.4 —
+            // actual alignment math is Phase B work (per spec). Show only
+            // when something is selected so the empty-state footer stays
+            // clean.
+            showAlignment={selectedEntry !== null && !selectedEntry.locked}
+            zoom={zoom}
+            onZoomIn={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
+            onZoomOut={() =>
+              setZoom((z) => Math.max(0.25, +(z - 0.1).toFixed(2)))
+            }
+            onZoomFit={() => setZoom(1)}
+            canUndo={history.canUndo}
+            canRedo={history.canRedo}
+            onUndo={() => history.undo()}
+            onRedo={() => history.redo()}
+          />
         </div>
 
-        {/* Right-side panel — mode-switches between selection properties and
-            the layer list. Phase 2 split: when something is selected, show
-            Agent A's SelectionPropertiesPanel; otherwise show Agent C's
-            drag-reorderable LayerListPanel. */}
-        {selectionMode === "none" ? (
-          <LayerListPanel
-            entries={layerEntries}
-            selectedLayerId={selection.layerId}
-            onSelect={handleSelectLayer}
-            onToggleVisibility={handleToggleLayerVisibility}
-            onDelete={handleDeleteLayer}
-            onReorder={handleReorderLayers}
-          />
+        {/* === Right-side panel — Layers / Selection-properties with collapse rail ===
+            why: ADHD principle — preserve scroll position + minimize
+            context-switching. Collapsing to a 48px rail keeps the panel
+            spatially anchored while giving the canvas more room. The
+            inner panel content (LayerListPanel / SelectionPropertiesPanel)
+            is unchanged from before — we only wrap their <aside> shell
+            with the collapse affordance + width adjustment. */}
+        {layersExpanded ? (
+          <div className="flex w-[280px] shrink-0 flex-col border-l border-neutral-200 bg-white">
+            <div className="flex h-10 shrink-0 items-center justify-between border-b border-neutral-200 px-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+                {selectionMode === "none" ? "Layers" : "Properties"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLayersExpanded(false)}
+                aria-label="Collapse layers panel"
+                title="Collapse layers panel"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+              >
+                <ChevronDoubleRightIcon />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {/* why: the inner panels supply their own <aside> with
+                  border-l + w-72. To avoid a double border + a fixed
+                  width fighting our parent, we wrap them in a
+                  full-width container and let our parent govern the
+                  width. Inner components were already authored to be
+                  full-height inside their flex parent. */}
+              <div className="flex h-full w-full flex-col [&>aside]:w-full [&>aside]:border-l-0">
+                {selectionMode === "none" ? (
+                  <LayerListPanel
+                    entries={layerEntries}
+                    selectedLayerId={selection.layerId}
+                    onSelect={handleSelectLayer}
+                    onToggleVisibility={handleToggleLayerVisibility}
+                    onDelete={handleDeleteLayer}
+                    onReorder={handleReorderLayers}
+                  />
+                ) : (
+                  <SelectionPropertiesPanel
+                    mode={selectionMode}
+                    canvas={fabricRef.current}
+                    listing={listing}
+                    selectionVersion={layerVersion}
+                    onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+                    onClearSelection={handleClearSelection}
+                    recordHistory={history.record}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
         ) : (
-          <SelectionPropertiesPanel
-            mode={selectionMode}
-            canvas={fabricRef.current}
-            listing={listing}
-            selectionVersion={layerVersion}
-            onCanvasMutated={() => setLayerVersion((v) => v + 1)}
-            onClearSelection={handleClearSelection}
-            recordHistory={history.record}
-          />
+          // why: collapsed rail — single 48px column with a Layers icon
+          // that acts as the expand affordance. Vertical-label keeps the
+          // rail readable when shut.
+          <div className="flex w-12 shrink-0 flex-col border-l border-neutral-200 bg-white">
+            <button
+              type="button"
+              onClick={() => setLayersExpanded(true)}
+              aria-label="Expand layers panel"
+              title="Expand layers panel"
+              className="group flex h-12 w-full items-center justify-center text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+            >
+              <LayersStackIcon />
+            </button>
+          </div>
         )}
       </div>
 
@@ -2923,6 +3237,498 @@ function PhotosTabIcon(): JSX.Element {
     >
       <rect x="4" y="4" width="9" height="9" rx="1" />
       <path d="M2 11V3a1 1 0 011-1h8" />
+    </svg>
+  );
+}
+
+// ===========================================================================
+// SECTION 6 — Canva-style chrome subcomponents (Phase A.4 redesign)
+// ===========================================================================
+//
+// SidebarRailButton: a single rail entry in the 64px vertical icon dock.
+// Renders a 24px icon centered above a 10px label. Active state shows a
+// gold-50 background, gold-700 text, and a 3px gold-500 left-border bar
+// that visually attaches the button to the rail's edge — exactly the
+// Canva pattern. Inactive state is muted neutral-600 with a soft hover.
+// ---------------------------------------------------------------------------
+
+interface SidebarRailButtonProps {
+  label: string;
+  icon: JSX.Element;
+  active: boolean;
+  onClick: () => void;
+}
+
+/**
+ * One entry in the left icon rail. Vertically stacks a 24px icon over a
+ * 10px label, both centered horizontally. The 3px gold-500 stripe on the
+ * left edge anchors the active state to the rail (Canva pattern).
+ */
+function SidebarRailButton(props: SidebarRailButtonProps): JSX.Element {
+  const { label, icon, active, onClick } = props;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={label}
+      className={`relative flex h-14 w-full flex-col items-center justify-center gap-0.5 transition-colors ${
+        active
+          ? "bg-gold-50 text-gold-700"
+          : "text-neutral-600 hover:bg-neutral-100"
+      }`}
+    >
+      {/* why: 3px gold-500 stripe pinned to the LEFT edge of the rail
+          (the rail's outer edge faces the viewport). Renders only on
+          the active row. Visually attaches the active state to the
+          rail's boundary — matches Canva's pattern. */}
+      {active ? (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-1/2 h-8 w-[3px] -translate-y-1/2 rounded-r-sm bg-gold-500"
+        />
+      ) : null}
+      {/* why: scale the existing 14px tab icons up to ~22px for the rail
+          via an inline style — the rail icons read MUCH bigger than the
+          old text-tab icons, so we re-use the same SVGs but project them
+          at a larger render size. Keeps the icon set single-sourced. */}
+      <span
+        className="flex items-center justify-center"
+        style={{ width: 22, height: 22 }}
+      >
+        <span className="scale-150">{icon}</span>
+      </span>
+      <span className="text-[10px] font-semibold leading-none">{label}</span>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CanvasFooter — 40px bottom bar with alignment / zoom / undo + redo
+// ---------------------------------------------------------------------------
+//
+// Layout: three-cluster flex row. Left = alignment (UI-only for now —
+// per Phase A.4 spec, wiring the alignment math is Phase B work).
+// Center = zoom controls ([-] 100% [+] Fit). Right = undo / redo wired
+// to the existing useUndoRedoHistory hook.
+//
+// Buttons are 28×28 square, icon-only, hover:bg-neutral-100. Tooltips
+// via title attribute (matches existing IconButton convention).
+// ---------------------------------------------------------------------------
+
+interface CanvasFooterProps {
+  showAlignment: boolean;
+  zoom: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onZoomFit: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+}
+
+/**
+ * Canvas footer — alignment / zoom / undo+redo. Renders below the canvas
+ * area, above the carousel strip. 40px tall, white bg, top border.
+ */
+function CanvasFooter(props: CanvasFooterProps): JSX.Element {
+  const zoomPct = Math.round(props.zoom * 100);
+  return (
+    <div className="flex h-10 shrink-0 items-center justify-between border-t border-neutral-200 bg-white px-3">
+      {/* === Left cluster — alignment buttons (UI-only) === */}
+      <div className="flex items-center gap-0.5">
+        {props.showAlignment ? (
+          <>
+            <FooterIconButton
+              label="Align left"
+              onClick={() => {
+                /* Phase B */
+              }}
+            >
+              <AlignLeftIcon />
+            </FooterIconButton>
+            <FooterIconButton
+              label="Align center"
+              onClick={() => {
+                /* Phase B */
+              }}
+            >
+              <AlignCenterIcon />
+            </FooterIconButton>
+            <FooterIconButton
+              label="Align right"
+              onClick={() => {
+                /* Phase B */
+              }}
+            >
+              <AlignRightIcon />
+            </FooterIconButton>
+            <span className="mx-1 h-4 w-px bg-neutral-200" />
+            <FooterIconButton
+              label="Align top"
+              onClick={() => {
+                /* Phase B */
+              }}
+            >
+              <AlignTopIcon />
+            </FooterIconButton>
+            <FooterIconButton
+              label="Align middle"
+              onClick={() => {
+                /* Phase B */
+              }}
+            >
+              <AlignMiddleIcon />
+            </FooterIconButton>
+            <FooterIconButton
+              label="Align bottom"
+              onClick={() => {
+                /* Phase B */
+              }}
+            >
+              <AlignBottomIcon />
+            </FooterIconButton>
+          </>
+        ) : null}
+      </div>
+
+      {/* === Center cluster — zoom controls === */}
+      <div className="flex items-center gap-0.5">
+        <FooterIconButton label="Zoom out" onClick={props.onZoomOut}>
+          <ZoomOutIcon />
+        </FooterIconButton>
+        <span className="min-w-[44px] text-center font-mono text-[11px] text-neutral-600">
+          {zoomPct}%
+        </span>
+        <FooterIconButton label="Zoom in" onClick={props.onZoomIn}>
+          <ZoomInIcon />
+        </FooterIconButton>
+        <span className="mx-1 h-4 w-px bg-neutral-200" />
+        <button
+          type="button"
+          onClick={props.onZoomFit}
+          title="Fit to viewport"
+          className="flex h-7 items-center rounded-md px-2 text-[11px] font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+        >
+          Fit
+        </button>
+      </div>
+
+      {/* === Right cluster — undo / redo === */}
+      <div className="flex items-center gap-0.5">
+        <FooterIconButton
+          label="Undo"
+          onClick={props.onUndo}
+          disabled={!props.canUndo}
+        >
+          <UndoIcon />
+        </FooterIconButton>
+        <FooterIconButton
+          label="Redo"
+          onClick={props.onRedo}
+          disabled={!props.canRedo}
+        >
+          <RedoIcon />
+        </FooterIconButton>
+      </div>
+    </div>
+  );
+}
+
+interface FooterIconButtonProps {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}
+
+/**
+ * 28×28 icon button used throughout the canvas footer. Hover state is
+ * neutral-100 — kept gold-free per the redesign's "reserve gold for
+ * brand-accent moments" rule.
+ */
+function FooterIconButton(props: FooterIconButtonProps): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      disabled={props.disabled}
+      aria-label={props.label}
+      title={props.label}
+      className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+    >
+      {props.children}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SECTION 7 — Phase A.4 inline icons (file glyph, chevrons, zoom, undo, align)
+// ---------------------------------------------------------------------------
+
+function FileGlyphIcon(): JSX.Element {
+  // why: small document glyph in the header — Canva's leftmost item is the
+  // app icon, but here a file glyph reads as "this is the document title."
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 2h5l3 3v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
+      <path d="M9 2v3h3" />
+    </svg>
+  );
+}
+
+function ChevronDoubleLeftIcon(): JSX.Element {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 4L5 8l4 4M13 4l-4 4 4 4" />
+    </svg>
+  );
+}
+
+function ChevronDoubleRightIcon(): JSX.Element {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7 4l4 4-4 4M3 4l4 4-4 4" />
+    </svg>
+  );
+}
+
+function LayersStackIcon(): JSX.Element {
+  // why: three stacked layers — the canonical "layers" glyph in design tools.
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M10 2L2.5 6 10 10l7.5-4L10 2z" />
+      <path d="M2.5 10L10 14l7.5-4" />
+      <path d="M2.5 14L10 18l7.5-4" />
+    </svg>
+  );
+}
+
+function ZoomInIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M10.5 10.5l3 3M5 7h4M7 5v4" />
+    </svg>
+  );
+}
+
+function ZoomOutIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M10.5 10.5l3 3M5 7h4" />
+    </svg>
+  );
+}
+
+function UndoIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7h6a3 3 0 0 1 0 6H7" />
+      <path d="M6 4L3 7l3 3" />
+    </svg>
+  );
+}
+
+function RedoIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 7H6a3 3 0 0 0 0 6h3" />
+      <path d="M10 4l3 3-3 3" />
+    </svg>
+  );
+}
+
+// why: alignment icons are pure UI for Phase A.4. The visuals match Canva
+// — a baseline + a small rectangle anchored to the relevant edge.
+function AlignLeftIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M2 2v12" />
+      <rect x="4" y="4" width="9" height="3" />
+      <rect x="4" y="9" width="6" height="3" />
+    </svg>
+  );
+}
+
+function AlignCenterIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M8 2v12" />
+      <rect x="3.5" y="4" width="9" height="3" />
+      <rect x="5" y="9" width="6" height="3" />
+    </svg>
+  );
+}
+
+function AlignRightIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M14 2v12" />
+      <rect x="3" y="4" width="9" height="3" />
+      <rect x="6" y="9" width="6" height="3" />
+    </svg>
+  );
+}
+
+function AlignTopIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M2 2h12" />
+      <rect x="4" y="4" width="3" height="9" />
+      <rect x="9" y="4" width="3" height="6" />
+    </svg>
+  );
+}
+
+function AlignMiddleIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M2 8h12" />
+      <rect x="4" y="3.5" width="3" height="9" />
+      <rect x="9" y="5" width="3" height="6" />
+    </svg>
+  );
+}
+
+function AlignBottomIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M2 14h12" />
+      <rect x="4" y="3" width="3" height="9" />
+      <rect x="9" y="6" width="3" height="6" />
     </svg>
   );
 }

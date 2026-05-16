@@ -278,8 +278,19 @@ export interface ImageLayer extends CanvasLayerBase {
 export interface ShapeLayer extends CanvasLayerBase {
   kind: "shape";
   shapeType: "rect" | "circle" | "ellipse" | "line";
-  /** Hex fill. Empty string = no fill (lines, outlined shapes). */
-  fill: string;
+  /**
+   * Hex string for a flat fill OR a structured GradientFill object. Worker
+   * + Fabric factory both handle both shapes. Empty string = no fill
+   * (lines, outlined shapes). Use `isGradientFill(layer.fill)` to narrow.
+   *
+   * why a union (not a separate `gradientFill` field): every consumer that
+   * touches `fill` already has to do SOMETHING with it (pass to Fabric,
+   * round-trip to JSON, diff in tests). Adding a parallel optional field
+   * doubles the read paths and creates an ambiguity if both are set.
+   * Discriminated by the runtime shape — string vs object — narrowed via
+   * the exported `isGradientFill` type guard.
+   */
+  fill: string | GradientFill;
   stroke: string;
   strokeWidth: number;
   /** Rectangle corner radius. Ignored for non-rect shapes. */
@@ -290,6 +301,96 @@ export interface ShapeLayer extends CanvasLayerBase {
    */
   strokeDashArray: number[];
 }
+
+// ---------------------------------------------------------------------------
+// Gradient fills — structured fill objects for ShapeLayer
+// ---------------------------------------------------------------------------
+
+/**
+ * A single color stop along a gradient axis. Used by both linear and radial
+ * GradientFill variants.
+ *
+ * offset:
+ *   • 0..1; 0 = start of gradient, 1 = end.
+ *   • The first stop's offset should be 0 and the last's offset should be 1;
+ *     intermediate stops can be anywhere in between in INCREASING order.
+ *     The template validator enforces this; runtime Fabric does too (out-of-
+ *     range stops paint as solid color from the nearest in-range stop).
+ *
+ * color:
+ *   • Hex string. Both "#RRGGBB" and "#RRGGBBAA" are permitted — Fabric's
+ *     CanvasGradient consumes either via its underlying CanvasRenderingContext2D.
+ */
+export interface GradientStop {
+  /** 0..1 along the gradient axis. */
+  offset: number;
+  /** Hex color. Hex+alpha permitted. */
+  color: string;
+}
+
+/**
+ * Linear gradient — paints color stops along a straight axis at `angleDeg`.
+ *
+ * Coordinate convention:
+ *   `angleDeg` is degrees CLOCKWISE from horizontal-right. This matches
+ *   CSS `linear-gradient()` direction so authors can intuit the rotation
+ *   without a separate mental model.
+ *     • 0°   → left-to-right
+ *     • 90°  → top-to-bottom
+ *     • 180° → right-to-left
+ *     • 270° → bottom-to-top
+ *
+ * The factory + worker translate `angleDeg` into Fabric's `x1/y1/x2/y2`
+ * coords inside the layer's own bounding box at render time.
+ */
+export interface GradientFillLinear {
+  kind: "linear";
+  /** Direction in degrees clockwise from horizontal-right. */
+  angleDeg: number;
+  /** Color stops along the gradient axis. */
+  stops: readonly GradientStop[];
+}
+
+/**
+ * Radial gradient — paints color stops from the layer's center outward.
+ *
+ * Coordinate convention:
+ *   Centered on the layer's bounding box. `spread` is the fraction of the
+ *   box's LONGER axis the gradient covers — 1.0 (default) means the outer
+ *   edge of the gradient touches the longer side of the box; 0.5 means
+ *   the gradient finishes halfway out (anything beyond paints as the last
+ *   stop's color).
+ *
+ * why no explicit center coordinates: every template designed to date wants
+ * a centered radial. If a future template needs an off-center radial (e.g.,
+ * a spotlight in one corner), add `centerX`/`centerY` as optional 0..1
+ * fractions and default both to 0.5. Don't widen the type prematurely.
+ */
+export interface GradientFillRadial {
+  kind: "radial";
+  /** 0..1 — % of the layer's longer axis the gradient spreads. Default 1. */
+  spread?: number;
+  /** Color stops from center (offset 0) to edge (offset 1). */
+  stops: readonly GradientStop[];
+}
+
+/**
+ * Structured gradient fill — used in `ShapeLayer.fill` to render either a
+ * linear or radial color blend instead of a flat hex color.
+ *
+ * Why two kinds (not one with optional radial fields):
+ *   Linear and radial gradients have fundamentally different coordinate
+ *   shapes — linear needs an angle; radial needs an implicit center +
+ *   spread. Forcing them into one shape would either bloat both with
+ *   unused fields OR require runtime branching everywhere. The
+ *   discriminated union keeps each consumer's switch exhaustive.
+ *
+ * Stops:
+ *   • At least 2 stops required (rendered as a no-op solid otherwise).
+ *   • Validator below enforces ascending offsets in [0, 1]; runtime
+ *     Fabric does too.
+ */
+export type GradientFill = GradientFillLinear | GradientFillRadial;
 
 /**
  * Group layer — RESERVED. Not implemented in Phase 1 of the canvas editor.
@@ -675,6 +776,29 @@ export function isResolvedImageLayer(
   layer: ResolvedCanvasLayer,
 ): layer is ResolvedImageLayer {
   return layer.kind === "image";
+}
+
+/**
+ * Type guard — narrow a `ShapeLayer.fill` value to a `GradientFill`. Returns
+ * false for strings (flat fills), null, undefined, or malformed objects.
+ *
+ * Why a structural runtime check (not just `typeof === "object"`):
+ *   • `null` is `typeof "object"` in JS — checked first to avoid a crash on
+ *     the property access below.
+ *   • An accidentally-malformed object (e.g., `{ kind: "wrong" }`) should be
+ *     rejected, not silently treated as a gradient, so consumers fall back to
+ *     the flat-fill code path instead of crashing later in Fabric.
+ *   • The two required structural invariants — `kind` is "linear" | "radial"
+ *     AND `stops` is an array of >=2 — match the validator in the templates
+ *     registry. Keeping these checks in sync is the type guard's job; the
+ *     factory + worker both rely on this guard to narrow.
+ */
+export function isGradientFill(fill: unknown): fill is GradientFill {
+  if (!fill || typeof fill !== "object") return false;
+  const f = fill as Partial<GradientFill>;
+  if (f.kind !== "linear" && f.kind !== "radial") return false;
+  if (!Array.isArray(f.stops) || f.stops.length < 2) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------

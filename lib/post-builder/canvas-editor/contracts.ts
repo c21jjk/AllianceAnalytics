@@ -362,6 +362,25 @@ export interface BrandSyncOutcome {
 }
 
 /**
+ * Last-sync metadata that the BrandPanel + AgentPanel headers render as a
+ * "Synced 12m ago" / "Last sync failed Nm ago" pill. Written by the
+ * sync-brand-assets Edge Function on every run (success or failure) into
+ * `api_credentials.credentials` for platform='google_drive'; the
+ * orchestrator reads it server-side via getBrandSyncStatusAction and passes
+ * the result to both panels through these props.
+ */
+export interface BrandSyncStatus {
+  /** ISO timestamp of the most recent sync completion. null if never run. */
+  lastSyncedAt: string | null;
+  /**
+   * The last sync's error message, when it failed. null when the most recent
+   * run succeeded. A partial-failure run (errors[] non-empty but ok=true)
+   * surfaces the FIRST error string here so users can spot regressions.
+   */
+  lastSyncError: string | null;
+}
+
+/**
  * BrandPanel — grid of C21 logos + co-brand partner logos.
  *
  * Renders inside the editor's left sidebar when the user clicks the Brand
@@ -381,6 +400,14 @@ export interface BrandPanelProps {
    * its header. Returns a brief outcome the panel surfaces as a toast.
    */
   onSync?: () => Promise<BrandSyncOutcome>;
+  /**
+   * Most recent sync's metadata. When provided, the panel header surfaces a
+   * "Synced 12m ago" pill (success) / "Last sync failed Nm ago" (rose-700,
+   * failure) / "Could be out of date" amber hint (older than 24h).
+   * Omit on consumers that don't have access to the status row (e.g.
+   * brand-asset admin UI); the panel degrades to just the Sync button.
+   */
+  syncStatus?: BrandSyncStatus;
 }
 
 /**
@@ -408,6 +435,11 @@ export interface AgentPanelProps {
    * BOTH the logos folder and the agents folder in one pass).
    */
   onSync?: () => Promise<BrandSyncOutcome>;
+  /**
+   * Most recent sync's metadata. Same shape + semantics as BrandPanel's
+   * syncStatus — see BrandSyncStatus.
+   */
+  syncStatus?: BrandSyncStatus;
 }
 
 /**

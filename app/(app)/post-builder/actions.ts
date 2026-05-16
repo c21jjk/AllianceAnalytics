@@ -738,6 +738,12 @@ export interface BrandSyncReport {
   added: number;
   updated: number;
   unchanged: number;
+  /**
+   * Rows whose drive_file_id was not seen on this run → flipped to
+   * status='archived'. Added 2026-05-16 alongside the drift fix; the Edge
+   * Function now sweeps stale rows out of the active set on every run.
+   */
+  archived?: number;
   skipped: number;
   errors: unknown[];
 }
@@ -750,6 +756,73 @@ export interface SyncBrandAssetsOk {
 export interface SyncBrandAssetsErr {
   ok: false;
   error: string;
+}
+
+/**
+ * Most-recent-sync metadata for the Brand panel + Agent panel header pill.
+ * Mirrors the shape persisted by the sync-brand-assets Edge Function into
+ * `api_credentials.credentials` (platform='google_drive'). When the
+ * function has never run successfully, both fields can be null.
+ */
+export interface BrandSyncStatusResult {
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+}
+
+/**
+ * Reads the last-sync metadata that the sync-brand-assets Edge Function
+ * writes back into `api_credentials.credentials` after every run. Used by
+ * the Studio Brand + Agent panel headers to render a "Synced 12m ago" /
+ * "Last sync failed Nm ago" pill so users can self-diagnose drift.
+ *
+ * Why a server action (not a client query):
+ *   - The `api_credentials` table is service-role-only (RLS denies anon +
+ *     authenticated reads on every column, including non-secret metadata).
+ *     A client read would return 0 rows. Routing through a server action
+ *     with the admin client lets us return ONLY the two timestamps, no
+ *     secrets.
+ *   - Single-shot fetch keeps the canvas editor's mount-time network cost
+ *     bounded: one extra request alongside the existing brand_assets +
+ *     offices fetches.
+ *
+ * Returns null timestamps when the row doesn't exist or the function has
+ * never run (instead of throwing) — the panel renders "Never synced" in
+ * that case.
+ */
+export async function getBrandSyncStatusAction(): Promise<BrandSyncStatusResult> {
+  // why: gated to authenticated users only — the metadata isn't a secret
+  // but there's no reason to expose it to anon visitors.
+  await requireUser();
+
+  const supabase = createAdminClient();
+
+  // why: select only the credentials column; we'll pull lastSyncAt /
+  // lastSyncError out of the JSONB here so the action's return type
+  // stays minimal and we don't accidentally leak service_account_json
+  // back to the client.
+  const { data, error } = await supabase
+    .from("api_credentials")
+    .select("credentials")
+    .eq("platform", "google_drive")
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error || !data) {
+    return { lastSyncedAt: null, lastSyncError: null };
+  }
+
+  const creds = (data.credentials ?? {}) as {
+    lastSyncAt?: string;
+    lastSyncError?: string | null;
+  };
+
+  return {
+    lastSyncedAt: typeof creds.lastSyncAt === "string" ? creds.lastSyncAt : null,
+    lastSyncError:
+      typeof creds.lastSyncError === "string" && creds.lastSyncError.length > 0
+        ? creds.lastSyncError
+        : null,
+  };
 }
 
 /**
