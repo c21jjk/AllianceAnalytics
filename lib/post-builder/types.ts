@@ -350,3 +350,279 @@ export interface MultiOHGenerateErr {
 }
 
 export type MultiOHGenerateResult = MultiOHGenerateOk | MultiOHGenerateErr;
+
+// ---------------------------------------------------------------------------
+// Native video / Reels — Phase 6 (started 2026-05-15)
+// ---------------------------------------------------------------------------
+//
+// Static feed posts get a fraction of the reach Reels do on IG + FB. The
+// fix is to deliver still-property content AS short Reels-format videos —
+// same source material (designed hero card + listing photos), wrapped in
+// 5-7 seconds of motion, audio, and brand-perfect framing.
+//
+// We're building this natively rather than renting a render service. The
+// schema below is the contract between the editor (which composes the
+// video declaratively) and the render worker (which interprets the schema
+// and produces an MP4 via headless Fabric + ffmpeg).
+//
+// Persisted on `generated_posts.composition_json` so a published Reel can
+// be re-opened and re-edited in Studio later — same role layer_tree plays
+// for stills.
+
+/**
+ * A motion path defines how a photo is cropped + animated over a scene's
+ * duration. Coordinates are 0..1 normalized (fractions of the source
+ * photo's dimensions), so the same motion path applies cleanly across
+ * different source photos.
+ *
+ *   startRect = {x:0.10, y:0.10, w:0.80, h:0.80}  →  start zoomed to center 80%
+ *   endRect   = {x:0.00, y:0.00, w:1.00, h:1.00}  →  end at full frame
+ *   easing    = "ease_in_out"                       →  smooth zoom-out
+ *
+ * The renderer interpolates rect → rect linearly over the scene's
+ * durationMs, with the easing curve applied. Frame N's crop is the lerped
+ * rect projected onto the source photo's pixel grid.
+ */
+export interface MotionRect {
+  /** Top-left x as fraction of source width [0..1]. */
+  x: number;
+  /** Top-left y as fraction of source height [0..1]. */
+  y: number;
+  /** Crop width as fraction of source width (0..1]. */
+  w: number;
+  /** Crop height as fraction of source height (0..1]. */
+  h: number;
+}
+
+export interface MotionPath {
+  startRect: MotionRect;
+  endRect: MotionRect;
+  /**
+   * Easing curve applied to the parametric t (0..1) before lerping the
+   * rects. Default is "ease_in_out" — the most natural Ken Burns motion.
+   */
+  easing: "linear" | "ease_in" | "ease_out" | "ease_in_out";
+}
+
+/**
+ * Canonical motion preset library. The editor surfaces these as named
+ * buttons ("Zoom in", "Pan left", etc.); a custom path is also allowed.
+ *
+ * Why preset constants live in types.ts: the renderer needs to resolve a
+ * preset NAME to a motion path the same way the editor does, and both
+ * sides need to agree on the exact rect math. Single source of truth.
+ */
+export const MOTION_PRESETS: Readonly<Record<string, MotionPath>> = {
+  static: {
+    startRect: { x: 0, y: 0, w: 1, h: 1 },
+    endRect: { x: 0, y: 0, w: 1, h: 1 },
+    easing: "linear",
+  },
+  zoom_in: {
+    startRect: { x: 0, y: 0, w: 1, h: 1 },
+    endRect: { x: 0.05, y: 0.05, w: 0.9, h: 0.9 },
+    easing: "ease_in_out",
+  },
+  zoom_out: {
+    startRect: { x: 0.05, y: 0.05, w: 0.9, h: 0.9 },
+    endRect: { x: 0, y: 0, w: 1, h: 1 },
+    easing: "ease_in_out",
+  },
+  pan_left: {
+    startRect: { x: 0.1, y: 0, w: 0.9, h: 1 },
+    endRect: { x: 0, y: 0, w: 0.9, h: 1 },
+    easing: "ease_in_out",
+  },
+  pan_right: {
+    startRect: { x: 0, y: 0, w: 0.9, h: 1 },
+    endRect: { x: 0.1, y: 0, w: 0.9, h: 1 },
+    easing: "ease_in_out",
+  },
+} as const;
+
+/**
+ * Discriminated union for what a scene actually contains. Three kinds
+ * cover everything we need at MVP:
+ *
+ *   "design"      — a canvas-editor schema instance (uses CanvasTemplateSchema).
+ *                   Rendered by running the editor's Fabric pipeline
+ *                   server-side and capturing the result. Static for the
+ *                   full scene duration (no motion — text doesn't animate
+ *                   in MVP). Used for hero card frames + outros.
+ *
+ *   "photo"       — a single listing photo with a motion path. The most
+ *                   common scene type — this is what makes the Reel feel
+ *                   like a moving listing tour.
+ *
+ *   "video_clip"  — RESERVED for Phase 7 (real video clip ingestion). Not
+ *                   wired in MVP; reserved in the schema to keep the union
+ *                   open. The renderer rejects this kind for now.
+ */
+export type SceneContent =
+  | {
+      kind: "design";
+      /**
+       * The canvas-editor template schema this scene renders. The
+       * composition references the schema by VALUE (inline) rather than
+       * by template_id so the Reel is self-contained — re-rendering the
+       * MP4 produces the same output even if the template factory changes.
+       */
+      templateRef: string;
+    }
+  | {
+      kind: "photo";
+      /** Public URL of the source photo (listing photo, brand asset, etc.). */
+      photoUrl: string;
+      /** How the photo crops + animates over the scene duration. */
+      motion: MotionPath;
+    }
+  | {
+      kind: "video_clip";
+      /** RESERVED — Phase 7. Renderer rejects this in MVP. */
+      videoUrl: string;
+      trimStartMs: number;
+    };
+
+/** Transitions between scenes. All have a configurable duration in ms. */
+export type TransitionType =
+  | "cut" // 0ms hard cut — no overlap.
+  | "fade" // fade to black + fade in.
+  | "dissolve" // direct alpha crossfade between two scenes.
+  | "slide_left" // outgoing slides off-left as incoming enters from right.
+  | "zoom_blur"; // outgoing zooms in + blurs out as incoming fades in.
+
+export interface Scene {
+  /** Stable id used as React key + for re-ordering. Generate with crypto.randomUUID(). */
+  id: string;
+  /** Start of the scene in the timeline, in ms. Computed from prior scene durations. */
+  startMs: number;
+  /** Duration of the scene in ms. Cap: 10s per scene. Min: 500ms. */
+  durationMs: number;
+  /** What this scene shows. */
+  content: SceneContent;
+  /** Transition into this scene (from the previous one, or from black at start). */
+  transitionIn: TransitionType;
+  /** Transition duration in ms. Overlaps with the END of the previous scene. */
+  transitionMs: number;
+}
+
+/** Audio track on the composition — background music. */
+export interface AudioTrack {
+  /** Stable id of the track in our curated music library. */
+  trackId: string;
+  /** Public URL of the audio file (mp3 or aac, Supabase Storage). */
+  url: string;
+  /** Display name shown in the editor's music picker. */
+  displayName: string;
+  /**
+   * Volume 0..1 applied to the track. Default 0.6 so it sits under any
+   * future voiceover without overpowering — also matches IG's typical
+   * Reels music balance.
+   */
+  volume: number;
+  /** Fade-in duration at the start of the track, in ms. */
+  fadeInMs: number;
+  /** Fade-out duration at the end of the track, in ms. */
+  fadeOutMs: number;
+}
+
+/**
+ * The full Reel composition document. Persisted to
+ * `generated_posts.composition_json` so a Reel can be re-opened and
+ * re-edited in Studio. Self-contained — no foreign keys to templates
+ * outside this document.
+ */
+export interface VideoComposition {
+  /** Schema version. Bumped on breaking changes; renderer migrates older versions. */
+  schemaVersion: 1;
+  /**
+   * Output canvas dimensions. For Reels this is always 1080×1920 (9:16)
+   * because that's the only IG/FB Reels accepts in feed/Reels surfaces.
+   * Stored explicitly so the renderer doesn't have to assume.
+   */
+  width: 1080;
+  height: 1920;
+  /** Frame rate for the rendered MP4. 30 is standard for IG/FB. */
+  frameRate: 30;
+  /**
+   * Total duration of the rendered MP4 in ms. Computed as the sum of all
+   * scene durations minus the sum of overlapping transition durations.
+   * Stored explicitly so the renderer + UI can read it directly without
+   * recomputing.
+   */
+  totalDurationMs: number;
+  /** Scenes in playback order. */
+  scenes: readonly Scene[];
+  /** Optional background music. Null = silent Reel. */
+  audio: AudioTrack | null;
+  /**
+   * Optional: the listing this Reel was composed for. Set when the user
+   * launched the Reel wizard from a listing. The renderer uses this to
+   * stamp a watermark + the canonical MLS hashtag on the cover frame
+   * (matching the static post flow's auto-attribution).
+   */
+  sourceListingMls?: string;
+  /** ISO timestamp the composition was last edited. */
+  updatedAt: string;
+}
+
+/**
+ * Input shape the Reel wizard / Studio sends to the render worker.
+ * Carries the composition + an idempotency key so duplicate submits
+ * (network retries) don't produce duplicate jobs.
+ */
+export interface ReelRenderInput {
+  composition: VideoComposition;
+  /**
+   * Client-generated UUID. Renderer dedupes by this — submitting the same
+   * idempotency_key twice within 24h returns the original job's status,
+   * not a new job.
+   */
+  idempotency_key: string;
+}
+
+/**
+ * Job status returned by the render worker. The wizard polls this until
+ * `status === "succeeded"` or `"failed"`.
+ */
+export type ReelRenderStatus =
+  | "queued"
+  | "processing"
+  | "succeeded"
+  | "failed";
+
+export interface ReelRenderJob {
+  job_id: string;
+  status: ReelRenderStatus;
+  /** 0..100 progress percentage. Only meaningful while status === "processing". */
+  progress_pct: number;
+  /** Public Storage URL of the rendered MP4. Only set when status === "succeeded". */
+  video_url: string | null;
+  /** Internal Storage path of the MP4. Only set when status === "succeeded". */
+  video_path: string | null;
+  /** Duration of the rendered MP4 in ms. Only set when status === "succeeded". */
+  duration_ms: number | null;
+  /** Error message. Only set when status === "failed". */
+  error: string | null;
+  /** ISO timestamp the job was submitted. */
+  created_at: string;
+  /** ISO timestamp of the last status update. */
+  updated_at: string;
+}
+
+/** Hard caps used by both the editor (validation) and the renderer (rejection). */
+export const REEL_CAPS = {
+  /** Maximum total composition duration. IG Reels cap is 90s but we cap
+   *  ourselves at 15s for "still property → motion" content — anything
+   *  longer dilutes the Reels-tier distribution boost. */
+  maxTotalDurationMs: 15_000,
+  /** Minimum total composition duration. Anything under 3s reads as a stutter. */
+  minTotalDurationMs: 3_000,
+  /** Maximum number of scenes in one composition. */
+  maxScenes: 8,
+  /** Minimum scenes (must include at least a hero card + one content frame). */
+  minScenes: 2,
+  /** Per-scene duration caps. */
+  maxSceneDurationMs: 10_000,
+  minSceneDurationMs: 500,
+} as const;

@@ -10,23 +10,24 @@
  *     available for a given (category, variant, format) combination.
  *
  * Current coverage (2026-05-15):
- *   5 post types × 3 variants × 3 formats = 45 templates, all generated
+ *   5 post types × 6 variants × 3 formats = 90 templates, all generated
  *   programmatically by factories:
  *     • v1 Hero Editorial    — buildAllHeroEditorialTemplates  (15)
  *     • v2 Bold Stats        — buildAllBoldStatsTemplates      (15)
  *     • v3 Side-by-Side      — buildAllSideBySideTemplates     (15)
+ *     • v6 Magazine Cover    — buildAllMagazineCoverTemplates  (15)
+ *     • v7 Polaroid          — buildAllPolaroidTemplates       (15)
+ *     • v8 Minimal Frame     — buildAllMinimalFrameTemplates   (15)
  *
  *   Each factory uses the same shape — POST_TYPE_CONFIGS table + per-format
- *   LAYOUTS table — so adding a new post type is one row in three files.
- *
- * Still to port from the V1 HTML primitives:
- *   • v6 Magazine Cover
- *   • v7 Polaroid
- *   • v8 Minimal Frame
+ *   LAYOUTS table — so adding a new post type is one row in six files.
  *
  *   (v4 Diptych + v5 Grid were retired on 2026-05-14 when the in-Studio
  *   Photos panel shipped — Larissa composes multi-photo posts by dragging
  *   additional photos onto the canvas instead of via dedicated variants.)
+ *
+ * "Edit in Studio" coverage: every variant card in Post Builder now resolves
+ * to a canvas template, so the button appears across the entire variant grid.
  */
 
 import type {
@@ -39,17 +40,23 @@ import { PLATFORM_DIMENSIONS } from "../types";
 import { buildAllHeroEditorialTemplates } from "./hero-editorial-factory";
 import { buildAllBoldStatsTemplates } from "./bold-stats-factory";
 import { buildAllSideBySideTemplates } from "./side-by-side-factory";
+import { buildAllMagazineCoverTemplates } from "./magazine-cover-factory";
+import { buildAllPolaroidTemplates } from "./polaroid-factory";
+import { buildAllMinimalFrameTemplates } from "./minimal-frame-factory";
 
 /**
  * Source-of-truth array. Order doesn't matter for lookup, but the array
  * order DOES drive the default sort in the Templates panel (it groups by
  * category first, then by variant within category) — so we concatenate
- * by variant here so v1 cards come first, then v2, then v3.
+ * by variant here so v1 cards come first, then v2, then v3, then v6/v7/v8.
  */
 export const CANVAS_TEMPLATES: readonly CanvasTemplateSchema[] = [
   ...buildAllHeroEditorialTemplates(),
   ...buildAllBoldStatsTemplates(),
   ...buildAllSideBySideTemplates(),
+  ...buildAllMagazineCoverTemplates(),
+  ...buildAllPolaroidTemplates(),
+  ...buildAllMinimalFrameTemplates(),
 ] as const;
 
 /**

@@ -1,0 +1,57 @@
+# fly.toml — AllianceAnalytics Reel render worker
+#
+# Deploy: `fly deploy` from inside the worker/ directory.
+# Secrets live in `fly secrets` (see README) — never commit any.
+
+app = "alliance-reel-render"
+# why iad: Supabase project lives US-East. Same-region cuts upload
+# latency for the rendered MP4 to single-digit ms.
+primary_region = "iad"
+
+[build]
+
+# why one [http_service] block + internal_port 8080: the worker exposes
+# a single HTTP surface. Fly's proxy terminates TLS on 80/443 and
+# forwards to internal_port over the private network.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # why auto_stop_machines = "stop" + auto_start: idle stops are free,
+  # cold-start on first request is ~1-2s. For a worker called from
+  # human-driven Studio actions this is a great cost trade — the
+  # alternative is ~$5/mo of idle compute.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # min_machines_running = 0 means a fully idle worker costs $0 in
+  # compute (you still pay for the volume / image storage).
+  min_machines_running = 0
+  processes = ["app"]
+
+  # Fly's built-in HTTP health check, in addition to the Dockerfile's
+  # container-level HEALTHCHECK. Belt + braces — the Fly check decides
+  # routing, the Docker check decides restart.
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+# why shared-cpu-1x + 1024 MB: stub doesn't need it, but Day 2 ffmpeg
+# encode + headless Chromium will, and bumping a VM size mid-week
+# requires re-creating the machine. Start at "small enough to be cheap,
+# big enough we don't trip the wire next session" — Fly bills per-second
+# so a slightly-larger idle machine costs nothing while stopped.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
+  cpu_kind = "shared"
+  cpus = 1
+  processes = ["app"]
+
+# Env vars set at the platform level (NON-secret). Secrets
+# (WORKER_AUTH_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) are set
+# with `fly secrets set` — see README.
+[env]
+  LOG_LEVEL = "info"
+  PORT = "8080"

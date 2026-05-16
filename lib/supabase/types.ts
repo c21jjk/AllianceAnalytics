@@ -275,6 +275,7 @@ export type Database = {
           bundle_path: string | null
           bundle_url: string | null
           caption: string | null
+          composition_json: Json | null
           confirmed_platforms: string[] | null
           created_at: string
           created_by: string | null
@@ -289,6 +290,7 @@ export type Database = {
           image_url: string | null
           last_post_error: string | null
           layer_tree: Json | null
+          media_type: string
           mls_hashtag: string | null
           mls_number: string
           notes: string | null
@@ -299,12 +301,15 @@ export type Database = {
           posted_by: string | null
           posted_to: string[]
           property_id: string | null
+          reel_duration_ms: number | null
           source_mls: string | null
           status: string
           template_id: string
           template_props: Json
           updated_at: string
           variant: string
+          video_path: string | null
+          video_url: string | null
         }
         Insert: {
           additional_images?: Json
@@ -312,6 +317,7 @@ export type Database = {
           bundle_path?: string | null
           bundle_url?: string | null
           caption?: string | null
+          composition_json?: Json | null
           confirmed_platforms?: string[] | null
           created_at?: string
           created_by?: string | null
@@ -326,6 +332,7 @@ export type Database = {
           image_url?: string | null
           last_post_error?: string | null
           layer_tree?: Json | null
+          media_type?: string
           mls_hashtag?: string | null
           mls_number: string
           notes?: string | null
@@ -336,12 +343,15 @@ export type Database = {
           posted_by?: string | null
           posted_to?: string[]
           property_id?: string | null
+          reel_duration_ms?: number | null
           source_mls?: string | null
           status?: string
           template_id: string
           template_props?: Json
           updated_at?: string
           variant: string
+          video_path?: string | null
+          video_url?: string | null
         }
         Update: {
           additional_images?: Json
@@ -349,6 +359,7 @@ export type Database = {
           bundle_path?: string | null
           bundle_url?: string | null
           caption?: string | null
+          composition_json?: Json | null
           confirmed_platforms?: string[] | null
           created_at?: string
           created_by?: string | null
@@ -363,6 +374,7 @@ export type Database = {
           image_url?: string | null
           last_post_error?: string | null
           layer_tree?: Json | null
+          media_type?: string
           mls_hashtag?: string | null
           mls_number?: string
           notes?: string | null
@@ -373,12 +385,15 @@ export type Database = {
           posted_by?: string | null
           posted_to?: string[]
           property_id?: string | null
+          reel_duration_ms?: number | null
           source_mls?: string | null
           status?: string
           template_id?: string
           template_props?: Json
           updated_at?: string
           variant?: string
+          video_path?: string | null
+          video_url?: string | null
         }
         Relationships: []
       }
