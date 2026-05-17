@@ -956,6 +956,64 @@ export type SetPostTestModeResult =
  * Owner-checked (created_by = profile.id) like the other Post Builder
  * actions.
  */
+/**
+ * Flush the latest in-memory captions to the generated_posts row.
+ *
+ * Why this is a dedicated action: captions live in client state
+ * (`editedCaptions` map + the AI-generated `captionResult`). They only
+ * reach the DB when the user explicitly saves from Studio
+ * (`upsertGeneratedPostFromStudioAction`). A Post Now click that follows
+ * a Generate-then-edit flow — without ever entering Studio — would
+ * otherwise publish against a row whose caption columns are empty, even
+ * though the user sees caption text on screen.
+ *
+ * Caller passes:
+ *   • `legacy_caption` — single string used as fallback when a platform's
+ *     per-platform variant is missing. We always seed this from whichever
+ *     platform has the most content (typically Instagram).
+ *   • `captions_by_platform` — { facebook, instagram, tiktok } each with
+ *     { caption, hashtags }. Empty entries pass through unchanged.
+ *
+ * Owner-checked.
+ */
+export interface UpdatePostCaptionsInput {
+  generated_post_id: string;
+  legacy_caption: string | null;
+  legacy_hashtags: string[] | null;
+  captions_by_platform: {
+    facebook?: { caption: string; hashtags: string[] };
+    instagram?: { caption: string; hashtags: string[] };
+    tiktok?: { caption: string; hashtags: string[] };
+  };
+}
+
+export type UpdatePostCaptionsResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+export async function updatePostCaptionsAction(
+  input: UpdatePostCaptionsInput,
+): Promise<UpdatePostCaptionsResult> {
+  const profile = await requireUser();
+  if (!input.generated_post_id) {
+    return { ok: false, error: "generated_post_id required" };
+  }
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("generated_posts")
+    .update({
+      caption: input.legacy_caption,
+      hashtags: input.legacy_hashtags ?? [],
+      captions_by_platform: input.captions_by_platform as unknown as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/post-builder");
+  return { ok: true };
+}
+
 export async function setPostTestModeAction(
   input: SetPostTestModeInput,
 ): Promise<SetPostTestModeResult> {

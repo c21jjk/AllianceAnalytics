@@ -173,9 +173,24 @@ export async function POST(request: Request) {
       "tiktok",
     ),
   } as const;
-  if (!captionBody) {
+  // why: gate on ANY available caption source — legacy column OR any
+  // per-platform variant. Previously this only checked the legacy
+  // column, which rejected rows that had per-platform captions set but
+  // an empty legacy column (e.g., posts saved before the user ran
+  // Generate Captions, or rows where only the per-platform map was
+  // populated).
+  const hasAnyCaption =
+    captionBody !== "" ||
+    captionByPlatform.facebook !== "" ||
+    captionByPlatform.instagram !== "" ||
+    captionByPlatform.tiktok !== "";
+  if (!hasAnyCaption) {
     return NextResponse.json(
-      { ok: false, error: "generated_post has no caption" } satisfies ErrorResponse,
+      {
+        ok: false,
+        error:
+          "generated_post has no caption on any platform. Open it in the Post Builder, generate or paste a caption, then try again.",
+      } satisfies ErrorResponse,
       { status: 412 },
     );
   }

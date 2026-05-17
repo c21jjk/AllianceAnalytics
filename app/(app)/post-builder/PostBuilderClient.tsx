@@ -24,6 +24,7 @@ import {
   setPostTestModeAction,
   updateGeneratedPostImageAction,
   updateGeneratedPostSlideAction,
+  updatePostCaptionsAction,
   upsertGeneratedPostFromStudioAction,
 } from "./actions";
 
@@ -1531,6 +1532,50 @@ export default function PostBuilderClient({
           return;
         }
       }
+
+      // why: captions live in client state (editedCaptions per platform).
+      // They only persist to the DB when the user saves from Studio. So
+      // ANY Post Now click that follows a Generate-then-edit flow without
+      // re-entering Studio would otherwise publish against a row whose
+      // caption columns are empty — exactly the "no caption" gate error
+      // seen on first publish attempts. Always flush captions to the row
+      // here before firing the publish API.
+      const parsedByPlatform = {
+        facebook: parsePlatformText(editedCaptions.facebook),
+        instagram: parsePlatformText(editedCaptions.instagram),
+        tiktok: parsePlatformText(editedCaptions.tiktok),
+      };
+      // Pick the richest entry to mirror onto the legacy caption column
+      // (the publish route's fallback path reads this). Instagram first
+      // since it's the canonical surface, then FB, then TT, then a final
+      // fallback to captionResult.caption if Larissa never edited the
+      // textarea but the AI generated something.
+      const legacyPick =
+        parsedByPlatform.instagram.caption ||
+        parsedByPlatform.facebook.caption ||
+        parsedByPlatform.tiktok.caption ||
+        captionResult?.caption ||
+        "";
+      const legacyHashtagsPick =
+        parsedByPlatform.instagram.hashtags.length > 0
+          ? parsedByPlatform.instagram.hashtags
+          : parsedByPlatform.facebook.hashtags.length > 0
+            ? parsedByPlatform.facebook.hashtags
+            : parsedByPlatform.tiktok.hashtags.length > 0
+              ? parsedByPlatform.tiktok.hashtags
+              : (captionResult?.hashtags ?? []);
+      const flushRes = await updatePostCaptionsAction({
+        generated_post_id: id,
+        legacy_caption: legacyPick,
+        legacy_hashtags: legacyHashtagsPick,
+        captions_by_platform: parsedByPlatform,
+      });
+      if (!flushRes.ok) {
+        setError(`Could not save captions before publishing: ${flushRes.error}`);
+        setPostNowSending(false);
+        return;
+      }
+
       const platforms = [...postNowPlatforms];
       const res = await fetch("/api/post-builder/post", {
         method: "POST",
@@ -1576,6 +1621,40 @@ export default function PostBuilderClient({
           return;
         }
       }
+
+      // Mirror submitPostNow — flush current captions to the row so the
+      // cron tick at fire time finds something to publish.
+      const parsedByPlatform = {
+        facebook: parsePlatformText(editedCaptions.facebook),
+        instagram: parsePlatformText(editedCaptions.instagram),
+        tiktok: parsePlatformText(editedCaptions.tiktok),
+      };
+      const legacyPick =
+        parsedByPlatform.instagram.caption ||
+        parsedByPlatform.facebook.caption ||
+        parsedByPlatform.tiktok.caption ||
+        captionResult?.caption ||
+        "";
+      const legacyHashtagsPick =
+        parsedByPlatform.instagram.hashtags.length > 0
+          ? parsedByPlatform.instagram.hashtags
+          : parsedByPlatform.facebook.hashtags.length > 0
+            ? parsedByPlatform.facebook.hashtags
+            : parsedByPlatform.tiktok.hashtags.length > 0
+              ? parsedByPlatform.tiktok.hashtags
+              : (captionResult?.hashtags ?? []);
+      const flushRes = await updatePostCaptionsAction({
+        generated_post_id: id,
+        legacy_caption: legacyPick,
+        legacy_hashtags: legacyHashtagsPick,
+        captions_by_platform: parsedByPlatform,
+      });
+      if (!flushRes.ok) {
+        setError(`Could not save captions before scheduling: ${flushRes.error}`);
+        setPostNowSending(false);
+        return;
+      }
+
       const result = await schedulePostAction({
         generated_post_id: id,
         scheduled_for: scheduledFor,
