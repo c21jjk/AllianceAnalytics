@@ -256,8 +256,11 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       eyebrow: { top: 290, fontSize: 76 },
       price: { top: 386, fontSize: 28 },
       openHouse: { top: 424, fontSize: 28 },
-      address: { top: 468, fontSize: 28 },
-      city: { top: 508, fontSize: 28 },
+      // why: design review 2026-05-17 — story extends the square (26/24) +
+      // portrait (28/26) progression to 32/30 so the address dominates the
+      // city at story scale (post viewed at full-screen on phone).
+      address: { top: 468, fontSize: 32 },
+      city: { top: 514, fontSize: 30 },
     },
     hero: {
       left: 0,

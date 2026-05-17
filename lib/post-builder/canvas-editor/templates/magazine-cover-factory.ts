@@ -452,7 +452,10 @@ export function createMagazineCoverTemplate(
       width: layout.width,
       height: layout.seamRule.height,
       angle: 0,
-      opacity: 0.55,
+      // why: design review 2026-05-17 — seam rule opacity 0.55 read as
+      // dust; the gold seam is a structural divider, not decoration. 0.75
+      // gives it presence without overpowering the headline.
+      opacity: 0.75,
       z: 2,
       visible: true,
       locked: false,
@@ -722,7 +725,10 @@ export function createMagazineCoverTemplate(
     width: layout.footer.brandWidth,
     height: layout.footer.brandFontSize + 8,
     angle: 0,
-    opacity: 0.6,
+    // why: design review 2026-05-17 — brand mark opacity 0.6 read as
+    // ghosted disclaimer; bumped to 0.75 so the C21 lockup carries proper
+    // brand presence in the footer.
+    opacity: 0.75,
     z: 11,
     visible: true,
     locked: false,
@@ -742,6 +748,11 @@ export function createMagazineCoverTemplate(
   });
 
   // ---- z=12  MLS number tag ----
+  // why: design review 2026-05-17 — MLS removed from square + portrait
+  // editorial cards (it lives in the caption + hashtags anyway, and the
+  // magazine layout reads cleaner without a numeric stub in the footer).
+  // Kept visible on story format so the on-image hashtag still serves as
+  // the auto-link cue when captions get truncated by IG/FB Story UI.
   layers.push({
     kind: "text",
     id: "layer_mls_number",
@@ -753,7 +764,7 @@ export function createMagazineCoverTemplate(
     angle: 0,
     opacity: 0.6,
     z: 12,
-    visible: true,
+    visible: format === "story_9x16",
     locked: false,
     text: "MLS #607680",
     boundField: "mls_number",

@@ -109,7 +109,10 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
     width: 1080,
     height: 1080,
     photoBottom: 648,
-    topScrim: { top: 0, height: 180, opacity: 0.35 },
+    // why: design review 2026-05-17 — scrim 0.35 was too thin under bright
+    // beach photos; eyebrow text washed out. 0.50 keeps the photo legible
+    // while guaranteeing the eyebrow + badge stay readable.
+    topScrim: { top: 0, height: 180, opacity: 0.50 },
     eyebrow: {
       left: 56,
       ruleTop: 64,
@@ -141,7 +144,7 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
     width: 1080,
     height: 1350,
     photoBottom: 810,
-    topScrim: { top: 0, height: 220, opacity: 0.35 },
+    topScrim: { top: 0, height: 220, opacity: 0.50 },
     eyebrow: {
       left: 64,
       ruleTop: 76,
@@ -411,7 +414,11 @@ export function createBoldStatsTemplate(
       fill: ALLIANCE_COLORS.whiteWarm,
       textAlign: "left",
       lineHeight: 1.1,
-      charSpacing: 320,
+      // why: design review 2026-05-17 — charSpacing 320 was so wide that
+      // 11-character eyebrows like "PRICE REDUCED" hit the badge on
+      // 1080-wide canvases. 260 keeps the editorial spread while staying
+      // within the eyebrow column.
+      charSpacing: 260,
       underline: false,
       linethrough: false,
       editable: true,
@@ -677,6 +684,11 @@ export function createBoldStatsTemplate(
   });
 
   // ---- z=13  MLS number tag ----
+  // why: design review 2026-05-17 — MLS removed from square + portrait feed
+  // cards (it lives in the caption + hashtags anyway, and the card is more
+  // readable without it). Kept visible on story format only because story
+  // captions get truncated by the IG/FB Story UI, so the on-image hashtag
+  // serves as the auto-link cue for the listing.
   layers.push({
     kind: "text",
     id: "layer_mls_number",
@@ -692,7 +704,7 @@ export function createBoldStatsTemplate(
     angle: 0,
     opacity: 0.7,
     z: 13,
-    visible: true,
+    visible: format === "story_9x16",
     locked: false,
     text: "MLS #607680",
     boundField: "mls_number",

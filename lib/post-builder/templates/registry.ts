@@ -13,24 +13,24 @@ import {
   buildCustomizationCSS,
   injectCustomizationCSS,
 } from "./primitives/_shared";
-import { renderV1HeroEditorial } from "./primitives/v1-hero-editorial";
-import { renderV1HeroEditorialPortrait } from "./primitives/v1-hero-editorial-portrait";
-import { renderV1HeroEditorialStory } from "./primitives/v1-hero-editorial-story";
 import { renderV2BoldStats } from "./primitives/v2-bold-stats";
 import { renderV2BoldStatsPortrait } from "./primitives/v2-bold-stats-portrait";
 import { renderV2BoldStatsStory } from "./primitives/v2-bold-stats-story";
-import { renderV3SideBySide } from "./primitives/v3-side-by-side";
-import { renderV3SideBySidePortrait } from "./primitives/v3-side-by-side-portrait";
-import { renderV3SideBySideStory } from "./primitives/v3-side-by-side-story";
+import { renderV3ExcellenceCollection } from "./primitives/v3-excellence-collection";
+import { renderV3ExcellenceCollectionPortrait } from "./primitives/v3-excellence-collection-portrait";
+import { renderV3ExcellenceCollectionStory } from "./primitives/v3-excellence-collection-story";
 import { renderV6MagazineCover } from "./primitives/v6-magazine-cover";
 import { renderV6MagazineCoverPortrait } from "./primitives/v6-magazine-cover-portrait";
 import { renderV6MagazineCoverStory } from "./primitives/v6-magazine-cover-story";
-import { renderV7Polaroid } from "./primitives/v7-polaroid";
-import { renderV7PolaroidPortrait } from "./primitives/v7-polaroid-portrait";
-import { renderV7PolaroidStory } from "./primitives/v7-polaroid-story";
-import { renderV8MinimalFrame } from "./primitives/v8-minimal-frame";
-import { renderV8MinimalFramePortrait } from "./primitives/v8-minimal-frame-portrait";
-import { renderV8MinimalFrameStory } from "./primitives/v8-minimal-frame-story";
+import { renderV8StandardListing } from "./primitives/v8-standard-listing";
+import { renderV8StandardListingPortrait } from "./primitives/v8-standard-listing-portrait";
+import { renderV8StandardListingStory } from "./primitives/v8-standard-listing-story";
+import { renderV9JustSoldCelebration } from "./primitives/v9-just-sold-celebration";
+import { renderV9JustSoldCelebrationPortrait } from "./primitives/v9-just-sold-celebration-portrait";
+import { renderV9JustSoldCelebrationStory } from "./primitives/v9-just-sold-celebration-story";
+import { renderV10ComingSoonTeaser } from "./primitives/v10-coming-soon-teaser";
+import { renderV10ComingSoonTeaserPortrait } from "./primitives/v10-coming-soon-teaser-portrait";
+import { renderV10ComingSoonTeaserStory } from "./primitives/v10-coming-soon-teaser-story";
 import { POST_TYPE_THEMES, getTheme } from "./themes";
 
 // v4 (Two-Photo Diptych) and v5 (Three-Photo Grid) retired on 2026-05-14.
@@ -42,14 +42,27 @@ import { POST_TYPE_THEMES, getTheme } from "./themes";
 /**
  * Template registry.
  *
- * Current architecture: 5 post types × 3 variants × 3 formats = 45
- * composable templates. The (variant, format) primitives are 9 files;
+ * Current architecture (2026-05-17): 5 post types × 6 variants × 3 formats =
+ * 90 composable templates. The (variant, format) primitives are 18 files;
  * post-type is applied via the theme. Template IDs follow
  * "{post_type}_{format_short}_{variant}".
  *
- *   - Adding a new variant: add a primitive file per format, register here.
- *   - Adding a new format: add 3 primitive files (one per variant), register.
- *   - Adding a new post type: one theme entry, all 9 (variant, format)
+ * Active variants:
+ *   • v2 Bold Stats           — photo + oversized stats on a dark surface
+ *   • v3 Excellence Collection — premium tier (replaces v3 Side-by-Side)
+ *   • v6 Magazine Cover       — editorial cover-style layout
+ *   • v8 Standard NEW LISTING — everyday tier (replaces v8 Minimal Frame)
+ *   • v9 Just Sold Celebration — closed-deal energy with angled SOLD sash
+ *   • v10 Coming Soon Teaser   — pre-listing tease with withheld address
+ *
+ * Retired (kept on disk for git history but not imported): v1 Hero
+ * Editorial and v7 Polaroid (2026-05-17); v4 Diptych and v5 Grid
+ * (2026-05-14); v3 Side-by-Side and v8 Minimal Frame (2026-05-17 — variant
+ * slots reassigned to Excellence Collection and Standard NEW LISTING).
+ *
+ *   - Adding a new variant: add 3 primitive files (one per format), register here.
+ *   - Adding a new format: add 6 primitive files (one per variant), register.
+ *   - Adding a new post type: one theme entry, all 18 (variant, format)
  *     combinations light up automatically.
  *
  * All variants are single-photo as of 2026-05-14 (v4/v5 multi-photo
@@ -89,44 +102,45 @@ type PrimitiveRenderer = (args: {
   heroImageDataUris?: string[];
 }) => string;
 
-// Active single-photo variants. v4/v5 retired 2026-05-14.
-// PostVariant still types as "v1" | "v2" | "v3" | "v4" | "v5" (legacy
-// rows in the DB use v4/v5), but the runtime registry only registers
-// the 3 active ones. listVariantsForPostType() / listTemplates() see
-// only the active set, so the picker UI never shows v4/v5 cards.
-const ACTIVE_VARIANTS = ["v1", "v2", "v3", "v6", "v7", "v8"] as const satisfies readonly PostVariant[];
+// Active single-photo variants (2026-05-17): v2, v3, v6, v8, v9, v10.
+// v1 Hero Editorial and v7 Polaroid retired same day; v4/v5 retired 2026-05-14.
+// PostVariant still types as a wider union including legacy values so old
+// generated_posts rows continue to deserialize, but the runtime registry
+// only registers the active set. listVariantsForPostType() / listTemplates()
+// see only the active set, so the picker UI never shows retired cards.
+const ACTIVE_VARIANTS = ["v2", "v3", "v6", "v8", "v9", "v10"] as const satisfies readonly PostVariant[];
 type ActiveVariant = (typeof ACTIVE_VARIANTS)[number];
 
 const PRIMITIVE_RENDERERS: Record<ActiveVariant, Record<PostFormat, PrimitiveRenderer>> = {
-  v1: {
-    square_1x1: renderV1HeroEditorial,
-    portrait_4x5: renderV1HeroEditorialPortrait,
-    story_9x16: renderV1HeroEditorialStory,
-  },
   v2: {
     square_1x1: renderV2BoldStats,
     portrait_4x5: renderV2BoldStatsPortrait,
     story_9x16: renderV2BoldStatsStory,
   },
   v3: {
-    square_1x1: renderV3SideBySide,
-    portrait_4x5: renderV3SideBySidePortrait,
-    story_9x16: renderV3SideBySideStory,
+    square_1x1: renderV3ExcellenceCollection,
+    portrait_4x5: renderV3ExcellenceCollectionPortrait,
+    story_9x16: renderV3ExcellenceCollectionStory,
   },
   v6: {
     square_1x1: renderV6MagazineCover,
     portrait_4x5: renderV6MagazineCoverPortrait,
     story_9x16: renderV6MagazineCoverStory,
   },
-  v7: {
-    square_1x1: renderV7Polaroid,
-    portrait_4x5: renderV7PolaroidPortrait,
-    story_9x16: renderV7PolaroidStory,
-  },
   v8: {
-    square_1x1: renderV8MinimalFrame,
-    portrait_4x5: renderV8MinimalFramePortrait,
-    story_9x16: renderV8MinimalFrameStory,
+    square_1x1: renderV8StandardListing,
+    portrait_4x5: renderV8StandardListingPortrait,
+    story_9x16: renderV8StandardListingStory,
+  },
+  v9: {
+    square_1x1: renderV9JustSoldCelebration,
+    portrait_4x5: renderV9JustSoldCelebrationPortrait,
+    story_9x16: renderV9JustSoldCelebrationStory,
+  },
+  v10: {
+    square_1x1: renderV10ComingSoonTeaser,
+    portrait_4x5: renderV10ComingSoonTeaserPortrait,
+    story_9x16: renderV10ComingSoonTeaserStory,
   },
 };
 
@@ -134,12 +148,6 @@ const VARIANT_META: Record<
   ActiveVariant,
   { display_name: string; description: string; photo_count: number }
 > = {
-  v1: {
-    display_name: "Hero Editorial",
-    description:
-      "Hero photo fills the frame. Type stacked over a dark gradient. Best when the photo is the story.",
-    photo_count: 1,
-  },
   v2: {
     display_name: "Bold Stats",
     description:
@@ -147,9 +155,9 @@ const VARIANT_META: Record<
     photo_count: 1,
   },
   v3: {
-    display_name: "Side-by-Side",
+    display_name: "Excellence Collection",
     description:
-      "Photo + data on a light surface with a gold accent rule between them. Listing-card composition.",
+      "Premium tier — gold-trimmed editorial for properties $949k and up. Excellence Collection branding with dominant photo + Playfair price.",
     photo_count: 1,
   },
   v6: {
@@ -158,16 +166,22 @@ const VARIANT_META: Record<
       "Editorial magazine-cover layout — hero photo above, large serif headline + price below on a cream surface.",
     photo_count: 1,
   },
-  v7: {
-    display_name: "Polaroid",
+  v8: {
+    display_name: "Standard NEW LISTING",
     description:
-      "Polaroid-framed hero on a kraft-paper background with a slight tilt. Casual + warm, Pinterest-friendly.",
+      "Everyday tier — cream surface with dark bottom band carrying address, city, and bed/bath/feature row. C21 Alliance badge top-right.",
     photo_count: 1,
   },
-  v8: {
-    display_name: "Minimal Frame",
+  v9: {
+    display_name: "Just Sold Celebration",
     description:
-      "Gold-framed hero in maximum negative space. Gallery-poster minimalism for high-end listings.",
+      "Closed-deal energy — angled gold SOLD sash, photo with scrim, and bright address typography. For just_sold post types.",
+    photo_count: 1,
+  },
+  v10: {
+    display_name: "Coming Soon Teaser",
+    description:
+      "Pre-listing tease — heavy bottom veil, mixed-weight COMING/SOON in Playfair, withheld address (street + city only). Builds anticipation before list.",
     photo_count: 1,
   },
 };
