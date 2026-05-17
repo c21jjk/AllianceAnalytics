@@ -55,9 +55,10 @@ export type PublishResult = PublishOk | PublishErr;
 export interface TikTokCredentials {
   access_token: string;
   open_id: string;
-  /** Refresh token + client_key kept on the row for refresh-on-401 fallback. */
+  /** Refresh token + client_key + client_secret kept on the row for refresh-on-401 fallback. */
   refresh_token: string | null;
   client_key: string | null;
+  client_secret: string | null;
 }
 
 /**
@@ -117,14 +118,25 @@ export async function loadTikTokCredentials(): Promise<TikTokCredentials | null>
     open_id?: string;
     refresh_token?: string;
     client_key?: string;
+    client_secret?: string;
   };
   if (!creds.access_token || !creds.open_id) return null;
+
+  // why: tt-sync edge function reads TT_CLIENT_SECRET from env (see
+  // credentialSchemas.ts), so the secret may not be persisted in the
+  // api_credentials JSONB row. Fall back to env so refresh-on-401 works
+  // without requiring a credentials backfill. The JSONB value wins when
+  // present so a per-environment override is still possible.
+  const envClientSecret = process.env.TT_CLIENT_SECRET ?? null;
 
   return {
     access_token: String(creds.access_token),
     open_id: String(creds.open_id),
     refresh_token: creds.refresh_token ? String(creds.refresh_token) : null,
     client_key: creds.client_key ? String(creds.client_key) : null,
+    client_secret: creds.client_secret
+      ? String(creds.client_secret)
+      : envClientSecret,
   };
 }
 
@@ -374,6 +386,118 @@ function classifyFBError(
     };
   }
   return { ok: false, platform, error: msg };
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Meta token health — debug_token surface
+ *
+ *  Surfaces the real expires_at of the saved FB Page Access Token so the
+ *  UI can warn before the token dies and so `schedulePostAction` can
+ *  reject scheduled posts that would land past the expiry.
+ *
+ *  why: long-lived Page tokens inherit the underlying User token's expiry
+ *  (60d for User long-lived, longer for system users). The hard-coded
+ *  2026-08-08 deadline in memory is a starting point — debug_token tells
+ *  us the actual expiry, which may be sooner if the underlying User
+ *  token was rotated.
+ *
+ *  The endpoint is `/debug_token?input_token=<t>&access_token=<app|user|page>`.
+ *  We pass the page token as BOTH input and access — Meta returns the
+ *  expires_at field for this self-referential call (scopes may be
+ *  truncated without an app token, but expires_at is what matters here).
+ * ----------------------------------------------------------------------- */
+
+export interface FBTokenStatus {
+  /** True when debug_token returned valid data. */
+  ok: boolean;
+  /** Unix seconds. null when the token never expires (rare, system users). */
+  expires_at_unix: number | null;
+  /** ISO 8601 string. null when never expires. */
+  expires_at_iso: string | null;
+  /** Whole days until expiry. null when never expires; negative when expired. */
+  days_until_expiry: number | null;
+  /** True when Meta says the token is currently valid. */
+  is_valid: boolean;
+  /** Best-available app id (from debug_token data.app_id). */
+  app_id: string | null;
+  /** Error from debug_token or a transport-level failure. */
+  error: string | null;
+}
+
+/**
+ * Hit /debug_token with the saved Page Access Token. Returns FBTokenStatus
+ * with the real expires_at and a derived days_until_expiry.
+ *
+ * Caller is expected to handle ok:false gracefully (e.g. fall back to the
+ * known rotation deadline in memory) rather than blocking.
+ */
+export async function getFBTokenStatus(
+  creds: MetaCredentials,
+): Promise<FBTokenStatus> {
+  const url =
+    `${GRAPH}/debug_token` +
+    `?input_token=${encodeURIComponent(creds.page_access_token)}` +
+    `&access_token=${encodeURIComponent(creds.page_access_token)}`;
+
+  try {
+    const res = await fetch(url);
+    const json = (await res.json()) as {
+      data?: {
+        is_valid?: boolean;
+        expires_at?: number;
+        data_access_expires_at?: number;
+        app_id?: string;
+        scopes?: string[];
+      };
+      error?: { message?: string; code?: number };
+    };
+
+    if (!res.ok || json.error || !json.data) {
+      return {
+        ok: false,
+        expires_at_unix: null,
+        expires_at_iso: null,
+        days_until_expiry: null,
+        is_valid: false,
+        app_id: null,
+        error: json.error?.message ?? `HTTP ${res.status}`,
+      };
+    }
+
+    const data = json.data;
+    // why: expires_at 0 or missing means "never expires" for some long-lived
+    // page / system-user tokens. Normalize to null so callers treat both
+    // shapes identically.
+    const expiresAtRaw =
+      typeof data.expires_at === "number" && data.expires_at > 0
+        ? data.expires_at
+        : null;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const days =
+      expiresAtRaw != null ? Math.floor((expiresAtRaw - nowSec) / 86400) : null;
+
+    return {
+      ok: true,
+      expires_at_unix: expiresAtRaw,
+      expires_at_iso: expiresAtRaw
+        ? new Date(expiresAtRaw * 1000).toISOString()
+        : null,
+      days_until_expiry: days,
+      is_valid: data.is_valid === true,
+      app_id: data.app_id ?? null,
+      error: null,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      expires_at_unix: null,
+      expires_at_iso: null,
+      days_until_expiry: null,
+      is_valid: false,
+      app_id: null,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
 }
 
 /* ----------------------------------------------------------------------- *
@@ -662,6 +786,178 @@ interface TtPublishStatusResponse {
   error?: { code?: string; message?: string };
 }
 
+/**
+ * Detect TikTok auth/expired-token failures. The Content Posting API can
+ * surface them either as HTTP 401 or as a structured error code in the
+ * JSON body — cover both shapes so we don't miss a stale-token retry
+ * opportunity. Scope failures route to `classifyTikTokError` instead so
+ * the user sees a clean "re-authorize" message.
+ *
+ * why: TikTok's access tokens expire every 24h. The tt-sync edge function
+ * refreshes daily, but a publish that fires within the refresh window will
+ * occasionally see a freshly-stale token. This guard lets us retry once
+ * with a refreshed token before bubbling the failure up to Larissa.
+ */
+function isTikTokAuthError(
+  status: number,
+  code: string | undefined,
+  message: string,
+): boolean {
+  if (status === 401) return true;
+  const c = (code ?? "").toLowerCase();
+  if (c === "access_token_invalid" || c === "unauthorized") return true;
+  if (c === "invalid_request" && /token/i.test(message)) return true;
+  return /access[\s_]?token/i.test(message) && /expired|invalid/i.test(message);
+}
+
+/**
+ * Refresh the TikTok access_token using the stored refresh_token.
+ *
+ * Persists the new access_token + rotated refresh_token to api_credentials
+ * (TikTok rotates the refresh_token on every refresh and bumps it back to
+ * 365d). Returns the new access_token on success or null on failure — the
+ * caller surfaces the original error message when refresh fails.
+ *
+ * why: the in-place mutation of `creds.access_token` lets the caller's
+ * poll loop reuse the refreshed token without re-loading from Supabase.
+ * The DB write is best-effort: if it fails, the in-memory creds are still
+ * usable for this request but the next request will get the old token —
+ * tt-sync will eventually re-refresh and self-heal.
+ */
+async function refreshTikTokToken(
+  creds: TikTokCredentials,
+): Promise<string | null> {
+  if (!creds.refresh_token || !creds.client_key || !creds.client_secret) {
+    console.warn(
+      "[publishTikTok] refresh-on-401 skipped: missing refresh_token / client_key / client_secret on credential row",
+    );
+    return null;
+  }
+  try {
+    const res = await fetch(`${TT_API}/v2/oauth/token/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_key: creds.client_key,
+        client_secret: creds.client_secret,
+        grant_type: "refresh_token",
+        refresh_token: creds.refresh_token,
+      }),
+    });
+    const json = (await res.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      refresh_expires_in?: number;
+      error?: string;
+      error_description?: string;
+    };
+    if (!res.ok || !json.access_token) {
+      console.error(
+        "[publishTikTok] token refresh failed:",
+        json.error ?? `HTTP ${res.status}`,
+        json.error_description ?? "",
+      );
+      return null;
+    }
+
+    // Persist rotated tokens. We preserve the rest of the credentials
+    // JSONB shape (open_id, client_key, client_secret) and only swap the
+    // token fields + expires_at.
+    const supabase = createAdminClient();
+    const nextCreds = {
+      access_token: json.access_token,
+      open_id: creds.open_id,
+      refresh_token: json.refresh_token ?? creds.refresh_token,
+      client_key: creds.client_key,
+      client_secret: creds.client_secret,
+      expires_at: json.expires_in
+        ? new Date(Date.now() + json.expires_in * 1000).toISOString()
+        : null,
+    };
+    const { error: upErr } = await supabase
+      .from("api_credentials")
+      .update({
+        credentials: nextCreds,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("platform", "tiktok")
+      .eq("is_active", true);
+    if (upErr) {
+      console.error(
+        "[publishTikTok] credential update failed (in-memory token still usable):",
+        upErr.message,
+      );
+    }
+
+    // Mutate in place so the caller's poll loop sees the new token.
+    creds.access_token = json.access_token;
+    if (json.refresh_token) creds.refresh_token = json.refresh_token;
+    return json.access_token;
+  } catch (e) {
+    console.error("[publishTikTok] token refresh threw:", e);
+    return null;
+  }
+}
+
+/**
+ * Wrap a TikTok publish-init POST with one refresh-on-401 retry.
+ *
+ * Used by both `publishToTikTok` (photo) and `publishVideoToTikTok` (video)
+ * — the only thing that differs between them is the endpoint and the body
+ * shape, so we keep this generic.
+ *
+ * Returns the final {res, json} pair. On auth failure WITH no successful
+ * refresh, the returned json carries the original error so the caller's
+ * `classifyTikTokError` path surfaces the right message to the UI.
+ */
+async function tryTikTokInitWithRefresh(
+  initUrl: string,
+  initBody: unknown,
+  creds: TikTokCredentials,
+): Promise<{ res: Response; json: TtPublishInitResponse }> {
+  let lastRes: Response | undefined;
+  let lastJson: TtPublishInitResponse = {};
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(initUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${creds.access_token}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify(initBody),
+    });
+    let json: TtPublishInitResponse;
+    try {
+      json = (await res.json()) as TtPublishInitResponse;
+    } catch {
+      // Non-JSON response — surface synthetically so the caller's normal
+      // error path handles it without a try/catch ladder.
+      json = {
+        error: { code: "non_json", message: `TikTok returned non-JSON (HTTP ${res.status})` },
+      };
+    }
+    lastRes = res;
+    lastJson = json;
+
+    const errCode = json.error?.code;
+    const failed = !res.ok || (errCode != null && errCode !== "ok");
+    if (!failed) return { res, json };
+
+    // Only retry on the first attempt, and only for auth-shaped errors.
+    if (
+      attempt === 0 &&
+      isTikTokAuthError(res.status, errCode, json.error?.message ?? "")
+    ) {
+      const refreshed = await refreshTikTokToken(creds);
+      if (refreshed) continue;
+    }
+    return { res, json };
+  }
+  // Unreachable — the loop returns or continues. Belt-and-suspenders for TS.
+  return { res: lastRes as Response, json: lastJson };
+}
+
 export async function publishToTikTok(args: {
   creds: TikTokCredentials;
   image_urls: string[];
@@ -679,47 +975,34 @@ export async function publishToTikTok(args: {
 
   // 1) Init the post. PHOTO mode with PULL_FROM_URL avoids the multi-step
   // UPLOAD/PUT flow and lets TikTok fetch the image directly.
-  const initRes = await fetch(
+  // why: tryTikTokInitWithRefresh wraps the init POST with a single
+  // refresh-on-401 retry. If the saved access_token is stale (24h expiry
+  // + a publish that lands mid-refresh window), we silently swap in a new
+  // token using the stored refresh_token before bubbling the failure up.
+  const { res: initRes, json: initJson } = await tryTikTokInitWithRefresh(
     `${TT_API}/v2/post/publish/content/init/`,
     {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${creds.access_token}`,
-        "Content-Type": "application/json; charset=UTF-8",
+      post_info: {
+        title,
+        // PUBLIC_TO_EVERYONE requires the creator's privacy settings to
+        // allow it. If the creator's account is private the API will
+        // reject with a clear error — caller can surface to user.
+        privacy_level: "PUBLIC_TO_EVERYONE",
+        disable_comment: false,
+        // Photo-mode-only flags (TikTok ignores duet/stitch for photos
+        // but accepts them in the body).
+        auto_add_music: true,
       },
-      body: JSON.stringify({
-        post_info: {
-          title,
-          // PUBLIC_TO_EVERYONE requires the creator's privacy settings to
-          // allow it. If the creator's account is private the API will
-          // reject with a clear error — caller can surface to user.
-          privacy_level: "PUBLIC_TO_EVERYONE",
-          disable_comment: false,
-          // Photo-mode-only flags (TikTok ignores duet/stitch for photos
-          // but accepts them in the body).
-          auto_add_music: true,
-        },
-        source_info: {
-          source: "PULL_FROM_URL",
-          photo_cover_index: 0,
-          photo_images: photoImages,
-        },
-        post_mode: "DIRECT_POST",
-        media_type: "PHOTO",
-      }),
+      source_info: {
+        source: "PULL_FROM_URL",
+        photo_cover_index: 0,
+        photo_images: photoImages,
+      },
+      post_mode: "DIRECT_POST",
+      media_type: "PHOTO",
     },
+    creds,
   );
-
-  let initJson: TtPublishInitResponse;
-  try {
-    initJson = (await initRes.json()) as TtPublishInitResponse;
-  } catch {
-    return {
-      ok: false,
-      platform: "tiktok",
-      error: `TikTok init returned non-JSON (status ${initRes.status})`,
-    };
-  }
 
   const initErrCode = initJson.error?.code;
   if (!initRes.ok || (initErrCode && initErrCode !== "ok")) {
@@ -833,5 +1116,151 @@ function classifyTikTokError(
     ok: false,
     platform: "tiktok",
     error: `TikTok publish failed: ${message}`,
+  };
+}
+
+/* ----------------------------------------------------------------------- *
+ *  TikTok — VIDEO publishing (Reel parity)
+ *
+ *  Mirrors publishToTikTok's flow but targets the video init endpoint:
+ *
+ *    POST /v2/post/publish/video/init/
+ *      media_type: "VIDEO"  (implicit on this endpoint, but explicit here)
+ *      post_mode:  "DIRECT_POST"
+ *      source_info.source: "PULL_FROM_URL"
+ *      source_info.video_url: <https-only mp4 URL>
+ *
+ *  Same poll endpoint, longer deadline (TikTok transcodes vertical video
+ *  for the For You feed before "PUBLISH_COMPLETE" lands — typically 20-45s
+ *  but we give it ~60s before reporting back).
+ *
+ *  Same gotchas as the photo path:
+ *    - PULL_FROM_URL requires the video host to be on the verified-domains
+ *      list in the TikTok developer console (see classifyTikTokError for
+ *      the user-friendly message).
+ *    - The access_token must carry `video.publish`. Re-auth flow if missing.
+ *
+ *  Refresh-on-401: tryTikTokInitWithRefresh handles the init retry. If a
+ *  long video transcode times out the polling phase, the publish_id is
+ *  returned so callers have a paper trail (the post lands shortly after).
+ * ----------------------------------------------------------------------- */
+
+export async function publishVideoToTikTok(args: {
+  creds: TikTokCredentials;
+  video_url: string;
+  caption: string;
+}): Promise<PublishResult> {
+  const { creds, video_url, caption } = args;
+
+  // why: same HTTPS guard as Meta video — TikTok rejects plain http URLs
+  // for PULL_FROM_URL and we'd rather fail fast with a clear message than
+  // wait for the API round-trip.
+  if (!video_url.startsWith("https://")) {
+    return {
+      ok: false,
+      platform: "tiktok",
+      error: `TikTok video_url must be https:// (got ${video_url.slice(0, 32)}...). TikTok rejects plain http URLs.`,
+    };
+  }
+
+  const title = (caption ?? "").trim().slice(0, TT_CAPTION_MAX);
+
+  // 1) Init the video post.
+  const { res: initRes, json: initJson } = await tryTikTokInitWithRefresh(
+    `${TT_API}/v2/post/publish/video/init/`,
+    {
+      post_info: {
+        title,
+        // Same privacy + interaction defaults as the photo path. The
+        // duet/stitch flags actually matter for video (unlike photo where
+        // TikTok ignores them).
+        privacy_level: "PUBLIC_TO_EVERYONE",
+        disable_duet: false,
+        disable_comment: false,
+        disable_stitch: false,
+        // why: a 1s offset gives TikTok a usable poster frame even on
+        // videos that open on a black/intro frame. 1000ms is well within
+        // every Reel template we ship (all > 5s).
+        video_cover_timestamp_ms: 1000,
+      },
+      source_info: {
+        source: "PULL_FROM_URL",
+        video_url,
+      },
+    },
+    creds,
+  );
+
+  const initErrCode = initJson.error?.code;
+  if (!initRes.ok || (initErrCode && initErrCode !== "ok")) {
+    return classifyTikTokError(
+      initJson.error?.message ?? `HTTP ${initRes.status}`,
+      initErrCode,
+    );
+  }
+
+  const publishId = initJson.data?.publish_id;
+  if (!publishId) {
+    return {
+      ok: false,
+      platform: "tiktok",
+      error: "TikTok video init succeeded but returned no publish_id.",
+    };
+  }
+
+  // 2) Poll status. Video transcodes are slower than photos — give it ~60s
+  // before reporting back. The publish row already exists by then; even on
+  // timeout the post usually lands shortly after.
+  const deadline = Date.now() + 60_000;
+  let lastStatus: string | undefined;
+  let publicPostId: string | undefined;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    const statusRes = await fetch(`${TT_API}/v2/post/publish/status/fetch/`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${creds.access_token}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify({ publish_id: publishId }),
+    });
+    let statusJson: TtPublishStatusResponse | null = null;
+    try {
+      statusJson = (await statusRes.json()) as TtPublishStatusResponse;
+    } catch {
+      // Transient — retry on the next loop iteration.
+      continue;
+    }
+    if (statusJson?.error?.code && statusJson.error.code !== "ok") {
+      return classifyTikTokError(
+        statusJson.error.message ?? "TikTok status error",
+        statusJson.error.code,
+      );
+    }
+    lastStatus = statusJson?.data?.status;
+    if (lastStatus === "PUBLISH_COMPLETE") {
+      publicPostId = statusJson?.data?.publicaly_available_post_id?.[0];
+      break;
+    }
+    if (lastStatus === "FAILED") {
+      return {
+        ok: false,
+        platform: "tiktok",
+        error:
+          statusJson?.data?.fail_reason ??
+          "TikTok reported video publish failure",
+      };
+    }
+  }
+
+  // Even if we time out polling, TikTok has accepted the publish — surface
+  // the publish_id as a paper trail. The post lands shortly after.
+  return {
+    ok: true,
+    platform: "tiktok",
+    platform_post_id: publicPostId ?? publishId,
+    permalink: publicPostId
+      ? `https://www.tiktok.com/@/video/${publicPostId}`
+      : null,
   };
 }

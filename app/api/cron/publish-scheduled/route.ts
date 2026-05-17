@@ -40,9 +40,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   loadMetaCredentials,
   loadTikTokCredentials,
+  publishReelToIG,
   publishToFBPage,
   publishToIG,
   publishToTikTok,
+  publishVideoToFB,
+  publishVideoToTikTok,
   type MetaCredentials,
   type TikTokCredentials,
   type PublishResult,
@@ -146,7 +149,9 @@ export async function GET(request: Request): Promise<NextResponse> {
       // Phase D — captions_by_platform added so the scheduled publisher
       // reads the same per-platform caption variants as the manual Post
       // Now route. Falls back to legacy `caption` when the map is empty.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by",
+      // 2026-05-16 — media_type + video_url added so the cron can branch
+      // between image and reel publishing in processRow.
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url",
     )
     .neq("scheduled_for", "{}")
     .or(orPredicate)
@@ -271,8 +276,36 @@ async function processRow(
     // scheduled_for so we don't retry endlessly.
     return await failAndClear(supabase, row, duePlatforms, "missing caption");
   }
-  if (!row.image_url) {
-    return await failAndClear(supabase, row, duePlatforms, "missing image_url");
+
+  // why: media_type drives which publishers fire. "reel" routes through
+  // the video publishers (publishReelToIG / publishVideoToFB /
+  // publishVideoToTikTok); anything else (default "image") routes through
+  // the photo carousel publishers. Per-media-type validation runs before
+  // the task fan-out so we can failAndClear with a clear message when the
+  // row is structurally unpublishable for its media_type.
+  const isReel = row.media_type === "reel";
+  if (isReel) {
+    if (!row.video_url) {
+      return await failAndClear(
+        supabase,
+        row,
+        duePlatforms,
+        "missing video_url for reel",
+      );
+    }
+    // IG Reels require a cover image; if the row is missing one we'd
+    // rather fail the IG branch and let FB/TT publish than block the
+    // whole row. So we DON'T failAndClear here — the per-platform check
+    // below records the IG-only failure and clears just that platform.
+  } else {
+    if (!row.image_url) {
+      return await failAndClear(
+        supabase,
+        row,
+        duePlatforms,
+        "missing image_url",
+      );
+    }
   }
 
   const captionByPlatform = {
@@ -293,81 +326,154 @@ async function processRow(
     ),
   } as const;
 
-  // why: additional_images is jsonb array of { url, ... } slides. Mirror
-  // the validation from app/api/post-builder/post/route.ts so the publish
-  // shape is identical between Post Now and cron — same defensive trim.
-  const imageUrls: string[] = [row.image_url];
-  const rawAdditional: unknown = row.additional_images;
-  if (Array.isArray(rawAdditional)) {
-    for (const entry of rawAdditional) {
-      if (
-        entry !== null &&
-        typeof entry === "object" &&
-        "url" in entry &&
-        typeof (entry as { url: unknown }).url === "string" &&
-        (entry as { url: string }).url.trim().length > 0
-      ) {
-        imageUrls.push((entry as { url: string }).url);
+  // why: additional_images is jsonb array of { url, ... } slides. Only
+  // relevant on the image branch — reels publish a single video URL.
+  // Mirror the validation from app/api/post-builder/post/route.ts so the
+  // publish shape is identical between Post Now and cron.
+  const imageUrls: string[] = [];
+  if (!isReel && row.image_url) {
+    imageUrls.push(row.image_url);
+    const rawAdditional: unknown = row.additional_images;
+    if (Array.isArray(rawAdditional)) {
+      for (const entry of rawAdditional) {
+        if (
+          entry !== null &&
+          typeof entry === "object" &&
+          "url" in entry &&
+          typeof (entry as { url: unknown }).url === "string" &&
+          (entry as { url: string }).url.trim().length > 0
+        ) {
+          imageUrls.push((entry as { url: string }).url);
+        }
       }
     }
   }
 
   // ---- publish each due platform --------------------------------------
   // why: fire them in parallel — they're independent. A failure on one
-  // platform must not abort the others.
+  // platform must not abort the others. Reel + image branches share the
+  // same fan-out shape so the merge logic below doesn't care which path
+  // produced the PublishResult.
   const tasks: Array<Promise<PublishResult>> = [];
   for (const platform of duePlatforms) {
     summary.platforms_processed.push(platform);
-    if (platform === "facebook" || platform === "instagram") {
-      tasks.push(
-        (async () => {
-          const creds = await getMeta();
-          if (!creds) {
-            return {
-              ok: false as const,
-              platform,
-              error: "Meta credentials not configured",
-            };
-          }
-          if (platform === "facebook") {
-            return await publishToFBPage({
+
+    if (isReel) {
+      // ============ Reel branch — scheduled video publish ============
+      if (platform === "facebook" || platform === "instagram") {
+        tasks.push(
+          (async () => {
+            const creds = await getMeta();
+            if (!creds) {
+              return {
+                ok: false as const,
+                platform,
+                error: "Meta credentials not configured",
+              };
+            }
+            if (platform === "facebook") {
+              return await publishVideoToFB({
+                creds,
+                video_url: row.video_url as string,
+                caption: captionByPlatform.facebook,
+              });
+            }
+            // Instagram Reels
+            if (!creds.ig_business_account_id) {
+              return {
+                ok: false as const,
+                platform: "instagram",
+                error: "Instagram Business account ID not configured",
+              };
+            }
+            if (!row.image_url) {
+              return {
+                ok: false as const,
+                platform: "instagram",
+                error:
+                  "Reel row has no cover image_url — IG Reels require one. FB/TT can still publish.",
+              };
+            }
+            return await publishReelToIG({
+              creds,
+              video_url: row.video_url as string,
+              cover_url: row.image_url,
+              caption: captionByPlatform.instagram,
+            });
+          })(),
+        );
+      } else if (platform === "tiktok") {
+        tasks.push(
+          (async () => {
+            const creds = await getTikTok();
+            if (!creds) {
+              return {
+                ok: false as const,
+                platform: "tiktok",
+                error: "TikTok credentials not configured",
+              };
+            }
+            return await publishVideoToTikTok({
+              creds,
+              video_url: row.video_url as string,
+              caption: captionByPlatform.tiktok,
+            });
+          })(),
+        );
+      }
+    } else {
+      // ============ Image / carousel branch — unchanged ============
+      if (platform === "facebook" || platform === "instagram") {
+        tasks.push(
+          (async () => {
+            const creds = await getMeta();
+            if (!creds) {
+              return {
+                ok: false as const,
+                platform,
+                error: "Meta credentials not configured",
+              };
+            }
+            if (platform === "facebook") {
+              return await publishToFBPage({
+                creds,
+                image_urls: imageUrls,
+                caption: captionByPlatform.facebook,
+              });
+            }
+            if (!creds.ig_business_account_id) {
+              return {
+                ok: false as const,
+                platform: "instagram",
+                error: "Instagram Business account ID not configured",
+              };
+            }
+            return await publishToIG({
               creds,
               image_urls: imageUrls,
-              caption: captionByPlatform.facebook,
+              caption: captionByPlatform.instagram,
             });
-          }
-          if (!creds.ig_business_account_id) {
-            return {
-              ok: false as const,
-              platform: "instagram",
-              error: "Instagram Business account ID not configured",
-            };
-          }
-          return await publishToIG({
-            creds,
-            image_urls: imageUrls,
-            caption: captionByPlatform.instagram,
-          });
-        })(),
-      );
-    } else if (platform === "tiktok") {
-      tasks.push(
-        (async () => {
-          const creds = await getTikTok();
-          if (!creds) {
-            return {
-              ok: false as const,
-              platform: "tiktok",
-              error: "TikTok credentials not configured",
-            };
-          }
-          return await publishToTikTok({
-            creds,
-            image_urls: imageUrls,
-            caption: captionByPlatform.tiktok,
-          });
-        })(),
-      );
+          })(),
+        );
+      } else if (platform === "tiktok") {
+        tasks.push(
+          (async () => {
+            const creds = await getTikTok();
+            if (!creds) {
+              return {
+                ok: false as const,
+                platform: "tiktok",
+                error: "TikTok credentials not configured",
+              };
+            }
+            return await publishToTikTok({
+              creds,
+              image_urls: imageUrls,
+              caption: captionByPlatform.tiktok,
+            });
+          })(),
+        );
+      }
     }
   }
   const results = await Promise.all(tasks);

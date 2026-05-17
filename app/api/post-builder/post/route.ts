@@ -25,6 +25,7 @@ import {
   publishToIG,
   publishToTikTok,
   publishVideoToFB,
+  publishVideoToTikTok,
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
@@ -250,20 +251,29 @@ export async function POST(request: Request) {
       }
     }
 
-    // why: TikTok video publishing requires a separate API path (the
-    // existing publishToTikTok handles PHOTO mode only). For Day 6 MVP
-    // we surface a clear "not yet implemented" tagged result; Day 7+
-    // adds publishVideoToTikTok. The TT credential lookup already ran;
-    // if it's null we just skip silently like the other branches.
+    // why: TikTok video publishing goes through publishVideoToTikTok —
+    // mirrors the Meta video flow: validate video_url, dispatch to the
+    // /v2/post/publish/video/init/ endpoint, poll status with a 60s
+    // deadline. The TT credential lookup already ran; if it's null we
+    // just skip silently like the other branches.
     if (platforms.includes("tiktok") && ttCreds) {
-      tasks.push(
-        Promise.resolve({
-          ok: false,
-          platform: "tiktok" as const,
-          error:
-            "TikTok video publishing not yet implemented for Reels — coming soon.",
-        }),
-      );
+      if (!gp.video_url) {
+        tasks.push(
+          Promise.resolve({
+            ok: false,
+            platform: "tiktok" as const,
+            error: "Reel row has no video_url — render may have failed.",
+          }),
+        );
+      } else {
+        tasks.push(
+          publishVideoToTikTok({
+            creds: ttCreds,
+            video_url: gp.video_url,
+            caption: captionByPlatform.tiktok,
+          }),
+        );
+      }
     }
   } else {
     // ============ Image / carousel branch — UNCHANGED ============

@@ -8,6 +8,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { listMlsFeeds } from "@/lib/data/mls-feeds";
 import { listCredentials } from "@/lib/data/credentials";
 import { listOffices } from "@/lib/data/offices";
+import {
+  getFBTokenStatus,
+  loadMetaCredentials,
+  type FBTokenStatus,
+} from "@/lib/post-builder/publish";
 import { PLATFORMS } from "./credentialSchemas";
 import ThumbnailCacheBackfillCard from "./ThumbnailCacheBackfillCard";
 import { getUncachedThumbnailCount } from "./thumbnail-cache-actions";
@@ -31,6 +36,26 @@ export default async function SettingsPage() {
   const credByPlatform = new Map(
     credentials.map((c) => [c.platform, c] as const),
   );
+
+  // why: surface the real FB Page token expiry on the facebook + instagram
+  // credential cards. debug_token is a single Graph call; we only fire it
+  // when at least one Meta credential is configured so unconfigured
+  // installs don't pay the round-trip. Failure is non-fatal — the card
+  // just renders without the expiry badge.
+  let fbTokenStatus: FBTokenStatus | null = null;
+  const metaRowConfigured =
+    !!credByPlatform.get("facebook")?.has_value &&
+    credByPlatform.get("facebook")?.is_active;
+  if (metaRowConfigured) {
+    try {
+      const metaCreds = await loadMetaCredentials();
+      if (metaCreds) {
+        fbTokenStatus = await getFBTokenStatus(metaCreds);
+      }
+    } catch (e) {
+      console.warn("[settings] FB token status fetch failed:", e);
+    }
+  }
 
   // Users — summary count for the link card. Detailed table + invite form
   // live on /settings/users now.
@@ -130,6 +155,11 @@ export default async function SettingsPage() {
               key={def.platform}
               def={def}
               summary={credByPlatform.get(def.platform) ?? null}
+              tokenStatus={
+                def.platform === "facebook" || def.platform === "instagram"
+                  ? fbTokenStatus
+                  : null
+              }
             />
           ))}
         </div>

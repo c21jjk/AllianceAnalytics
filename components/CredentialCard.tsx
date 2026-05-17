@@ -1,17 +1,20 @@
 import Link from "next/link";
 import type { PlatformDef } from "@/app/(app)/settings/credentialSchemas";
 import type { CredentialSummary } from "@/lib/data/credentials";
+import type { FBTokenStatus } from "@/lib/post-builder/publish";
 
 interface Props {
   def: PlatformDef;
   summary: CredentialSummary | null;
+  /** Optional — only meaningful for the Meta (facebook/instagram) cards. */
+  tokenStatus?: FBTokenStatus | null;
 }
 
 /**
  * Read-only summary card for one api_credentials row. Renders inside the
  * /settings landing page. Edit button links to /settings/credentials/[platform]/edit.
  */
-export default function CredentialCard({ def, summary }: Props) {
+export default function CredentialCard({ def, summary, tokenStatus }: Props) {
   const configured = !!summary && summary.has_value && summary.is_active;
   const editHref = `/settings/credentials/${encodeURIComponent(def.platform)}/edit`;
 
@@ -27,6 +30,7 @@ export default function CredentialCard({ def, summary }: Props) {
                 active={summary?.is_active ?? true}
                 hasRow={!!summary}
               />
+              {tokenStatus ? <TokenExpiryBadge status={tokenStatus} /> : null}
             </div>
             <p className="mt-1 text-sm text-neutral-500">{def.description}</p>
           </div>
@@ -74,6 +78,69 @@ export default function CredentialCard({ def, summary }: Props) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * Token expiry badge for the FB credential card. Color-coded thresholds:
+ *   • Red       — token expired OR < 7d remaining.
+ *   • Amber     — 7-29d remaining.
+ *   • Neutral   — 30+ days OR token never expires.
+ *   • Hidden    — debug_token couldn't be reached (status.ok === false).
+ *
+ * Kept out of the main status badge so an expiring-but-valid token still
+ * reads as "Configured" (it IS configured — it just needs rotating soon).
+ */
+function TokenExpiryBadge({ status }: { status: FBTokenStatus }) {
+  if (!status.ok) return null;
+  const days = status.days_until_expiry;
+  if (days == null) {
+    return (
+      <span
+        className="badge bg-neutral-50 text-neutral-600 ring-1 ring-neutral-200 text-[10px]"
+        title="Token does not expire"
+      >
+        No expiry
+      </span>
+    );
+  }
+  if (days < 0) {
+    return (
+      <span
+        className="badge bg-rose-50 text-rose-700 ring-1 ring-rose-200 text-[10px]"
+        title={status.expires_at_iso ?? ""}
+      >
+        Token expired
+      </span>
+    );
+  }
+  if (days < 7) {
+    return (
+      <span
+        className="badge bg-rose-50 text-rose-700 ring-1 ring-rose-200 text-[10px]"
+        title={status.expires_at_iso ?? ""}
+      >
+        Rotate now · {days}d left
+      </span>
+    );
+  }
+  if (days < 30) {
+    return (
+      <span
+        className="badge bg-amber-50 text-amber-700 ring-1 ring-amber-200 text-[10px]"
+        title={status.expires_at_iso ?? ""}
+      >
+        Rotate soon · {days}d
+      </span>
+    );
+  }
+  return (
+    <span
+      className="badge bg-neutral-50 text-neutral-600 ring-1 ring-neutral-200 text-[10px]"
+      title={status.expires_at_iso ?? ""}
+    >
+      {days}d to expiry
+    </span>
   );
 }
 

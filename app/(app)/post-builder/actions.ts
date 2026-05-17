@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  getFBTokenStatus,
+  loadMetaCredentials,
+} from "@/lib/post-builder/publish";
 import type { Json } from "@/lib/supabase/types";
 import type {
   PostFormat,
@@ -1009,6 +1013,57 @@ export async function schedulePostAction(
     // Re-serialize to canonical UTC ISO so the DB always stores normalized
     // values regardless of what shape the client sent.
     validated[platform] = new Date(t).toISOString();
+  }
+
+  // why: block schedules that would land past the saved FB Page token's
+  // expiry. The cron has no way to publish with an expired token, so the
+  // schedule would silently fail at fire time. Catching it at save time
+  // gives Larissa a clear action ("rotate FB token before scheduling
+  // anything past X"). Only checks Meta platforms — TikTok's refresh-on-
+  // 401 already handles its own token rotation.
+  const meta_platforms_requested = platformsRequested.filter(
+    (p) => p === "facebook" || p === "instagram",
+  );
+  if (meta_platforms_requested.length > 0) {
+    try {
+      const metaCreds = await loadMetaCredentials();
+      if (metaCreds) {
+        const tokenStatus = await getFBTokenStatus(metaCreds);
+        if (
+          tokenStatus.ok &&
+          tokenStatus.expires_at_unix != null
+        ) {
+          const expiryMs = tokenStatus.expires_at_unix * 1000;
+          for (const platform of meta_platforms_requested) {
+            const iso = validated[platform];
+            if (!iso) continue;
+            const t = Date.parse(iso);
+            if (Number.isNaN(t)) continue;
+            if (t >= expiryMs) {
+              const expiresDate = tokenStatus.expires_at_iso
+                ? new Date(tokenStatus.expires_at_iso).toLocaleString(
+                    undefined,
+                    { dateStyle: "medium", timeStyle: "short" },
+                  )
+                : "unknown date";
+              return {
+                ok: false,
+                error: `Cannot schedule ${platform} past the Meta token expiry (${expiresDate}). Rotate the FB Page token in /settings, then try again.`,
+              };
+            }
+          }
+        }
+        // why: ok:false is intentionally soft — debug_token can fail for
+        // transient reasons (rate limits, network blips). We don't want a
+        // transient failure to block scheduling. The cron will catch a
+        // truly-dead token at fire time with a clear scope_error message.
+      }
+    } catch (e) {
+      console.warn(
+        "[schedulePostAction] FB token check failed (allowing through):",
+        e,
+      );
+    }
   }
 
   const supabase = createAdminClient();
