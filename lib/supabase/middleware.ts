@@ -6,7 +6,14 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "./types";
 
-const PUBLIC_PATHS = new Set<string>(["/login"]);
+const PUBLIC_PATHS = new Set<string>([
+  "/login",
+  // why: privacy + terms URLs required by Meta App Review and TikTok app
+  // registration. Must be reachable by Meta's reviewer (logged out) and by
+  // anyone evaluating the app's data handling policy.
+  "/privacy",
+  "/terms",
+]);
 
 // Public path prefixes — anything starting with these resolves without auth.
 // `/r/` is the legacy Compass-style report view; `/home/` is the new
