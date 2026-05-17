@@ -39,10 +39,14 @@ import type {
 import { isGradientFill, PLATFORM_DIMENSIONS } from "../types";
 import { buildAllHeroEditorialTemplates } from "./hero-editorial-factory";
 import { buildAllBoldStatsTemplates } from "./bold-stats-factory";
-import { buildAllSideBySideTemplates } from "./side-by-side-factory";
+// why: 2026-05-17 — v3 Side-by-Side retired in favor of Excellence Collection
+// (premium tier, auto-selected at price >= $949k). v8 Minimal Frame retired
+// in favor of Standard NEW LISTING (everyday tier). Old factories kept on
+// disk for git history; not imported anymore.
+import { buildAllExcellenceCollectionTemplates } from "./excellence-collection-factory";
 import { buildAllMagazineCoverTemplates } from "./magazine-cover-factory";
 import { buildAllPolaroidTemplates } from "./polaroid-factory";
-import { buildAllMinimalFrameTemplates } from "./minimal-frame-factory";
+import { buildAllStandardListingTemplates } from "./standard-listing-factory";
 
 /**
  * Source-of-truth array. Order doesn't matter for lookup, but the array
@@ -53,10 +57,10 @@ import { buildAllMinimalFrameTemplates } from "./minimal-frame-factory";
 export const CANVAS_TEMPLATES: readonly CanvasTemplateSchema[] = [
   ...buildAllHeroEditorialTemplates(),
   ...buildAllBoldStatsTemplates(),
-  ...buildAllSideBySideTemplates(),
+  ...buildAllExcellenceCollectionTemplates(),
   ...buildAllMagazineCoverTemplates(),
   ...buildAllPolaroidTemplates(),
-  ...buildAllMinimalFrameTemplates(),
+  ...buildAllStandardListingTemplates(),
 ] as const;
 
 /**

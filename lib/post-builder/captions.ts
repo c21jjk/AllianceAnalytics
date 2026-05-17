@@ -1,5 +1,9 @@
 import "server-only";
 import { getAnthropic, ANTHROPIC_MODELS } from "@/lib/ai/anthropic";
+import {
+  EXCELLENCE_HASHTAG,
+  isExcellenceCollection,
+} from "./excellence-collection";
 import type {
   PostBuilderListing,
   PostType,
@@ -121,9 +125,16 @@ export async function generateCaption(args: {
 
   const mlsHashtag = canonicalMlsHashtag(listing.mls_number, listing.source_mls);
   const tone = POST_TYPE_TONE[post_type];
+  // why: Excellence Collection listings ($949k+) get an auto-appended
+  // #ExcellenceCollection hashtag on every caption regardless of platform.
+  // The threshold + hashtag are defined in lib/post-builder/excellence-collection.ts.
+  const excellenceHashtag = isExcellenceCollection(listing.list_price)
+    ? [EXCELLENCE_HASHTAG]
+    : [];
   const basePostTypeAndBrand = [
     ...POST_TYPE_HASHTAGS[post_type],
     ...BRAND_HASHTAGS,
+    ...excellenceHashtag,
     mlsHashtag,
   ];
 
