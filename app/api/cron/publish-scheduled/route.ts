@@ -151,7 +151,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       // Now route. Falls back to legacy `caption` when the map is empty.
       // 2026-05-16 — media_type + video_url added so the cron can branch
       // between image and reel publishing in processRow.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url",
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url, test_mode",
     )
     .neq("scheduled_for", "{}")
     .or(orPredicate)
@@ -326,6 +326,11 @@ async function processRow(
     ),
   } as const;
 
+  // why: per-row test_mode flag drives whether each publisher routes
+  // through hidden/draft paths. Resolved once per row, passed to every
+  // task below — keeps the cron fan-out symmetric with the Post Now route.
+  const test_mode = row.test_mode === true;
+
   // why: additional_images is jsonb array of { url, ... } slides. Only
   // relevant on the image branch — reels publish a single video URL.
   // Mirror the validation from app/api/post-builder/post/route.ts so the
@@ -376,6 +381,7 @@ async function processRow(
                 creds,
                 video_url: row.video_url as string,
                 caption: captionByPlatform.facebook,
+                test_mode,
               });
             }
             // Instagram Reels
@@ -399,6 +405,7 @@ async function processRow(
               video_url: row.video_url as string,
               cover_url: row.image_url,
               caption: captionByPlatform.instagram,
+              test_mode,
             });
           })(),
         );
@@ -417,6 +424,7 @@ async function processRow(
               creds,
               video_url: row.video_url as string,
               caption: captionByPlatform.tiktok,
+              test_mode,
             });
           })(),
         );
@@ -439,6 +447,7 @@ async function processRow(
                 creds,
                 image_urls: imageUrls,
                 caption: captionByPlatform.facebook,
+                test_mode,
               });
             }
             if (!creds.ig_business_account_id) {
@@ -452,6 +461,7 @@ async function processRow(
               creds,
               image_urls: imageUrls,
               caption: captionByPlatform.instagram,
+              test_mode,
             });
           })(),
         );
@@ -470,6 +480,7 @@ async function processRow(
               creds,
               image_urls: imageUrls,
               caption: captionByPlatform.tiktok,
+              test_mode,
             });
           })(),
         );

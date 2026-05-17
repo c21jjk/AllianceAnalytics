@@ -7,6 +7,7 @@ import {
   getFBTokenStatus,
   loadMetaCredentials,
 } from "@/lib/post-builder/publish";
+import { getPublishTestMode } from "@/lib/data/system-config";
 import type { Json } from "@/lib/supabase/types";
 import type {
   PostFormat,
@@ -46,6 +47,10 @@ export async function saveGeneratedPostAction(
 
   const supabase = createAdminClient();
 
+  // why: seed test_mode on insert from the global default. The user can
+  // override per-post via setPostTestModeAction after the row exists.
+  const test_mode_default = await getPublishTestMode();
+
   const { data, error } = await supabase
     .from("generated_posts")
     .insert({
@@ -73,6 +78,7 @@ export async function saveGeneratedPostAction(
       status: "downloaded",
       downloaded_at: new Date().toISOString(),
       created_by: profile.id,
+      test_mode: test_mode_default,
     })
     .select("id")
     .maybeSingle();
@@ -357,6 +363,7 @@ export async function upsertGeneratedPostFromStudioAction(
   }
 
   // ---- INSERT path: no id yet, create a draft row ----
+  const test_mode_default = await getPublishTestMode();
   const { data, error: insError } = await supabase
     .from("generated_posts")
     .insert({
@@ -396,6 +403,9 @@ export async function upsertGeneratedPostFromStudioAction(
       // existing Post Now flow can flip this to 'posted' or 'scheduled'.
       status: "draft",
       created_by: profile.id,
+      // why: seed test_mode from the global default. User can override per
+      // post via setPostTestModeAction after creation.
+      test_mode: test_mode_default,
     })
     .select("id")
     .maybeSingle();
@@ -919,6 +929,55 @@ export async function syncBrandAssetsAction(): Promise<
       error: `threw: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Per-post test_mode override (2026-05-16)
+// ---------------------------------------------------------------------------
+
+export interface SetPostTestModeInput {
+  generated_post_id: string;
+  test_mode: boolean;
+}
+
+export type SetPostTestModeResult =
+  | { ok: true; test_mode: boolean }
+  | { ok: false; error: string };
+
+/**
+ * Flip the per-post `test_mode` flag on a generated_posts row.
+ *
+ * Why this is its own action: it's a tiny, frequent UI write (every flick
+ * of the Test/Live toggle in the Post Builder). Co-locating it with the
+ * heavier save actions would force the client to re-send all the row's
+ * other fields just to change one boolean. This way the toggle is a
+ * sub-100ms round-trip independent of save state.
+ *
+ * Owner-checked (created_by = profile.id) like the other Post Builder
+ * actions.
+ */
+export async function setPostTestModeAction(
+  input: SetPostTestModeInput,
+): Promise<SetPostTestModeResult> {
+  const profile = await requireUser();
+  if (!input.generated_post_id) {
+    return { ok: false, error: "generated_post_id required" };
+  }
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("generated_posts")
+    .update({
+      test_mode: input.test_mode,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return { ok: true, test_mode: input.test_mode };
 }
 
 // ---------------------------------------------------------------------------

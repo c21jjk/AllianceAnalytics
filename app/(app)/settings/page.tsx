@@ -3,11 +3,13 @@ import PageHeader from "@/components/PageHeader";
 import MlsFeedCard from "@/components/MlsFeedCard";
 import CredentialCard from "@/components/CredentialCard";
 import OfficeCard from "@/components/OfficeCard";
+import TestModeBanner from "@/components/TestModeBanner";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listMlsFeeds } from "@/lib/data/mls-feeds";
 import { listCredentials } from "@/lib/data/credentials";
 import { listOffices } from "@/lib/data/offices";
+import { loadSystemConfig } from "@/lib/data/system-config";
 import {
   getFBTokenStatus,
   loadMetaCredentials,
@@ -16,6 +18,7 @@ import {
 import { PLATFORMS } from "./credentialSchemas";
 import ThumbnailCacheBackfillCard from "./ThumbnailCacheBackfillCard";
 import { getUncachedThumbnailCount } from "./thumbnail-cache-actions";
+import { setPublishTestModeAction } from "./actions";
 
 export const metadata = { title: "Settings — Alliance Social" };
 export const dynamic = "force-dynamic";
@@ -25,11 +28,12 @@ export default async function SettingsPage() {
 
   const admin = createAdminClient();
 
-  const [feeds, credentials, offices, uncachedThumbnails] = await Promise.all([
+  const [feeds, credentials, offices, uncachedThumbnails, systemConfig] = await Promise.all([
     listMlsFeeds(),
     listCredentials(),
     listOffices({ active_only: false }),
     getUncachedThumbnailCount(),
+    loadSystemConfig(),
   ]);
 
   // Build platform → summary map for the credential cards.
@@ -85,11 +89,25 @@ export default async function SettingsPage() {
       p.platform === "claude",
   );
 
+  // why: pass the server action through to the client banner so the
+  // "Switch global default to Live" button can flip the flag without a
+  // separate route. Wrapped in a thin closure so the client doesn't need
+  // to know the function name.
+  async function toggleTestMode(nextValue: boolean) {
+    "use server";
+    await setPublishTestModeAction(nextValue);
+  }
+
   return (
     <div className="space-y-10">
       <PageHeader
         title="Settings"
         description="Manage MLS feeds, API credentials, and team access."
+      />
+
+      <TestModeBanner
+        testModeOn={systemConfig.publish_test_mode}
+        onToggle={toggleTestMode}
       />
 
       <section>

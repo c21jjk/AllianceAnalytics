@@ -137,7 +137,7 @@ export async function POST(request: Request) {
       // Phase D — captions_by_platform added so each platform receives
       // its tuned caption variant; falls back to the legacy `caption`
       // when a platform's entry is missing.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms",
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -190,6 +190,11 @@ export async function POST(request: Request) {
   // Each platform call is independent; we await all in parallel. The TT
   // call uses its own access token; Meta uses the page token. Calls that
   // weren't requested are skipped before this point via the `needs*` flags.
+  // why: test_mode is per-row. true → publishers route through hidden/
+  // draft paths. The system_config global flag is ONLY used as the
+  // default at row-creation time; at publish time the row value wins.
+  const test_mode = gp.test_mode === true;
+
   const tasks: Promise<PublishResult>[] = [];
 
   if (gp.media_type === "reel") {
@@ -213,6 +218,7 @@ export async function POST(request: Request) {
             creds,
             video_url: gp.video_url,
             caption: captionByPlatform.facebook,
+            test_mode,
           }),
         );
       }
@@ -246,6 +252,7 @@ export async function POST(request: Request) {
             video_url: gp.video_url,
             cover_url: gp.image_url,
             caption: captionByPlatform.instagram,
+            test_mode,
           }),
         );
       }
@@ -271,6 +278,7 @@ export async function POST(request: Request) {
             creds: ttCreds,
             video_url: gp.video_url,
             caption: captionByPlatform.tiktok,
+            test_mode,
           }),
         );
       }
@@ -343,6 +351,7 @@ export async function POST(request: Request) {
           creds,
           image_urls: imageUrls,
           caption: captionByPlatform.facebook,
+          test_mode,
         }),
       );
     }
@@ -352,6 +361,7 @@ export async function POST(request: Request) {
           creds,
           image_urls: imageUrls,
           caption: captionByPlatform.instagram,
+          test_mode,
         }),
       );
     }
@@ -361,6 +371,7 @@ export async function POST(request: Request) {
           creds: ttCreds,
           image_urls: imageUrls,
           caption: captionByPlatform.tiktok,
+          test_mode,
         }),
       );
     }

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdmin } from "@/lib/auth";
+import { setPublishTestMode } from "@/lib/data/system-config";
 import {
   getPlatformDef,
   type CredentialPlatform,
@@ -434,4 +435,27 @@ export async function upsertCredential(
 
   revalidatePath("/settings");
   redirect("/settings");
+}
+
+/**
+ * Flip the global publish_test_mode flag. Admin-only.
+ *
+ * Per-post `test_mode` values are NOT touched by this — flipping the
+ * global default only affects new posts going forward. Existing posts
+ * keep whatever they were saved with.
+ *
+ * Revalidates every surface where the banner / TEST chip is read so
+ * the UI flips immediately.
+ */
+export async function setPublishTestModeAction(
+  next_value: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const profile = await requireAdmin();
+  const result = await setPublishTestMode(next_value, profile.id);
+  if (!result.ok) return result;
+
+  revalidatePath("/settings");
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return { ok: true };
 }

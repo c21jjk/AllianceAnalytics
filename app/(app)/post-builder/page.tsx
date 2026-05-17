@@ -6,6 +6,7 @@ import {
   listVariantsForPostType,
 } from "@/lib/post-builder/templates/registry";
 import { fetchCreatedPostResume } from "@/lib/data/created-posts-db";
+import { loadSystemConfig } from "@/lib/data/system-config";
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import PostBuilderClient from "./PostBuilderClient";
@@ -145,6 +146,10 @@ export default async function PostBuilderPage({
       ? { postType: requestedPostType, mls: mlsParam }
       : null;
 
+  // why: pull the global publish_test_mode flag so PostBuilderClient can
+  // seed new posts to the right default and render the inline banner.
+  const systemConfig = await loadSystemConfig();
+
   return (
     <div>
       <PageHeader
@@ -196,6 +201,8 @@ export default async function PostBuilderPage({
         isAdmin={isAdmin}
         initialResume={resume}
         initialPick={initialPick}
+        globalTestModeDefault={systemConfig.publish_test_mode}
+        globalTestModeOn={systemConfig.publish_test_mode}
       />
     </div>
   );

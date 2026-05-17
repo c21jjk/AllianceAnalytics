@@ -310,6 +310,7 @@ export type Database = {
           status: string
           template_id: string
           template_props: Json
+          test_mode: boolean
           updated_at: string
           variant: string
           video_path: string | null
@@ -356,6 +357,7 @@ export type Database = {
           status?: string
           template_id: string
           template_props?: Json
+          test_mode?: boolean
           updated_at?: string
           variant: string
           video_path?: string | null
@@ -402,6 +404,7 @@ export type Database = {
           status?: string
           template_id?: string
           template_props?: Json
+          test_mode?: boolean
           updated_at?: string
           variant?: string
           video_path?: string | null
@@ -1308,6 +1311,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      system_config: {
+        Row: {
+          id: number
+          publish_test_mode: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          id?: number
+          publish_test_mode?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          id?: number
+          publish_test_mode?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
       }
       sync_runs: {
         Row: {

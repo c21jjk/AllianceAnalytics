@@ -55,6 +55,12 @@ export interface CreatedPostRow {
   video_url: string | null;
   /** Cached duration in ms — used to show "0:07" pill on Reel thumbnails. */
   reel_duration_ms: number | null;
+  /**
+   * Per-post test_mode flag. When true, publishes route through hidden/draft
+   * paths (FB Drafts, IG container-only, TT app inbox). UI renders a TEST
+   * chip on the card so the row is identifiable at a glance.
+   */
+  test_mode: boolean;
 }
 
 /**
@@ -72,7 +78,7 @@ export async function fetchCreatedPostsByMls(
   const { data, error } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms, test_mode",
     )
     .eq("mls_number", mlsNumber)
     .order("updated_at", { ascending: false, nullsFirst: false })
@@ -104,6 +110,7 @@ export async function fetchCreatedPostsByMls(
       | "reel",
     video_url: row.video_url,
     reel_duration_ms: row.reel_duration_ms,
+    test_mode: row.test_mode === true,
   }));
 }
 
@@ -171,6 +178,11 @@ export interface CreatedPostResumeRow {
    * to its own `CaptionsByPlatform` shape before use.
    */
   captions_by_platform: unknown | null;
+  /**
+   * Per-post test_mode flag. Seeds the Post Builder's Test/Live toggle on
+   * resume. Publishers read row.test_mode at publish time.
+   */
+  test_mode: boolean;
 }
 
 export async function fetchCreatedPostResume(
@@ -184,7 +196,8 @@ export async function fetchCreatedPostResume(
     .select(
       // Phase D — caption / hashtags / captions_by_platform added so the
       // client can re-seed the three caption tabs on resume.
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, caption, hashtags, captions_by_platform, created_by",
+      // 2026-05-16 — test_mode added so the Test/Live toggle re-seeds on resume.
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, caption, hashtags, captions_by_platform, test_mode, created_by",
     )
     .eq("id", id)
     .maybeSingle();
@@ -214,6 +227,7 @@ export async function fetchCreatedPostResume(
     caption: data.caption,
     hashtags: data.hashtags,
     captions_by_platform: data.captions_by_platform,
+    test_mode: data.test_mode === true,
   };
 }
 
@@ -344,7 +358,7 @@ export async function fetchCreatedPostsLibrary(
   let rowsQ = supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms, test_mode",
     );
   let countQ = supabase
     .from("generated_posts")
@@ -420,6 +434,7 @@ export async function fetchCreatedPostsLibrary(
       | "reel",
     video_url: row.video_url,
     reel_duration_ms: row.reel_duration_ms,
+    test_mode: row.test_mode === true,
   }));
 
   return {

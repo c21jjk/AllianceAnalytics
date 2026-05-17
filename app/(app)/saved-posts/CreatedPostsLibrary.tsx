@@ -524,6 +524,17 @@ function LibraryCard({
             </div>
           )}
           <StatusBadge post={post} />
+          {/* Test-mode chip — sits next to the status badge so the card
+              is identifiable as a test post at a glance, alongside its
+              Posted/Scheduled/Draft state. */}
+          {post.test_mode ? (
+            <span
+              className="absolute bottom-1.5 left-[60px] inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-amber-300 backdrop-blur-sm"
+              title="Test mode — publishes to drafts only, not visible to the public"
+            >
+              Test
+            </span>
+          ) : null}
           {/* Reel marker — same shape as the per-listing strip's overlay
               so the visual language reads as one app across surfaces. */}
           {post.media_type === "reel" ? (

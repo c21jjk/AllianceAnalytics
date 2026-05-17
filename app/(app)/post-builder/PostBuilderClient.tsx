@@ -21,6 +21,7 @@ import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
 import {
   saveGeneratedPostAction,
   schedulePostAction,
+  setPostTestModeAction,
   updateGeneratedPostImageAction,
   updateGeneratedPostSlideAction,
   upsertGeneratedPostFromStudioAction,
@@ -86,6 +87,17 @@ interface Props {
    * preferences.
    */
   initialPick?: { postType: PostType; mls: string } | null;
+  /**
+   * Global publish_test_mode flag from system_config — the DEFAULT for
+   * newly-created posts. Existing rows carry their own `test_mode` value;
+   * the per-row state seeds from `initialResume.test_mode` when resuming,
+   * or from this default for new posts.
+   */
+  globalTestModeDefault?: boolean;
+  /** True when the system_config global flag is currently `true`. UI shows
+   *  the global banner inline on the page when true. Allows users to see
+   *  the default mode without having to navigate to /settings. */
+  globalTestModeOn?: boolean;
 }
 
 type PostPlatform = "facebook" | "instagram";
@@ -201,6 +213,8 @@ export default function PostBuilderClient({
   isAdmin,
   initialResume,
   initialPick,
+  globalTestModeDefault = true,
+  globalTestModeOn = false,
 }: Props) {
   const [postType, setPostType] = useState<PostType>("just_listed");
   const [format, setFormat] = useState<PostFormat>("square_1x1");
@@ -210,6 +224,44 @@ export default function PostBuilderClient({
   // Phase 5A — Post Now state
   const [generatedPostId, setGeneratedPostId] = useState<string | null>(null);
   const [postNowOpen, setPostNowOpen] = useState(false);
+  // 2026-05-16 — per-post test_mode state. Seeded from initialResume on
+  // resume; otherwise from the global default. Persisted via
+  // setPostTestModeAction the moment the user flips the toggle in
+  // PostNowModal — the publish route reads row.test_mode at publish time.
+  const [currentTestMode, setCurrentTestMode] = useState<boolean>(
+    initialResume?.test_mode ?? globalTestModeDefault,
+  );
+  const [testModeSaving, setTestModeSaving] = useState(false);
+
+  // why: server-action handler for the Test/Live toggle in PostNowModal.
+  // Optimistically flips local state, then persists to the DB. Reverts on
+  // failure so the UI never lies about what the publisher will see at fire
+  // time. Only persists when a generated_post_id exists — pre-save flips
+  // are kept local and apply when the row is created.
+  const handleSetTestMode = useCallback(
+    async (nextValue: boolean) => {
+      setCurrentTestMode(nextValue);
+      if (!generatedPostId) return; // no row yet — local-only flip
+      setTestModeSaving(true);
+      try {
+        const res = await setPostTestModeAction({
+          generated_post_id: generatedPostId,
+          test_mode: nextValue,
+        });
+        if (!res.ok) {
+          console.error("[set test_mode] failed:", res.error);
+          // Revert on failure so the UI matches the DB.
+          setCurrentTestMode(!nextValue);
+        }
+      } catch (e) {
+        console.error("[set test_mode] threw:", e);
+        setCurrentTestMode(!nextValue);
+      } finally {
+        setTestModeSaving(false);
+      }
+    },
+    [generatedPostId],
+  );
   // Path A Customize state was removed on 2026-05-14 — replaced by the Path C
   // canvas editor ("Edit in Studio"). The render pipeline still accepts an
   // optional customizations payload for backward compat; we just never send one.
@@ -2611,6 +2663,10 @@ export default function PostBuilderClient({
           onCancel={closePostNow}
           onConfirm={submitPostNow}
           onSchedule={submitSchedule}
+          testMode={currentTestMode}
+          onSetTestMode={handleSetTestMode}
+          testModeSaving={testModeSaving}
+          globalTestModeOn={globalTestModeOn}
         />
       ) : null}
       {/* === Canvas Editor (Path C) — overlay portal ===
@@ -2710,6 +2766,19 @@ interface PostNowModalProps {
    * disable the button while the action runs.
    */
   onSchedule: (scheduledFor: ScheduledFor) => Promise<void>;
+  /**
+   * 2026-05-16 — per-post test_mode toggle.
+   *   testMode        — current row state (true = drafts only).
+   *   onSetTestMode   — flips the value; awaits the server write.
+   *   testModeSaving  — true while the server action is in flight.
+   *   globalTestModeOn — system_config.publish_test_mode; surfaces a
+   *                     small "Test mode is the default" pill above the
+   *                     toggle so the user understands where they are.
+   */
+  testMode: boolean;
+  onSetTestMode: (next: boolean) => Promise<void>;
+  testModeSaving: boolean;
+  globalTestModeOn: boolean;
 }
 
 const POST_NOW_ARM_MS = 2000;
@@ -2727,6 +2796,10 @@ function PostNowModal(props: PostNowModalProps) {
     onCancel,
     onConfirm,
     onSchedule,
+    testMode,
+    onSetTestMode,
+    testModeSaving,
+    globalTestModeOn,
   } = props;
 
   const [, forceTick] = useState(0);
@@ -2920,6 +2993,70 @@ function PostNowModal(props: PostNowModalProps) {
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
                 1 designed image · IG single post
+              </div>
+            </div>
+          </div>
+
+          {/* 2026-05-16 — per-post Test / Live toggle. Test routes
+              publishers through hidden/draft paths (FB Drafts, IG container
+              only, TikTok app inbox); Live publishes for real. The current
+              value is persisted to generated_posts.test_mode the moment
+              the user flips, so any cron tick OR the Post Now button below
+              both pick up the right value. */}
+          <div className="rounded-lg ring-1 ring-neutral-200 bg-neutral-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-neutral-700 uppercase tracking-wide">
+                  Publish mode
+                </div>
+                <div className="text-xs text-neutral-500 mt-0.5">
+                  {testMode
+                    ? "Test mode — drafts only, no follower sees this"
+                    : "Live — this post goes public when you click Post Now"}
+                </div>
+                {globalTestModeOn ? (
+                  <div className="mt-1 inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 ring-1 ring-amber-300">
+                    Global default: Test
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 rounded-md ring-1 ring-neutral-300 bg-white overflow-hidden">
+                <button
+                  type="button"
+                  disabled={testModeSaving || sending}
+                  onClick={() => {
+                    if (!testMode) return; // already off
+                    void onSetTestMode(false);
+                  }}
+                  className={[
+                    "px-3 py-1.5 text-xs font-semibold transition",
+                    !testMode
+                      ? "bg-emerald-600 text-white"
+                      : "text-neutral-700 hover:bg-neutral-100",
+                    "disabled:opacity-50 disabled:cursor-not-allowed",
+                  ].join(" ")}
+                  aria-pressed={!testMode}
+                >
+                  Live
+                </button>
+                <button
+                  type="button"
+                  disabled={testModeSaving || sending}
+                  onClick={() => {
+                    if (testMode) return; // already on
+                    void onSetTestMode(true);
+                  }}
+                  className={[
+                    "px-3 py-1.5 text-xs font-semibold transition border-l border-neutral-300",
+                    testMode
+                      ? "bg-amber-500 text-neutral-900"
+                      : "text-neutral-700 hover:bg-neutral-100",
+                    "disabled:opacity-50 disabled:cursor-not-allowed",
+                  ].join(" ")}
+                  aria-pressed={testMode}
+                >
+                  Test
+                </button>
               </div>
             </div>
           </div>

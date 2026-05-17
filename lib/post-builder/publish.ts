@@ -155,8 +155,16 @@ export async function publishToFBPage(args: {
   creds: MetaCredentials;
   image_urls: string[];
   caption: string;
+  /**
+   * When true, append `published=false` so the post lands in the Page's
+   * Drafts (Page Manager → Drafts). Invisible to followers; admins only.
+   * For multi-photo: every child upload is already published=false, AND
+   * the final /feed call also gets published=false so the bundled post
+   * stays in Drafts instead of going live.
+   */
+  test_mode?: boolean;
 }): Promise<PublishResult> {
-  const { creds, image_urls, caption } = args;
+  const { creds, image_urls, caption, test_mode } = args;
 
   if (image_urls.length === 0) {
     return { ok: false, platform: "facebook", error: "no images provided" };
@@ -166,11 +174,13 @@ export async function publishToFBPage(args: {
     if (image_urls.length === 1) {
       // Single photo path.
       const url = `${GRAPH}/${creds.page_id}/photos`;
-      const body = new URLSearchParams({
+      const params: Record<string, string> = {
         url: image_urls[0],
         message: caption,
         access_token: creds.page_access_token,
-      });
+      };
+      if (test_mode) params.published = "false";
+      const body = new URLSearchParams(params);
       const res = await fetch(url, { method: "POST", body });
       const json = await res.json();
       if (!res.ok || !json.id) {
@@ -182,7 +192,12 @@ export async function publishToFBPage(args: {
         ok: true,
         platform: "facebook",
         platform_post_id: postId,
-        permalink: `https://www.facebook.com/${postId}`,
+        // why: in test mode there's no public permalink — the post lives
+        // in the Page's Drafts. Surface the Page Manager Drafts URL so
+        // the user can find the test post without hunting for it.
+        permalink: test_mode
+          ? `https://www.facebook.com/business/help/page-manager`
+          : `https://www.facebook.com/${postId}`,
       };
     }
 
@@ -206,11 +221,13 @@ export async function publishToFBPage(args: {
     // Publish the gallery post via /feed with attached_media.
     const feedUrl = `${GRAPH}/${creds.page_id}/feed`;
     const attached = mediaIds.map((id) => ({ media_fbid: id }));
-    const body = new URLSearchParams({
+    const feedParams: Record<string, string> = {
       message: caption,
       attached_media: JSON.stringify(attached),
       access_token: creds.page_access_token,
-    });
+    };
+    if (test_mode) feedParams.published = "false";
+    const body = new URLSearchParams(feedParams);
     const res = await fetch(feedUrl, { method: "POST", body });
     const json = await res.json();
     if (!res.ok || !json.id) {
@@ -220,7 +237,9 @@ export async function publishToFBPage(args: {
       ok: true,
       platform: "facebook",
       platform_post_id: String(json.id),
-      permalink: `https://www.facebook.com/${json.id}`,
+      permalink: test_mode
+        ? `https://www.facebook.com/business/help/page-manager`
+        : `https://www.facebook.com/${json.id}`,
     };
   } catch (e) {
     return {
@@ -245,8 +264,15 @@ export async function publishToIG(args: {
   creds: MetaCredentials;
   image_urls: string[];
   caption: string;
+  /**
+   * When true, build the container(s) but DON'T call /media_publish. The
+   * container is created on IG's side (proving auth + payload + image
+   * fetch all worked) but never becomes visible. Containers expire in 24h
+   * if not published. Permalink is null in test mode.
+   */
+  test_mode?: boolean;
 }): Promise<PublishResult> {
-  const { creds, image_urls, caption } = args;
+  const { creds, image_urls, caption, test_mode } = args;
 
   if (!creds.ig_business_account_id) {
     return {
@@ -307,6 +333,19 @@ export async function publishToIG(args: {
       const json = await res.json();
       if (!res.ok || !json.id) return classifyFBError(json, "instagram");
       creationId = String(json.id);
+    }
+
+    // why: in test mode, stop here. The container exists on IG's side
+    // (proves auth + image fetch + caption all worked end-to-end) but
+    // is never made visible. Containers expire in 24h. Surface the
+    // creation_id as platform_post_id so the row still has a paper trail.
+    if (test_mode) {
+      return {
+        ok: true,
+        platform: "instagram",
+        platform_post_id: creationId,
+        permalink: null,
+      };
     }
 
     // Publish the container.
@@ -548,8 +587,14 @@ export async function publishReelToIG(args: {
   video_url: string;
   cover_url: string;
   caption: string;
+  /**
+   * When true, build the Reels container and poll status to confirm the
+   * transcode succeeded, but DON'T call /media_publish. Container exists
+   * on Meta's side but never appears in the feed or Reels tab.
+   */
+  test_mode?: boolean;
 }): Promise<PublishResult> {
-  const { creds, video_url, cover_url, caption } = args;
+  const { creds, video_url, cover_url, caption, test_mode } = args;
 
   if (!creds.ig_business_account_id) {
     return {
@@ -638,6 +683,18 @@ export async function publishReelToIG(args: {
       };
     }
 
+    // why: in test mode, the container is built + transcoded but never
+    // published. Surface the creation_id as platform_post_id; container
+    // expires in 24h if not published.
+    if (test_mode) {
+      return {
+        ok: true,
+        platform: "instagram",
+        platform_post_id: creationId,
+        permalink: null,
+      };
+    }
+
     // 3) Publish the container.
     const publishUrl = `${GRAPH}/${igId}/media_publish`;
     const publishBody = new URLSearchParams({
@@ -702,8 +759,14 @@ export async function publishVideoToFB(args: {
   creds: MetaCredentials;
   video_url: string;
   caption: string;
+  /**
+   * When true, attach `unpublished_content_type=DRAFT` so the video lands
+   * in the Page's Video Library as a draft instead of publishing live.
+   * Admins can review in Page Manager → Content → Videos → Drafts.
+   */
+  test_mode?: boolean;
 }): Promise<PublishResult> {
-  const { creds, video_url, caption } = args;
+  const { creds, video_url, caption, test_mode } = args;
 
   if (!video_url.startsWith("https://")) {
     return {
@@ -715,11 +778,13 @@ export async function publishVideoToFB(args: {
 
   try {
     const url = `${GRAPH}/${creds.page_id}/videos`;
-    const body = new URLSearchParams({
+    const params: Record<string, string> = {
       file_url: video_url,
       description: caption,
       access_token: creds.page_access_token,
-    });
+    };
+    if (test_mode) params.unpublished_content_type = "DRAFT";
+    const body = new URLSearchParams(params);
     const res = await fetch(url, { method: "POST", body });
     const json = (await res.json()) as {
       id?: string;
@@ -737,7 +802,11 @@ export async function publishVideoToFB(args: {
       ok: true,
       platform: "facebook",
       platform_post_id: videoId,
-      permalink: `https://www.facebook.com/${creds.page_id}/videos/${videoId}`,
+      // why: drafts aren't publicly addressable; surface Page Manager
+      // instead so the user can find the video in the Drafts list.
+      permalink: test_mode
+        ? `https://www.facebook.com/business/help/page-manager`
+        : `https://www.facebook.com/${creds.page_id}/videos/${videoId}`,
     };
   } catch (e) {
     return {
@@ -962,8 +1031,15 @@ export async function publishToTikTok(args: {
   creds: TikTokCredentials;
   image_urls: string[];
   caption: string;
+  /**
+   * When true, swap `post_mode: DIRECT_POST` → `post_mode: MEDIA_UPLOAD`.
+   * The content uploads to the account's TikTok app drafts inbox (visible
+   * via the "+" tab in the mobile app) instead of going live. User must
+   * manually publish from the app to make it public.
+   */
+  test_mode?: boolean;
 }): Promise<PublishResult> {
-  const { creds, image_urls, caption } = args;
+  const { creds, image_urls, caption, test_mode } = args;
 
   if (image_urls.length === 0) {
     return { ok: false, platform: "tiktok", error: "no images provided" };
@@ -998,7 +1074,10 @@ export async function publishToTikTok(args: {
         photo_cover_index: 0,
         photo_images: photoImages,
       },
-      post_mode: "DIRECT_POST",
+      // why: test_mode → MEDIA_UPLOAD lands the content in the app drafts
+      // inbox. The creator must manually publish from the TikTok app to
+      // make it public. DIRECT_POST is the live path.
+      post_mode: test_mode ? "MEDIA_UPLOAD" : "DIRECT_POST",
       media_type: "PHOTO",
     },
     creds,
@@ -1057,7 +1136,13 @@ export async function publishToTikTok(args: {
       );
     }
     lastStatus = statusJson?.data?.status;
-    if (lastStatus === "PUBLISH_COMPLETE") {
+    // why: DIRECT_POST finishes at PUBLISH_COMPLETE; MEDIA_UPLOAD finishes
+    // at SEND_TO_USER_INBOX (the content is in the user's app drafts).
+    // Both are success terminal states.
+    if (
+      lastStatus === "PUBLISH_COMPLETE" ||
+      lastStatus === "SEND_TO_USER_INBOX"
+    ) {
       publicPostId =
         statusJson?.data?.publicaly_available_post_id?.[0];
       break;
@@ -1078,6 +1163,9 @@ export async function publishToTikTok(args: {
     ok: true,
     platform: "tiktok",
     platform_post_id: publicPostId ?? publishId,
+    // why: in MEDIA_UPLOAD mode no public URL exists yet (creator must
+    // publish from the TikTok app). publicPostId is also absent. Null
+    // permalink signals "look in TikTok app drafts" — the UI handles it.
     permalink: publicPostId
       ? `https://www.tiktok.com/@/photo/${publicPostId}`
       : null,
@@ -1149,8 +1237,14 @@ export async function publishVideoToTikTok(args: {
   creds: TikTokCredentials;
   video_url: string;
   caption: string;
+  /**
+   * When true, swap `post_mode: DIRECT_POST` → `post_mode: MEDIA_UPLOAD`.
+   * Video lands in the account's TikTok app drafts inbox. Status reaches
+   * SEND_TO_USER_INBOX instead of PUBLISH_COMPLETE.
+   */
+  test_mode?: boolean;
 }): Promise<PublishResult> {
-  const { creds, video_url, caption } = args;
+  const { creds, video_url, caption, test_mode } = args;
 
   // why: same HTTPS guard as Meta video — TikTok rejects plain http URLs
   // for PULL_FROM_URL and we'd rather fail fast with a clear message than
@@ -1166,28 +1260,48 @@ export async function publishVideoToTikTok(args: {
   const title = (caption ?? "").trim().slice(0, TT_CAPTION_MAX);
 
   // 1) Init the video post.
+  //
+  // why: test mode uses a different endpoint AND a different body shape.
+  // The direct-post endpoint accepts post_info (privacy, interaction
+  // flags, cover timestamp); the inbox endpoint is source_info only,
+  // because the creator sets all of that themselves in the TikTok app
+  // before publishing the draft.
+  //
+  //   Live: POST /v2/post/publish/video/init/   (direct, publishes immediately)
+  //   Test: POST /v2/post/publish/inbox/video/init/ (lands in app inbox)
+  const initEndpoint = test_mode
+    ? `${TT_API}/v2/post/publish/inbox/video/init/`
+    : `${TT_API}/v2/post/publish/video/init/`;
+  const initBody = test_mode
+    ? {
+        source_info: {
+          source: "PULL_FROM_URL",
+          video_url,
+        },
+      }
+    : {
+        post_info: {
+          title,
+          // Same privacy + interaction defaults as the photo path. The
+          // duet/stitch flags actually matter for video (unlike photo
+          // where TikTok ignores them).
+          privacy_level: "PUBLIC_TO_EVERYONE",
+          disable_duet: false,
+          disable_comment: false,
+          disable_stitch: false,
+          // why: 1s offset gives TikTok a usable poster frame even on
+          // videos that open on a black/intro frame. 1000ms is within
+          // every Reel template we ship (all > 5s).
+          video_cover_timestamp_ms: 1000,
+        },
+        source_info: {
+          source: "PULL_FROM_URL",
+          video_url,
+        },
+      };
   const { res: initRes, json: initJson } = await tryTikTokInitWithRefresh(
-    `${TT_API}/v2/post/publish/video/init/`,
-    {
-      post_info: {
-        title,
-        // Same privacy + interaction defaults as the photo path. The
-        // duet/stitch flags actually matter for video (unlike photo where
-        // TikTok ignores them).
-        privacy_level: "PUBLIC_TO_EVERYONE",
-        disable_duet: false,
-        disable_comment: false,
-        disable_stitch: false,
-        // why: a 1s offset gives TikTok a usable poster frame even on
-        // videos that open on a black/intro frame. 1000ms is well within
-        // every Reel template we ship (all > 5s).
-        video_cover_timestamp_ms: 1000,
-      },
-      source_info: {
-        source: "PULL_FROM_URL",
-        video_url,
-      },
-    },
+    initEndpoint,
+    initBody,
     creds,
   );
 
@@ -1238,7 +1352,13 @@ export async function publishVideoToTikTok(args: {
       );
     }
     lastStatus = statusJson?.data?.status;
-    if (lastStatus === "PUBLISH_COMPLETE") {
+    // why: DIRECT_POST finishes at PUBLISH_COMPLETE; inbox upload finishes
+    // at SEND_TO_USER_INBOX (the video is in the user's app drafts).
+    // Both are success terminal states.
+    if (
+      lastStatus === "PUBLISH_COMPLETE" ||
+      lastStatus === "SEND_TO_USER_INBOX"
+    ) {
       publicPostId = statusJson?.data?.publicaly_available_post_id?.[0];
       break;
     }
