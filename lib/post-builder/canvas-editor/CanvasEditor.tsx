@@ -2735,6 +2735,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onAssetPicked={(a) => void handleSidebarAssetPicked(a)}
                     onSync={handleSyncBrandAssets}
                     syncStatus={brandSyncStatus}
+                    isAdmin={props.isAdmin}
+                    onUploadAsset={props.onUploadBrandAsset}
+                    onArchiveAsset={props.onArchiveBrandAsset}
                   />
                 ) : sidebarTab === "agents" ? (
                   <AgentPanel

@@ -221,11 +221,13 @@ export async function publishToFBPage(args: {
         ok: true,
         platform: "facebook",
         platform_post_id: postId,
-        // why: in test mode there's no public permalink — the post lives
-        // in the Page's Drafts. Surface the Page Manager Drafts URL so
-        // the user can find the test post without hunting for it.
+        // why: in test mode the post is a Page Draft — not publicly
+        // addressable. Send the user to Meta Business Suite's content
+        // view (filtered to the right Page) so they can find their
+        // drafts queue and review/publish from there. The post id is in
+        // platform_post_id above for downstream traceability.
         permalink: test_mode
-          ? `https://www.facebook.com/business/help/page-manager`
+          ? `https://business.facebook.com/latest/content?asset_id=${creds.page_id}`
           : `https://www.facebook.com/${postId}`,
       };
     }
@@ -267,7 +269,7 @@ export async function publishToFBPage(args: {
       platform: "facebook",
       platform_post_id: String(json.id),
       permalink: test_mode
-        ? `https://www.facebook.com/business/help/page-manager`
+        ? `https://business.facebook.com/latest/content?asset_id=${creds.page_id}`
         : `https://www.facebook.com/${json.id}`,
     };
   } catch (e) {

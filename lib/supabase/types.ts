@@ -135,9 +135,9 @@ export type Database = {
       brand_assets: {
         Row: {
           created_at: string
-          drive_file_id: string
-          drive_folder_id: string
-          drive_modified_at: string
+          drive_file_id: string | null
+          drive_folder_id: string | null
+          drive_modified_at: string | null
           drive_parent_subfolder_name: string | null
           filename: string
           id: string
@@ -153,9 +153,9 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          drive_file_id: string
-          drive_folder_id: string
-          drive_modified_at: string
+          drive_file_id?: string | null
+          drive_folder_id?: string | null
+          drive_modified_at?: string | null
           drive_parent_subfolder_name?: string | null
           filename: string
           id?: string
@@ -171,9 +171,9 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          drive_file_id?: string
-          drive_folder_id?: string
-          drive_modified_at?: string
+          drive_file_id?: string | null
+          drive_folder_id?: string | null
+          drive_modified_at?: string | null
           drive_parent_subfolder_name?: string | null
           filename?: string
           id?: string

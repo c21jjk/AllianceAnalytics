@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requireAdmin, requireUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getFBTokenStatus,
@@ -929,6 +929,283 @@ export async function syncBrandAssetsAction(): Promise<
       error: `threw: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Brand asset add/remove (2026-05-17)
+// ---------------------------------------------------------------------------
+//
+// As of 2026-05-17, logos + partner_logos are manually managed via the
+// Studio sidecar (BrandPanel). The sync-brand-assets Edge Function no
+// longer touches these kinds; the cron runs nightly for agent_headshot
+// only. These two actions are the write-side of that admin UX:
+//
+//   • uploadBrandAssetAction — admin uploads a new logo / partner_logo
+//   • archiveBrandAssetAction — admin removes one (soft-delete to
+//                                status='archived'; recoverable)
+//
+// Both are gated to admin role. Agent headshots are NOT editable here
+// (they're Drive-synced) — the kind input is restricted to logo /
+// partner_logo at validation time.
+
+const ALLOWED_BRAND_ASSET_KINDS = new Set(["logo", "partner_logo"]);
+// why: 5 MB cap is generous for logos (usually <500 KB) but well below
+// Vercel's 4.5 MB request body limit for server actions when base64-
+// encoded. Anything that doesn't fit is almost certainly a non-logo
+// upload that we don't want anyway.
+const MAX_BRAND_ASSET_BYTES = 5 * 1024 * 1024;
+const ALLOWED_BRAND_ASSET_MIMES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/svg+xml",
+]);
+const MIME_TO_EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+};
+
+export interface UploadBrandAssetInput {
+  kind: "logo" | "partner_logo";
+  /** Display name shown in the sidecar (admin-editable later). */
+  label: string;
+  /** Optional grouping tag — e.g. "Horizontal", "Stacked", "Seal". */
+  logo_category?: string | null;
+  /** Source filename — used to derive the storage extension. */
+  filename: string;
+  /** Image content-type, validated against an allowlist. */
+  content_type: string;
+  /** Base64-encoded file bytes (no `data:` prefix). */
+  file_base64: string;
+}
+
+export type UploadBrandAssetResult =
+  | { ok: true; id: string; public_url: string }
+  | { ok: false; error: string };
+
+/**
+ * Admin-only. Uploads a new brand asset (logo or partner_logo) into the
+ * `brand-assets` Storage bucket and inserts a `brand_assets` row that
+ * the Studio sidecar will surface immediately.
+ *
+ * Validation:
+ *   • kind must be 'logo' or 'partner_logo' (agent_headshots stay
+ *     Drive-synced and are not addable here).
+ *   • content_type must be one of png/jpg/webp/svg.
+ *   • file size after base64-decode must be ≤ 5 MB.
+ *   • label must be non-empty after trim.
+ *
+ * Side effects:
+ *   • Storage path: `manual/{kind}s/{uuid}.{ext}` — distinct from the
+ *     Drive-synced paths (`logos/...`, `agents/...`, `partners/...`) so
+ *     the two sources never collide on object keys.
+ *   • Row insert sets drive_* fields null, marking it as manually
+ *     uploaded — the sync function's archival sweep doesn't touch this
+ *     kind anymore but we still keep the audit clean.
+ *   • Revalidates `/post-builder` so the Studio sidecar refreshes.
+ */
+export async function uploadBrandAssetAction(
+  input: UploadBrandAssetInput,
+): Promise<UploadBrandAssetResult> {
+  // why: admin-only — adding to the brand library affects every author's
+  // Studio sidecar. requireAdmin throws when the caller is not admin,
+  // which the catch below translates into an `error` response.
+  let profile;
+  try {
+    profile = await requireAdmin();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `not_authorized: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  if (!ALLOWED_BRAND_ASSET_KINDS.has(input.kind)) {
+    return { ok: false, error: `kind must be logo or partner_logo` };
+  }
+  const label = (input.label ?? "").trim();
+  if (label.length === 0) {
+    return { ok: false, error: "label is required" };
+  }
+  if (!ALLOWED_BRAND_ASSET_MIMES.has(input.content_type)) {
+    return {
+      ok: false,
+      error: `unsupported content_type ${input.content_type}; use png/jpg/webp/svg`,
+    };
+  }
+
+  // Decode base64 → bytes. Reject if too large.
+  let bytes: Uint8Array;
+  try {
+    const buf = Buffer.from(input.file_base64, "base64");
+    bytes = new Uint8Array(buf);
+  } catch (e) {
+    return {
+      ok: false,
+      error: `invalid base64 payload: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  if (bytes.length === 0) {
+    return { ok: false, error: "uploaded file is empty" };
+  }
+  if (bytes.length > MAX_BRAND_ASSET_BYTES) {
+    return {
+      ok: false,
+      error: `file too large (${(bytes.length / 1024 / 1024).toFixed(2)} MB); max ${MAX_BRAND_ASSET_BYTES / 1024 / 1024} MB`,
+    };
+  }
+
+  const ext = MIME_TO_EXT[input.content_type] ?? "bin";
+  const id = crypto.randomUUID();
+  const storagePath = `manual/${input.kind}s/${id}.${ext}`;
+  const filename = (input.filename ?? "").trim() || `${label}.${ext}`;
+
+  const supabase = createAdminClient();
+
+  const { error: uploadErr } = await supabase.storage
+    .from("brand-assets")
+    .upload(storagePath, bytes, {
+      contentType: input.content_type,
+      upsert: false,
+      cacheControl: "31536000",
+    });
+  if (uploadErr) {
+    return {
+      ok: false,
+      error: `storage_upload_failed: ${uploadErr.message}`,
+    };
+  }
+
+  const { data: pub } = supabase.storage
+    .from("brand-assets")
+    .getPublicUrl(storagePath);
+
+  const { data: row, error: insertErr } = await supabase
+    .from("brand_assets")
+    .insert({
+      kind: input.kind,
+      office_id: null,
+      label,
+      filename,
+      logo_category: input.logo_category?.trim() || null,
+      storage_path: storagePath,
+      public_url: pub.publicUrl,
+      drive_file_id: null,
+      drive_folder_id: null,
+      drive_parent_subfolder_name: null,
+      drive_modified_at: null,
+      synced_at: new Date().toISOString(),
+      status: "active",
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (insertErr || !row?.id) {
+    // Roll back the Storage upload so we don't leak orphan objects.
+    await supabase.storage.from("brand-assets").remove([storagePath]);
+    return {
+      ok: false,
+      error: `db_insert_failed: ${insertErr?.message ?? "no id returned"}`,
+    };
+  }
+
+  void profile;
+  revalidatePath("/post-builder");
+  return { ok: true, id: row.id, public_url: pub.publicUrl };
+}
+
+export interface ArchiveBrandAssetInput {
+  id: string;
+  /**
+   * When true, also remove the underlying Storage object. Defaults to
+   * false (soft-archive only — keeps the file for recovery). The Studio
+   * sidecar filters to status='active' regardless, so the asset
+   * disappears from the picker either way.
+   */
+  hard_delete_storage?: boolean;
+}
+
+export type ArchiveBrandAssetResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string };
+
+/**
+ * Admin-only. Soft-archives a brand_asset row (status='archived'), so the
+ * Studio sidecar (which filters to status='active') stops showing it.
+ *
+ * Gated to `kind in ('logo', 'partner_logo')` — agent headshots are
+ * Drive-managed and must not be removable through this admin surface.
+ * If you want a headshot gone, remove the source file in Drive and let
+ * the next sync archive the row.
+ */
+export async function archiveBrandAssetAction(
+  input: ArchiveBrandAssetInput,
+): Promise<ArchiveBrandAssetResult> {
+  let profile;
+  try {
+    profile = await requireAdmin();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `not_authorized: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  if (!input.id) {
+    return { ok: false, error: "id required" };
+  }
+
+  const supabase = createAdminClient();
+
+  // why: read the row first so we (a) verify it's a logo/partner_logo
+  // (not an agent_headshot we'd refuse to touch) and (b) have the
+  // storage_path on hand if the caller opted into hard_delete_storage.
+  const { data: existing, error: readErr } = await supabase
+    .from("brand_assets")
+    .select("id, kind, status, storage_path")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (readErr) {
+    return { ok: false, error: `lookup_failed: ${readErr.message}` };
+  }
+  if (!existing) {
+    return { ok: false, error: "row not found" };
+  }
+  if (!ALLOWED_BRAND_ASSET_KINDS.has(existing.kind as string)) {
+    return {
+      ok: false,
+      error: `cannot archive kind=${existing.kind}; agent headshots are Drive-managed`,
+    };
+  }
+
+  const { error: updErr } = await supabase
+    .from("brand_assets")
+    .update({ status: "archived", updated_at: new Date().toISOString() })
+    .eq("id", existing.id);
+  if (updErr) {
+    return { ok: false, error: `db_update_failed: ${updErr.message}` };
+  }
+
+  if (input.hard_delete_storage && existing.storage_path) {
+    const { error: delErr } = await supabase.storage
+      .from("brand-assets")
+      .remove([existing.storage_path]);
+    if (delErr) {
+      // why: non-fatal — the row is archived, the asset is gone from the
+      // sidecar. Storage orphan is annoying but not user-facing.
+      console.warn(
+        `[archiveBrandAssetAction] storage remove failed: ${delErr.message}`,
+      );
+    }
+  }
+
+  void profile;
+  revalidatePath("/post-builder");
+  return { ok: true, id: existing.id };
 }
 
 // ---------------------------------------------------------------------------

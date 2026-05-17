@@ -398,6 +398,11 @@ export interface BrandPanelProps {
    * Optional manual sync — fires the Drive→Supabase sync Edge Function and
    * re-fetches the assets list. When set, the panel renders a Sync button in
    * its header. Returns a brief outcome the panel surfaces as a toast.
+   *
+   * @deprecated 2026-05-17 — logos + partner_logos are now manually managed
+   * via the Studio sidecar's + Add Asset button. The sync function only
+   * touches agent_headshots. Pass `onSync={null}` to suppress the legacy
+   * Sync button in the header.
    */
   onSync?: () => Promise<BrandSyncOutcome>;
   /**
@@ -408,6 +413,31 @@ export interface BrandPanelProps {
    * brand-asset admin UI); the panel degrades to just the Sync button.
    */
   syncStatus?: BrandSyncStatus;
+  /**
+   * 2026-05-17 — admin-only controls for manually managing the logo
+   * library inside the Studio sidecar.
+   *
+   *   isAdmin       — when true, the "+ Add Asset" button and per-tile
+   *                   "×" remove icons render. When false (non-admin
+   *                   author), the panel is read-only (existing
+   *                   behavior).
+   *   onUploadAsset — server-action wrapper: invokes the upload, then
+   *                   the orchestrator re-fetches the asset list so the
+   *                   new tile appears.
+   *   onArchiveAsset — server-action wrapper for soft-archive.
+   */
+  isAdmin?: boolean;
+  onUploadAsset?: (input: {
+    kind: "logo" | "partner_logo";
+    label: string;
+    logo_category: string | null;
+    filename: string;
+    content_type: string;
+    file_base64: string;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onArchiveAsset?: (
+    id: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /**

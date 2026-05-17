@@ -530,71 +530,18 @@ async function runSync(): Promise<SyncReport> {
   }
 
   // ===========================================================================
-  // Phase 1 — Logos master folder (recurse one level into subfolders)
+  // Phase 1 — DISABLED 2026-05-17. Logos + partner_logos are now manually
+  // managed via the Studio sidecar (admin clicks "+ Add Asset" / "×").
+  // This walk used to pull C21 brand marks + Family of Services logos from
+  // Drive — now the cron is headshot-only.
   // ===========================================================================
   // why: track per-walk success so we don't mass-archive on a partial
-  // failure. If the logos walk threw, only the agents walk's seen-set is
-  // trustworthy for archival of agent_headshot/partner_logo rows, and
-  // vice-versa.
-  let logosWalkOk = true;
+  // failure. logosWalkOk is permanently false now so the archival sweep
+  // never touches logo or partner_logo rows.
+  const logosWalkOk = false;
   let agentsWalkOk = true;
-  try {
-    const logosTopLevel = await listChildren(accessToken, logosFolderId);
-    for (const entry of logosTopLevel) {
-      if (entry.mimeType === "application/vnd.google-apps.folder") {
-        // recurse one level — sub-files get logo_category = subfolder name
-        const subfiles = await listChildren(accessToken, entry.id);
-        for (const f of subfiles) {
-          report.scanned += 1;
-          if (!isImage(f.mimeType)) {
-            report.skipped += 1;
-            continue;
-          }
-          try {
-            const result = await syncOneFile({
-              supabase,
-              accessToken,
-              file: f,
-              kind: "logo",
-              officeId: null,
-              parentSubfolderName: entry.name,
-              logoCategory: entry.name,
-              storagePathPrefix: `logos/${entry.id}`,
-            });
-            report[result] += 1;
-            seenDriveFileIds.add(f.id);
-          } catch (err) {
-            report.errors.push(`${f.name}: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        }
-      } else if (isImage(entry.mimeType)) {
-        report.scanned += 1;
-        try {
-          const result = await syncOneFile({
-            supabase,
-            accessToken,
-            file: entry,
-            kind: "logo",
-            officeId: null,
-            parentSubfolderName: null,
-            logoCategory: null,
-            storagePathPrefix: "logos/root",
-          });
-          report[result] += 1;
-          seenDriveFileIds.add(entry.id);
-        } catch (err) {
-          report.errors.push(`${entry.name}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      } else {
-        report.scanned += 1;
-        report.skipped += 1;
-      }
-    }
-  } catch (err) {
-    report.errors.push(`logos folder walk failed: ${err instanceof Error ? err.message : String(err)}`);
-    report.ok = false;
-    logosWalkOk = false;
-  }
+  // (no logos walk — the function below intentionally returns nothing)
+  void logosFolderId;
 
   // ===========================================================================
   // Phase 2 — Agents master folder (each child is an office subfolder OR partner folder)
@@ -609,6 +556,13 @@ async function runSync(): Promise<SyncReport> {
       }
       const mapping = folderToOffice.get(officeFolder.id);
       const isPartnerFolder = officeFolder.name.toLowerCase().includes("family of services");
+      // why: 2026-05-17 — partner_logos are now manually managed via the
+      // Studio sidecar. Skip the Family of Services folder so this walk
+      // doesn't insert/touch partner_logo rows.
+      if (isPartnerFolder) {
+        report.skipped += 1;
+        continue;
+      }
       // Recursive walk so nested folders (e.g. "Mount Laurel" under
       // Moorestown) get captured. Two-deep is enough for current data.
       const innerFiles = await listChildren(accessToken, officeFolder.id);
@@ -706,11 +660,13 @@ async function runSync(): Promise<SyncReport> {
     const seenList = [...seenDriveFileIds];
     if (seenList.length > 0) {
       // why: build the kind filter dynamically based on which walks
-      // succeeded. If both succeeded, archive across all three kinds. If
-      // only logos succeeded, archive only kind='logo'. Etc.
+      // succeeded. 2026-05-17 — logos + partner_logos are admin-managed
+      // via the Studio sidecar, so this sweep NEVER touches those kinds.
+      // logosWalkOk is permanently false; even if it weren't, the only
+      // kind that can be archived here is agent_headshot.
       const kindsToSweep: Array<"logo" | "agent_headshot" | "partner_logo"> = [];
       if (logosWalkOk) kindsToSweep.push("logo");
-      if (agentsWalkOk) kindsToSweep.push("agent_headshot", "partner_logo");
+      if (agentsWalkOk) kindsToSweep.push("agent_headshot");
 
       if (kindsToSweep.length > 0) {
         // why: PostgREST `not.in` expects a parenthesized comma list. We

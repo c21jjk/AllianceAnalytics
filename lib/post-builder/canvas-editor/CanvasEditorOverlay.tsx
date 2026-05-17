@@ -73,6 +73,13 @@ export interface CanvasEditorOverlayProps {
    * still-image Studio to Reel Studio for the same listing.
    */
   onMakeReel?: CanvasEditorProps["onMakeReel"];
+  /**
+   * 2026-05-17 — admin-only brand library management. Forwarded straight
+   * through to <CanvasEditor>. See its prop docs.
+   */
+  isAdmin?: CanvasEditorProps["isAdmin"];
+  onUploadBrandAsset?: CanvasEditorProps["onUploadBrandAsset"];
+  onArchiveBrandAsset?: CanvasEditorProps["onArchiveBrandAsset"];
 }
 
 export default function CanvasEditorOverlay(
@@ -194,6 +201,9 @@ export default function CanvasEditorOverlay(
           onResize={props.onResize}
           carousel={props.carousel}
           onMakeReel={props.onMakeReel}
+          isAdmin={props.isAdmin}
+          onUploadBrandAsset={props.onUploadBrandAsset}
+          onArchiveBrandAsset={props.onArchiveBrandAsset}
         />
       </div>
     </div>

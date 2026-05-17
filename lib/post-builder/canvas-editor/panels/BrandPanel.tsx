@@ -131,11 +131,15 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
   const isEmpty =
     !props.isLoading && totalLogos === 0 && totalPartners === 0;
 
-  // why: highlight the Sync button when the most recent run failed — gives
-  // the user a clear "click me to retry" affordance instead of just a red
-  // pill they could miss. Passed through to SyncButton as a prop so we don't
-  // have to query syncStatus inside that component.
-  const syncFailed: boolean = props.syncStatus?.lastSyncError != null;
+  // (SyncButton highlight was removed 2026-05-17 along with the button.)
+
+  // why: 2026-05-17 — admin can add/remove logos directly in the sidecar.
+  // Non-admins see a read-only panel (existing behavior). The modal opens
+  // pre-filled with `kind` matching whichever section's "+ Add Asset"
+  // was clicked so the user doesn't have to pick.
+  const [uploadKind, setUploadKind] = useState<
+    "logo" | "partner_logo" | null
+  >(null);
 
   return (
     <aside className="flex h-full min-h-0 w-72 flex-col border-l border-neutral-200 bg-white">
@@ -151,14 +155,11 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
               </span>
             ) : null}
           </div>
-          {props.onSync ? (
-            <SyncButton onSync={props.onSync} highlight={syncFailed} />
-          ) : null}
+          {/* why: SyncButton retired 2026-05-17 — logos are admin-managed,
+              not Drive-synced. We still keep the prop in the contract for
+              backward compatibility but the button no longer renders here.
+              Headshot syncing happens via the AgentPanel sync button. */}
         </div>
-        {/* why: status pill row sits below the header line so it gets its own
-            vertical lane when the "Could be out of date" sibling chip is
-            present. At w-72 (288px) two pills in a row would crowd the title;
-            stacking keeps both readable. */}
         {props.syncStatus ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
             <SyncStatusPill status={props.syncStatus} />
@@ -169,45 +170,94 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {props.isLoading ? (
           <SkeletonGrid />
-        ) : isEmpty ? (
-          <EmptyState />
         ) : (
           <>
-            {/* why: render the C21 Logos section only when there's at least
-                one logo. Otherwise the section header becomes a confusing
-                orphan label above a co-brand section. */}
-            {totalLogos > 0 ? (
-              <section className="mb-4">
-                <SectionHeader label="C21 Logos" />
-                {logoGroups.map(([category, items]) => (
+            <section className="mb-4">
+              <div className="mb-2 flex items-center justify-between gap-2 border-b border-neutral-100 pb-1">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                  C21 Logos
+                </h3>
+                {props.isAdmin && props.onUploadAsset ? (
+                  <button
+                    type="button"
+                    onClick={() => setUploadKind("logo")}
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-700 transition-colors hover:bg-gold-50"
+                    aria-label="Add a new logo"
+                  >
+                    <span aria-hidden>+</span>
+                    Add asset
+                  </button>
+                ) : null}
+              </div>
+              {totalLogos === 0 ? (
+                <p className="px-1 py-2 text-xs text-neutral-400">
+                  {props.isAdmin
+                    ? "Empty. Click + Add asset to upload your first logo."
+                    : "No logos uploaded yet."}
+                </p>
+              ) : (
+                logoGroups.map(([category, items]) => (
                   <LogoCategoryBlock
                     key={category}
                     category={category}
                     items={items}
                     showCategoryHeading={logoGroups.length > 1}
                     onAssetPicked={props.onAssetPicked}
+                    isAdmin={props.isAdmin === true}
+                    onArchiveAsset={props.onArchiveAsset}
                   />
-                ))}
-              </section>
-            ) : null}
+                ))
+              )}
+            </section>
 
-            {totalPartners > 0 ? (
-              <section>
-                <SectionHeader label="Partners & Co-brand" />
+            <section>
+              <div className="mb-2 flex items-center justify-between gap-2 border-b border-neutral-100 pb-1">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+                  Partners &amp; Co-brand
+                </h3>
+                {props.isAdmin && props.onUploadAsset ? (
+                  <button
+                    type="button"
+                    onClick={() => setUploadKind("partner_logo")}
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-700 transition-colors hover:bg-gold-50"
+                    aria-label="Add a new partner logo"
+                  >
+                    <span aria-hidden>+</span>
+                    Add asset
+                  </button>
+                ) : null}
+              </div>
+              {totalPartners === 0 ? (
+                <p className="px-1 py-2 text-xs text-neutral-400">
+                  {props.isAdmin
+                    ? "Empty. Click + Add asset to upload a co-brand mark."
+                    : "No partner logos uploaded yet."}
+                </p>
+              ) : (
                 <ThumbGrid>
                   {partners.map((asset) => (
                     <BrandThumb
                       key={asset.id}
                       asset={asset}
                       onAssetPicked={props.onAssetPicked}
+                      isAdmin={props.isAdmin === true}
+                      onArchiveAsset={props.onArchiveAsset}
                     />
                   ))}
                 </ThumbGrid>
-              </section>
-            ) : null}
+              )}
+            </section>
           </>
         )}
       </div>
+
+      {uploadKind && props.onUploadAsset ? (
+        <UploadAssetModal
+          kind={uploadKind}
+          onClose={() => setUploadKind(null)}
+          onUpload={props.onUploadAsset}
+        />
+      ) : null}
     </aside>
   );
 }
@@ -235,6 +285,10 @@ interface LogoCategoryBlockProps {
   items: BrandAsset[];
   showCategoryHeading: boolean;
   onAssetPicked: (asset: BrandAsset) => void;
+  isAdmin: boolean;
+  onArchiveAsset?: (
+    id: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 function LogoCategoryBlock(props: LogoCategoryBlockProps): JSX.Element {
@@ -255,6 +309,8 @@ function LogoCategoryBlock(props: LogoCategoryBlockProps): JSX.Element {
             key={asset.id}
             asset={asset}
             onAssetPicked={props.onAssetPicked}
+            isAdmin={props.isAdmin}
+            onArchiveAsset={props.onArchiveAsset}
           />
         ))}
       </ThumbGrid>
@@ -276,39 +332,93 @@ function ThumbGrid({ children }: { children: React.ReactNode }): JSX.Element {
 interface BrandThumbProps {
   asset: BrandAsset;
   onAssetPicked: (asset: BrandAsset) => void;
+  isAdmin: boolean;
+  onArchiveAsset?: (
+    id: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 function BrandThumb(props: BrandThumbProps): JSX.Element {
+  const [archiving, setArchiving] = useState(false);
+
+  async function handleArchiveClick(e: React.MouseEvent): Promise<void> {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!props.onArchiveAsset || archiving) return;
+    const ok = window.confirm(
+      `Remove "${props.asset.label}" from the brand library? Existing saved posts that already used this logo will still render — only the picker hides it.`,
+    );
+    if (!ok) return;
+    setArchiving(true);
+    try {
+      const res = await props.onArchiveAsset(props.asset.id);
+      if (!res.ok) {
+        // why: dead-simple alert is fine here — the failure path is rare
+        // (admin-only call against our own server action) and putting a
+        // toast system in the sidecar just for this is overkill.
+        window.alert(`Remove failed: ${res.error}`);
+      }
+    } finally {
+      setArchiving(false);
+    }
+  }
+
   // why: <button> so keyboard focus + Enter activation work for free. The
   // hover ring + gold focus ring match LayerListPanel's selected-row treatment
   // so the editor feels visually consistent across tabs.
   return (
-    <button
-      type="button"
-      onClick={() => props.onAssetPicked(props.asset)}
-      className="group flex flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-      aria-label={`Insert ${props.asset.label}`}
-    >
-      <div
-        className="flex items-center justify-center overflow-hidden rounded-md border border-neutral-200 bg-white transition-colors group-hover:border-gold-500"
-        style={{ width: TILE_PX, height: TILE_PX }}
+    <div className="relative group">
+      <button
+        type="button"
+        onClick={() => props.onAssetPicked(props.asset)}
+        disabled={archiving}
+        className="flex w-full flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label={`Insert ${props.asset.label}`}
       >
-        {/* why: object-contain (not cover) preserves the wordmark's aspect
-            ratio — logos are NOT photos and cropping them would clip the
-            brand mark. The white tile background also lets light-on-light
-            logos still read. */}
-        <img
-          src={props.asset.public_url}
-          alt={props.asset.label}
-          crossOrigin="anonymous"
-          loading="lazy"
-          className="max-h-full max-w-full object-contain"
-        />
-      </div>
-      <span className="line-clamp-1 w-full truncate text-center text-[10px] text-neutral-600">
-        {props.asset.label}
-      </span>
-    </button>
+        <div
+          className="flex items-center justify-center overflow-hidden rounded-md border border-neutral-200 bg-white transition-colors group-hover:border-gold-500"
+          style={{ width: TILE_PX, height: TILE_PX }}
+        >
+          {/* why: object-contain (not cover) preserves the wordmark's aspect
+              ratio — logos are NOT photos and cropping them would clip the
+              brand mark. The white tile background also lets light-on-light
+              logos still read. */}
+          <img
+            src={props.asset.public_url}
+            alt={props.asset.label}
+            crossOrigin="anonymous"
+            loading="lazy"
+            className="max-h-full max-w-full object-contain"
+          />
+        </div>
+        <span className="line-clamp-1 w-full truncate text-center text-[10px] text-neutral-600">
+          {props.asset.label}
+        </span>
+      </button>
+      {props.isAdmin && props.onArchiveAsset ? (
+        <button
+          type="button"
+          onClick={handleArchiveClick}
+          disabled={archiving}
+          className="absolute right-0.5 top-0.5 hidden h-5 w-5 items-center justify-center rounded-full bg-white text-rose-600 shadow-md ring-1 ring-rose-200 transition-colors hover:bg-rose-50 hover:text-rose-700 group-hover:flex disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label={`Remove ${props.asset.label} from the brand library`}
+          title="Remove from library"
+        >
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            aria-hidden
+          >
+            <path d="M2 2 L8 8 M8 2 L2 8" />
+          </svg>
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -489,5 +599,201 @@ function LogoPlaceholderIcon(): JSX.Element {
       <circle cx="8.5" cy="8.5" r="1.5" />
       <path d="M21 15l-5-5L5 21" />
     </svg>
+  );
+}
+
+// ===========================================================================
+// Upload modal — admin-only "+ Add asset"
+// ===========================================================================
+//
+// Tiny inline modal rendered when the admin clicks "+ Add asset" on either
+// section. Captures: label (required), optional logo_category, and the
+// file itself. On submit it base64-encodes the file client-side, calls the
+// parent's onUpload (which wraps uploadBrandAssetAction), and closes.
+
+interface UploadAssetModalProps {
+  kind: "logo" | "partner_logo";
+  onClose: () => void;
+  onUpload: (input: {
+    kind: "logo" | "partner_logo";
+    label: string;
+    logo_category: string | null;
+    filename: string;
+    content_type: string;
+    file_base64: string;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
+}
+
+function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
+  const [label, setLabel] = useState("");
+  const [category, setCategory] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml";
+  const MAX_MB = 5;
+
+  async function handleSubmit(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    setError(null);
+    if (!file) {
+      setError("Pick a file first.");
+      return;
+    }
+    if (file.size > MAX_MB * 1024 * 1024) {
+      setError(`File too large (${(file.size / 1024 / 1024).toFixed(2)} MB). Max ${MAX_MB} MB.`);
+      return;
+    }
+    const labelTrim = label.trim();
+    if (!labelTrim) {
+      setError("Label is required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      // why: read file → base64. FileReader.readAsDataURL gives us a
+      // data: URL we then strip the header off to get raw base64.
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(r.error ?? new Error("read failed"));
+        r.readAsDataURL(file);
+      });
+      const commaIdx = dataUrl.indexOf(",");
+      const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+      const res = await props.onUpload({
+        kind: props.kind,
+        label: labelTrim,
+        logo_category: category.trim() ? category.trim() : null,
+        filename: file.name,
+        content_type: file.type,
+        file_base64: base64,
+      });
+      if (!res.ok) {
+        setError(res.error);
+      } else {
+        props.onClose();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const titleLabel =
+    props.kind === "logo" ? "Add a C21 logo" : "Add a partner / co-brand mark";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) props.onClose();
+      }}
+    >
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+      >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-gold-700">
+              Brand library
+            </div>
+            <h3 className="text-base font-bold text-neutral-900">
+              {titleLabel}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={props.onClose}
+            disabled={busy}
+            className="text-neutral-400 hover:text-neutral-700 disabled:opacity-40"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-700">
+              Label <span className="text-rose-600">*</span>
+            </span>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              disabled={busy}
+              placeholder={
+                props.kind === "logo"
+                  ? "e.g. Gold Logo Horizontal"
+                  : "e.g. Family of Services"
+              }
+              className="mt-1 block w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500"
+              autoFocus
+            />
+          </label>
+
+          {props.kind === "logo" ? (
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-700">
+                Category{" "}
+                <span className="text-neutral-400">(optional grouping)</span>
+              </span>
+              <input
+                type="text"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                disabled={busy}
+                placeholder="e.g. Horizontal, Stacked, Seal"
+                className="mt-1 block w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500"
+              />
+            </label>
+          ) : null}
+
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-700">
+              File <span className="text-rose-600">*</span>
+            </span>
+            <input
+              type="file"
+              accept={ACCEPT}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              disabled={busy}
+              className="mt-1 block w-full text-xs text-neutral-600 file:mr-2 file:rounded-md file:border-0 file:bg-gold-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-gold-700 hover:file:bg-gold-100"
+            />
+            <span className="mt-1 block text-[10px] text-neutral-500">
+              PNG, JPG, WEBP, or SVG. Max {MAX_MB} MB.
+            </span>
+          </label>
+
+          {error ? (
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs text-rose-800">
+              {error}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={props.onClose}
+            disabled={busy}
+            className="rounded-md px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !file || !label.trim()}
+            className="rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-neutral-900 hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Uploading…" : "Upload"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }

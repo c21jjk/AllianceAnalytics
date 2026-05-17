@@ -963,4 +963,23 @@ export interface CanvasEditorProps {
    * author mode, /properties detail Studio embeds, etc).
    */
   onMakeReel?: () => void;
+  /**
+   * 2026-05-17 — admin-only brand library management. When `isAdmin` is
+   * true, the Brand sidecar (logos + partner_logos) renders + Add Asset
+   * buttons and × Remove icons. When false (default), it's read-only.
+   * The two callbacks are server-action wrappers; pass them when you
+   * want to enable management UX.
+   */
+  isAdmin?: boolean;
+  onUploadBrandAsset?: (input: {
+    kind: "logo" | "partner_logo";
+    label: string;
+    logo_category: string | null;
+    filename: string;
+    content_type: string;
+    file_base64: string;
+  }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onArchiveBrandAsset?: (
+    id: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }

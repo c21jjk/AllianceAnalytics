@@ -19,12 +19,14 @@ import type {
 } from "@/lib/post-builder/types";
 import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
 import {
+  archiveBrandAssetAction,
   saveGeneratedPostAction,
   schedulePostAction,
   setPostTestModeAction,
   updateGeneratedPostImageAction,
   updateGeneratedPostSlideAction,
   updatePostCaptionsAction,
+  uploadBrandAssetAction,
   upsertGeneratedPostFromStudioAction,
 } from "./actions";
 
@@ -2748,6 +2750,9 @@ export default function PostBuilderClient({
           globalTestModeOn={globalTestModeOn}
           error={error}
           onClearError={() => setError(null)}
+          // why: pass the actual slide count so the platform cards' copy
+          // can describe carousels accurately. hero (1) + extra slides.
+          slideCount={1 + carouselSlides.length}
         />
       ) : null}
       {/* === Canvas Editor (Path C) — overlay portal ===
@@ -2789,6 +2794,11 @@ export default function PostBuilderClient({
         onTemplateSwitched={handleStudioTemplateSwitched}
         onResize={handleStudioResize}
         onMakeReel={handleMakeReelFromStudio}
+        isAdmin={isAdmin}
+        onUploadBrandAsset={uploadBrandAssetAction}
+        onArchiveBrandAsset={async (id) =>
+          archiveBrandAssetAction({ id })
+        }
         carousel={{
           slides: carouselSlides,
           onSlidesChanged: setCarouselSlides,
@@ -2869,6 +2879,11 @@ interface PostNowModalProps {
   error: string | null;
   /** Callback to clear the parent's error state from inside the modal. */
   onClearError: () => void;
+  /**
+   * Total slides in the post (hero + extra carousel slides). Drives the
+   * "single photo" vs "N-photo carousel" copy on the platform cards.
+   */
+  slideCount: number;
 }
 
 const POST_NOW_ARM_MS = 2000;
@@ -2892,7 +2907,21 @@ function PostNowModal(props: PostNowModalProps) {
     globalTestModeOn,
     error,
     onClearError,
+    slideCount,
   } = props;
+
+  // why: drive the per-platform copy off the real slide count. 1 slide
+  // → "single photo / image", 2+ → "N-photo carousel". TT photo accepts
+  // up to 35; IG carousel caps at 10; FB has no hard limit.
+  const isCarousel = slideCount >= 2;
+  const fbCardCopy = isCarousel
+    ? `Posts a ${slideCount}-photo album to the Alliance Page.`
+    : `Posts a single photo to the Alliance Page.`;
+  const igCardCopy = isCarousel
+    ? slideCount > 10
+      ? `Posts a 10-image carousel to the Alliance IG (IG caps carousels at 10; ${slideCount - 10} slide${slideCount - 10 === 1 ? "" : "s"} will be trimmed).`
+      : `Posts a ${slideCount}-image carousel to the Alliance IG.`
+    : `Posts a single image to the Alliance IG.`;
 
   const [, forceTick] = useState(0);
   // why: tab between Post Now and Schedule. Defaults to "now" so the
@@ -3202,9 +3231,7 @@ function PostNowModal(props: PostNowModalProps) {
                 />
                 <div className="flex-1">
                   <div className="text-sm font-semibold text-neutral-900">Facebook Page</div>
-                  <div className="text-xs text-neutral-600 mt-0.5">
-                    Posts a single photo to the Alliance Page.
-                  </div>
+                  <div className="text-xs text-neutral-600 mt-0.5">{fbCardCopy}</div>
                 </div>
               </label>
 
@@ -3225,9 +3252,7 @@ function PostNowModal(props: PostNowModalProps) {
                 />
                 <div className="flex-1">
                   <div className="text-sm font-semibold text-neutral-900">Instagram Business</div>
-                  <div className="text-xs text-neutral-600 mt-0.5">
-                    Posts a single image to the Alliance IG.
-                  </div>
+                  <div className="text-xs text-neutral-600 mt-0.5">{igCardCopy}</div>
                 </div>
               </label>
 
