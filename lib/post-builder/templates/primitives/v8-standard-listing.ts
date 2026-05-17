@@ -74,21 +74,18 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
     font-style: italic; font-size: 18px; font-weight: 500;
     letter-spacing: 0.06em; color: ${theme.accent_dark};
   }
+  /* why: real C21 Alliance Grey lockup image — source of truth is
+     lib/post-builder/canvas-editor/templates/brand-logos.ts (C21_ALLIANCE_GREY_LOGO).
+     URL hardcoded here because primitives are render-time strings, not modules.
+     Sized to mirror standard-listing-factory.ts square badgeImage (200×80, top-right). */
   .c21-badge {
     position: absolute; top: 56px; right: 56px;
-    display: flex; align-items: center; gap: 10px;
-    background: #252526; padding: 14px 18px; border-radius: 6px;
-    border: 1.5px solid ${theme.accent};
-  }
-  .c21-badge .seal {
-    width: 28px; height: 28px; border-radius: 50%;
-    background: ${theme.accent}; color: #252526;
+    width: 200px; height: 80px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 900; letter-spacing: -0.04em;
   }
-  .c21-badge .wordmark {
-    font-size: 13px; font-weight: 700; letter-spacing: 0.22em;
-    color: ${theme.accent}; text-transform: uppercase;
+  .c21-badge img {
+    max-width: 100%; max-height: 100%; height: auto; width: auto;
+    object-fit: contain;
   }
   .photo {
     position: absolute; left: 0; top: 220px;
@@ -131,8 +128,7 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
     ${priceText ? `<div class="price-line">${escapeHtml(priceText)}</div>` : ""}
     ${ohText ? `<div class="open-house">${escapeHtml(ohText)}</div>` : ""}
     <div class="c21-badge">
-      <span class="seal">21</span>
-      <span class="wordmark">Alliance</span>
+      <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/15c6c2ea-dc9f-45c1-8f65-3cd412ba8299.png" alt="Century 21 Alliance" />
     </div>
     <div class="photo"></div>
     ${renderBadge(theme)}

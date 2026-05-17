@@ -50,16 +50,16 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
     text-rendering: geometricPrecision;
   }
   .frame { position: relative; width: 1080px; height: 1350px; overflow: hidden; }
+  /* why: real Excellence Collection lockup image — source of truth is
+     lib/post-builder/canvas-editor/templates/brand-logos.ts (EXCELLENCE_COLLECTION_LOGO).
+     URL hardcoded here because primitives are render-time strings, not modules. */
   .wordmark {
     position: absolute; top: 70px; left: 0; right: 0;
-    text-align: center;
-    font-family: "Playfair Display", "Times New Roman", Georgia, serif;
-    font-size: 30px; letter-spacing: 0.32em;
-    color: ${theme.accent};
+    display: flex; justify-content: center;
   }
-  .wordmark .excellence { font-style: italic; font-weight: 400; }
-  .wordmark .collection { font-weight: 700; }
-  .wordmark .pipe { display: inline-block; margin: 0 16px; opacity: 0.6; font-weight: 300; }
+  .wordmark img {
+    width: 320px; height: auto; object-fit: contain;
+  }
   .eyebrow {
     position: absolute; top: 160px; left: 0; right: 0;
     display: flex; align-items: baseline; justify-content: center;
@@ -136,7 +136,7 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
 <body>
   <div class="frame">
     <div class="wordmark">
-      <span class="excellence">Excellence</span><span class="pipe">|</span><span class="collection">COLLECTION</span>
+      <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/f07233b0-a22b-4595-bc06-98cddd65e993.png" alt="Excellence Collection" />
     </div>
     <div class="eyebrow">
       ${wordA ? `<span class="word-a">${escapeHtml(wordA)}</span>` : ""}

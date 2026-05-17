@@ -119,6 +119,18 @@ ${commonHead(`${theme.eyebrow} · ${withheldAddress}`)}
     font-size: 14px; font-weight: 600; letter-spacing: 0.30em;
     color: rgba(252,252,251,0.70); text-transform: uppercase;
   }
+  /* why: real C21 Alliance White lockup image — source of truth is
+     lib/post-builder/canvas-editor/templates/brand-logos.ts (C21_ALLIANCE_WHITE_LOGO).
+     URL hardcoded here because primitives are render-time strings, not modules.
+     Anchored above the bottom safe zone, just below the CTA. */
+  .brand-logo {
+    position: absolute; left: 0; right: 0;
+    bottom: ${STORY_SAFE_ZONE.bottom + 130}px;
+    display: flex; justify-content: center;
+  }
+  .brand-logo img {
+    width: 220px; height: auto; object-fit: contain;
+  }
   .cta {
     position: absolute; left: 0; right: 0;
     bottom: ${STORY_SAFE_ZONE.bottom + 70}px;
@@ -152,8 +164,11 @@ ${commonHead(`${theme.eyebrow} · ${withheldAddress}`)}
         ? `<div class="chips">${chips.map((c) => `<span>${escapeHtml(c)}</span>`).join("")}</div>`
         : ""
     }
+    <div class="brand-logo">
+      <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/1243286b-f208-47fb-a8f3-7fa1367951a2.png" alt="Century 21 Alliance" />
+    </div>
     <div class="cta">${escapeHtml(footerCta)}</div>
-    <div class="footer">Century 21 Alliance · ${escapeHtml(mlsHashtag)}</div>
+    <div class="footer">${escapeHtml(mlsHashtag)}</div>
   </div>
 </body>
 </html>`;

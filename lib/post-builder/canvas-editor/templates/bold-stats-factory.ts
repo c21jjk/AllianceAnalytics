@@ -53,6 +53,7 @@ import type {
   PostType,
 } from "../types";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
+import { C21_ALLIANCE_WHITE_LOGO } from "./brand-logos";
 
 // ---------------------------------------------------------------------------
 // Per-format layout numbers
@@ -654,33 +655,31 @@ export function createBoldStatsTemplate(
     editable: true,
   });
 
-  // ---- z=12  brand name ----
+  // ---- z=12  C21 ALLIANCE white logo (data pane footer) ----
+  // why: design review 2026-05-17 — typed wordmark "CENTURY 21 ALLIANCE"
+  // replaced by the real C21 Alliance White logo. White lockup so it pops
+  // against the dark data pane fill. Width sized to ~3.5× brandFontSize
+  // height-wise the layer matches what the text glyph row occupied so the
+  // footer baseline doesn't shift.
   layers.push({
-    kind: "text",
-    id: "layer_brand_name",
-    name: "Brand name",
+    kind: "image",
+    id: "layer_brand_logo",
+    name: "C21 Alliance logo",
     left: layout.body.paddingLeft,
-    top: layout.footer.top,
-    width: layout.footer.brandWidth,
-    height: layout.footer.brandFontSize + 12,
+    top: layout.footer.top - 4,
+    width: Math.round(layout.footer.brandFontSize * 12),
+    height: Math.round(layout.footer.brandFontSize * 4),
     angle: 0,
-    opacity: 0.92,
+    opacity: 1,
     z: 12,
     visible: true,
     locked: false,
-    text: "CENTURY 21 ALLIANCE",
-    boundField: "office_name",
-    fontFamily: ALLIANCE_FONTS.bodySans,
-    fontSize: layout.footer.brandFontSize,
-    fontWeight: 700,
-    fontStyle: "normal",
-    fill: ALLIANCE_COLORS.whiteWarm,
-    textAlign: "left",
-    lineHeight: 1.2,
-    charSpacing: 220,
-    underline: false,
-    linethrough: false,
-    editable: true,
+    src: C21_ALLIANCE_WHITE_LOGO,
+    objectFit: "contain",
+    crossOrigin: "anonymous",
+    cornerRadius: 0,
+    borderColor: "transparent",
+    borderWidth: 0,
   });
 
   // ---- z=13  MLS number tag ----

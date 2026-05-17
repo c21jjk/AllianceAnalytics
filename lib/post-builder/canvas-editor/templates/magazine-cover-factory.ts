@@ -68,6 +68,7 @@ import type {
   PostType,
 } from "../types";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
+import { C21_ALLIANCE_GREY_LOGO } from "./brand-logos";
 
 // ---------------------------------------------------------------------------
 // Per-format layout numbers
@@ -106,10 +107,15 @@ interface FormatLayout {
   };
   /** Subtle gold hairline at the photo / cream-panel seam. */
   seamRule: { top: number; height: number };
-  /** City headline (display serif, the visual anchor of the design). */
-  city: { top: number; fontSize: number };
-  /** Address subhead — uppercase tracked sans below the city. */
+  /**
+   * Address headline (display serif, the visual anchor of the design).
+   * Why "address" is the anchor and not "city": buyers anchor on a specific
+   * street ("117 E Maple Ave"), not the municipality. Promoted 2026-05-17
+   * from subhead → headline.
+   */
   address: { top: number; fontSize: number };
+  /** City subhead — uppercase tracked sans below the address headline. */
+  city: { top: number; fontSize: number };
   /** Optional Open House chip (open_house category only). */
   openHouseChip: {
     top: number;
@@ -173,8 +179,14 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       labelFontSize: 18,
     },
     seamRule: { top: 670, height: 1 },
-    city: { top: 748, fontSize: 96 },
-    address: { top: 862, fontSize: 22 },
+    // why: design review 2026-05-17 — hierarchy flipped. The street ADDRESS
+    // is the buyer's mental anchor ("117 E Maple Ave" is searchable + memorable
+    // in a way "Wildwood" isn't), so we promote it to the big Playfair anchor
+    // and demote city to a small uppercase subhead below. The LAYOUTS keys
+    // keep their names (`address`/`city`) and the values describe their NEW
+    // visual roles: address = big headline, city = small subhead.
+    address: { top: 748, fontSize: 96 },
+    city: { top: 862, fontSize: 28 },
     openHouseChip: { top: 902, height: 40, width: 360, fontSize: 18 },
     price: { top: 952, fontSize: 60, labelFontSize: 36 },
     bedsBaths: { top: 1000, fontSize: 14 },
@@ -203,8 +215,10 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       labelFontSize: 20,
     },
     seamRule: { top: 840, height: 1 },
-    city: { top: 932, fontSize: 110 },
-    address: { top: 1062, fontSize: 24 },
+    // why: design review 2026-05-17 — address promoted to big headline,
+    // city demoted to subhead (see square layout for rationale).
+    address: { top: 932, fontSize: 110 },
+    city: { top: 1062, fontSize: 30 },
     openHouseChip: { top: 1106, height: 44, width: 380, fontSize: 20 },
     price: { top: 1166, fontSize: 68, labelFontSize: 40 },
     bedsBaths: { top: 1224, fontSize: 15 },
@@ -238,8 +252,10 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       labelFontSize: 26,
     },
     seamRule: { top: 1180, height: 1 },
-    city: { top: 1284, fontSize: 130 },
-    address: { top: 1438, fontSize: 30 },
+    // why: design review 2026-05-17 — address promoted to big headline,
+    // city demoted to subhead (see square layout for rationale).
+    address: { top: 1284, fontSize: 130 },
+    city: { top: 1438, fontSize: 32 },
     openHouseChip: { top: 1492, height: 56, width: 460, fontSize: 24 },
     price: { top: 1562, fontSize: 84, labelFontSize: 48 },
     bedsBaths: { top: 1640, fontSize: 18 },
@@ -522,64 +538,69 @@ export function createMagazineCoverTemplate(
       linethrough: false,
       editable: true,
     },
-    // ---- z=5  city headline (the visual anchor) ----
+    // ---- z=5  address headline (the visual anchor) ----
     // why: Playfair Display is the project's de-facto luxury real-estate
     // headline font. Negative charSpacing tightens the display serif so
-    // ascenders/descenders don't look gappy at 96–130pt.
+    // ascenders/descenders don't look gappy at 96–130pt. The headline is
+    // sized for 2-line capacity so long addresses like "1234 N Atlantic
+    // Ocean Blvd" wrap cleanly instead of clipping — that's the rationale
+    // for the (fontSize * 2.2) height + lineHeight:1.02.
     {
       kind: "text",
-      id: "layer_city_headline",
-      name: "City headline",
+      id: "layer_address_headline",
+      name: "Address headline",
       left: layout.padding.left,
-      top: layout.city.top,
+      top: layout.address.top,
       width: innerWidth,
-      height: layout.city.fontSize + 24,
+      height: Math.round(layout.address.fontSize * 2.2),
       angle: 0,
       opacity: 1,
       z: 5,
       visible: true,
       locked: false,
-      text: "Wildwood",
-      boundField: "city",
+      text: "117 E Maple Ave",
+      boundField: "address_line1",
       fontFamily: ALLIANCE_FONTS.playfair,
-      fontSize: layout.city.fontSize,
+      fontSize: layout.address.fontSize,
       fontWeight: 700,
       fontStyle: "normal",
       fill: ALLIANCE_COLORS.ink900,
       textAlign: "left",
-      lineHeight: 1,
+      lineHeight: 1.02,
       charSpacing: -20,
       underline: false,
       linethrough: false,
       editable: true,
     },
-    // ---- z=6  address subhead ----
+    // ---- z=6  city subhead ----
     {
       kind: "text",
-      id: "layer_address_line",
-      name: "Address",
+      id: "layer_city_subhead",
+      name: "City subhead",
       left: layout.padding.left,
-      top: layout.address.top,
+      top: layout.city.top,
       width: innerWidth,
-      height: layout.address.fontSize + 14,
+      height: layout.city.fontSize + 14,
       angle: 0,
       opacity: 1,
       z: 6,
       visible: true,
       locked: false,
-      text: "117 E Maple Ave",
-      boundField: "address_line1",
+      text: "WILDWOOD",
+      boundField: "city",
       fontFamily: ALLIANCE_FONTS.bodySans,
-      fontSize: layout.address.fontSize,
-      fontWeight: 500,
+      fontSize: layout.city.fontSize,
+      fontWeight: 600,
       fontStyle: "normal",
       // why: ink700 is the mid-tone "secondary text on cream" color —
-      // less heavy than the city headline so the visual hierarchy stays
-      // photo → city → address.
+      // less heavy than the address headline so the visual hierarchy
+      // stays photo → address → city.
       fill: ALLIANCE_COLORS.ink700,
       textAlign: "left",
       lineHeight: 1.2,
-      charSpacing: 80,
+      // why: 240 tracks the city through Inter's uppercase forms so the
+      // subhead reads as a tag (geographic label) instead of body text.
+      charSpacing: 240,
       underline: false,
       linethrough: false,
       editable: true,
@@ -715,37 +736,63 @@ export function createMagazineCoverTemplate(
     editable: true,
   });
 
-  // ---- z=11  brand mark ("CENTURY 21 ALLIANCE") ----
+  // ---- z=11  C21 ALLIANCE brand logo image (footer) ----
+  // why: design review 2026-05-17 — replaced the typed wordmark
+  // "CENTURY 21 ALLIANCE" with the real C21 Alliance Grey logo from the
+  // brand library so the magazine cover footer carries the actual
+  // designed lockup, not a font approximation. Width sized to roughly
+  // 3.5× brandFontSize (matches the optical weight the text version
+  // had at the same position).
   layers.push({
-    kind: "text",
-    id: "layer_brand_name",
-    name: "Brand mark",
+    kind: "image",
+    id: "layer_brand_logo",
+    name: "C21 Alliance logo",
     left: layout.padding.left,
-    top: layout.footer.top,
-    width: layout.footer.brandWidth,
-    height: layout.footer.brandFontSize + 8,
+    top: layout.footer.top - 6,
+    width: Math.round(layout.footer.brandFontSize * 14),
+    height: Math.round(layout.footer.brandFontSize * 5),
     angle: 0,
-    // why: design review 2026-05-17 — brand mark opacity 0.6 read as
-    // ghosted disclaimer; bumped to 0.75 so the C21 lockup carries proper
-    // brand presence in the footer.
-    opacity: 0.75,
+    opacity: 1,
     z: 11,
     visible: true,
     locked: false,
-    text: "CENTURY 21 ALLIANCE",
-    boundField: "office_name",
-    fontFamily: ALLIANCE_FONTS.bodySans,
-    fontSize: layout.footer.brandFontSize,
-    fontWeight: 600,
-    fontStyle: "normal",
-    fill: ALLIANCE_COLORS.ink900,
-    textAlign: "left",
-    lineHeight: 1.4,
-    charSpacing: 180,
-    underline: false,
-    linethrough: false,
-    editable: true,
+    src: C21_ALLIANCE_GREY_LOGO,
+    objectFit: "contain",
+    crossOrigin: "anonymous",
+    cornerRadius: 0,
+    borderColor: "transparent",
+    borderWidth: 0,
   });
+
+  // ---- z=11b  C21 ALLIANCE badge top-right (story format only) ----
+  // why: design review 2026-05-17 — story format needs a brand anchor in
+  // the photo region (top-right) because the editorial cream panel is
+  // way down at y=1180 and gets cropped by IG/FB Story UI on some devices.
+  // Badge sits just below the 250px top safe zone (y=290) so it's always
+  // visible. White lockup so it reads against most photos; grey was a
+  // candidate but tested poorly on light-sky beach shots.
+  if (format === "story_9x16") {
+    layers.push({
+      kind: "image",
+      id: "layer_c21_badge_story",
+      name: "C21 Alliance badge",
+      left: 820,
+      top: 290,
+      width: 220,
+      height: 90,
+      angle: 0,
+      opacity: 0.92,
+      z: 11.5,
+      visible: true,
+      locked: false,
+      src: C21_ALLIANCE_GREY_LOGO,
+      objectFit: "contain",
+      crossOrigin: "anonymous",
+      cornerRadius: 0,
+      borderColor: "transparent",
+      borderWidth: 0,
+    });
+  }
 
   // ---- z=12  MLS number tag ----
   // why: design review 2026-05-17 — MLS removed from square + portrait

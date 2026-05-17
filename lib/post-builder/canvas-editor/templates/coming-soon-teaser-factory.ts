@@ -94,17 +94,23 @@ import type {
   PostType,
 } from "../types";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
+import { C21_ALLIANCE_WHITE_LOGO } from "./brand-logos";
 
 // ---------------------------------------------------------------------------
 // Brand asset
 // ---------------------------------------------------------------------------
 
 /**
- * C21 ALLIANCE Grey badge — same brand-assets bucket URL as v8/v9. Rendered
- * with `objectFit: "contain"` so the asset letterboxes inside its rect.
+ * C21 ALLIANCE White logo for Coming Soon Teaser.
+ *
+ * Why white (not grey): the photo has a heavy bottom-up dark veil and the
+ * teaser word stack sits over the darkest part. The brand badge anchors
+ * the top-right corner — and most photos have a brighter sky at the top,
+ * but the badge still benefits from white-on-photo legibility for the
+ * occasional dusk/night listing photo. Resolved from the shared brand-logos
+ * registry so a re-upload only touches one file.
  */
-const C21_BADGE_URL =
-  "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/15c6c2ea-dc9f-45c1-8f65-3cd412ba8299.png";
+const C21_BADGE_URL = C21_ALLIANCE_WHITE_LOGO;
 
 // ---------------------------------------------------------------------------
 // Per-format layout numbers

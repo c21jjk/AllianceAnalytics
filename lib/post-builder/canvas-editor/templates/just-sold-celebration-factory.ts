@@ -61,18 +61,24 @@ import type {
   PostType,
 } from "../types";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
+import { C21_ALLIANCE_WHITE_LOGO } from "./brand-logos";
 
 // ---------------------------------------------------------------------------
 // Brand asset
 // ---------------------------------------------------------------------------
 
 /**
- * C21 ALLIANCE Grey badge — same brand-assets bucket URL as the other v8/v9
- * factories. Rendered with `objectFit: "contain"` so the asset letterboxes
- * inside its rect without distortion.
+ * C21 ALLIANCE White logo for Just Sold Celebration.
+ *
+ * Why white (not grey): the photo carries a dark gradient scrim from the
+ * bottom up + the sash banner overlays the photo top-right. Both surfaces
+ * are dark — the white wordmark reads everywhere. Resolved from the shared
+ * brand-logos registry so a re-upload only touches one file.
+ *
+ * Rendered with `objectFit: "contain"` so the asset letterboxes inside its
+ * rect without distortion.
  */
-const C21_BADGE_URL =
-  "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/15c6c2ea-dc9f-45c1-8f65-3cd412ba8299.png";
+const C21_BADGE_URL = C21_ALLIANCE_WHITE_LOGO;
 
 // ---------------------------------------------------------------------------
 // Per-format layout numbers

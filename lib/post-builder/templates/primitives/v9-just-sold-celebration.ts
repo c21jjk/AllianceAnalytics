@@ -122,13 +122,24 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
     font-size: 13px; font-weight: 600; letter-spacing: 0.26em;
     color: rgba(252,252,251,0.78); text-transform: uppercase;
   }
+  /* why: real C21 Alliance White lockup image — source of truth is
+     lib/post-builder/canvas-editor/templates/brand-logos.ts (C21_ALLIANCE_WHITE_LOGO).
+     URL hardcoded here because primitives are render-time strings, not modules.
+     The logo replaces the "Sold by Century 21 Alliance" wordmark text — the
+     MLS hashtag still trails after it in the footer row below. */
+  .brand-logo {
+    position: absolute; left: 0; right: 0; bottom: 80px;
+    display: flex; justify-content: center;
+  }
+  .brand-logo img {
+    width: 200px; height: auto; object-fit: contain;
+  }
   .footer {
     position: absolute; left: 0; right: 0; bottom: 44px;
     text-align: center;
     font-size: 12px; font-weight: 600; letter-spacing: 0.26em;
     color: rgba(252,252,251,0.55); text-transform: uppercase;
   }
-  .footer .brand { color: ${theme.accent}; }
 </style>
 <body>
   <div class="frame">
@@ -150,9 +161,10 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
           : ""
       }
     </div>
-    <div class="footer">
-      <span class="brand">Sold by Century 21 Alliance</span> · ${escapeHtml(mlsHashtag)}
+    <div class="brand-logo">
+      <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/1243286b-f208-47fb-a8f3-7fa1367951a2.png" alt="Century 21 Alliance" />
     </div>
+    <div class="footer">${escapeHtml(mlsHashtag)}</div>
   </div>
 </body>
 </html>`;

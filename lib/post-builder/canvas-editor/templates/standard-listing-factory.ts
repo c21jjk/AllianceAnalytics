@@ -68,6 +68,7 @@ import type {
   PostType,
 } from "../types";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
+import { C21_ALLIANCE_GREY_LOGO } from "./brand-logos";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -79,8 +80,11 @@ import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
  * brand-assets Supabase bucket; uploaded by John 2026-05-17. Placed in the
  * top-right corner of every template as the symmetric brand anchor.
  */
-const C21_BADGE_URL =
-  "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/15c6c2ea-dc9f-45c1-8f65-3cd412ba8299.png";
+// why: shared registry — see ./brand-logos.ts for the rationale on why
+// logo URLs live in one file instead of inline constants per factory.
+// All five active templates (v2, v3, v6, v8, v9, v10) now import from
+// brand-logos so a logo re-upload only requires updating one URL.
+const C21_BADGE_URL = C21_ALLIANCE_GREY_LOGO;
 
 // ---------------------------------------------------------------------------
 // Per-format layout numbers

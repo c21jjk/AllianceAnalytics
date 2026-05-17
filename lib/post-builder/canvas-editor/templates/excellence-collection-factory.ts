@@ -91,6 +91,7 @@ import type {
   PostType,
 } from "../types";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
+import { EXCELLENCE_COLLECTION_LOGO } from "./brand-logos";
 
 // ---------------------------------------------------------------------------
 // Logo asset
@@ -101,9 +102,11 @@ import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
  * dimensions are 3600×2025 (a wide horizontal mark). The image layer renders
  * with `objectFit: "contain"` so the layer's bounding box dictates the
  * displayed size + the logo letterboxes inside it without distortion.
+ *
+ * URL is pulled from the shared brand-logos registry so a re-upload only
+ * touches one file (./brand-logos.ts), not every factory that references it.
  */
-const EXCELLENCE_LOGO_URL =
-  "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/f07233b0-a22b-4595-bc06-98cddd65e993.png";
+const EXCELLENCE_LOGO_URL = EXCELLENCE_COLLECTION_LOGO;
 
 /** Logo's native aspect ratio (width / height). Drives the rendered height
  *  given a chosen width per format. 3600/2025 ≈ 1.7778. */
