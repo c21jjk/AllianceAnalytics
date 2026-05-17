@@ -161,8 +161,12 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       eyebrow: { top: 56, fontSize: 56 },
       price: { top: 126, fontSize: 22 },
       openHouse: { top: 156, fontSize: 22 },
-      address: { top: 190, fontSize: 22 },
-      city: { top: 222, fontSize: 22 },
+      // why: design review 2026-05-17 — address bumped 22 → 26, city
+      // → 24. Previously address+city+price were all 22pt 700-weight,
+      // distinguishable only by color. New sizes establish a clear
+      // hierarchy step (eyebrow > address > city > price).
+      address: { top: 186, fontSize: 26 },
+      city: { top: 224, fontSize: 24 },
     },
     hero: {
       left: 0,
@@ -206,8 +210,9 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       eyebrow: { top: 64, fontSize: 64 },
       price: { top: 146, fontSize: 24 },
       openHouse: { top: 180, fontSize: 24 },
-      address: { top: 218, fontSize: 24 },
-      city: { top: 254, fontSize: 24 },
+      // why: design review 2026-05-17 — bump address to 28 / city 26.
+      address: { top: 214, fontSize: 28 },
+      city: { top: 256, fontSize: 26 },
     },
     hero: {
       left: 0,

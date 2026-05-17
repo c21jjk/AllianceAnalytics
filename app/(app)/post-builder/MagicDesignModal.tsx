@@ -81,6 +81,8 @@ const VARIANT_LABEL: Record<PostVariant, string> = {
   v6: "Magazine Cover",
   v7: "Polaroid",
   v8: "Minimal Frame",
+  v9: "Just Sold Celebration",
+  v10: "Coming Soon Teaser",
 };
 
 const FORMAT_LABEL: Record<PostFormat, string> = {

@@ -221,32 +221,38 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       perCharWidthEstimate: 42,
     },
     photo: {
-      // why: 760×420 centered. left = (1080-760)/2 = 160. Top=340 leaves
-      // ~80px from the eyebrow's baseline.
-      left: 160,
-      top: 340,
-      width: 760,
-      height: 420,
+      // why: 820×510 centered (was 760×420 — design review 2026-05-17).
+      // Earlier sizing was ~27% of canvas area; new ~36%. The reviewer's
+      // ideal (50%+) doesn't fit at 1080×1080 once you account for the
+      // logo + eyebrow above and divider + price + address below — those
+      // four bands need ~360px of vertical space. We pick the largest
+      // photo that still gives the price 80-86pt headroom and breathing
+      // room above + below the divider.
+      left: 130,
+      top: 300,
+      width: 820,
+      height: 510,
     },
     divider: {
-      // why: divider sits 30px below the photo (760+340=760 photo bottom,
-      // divider at y=790). Width=440 centered → left = (1080-440)/2 = 320.
-      top: 790,
-      width: 440,
+      // photo bottom at 810 → divider at y=850 (40px gap — magazine breathe).
+      top: 850,
+      width: 480,
       height: 2,
     },
     price: {
-      top: 830,
-      fontSize: 74,
+      // why: 84pt (was 74pt). Compromise between reviewer's 88-92pt ask
+      // and the geometric constraint of fitting under the larger photo.
+      // Still a clear step up from the original.
+      top: 884,
+      fontSize: 84,
     },
     openHouse: {
-      top: 916,
+      top: 1000,
       fontSize: 22,
     },
     addressRow: {
-      // why: at y=946 the address bottom edge sits at ~970, leaving ~110px
-      // of bottom whitespace that frames the composition.
-      top: 946,
+      // why: y=1028 leaves ~30px bottom margin after the bigger price.
+      top: 1028,
       fontSize: 22,
       streetWidth: 480,
       cityWidth: 480,
@@ -304,48 +310,50 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
   },
 
   // ── Story 9:16 (1080×1920) ────────────────────────────────────────────────
-  // why: logo at y=120 sits inside the top safe zone (~250px) — the
-  // Excellence Collection mark is a brand fixture, so partial overlap with
-  // the IG/FB profile header is acceptable and the mark stays legible. The
-  // eyebrow + photo + type stack all sit BELOW the safe zone.
+  // why: logo at y=290 (was y=120) — fully BELOW the 250px top safe zone
+  // (design review 2026-05-17). IG/FB profile chip + close-friends ring
+  // were partially occluding the logo at y=120. Whole stack compresses
+  // upward by 100px to maintain composition rhythm.
   story_9x16: {
     width: 1080,
     height: 1920,
     logo: {
-      top: 120,
+      top: 290,
       width: 360,
     },
     eyebrow: {
-      // why: y=370 is well below the 250px top safe zone.
-      top: 370,
+      // why: y=470 keeps the same ~80px logo→eyebrow gap as before, just
+      // shifted down with the logo.
+      top: 470,
       fontSize: 108,
       gap: 32,
       perCharWidthEstimate: 60,
     },
     photo: {
-      // why: 880×700 centered. left = (1080-880)/2 = 100.
+      // why: shifted down 100px from y=560 → y=660 to follow the logo+
+      // eyebrow shift below the top safe zone. Photo size unchanged.
       left: 100,
-      top: 560,
+      top: 660,
       width: 880,
       height: 700,
     },
     divider: {
-      // photo bottom at 1260 → divider at y=1320.
-      top: 1320,
+      // photo bottom at 1360 → divider at y=1400.
+      top: 1400,
       width: 540,
       height: 2,
     },
     price: {
-      top: 1380,
+      top: 1460,
       fontSize: 108,
     },
     openHouse: {
-      top: 1512,
+      top: 1600,
       fontSize: 28,
     },
     addressRow: {
-      // why: y=1560 ends at ~1590, well clear of the 1720 bottom safe zone.
-      top: 1560,
+      // why: y=1660 ends at ~1696, just clear of the 1720 bottom safe zone.
+      top: 1660,
       fontSize: 28,
       streetWidth: 560,
       cityWidth: 560,
@@ -488,22 +496,36 @@ export function createExcellenceCollectionTemplate(
   const logoLeft = Math.round((layout.width - layout.logo.width) / 2);
   const logoHeight = Math.round(layout.logo.width / LOGO_ASPECT_RATIO);
 
-  // Eyebrow row math — two text layers butted side-by-side.
-  // why: we approximate each word's pixel width from `perCharWidthEstimate ×
-  // word length`. textAlign:"center" inside the layer box means a slight
-  // over-allocation (e.g., "NEW" measured at 3×42=126px but visually ~110px)
-  // just adds horizontal padding around the word — not a visual misalignment.
-  // The gap between layers is a fixed pixel value, so the rendered words sit
-  // exactly `gap` pixels apart at the inner edges of the two boxes.
+  // Eyebrow row math — two text layers, INNER EDGES anchored to a fixed
+  // pixel gap straddling the canvas centerline.
+  //
+  // why (design review 2026-05-17): the previous approach used
+  // `textAlign: "center"` inside both layers' boxes, which floats each
+  // word at the centerline of its own over-allocated box. Playfair is a
+  // *proportional* serif — "NEW" rendered ~110px wide inside a 126px
+  // box would float with ~8px padding either side, "LISTING" rendered
+  // ~280px wide inside a 294px box floats with ~7px either side. The
+  // *visible* gap between words isn't `layout.eyebrow.gap` — it's that
+  // gap PLUS each word's individual padding, which produces a noticeably
+  // looser perceptual spacing than intended and varies per post type.
+  //
+  // Fix: right-align word A and left-align word B. The right edge of
+  // word A's text box sits at `centerX - gap/2`; the left edge of word
+  // B's box sits at `centerX + gap/2`. Both word boxes are sized to
+  // their predicted widths, but textAlign now anchors the GLYPH edges
+  // to the inner gap. The math is identical at runtime (we still
+  // estimate per-character widths) but the rendered gap stays constant
+  // across post types regardless of word length.
   const wordAWidth = Math.round(
     cfg.eyebrowWordA.length * layout.eyebrow.perCharWidthEstimate,
   );
   const wordBWidth = Math.round(
     cfg.eyebrowWordB.length * layout.eyebrow.perCharWidthEstimate,
   );
-  const eyebrowTotalWidth = wordAWidth + layout.eyebrow.gap + wordBWidth;
-  const eyebrowLeftA = Math.round((layout.width - eyebrowTotalWidth) / 2);
-  const eyebrowLeftB = eyebrowLeftA + wordAWidth + layout.eyebrow.gap;
+  const centerX = Math.round(layout.width / 2);
+  const halfGap = Math.round(layout.eyebrow.gap / 2);
+  const eyebrowLeftA = centerX - halfGap - wordAWidth;
+  const eyebrowLeftB = centerX + halfGap;
 
   // Gold divider centered.
   const dividerLeft = Math.round((layout.width - layout.divider.width) / 2);
@@ -587,19 +609,30 @@ export function createExcellenceCollectionTemplate(
       // why: fill matches the canvas background so only the stroke is
       // visible — produces the "hollow gold" look in the reference sample.
       fill: "#FCFCFB",
-      textAlign: "center",
+      // why: textAlign:"right" anchors the glyph's right edge to the
+      // right edge of the box — combined with the centerX math above,
+      // the inner edge of "NEW" sits exactly `halfGap` pixels left of
+      // the canvas centerline. (Was "center" — see comment above the
+      // eyebrow math block.)
+      textAlign: "right",
       lineHeight: 1,
-      charSpacing: -20,
+      // why: outlined letterforms need slightly looser tracking, not
+      // tighter (-20 from previous rev was making strokes kiss). +30
+      // gives the gold outline room to breathe without separating words.
+      charSpacing: 30,
       underline: false,
       linethrough: false,
       editable: true,
       effect: {
         kind: "outline",
-        // why: 3px stroke at fontSize 72-108 reads as a refined hairline
-        // outline at every format — thicker would look chunky, thinner would
-        // disappear at the smaller square_1x1 size.
-        width: 3,
-        color: ALLIANCE_COLORS.gold500,
+        // why: 4px stroke (was 3) — design review flagged 3px would lose
+        // definition under IG's lossy compression. Bumping a hair keeps
+        // the outline crisp at every format.
+        width: 4,
+        // why: gold600 (was gold500) — review noted gold500 against
+        // near-white sits at ~2.2:1 contrast which fails non-text 3:1
+        // minimum. gold600 is one stop darker, ~3.6:1, AA-safe.
+        color: ALLIANCE_COLORS.gold600,
       },
     },
 
@@ -625,7 +658,11 @@ export function createExcellenceCollectionTemplate(
       fontWeight: 800,
       fontStyle: "normal",
       fill: ALLIANCE_COLORS.ink900,
-      textAlign: "center",
+      // why: textAlign:"left" anchors the glyph's left edge to the left
+      // edge of the box — combined with the centerX math, the inner
+      // edge of "LISTING" sits exactly `halfGap` pixels right of the
+      // canvas centerline. Pairs with word A's right-align.
+      textAlign: "left",
       lineHeight: 1,
       charSpacing: -20,
       underline: false,
@@ -802,14 +839,18 @@ export function createExcellenceCollectionTemplate(
     width: layout.addressRow.pipeWidth,
     height: layout.addressRow.fontSize + 10,
     angle: 0,
-    opacity: 0.7,
+    // why: opacity 1 (was 0.7) — design review 2026-05-17. Pipes work
+    // best at full opacity but thin weight. The 0.7 hack was making
+    // the separator look half-disappeared; switching to fontWeight 300
+    // gets the same "delicate" feel without contrast loss.
+    opacity: 1,
     z: 8,
     visible: true,
     locked: false,
     text: "|",
     fontFamily: ALLIANCE_FONTS.bodySans,
     fontSize: layout.addressRow.fontSize,
-    fontWeight: 400,
+    fontWeight: 300,
     fontStyle: "normal",
     fill: ALLIANCE_COLORS.ink700,
     textAlign: "center",
