@@ -603,13 +603,16 @@ function LogoPlaceholderIcon(): JSX.Element {
 }
 
 // ===========================================================================
-// Upload modal — admin-only "+ Add asset"
+// Upload modal — admin-only "+ Add asset" (multi-file 2026-05-17)
 // ===========================================================================
 //
-// Tiny inline modal rendered when the admin clicks "+ Add asset" on either
-// section. Captures: label (required), optional logo_category, and the
-// file itself. On submit it base64-encodes the file client-side, calls the
-// parent's onUpload (which wraps uploadBrandAssetAction), and closes.
+// Modal rendered when the admin clicks "+ Add asset" on either section.
+// Captures: one or more files + optional category. Each upload is named
+// from its filename (stem, prettified) — admin can rename later. The
+// optional Category applies to every file in the batch (logo only).
+//
+// Per-file progress (queued → uploading → done / failed) so the admin can
+// see partial successes and retry just the failures.
 
 interface UploadAssetModalProps {
   kind: "logo" | "partner_logo";
@@ -624,66 +627,147 @@ interface UploadAssetModalProps {
   }) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
-function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
-  const [label, setLabel] = useState("");
-  const [category, setCategory] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+type UploadItemStatus = "queued" | "uploading" | "done" | "failed";
 
-  const ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml";
-  const MAX_MB = 5;
+interface UploadItem {
+  /** Synthetic id so React keys stay stable across re-renders. */
+  id: string;
+  file: File;
+  /** Derived from filename stem on selection; not user-editable in this UI. */
+  label: string;
+  status: UploadItemStatus;
+  error: string | null;
+}
+
+const ACCEPT_BRAND_FILES = "image/png,image/jpeg,image/webp,image/svg+xml";
+const BRAND_FILE_MAX_MB = 5;
+
+/**
+ * Turn "1 - Gold-Horizontal.png" into "1 Gold Horizontal" — same heuristic
+ * the Edge Function used for Drive-synced rows. Strips the extension,
+ * collapses separators to single spaces, title-cases each word.
+ */
+function deriveLabelFromFilename(filename: string): string {
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const spaced = stem.replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim();
+  return spaced
+    .split(" ")
+    .map((w) => (w.length > 0 ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
+  const [items, setItems] = useState<UploadItem[]>([]);
+  const [category, setCategory] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [topError, setTopError] = useState<string | null>(null);
+
+  function handleFilesPicked(fileList: FileList | null): void {
+    if (!fileList || fileList.length === 0) return;
+    const next: UploadItem[] = [];
+    for (let i = 0; i < fileList.length; i++) {
+      const f = fileList[i];
+      next.push({
+        id: `${Date.now()}-${i}-${f.name}`,
+        file: f,
+        label: deriveLabelFromFilename(f.name),
+        status: "queued",
+        error: null,
+      });
+    }
+    // why: append to whatever's already queued so the admin can click
+    // "Choose files" multiple times to build a larger batch from
+    // different folders.
+    setItems((prev) => [...prev, ...next]);
+    setTopError(null);
+  }
+
+  function handleRemoveItem(id: string): void {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    setError(null);
-    if (!file) {
-      setError("Pick a file first.");
+    setTopError(null);
+    if (items.length === 0) {
+      setTopError("Pick at least one file.");
       return;
     }
-    if (file.size > MAX_MB * 1024 * 1024) {
-      setError(`File too large (${(file.size / 1024 / 1024).toFixed(2)} MB). Max ${MAX_MB} MB.`);
-      return;
-    }
-    const labelTrim = label.trim();
-    if (!labelTrim) {
-      setError("Label is required.");
-      return;
-    }
-    setBusy(true);
-    try {
-      // why: read file → base64. FileReader.readAsDataURL gives us a
-      // data: URL we then strip the header off to get raw base64.
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result));
-        r.onerror = () => reject(r.error ?? new Error("read failed"));
-        r.readAsDataURL(file);
-      });
-      const commaIdx = dataUrl.indexOf(",");
-      const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
-      const res = await props.onUpload({
-        kind: props.kind,
-        label: labelTrim,
-        logo_category: category.trim() ? category.trim() : null,
-        filename: file.name,
-        content_type: file.type,
-        file_base64: base64,
-      });
-      if (!res.ok) {
-        setError(res.error);
-      } else {
-        props.onClose();
+    // Validate every file up front so we don't half-upload a batch.
+    for (const it of items) {
+      if (it.file.size > BRAND_FILE_MAX_MB * 1024 * 1024) {
+        setTopError(
+          `"${it.file.name}" is ${(it.file.size / 1024 / 1024).toFixed(2)} MB — max ${BRAND_FILE_MAX_MB} MB. Remove it or pick a smaller version.`,
+        );
+        return;
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
     }
+
+    setBusy(true);
+    const cat = category.trim() ? category.trim() : null;
+
+    // why: sequential upload. Parallelism would race the row inserts and
+    // is unnecessary at this scale (admin uploads a couple dozen logos at
+    // most). Sequential also lets us show per-file status linearly.
+    for (const it of items) {
+      // Skip already-completed items if the user is retrying.
+      if (it.status === "done") continue;
+
+      setItems((prev) =>
+        prev.map((p) =>
+          p.id === it.id ? { ...p, status: "uploading", error: null } : p,
+        ),
+      );
+
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result));
+          r.onerror = () => reject(r.error ?? new Error("read failed"));
+          r.readAsDataURL(it.file);
+        });
+        const commaIdx = dataUrl.indexOf(",");
+        const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+        const res = await props.onUpload({
+          kind: props.kind,
+          label: it.label || it.file.name,
+          logo_category: cat,
+          filename: it.file.name,
+          content_type: it.file.type,
+          file_base64: base64,
+        });
+        if (!res.ok) {
+          setItems((prev) =>
+            prev.map((p) =>
+              p.id === it.id ? { ...p, status: "failed", error: res.error } : p,
+            ),
+          );
+        } else {
+          setItems((prev) =>
+            prev.map((p) =>
+              p.id === it.id ? { ...p, status: "done", error: null } : p,
+            ),
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setItems((prev) =>
+          prev.map((p) =>
+            p.id === it.id ? { ...p, status: "failed", error: msg } : p,
+          ),
+        );
+      }
+    }
+
+    setBusy(false);
   }
 
+  const allDone =
+    items.length > 0 && items.every((it) => it.status === "done");
+  const anyFailed = items.some((it) => it.status === "failed");
+
   const titleLabel =
-    props.kind === "logo" ? "Add a C21 logo" : "Add a partner / co-brand mark";
+    props.kind === "logo" ? "Add C21 logos" : "Add partner / co-brand marks";
 
   return (
     <div
@@ -694,7 +778,7 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
     >
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+        className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"
       >
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -704,6 +788,10 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
             <h3 className="text-base font-bold text-neutral-900">
               {titleLabel}
             </h3>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              Pick one or more files. Each upload uses the filename as the
+              label — you can rename them later if needed.
+            </p>
           </div>
           <button
             type="button"
@@ -717,30 +805,13 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
         </div>
 
         <div className="space-y-3">
-          <label className="block">
-            <span className="text-xs font-medium text-neutral-700">
-              Label <span className="text-rose-600">*</span>
-            </span>
-            <input
-              type="text"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              disabled={busy}
-              placeholder={
-                props.kind === "logo"
-                  ? "e.g. Gold Logo Horizontal"
-                  : "e.g. Family of Services"
-              }
-              className="mt-1 block w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500"
-              autoFocus
-            />
-          </label>
-
           {props.kind === "logo" ? (
             <label className="block">
               <span className="text-xs font-medium text-neutral-700">
                 Category{" "}
-                <span className="text-neutral-400">(optional grouping)</span>
+                <span className="text-neutral-400">
+                  (optional; applies to all selected files)
+                </span>
               </span>
               <input
                 type="text"
@@ -755,23 +826,66 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
 
           <label className="block">
             <span className="text-xs font-medium text-neutral-700">
-              File <span className="text-rose-600">*</span>
+              Files <span className="text-rose-600">*</span>
             </span>
             <input
               type="file"
-              accept={ACCEPT}
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              accept={ACCEPT_BRAND_FILES}
+              multiple
+              onChange={(e) => handleFilesPicked(e.target.files)}
               disabled={busy}
               className="mt-1 block w-full text-xs text-neutral-600 file:mr-2 file:rounded-md file:border-0 file:bg-gold-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-gold-700 hover:file:bg-gold-100"
             />
             <span className="mt-1 block text-[10px] text-neutral-500">
-              PNG, JPG, WEBP, or SVG. Max {MAX_MB} MB.
+              PNG, JPG, WEBP, or SVG. Max {BRAND_FILE_MAX_MB} MB per file.
             </span>
           </label>
 
-          {error ? (
+          {items.length > 0 ? (
+            <div className="rounded-md border border-neutral-200 bg-neutral-50">
+              <div className="border-b border-neutral-200 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                {items.length} file{items.length === 1 ? "" : "s"} queued
+              </div>
+              <ul className="max-h-60 divide-y divide-neutral-200 overflow-y-auto">
+                {items.map((it) => (
+                  <li
+                    key={it.id}
+                    className="flex items-center gap-2 px-2 py-1.5 text-xs"
+                  >
+                    <UploadStatusGlyph status={it.status} />
+                    <span className="flex-1 truncate">
+                      <span className="font-medium text-neutral-900">
+                        {it.label}
+                      </span>{" "}
+                      <span className="text-neutral-500">
+                        ({it.file.name})
+                      </span>
+                      {it.error ? (
+                        <span className="block truncate text-rose-700">
+                          {it.error}
+                        </span>
+                      ) : null}
+                    </span>
+                    {it.status === "queued" || it.status === "failed" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItem(it.id)}
+                        disabled={busy}
+                        className="rounded p-0.5 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700 disabled:opacity-40"
+                        aria-label={`Remove ${it.file.name} from the upload queue`}
+                      >
+                        ✕
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {topError ? (
             <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs text-rose-800">
-              {error}
+              {topError}
             </div>
           ) : null}
         </div>
@@ -783,17 +897,75 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
             disabled={busy}
             className="rounded-md px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
           >
-            Cancel
+            {allDone ? "Done" : "Cancel"}
           </button>
           <button
             type="submit"
-            disabled={busy || !file || !label.trim()}
+            disabled={busy || items.length === 0 || allDone}
             className="rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-neutral-900 hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? "Uploading…" : "Upload"}
+            {busy
+              ? "Uploading…"
+              : anyFailed
+                ? "Retry failed"
+                : items.length > 1
+                  ? `Upload ${items.length} files`
+                  : "Upload"}
           </button>
         </div>
       </form>
     </div>
+  );
+}
+
+function UploadStatusGlyph({
+  status,
+}: {
+  status: UploadItemStatus;
+}): JSX.Element {
+  if (status === "done") {
+    return (
+      <span
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"
+        aria-label="Uploaded"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M2 5l2 2 4-4" />
+        </svg>
+      </span>
+    );
+  }
+  if (status === "uploading") {
+    return (
+      <span
+        className="inline-flex h-4 w-4 items-center justify-center text-gold-600"
+        aria-label="Uploading"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" className="animate-spin" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M9 5a4 4 0 11-4-4" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <span
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-100 text-rose-700"
+        aria-label="Failed"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M3 3l4 4M7 3l-4 4" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
+  }
+  // queued
+  return (
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-neutral-300 text-[10px] text-neutral-400"
+      aria-label="Queued"
+    >
+      <span className="h-1 w-1 rounded-full bg-neutral-400" />
+    </span>
   );
 }
