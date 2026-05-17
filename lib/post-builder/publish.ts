@@ -29,7 +29,25 @@ const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
 export interface MetaCredentials {
   page_id: string;
+  /**
+   * FB Page Access Token — used for `/page/photos`, `/page/feed`, `/page/videos`.
+   * Must carry the `pages_manage_posts` permission (which requires the owning
+   * Meta app to have the "Manage everything on your Page" use case configured).
+   */
   page_access_token: string;
+  /**
+   * IG-capable Page Access Token — used for the `/ig-id/media`,
+   * `/ig-id/media_publish` IG publishing endpoints. MUST carry
+   * `instagram_basic` + `instagram_content_publish` scopes.
+   *
+   * why: a single Meta app may not yet have BOTH Page-publish scopes
+   * (`pages_manage_posts`) AND IG-publish scopes if the IG use case
+   * hasn't been fully customized. We persist them independently in the
+   * `facebook` vs `instagram` rows of `api_credentials` so each can come
+   * from a different app's token if needed. Falls back to
+   * `page_access_token` when the IG row doesn't carry its own token.
+   */
+  ig_page_access_token: string;
   ig_business_account_id: string | null;
 }
 
@@ -87,11 +105,22 @@ export async function loadMetaCredentials(): Promise<MetaCredentials | null> {
   const fbCreds = fb.credentials as { page_id?: string; page_access_token?: string };
   if (!fbCreds.page_id || !fbCreds.page_access_token) return null;
 
-  const igCreds = (ig?.credentials ?? {}) as { ig_business_account_id?: string };
+  const igCreds = (ig?.credentials ?? {}) as {
+    ig_business_account_id?: string;
+    page_access_token?: string;
+  };
+
+  // why: when the IG row carries its own page_access_token, use it for IG
+  // publishes (it'll have instagram_* scopes). Otherwise fall back to the FB
+  // row's token — the same single-token behavior we had before the split.
+  const igToken = igCreds.page_access_token
+    ? String(igCreds.page_access_token)
+    : String(fbCreds.page_access_token);
 
   return {
     page_id: String(fbCreds.page_id),
     page_access_token: String(fbCreds.page_access_token),
+    ig_page_access_token: igToken,
     ig_business_account_id: igCreds.ig_business_account_id
       ? String(igCreds.ig_business_account_id)
       : null,
@@ -293,6 +322,11 @@ export async function publishToIG(args: {
   }
 
   const igId = creds.ig_business_account_id;
+  // why: IG publishing uses the IG-specific page token (carries
+  // instagram_basic + instagram_content_publish). Falls back to the FB
+  // page token when no separate IG token is configured.
+  const igAccessToken = creds.ig_page_access_token;
+
   try {
     let creationId: string;
 
@@ -301,7 +335,7 @@ export async function publishToIG(args: {
       const body = new URLSearchParams({
         image_url: image_urls[0],
         caption,
-        access_token: creds.page_access_token,
+        access_token: igAccessToken,
       });
       const res = await fetch(url, { method: "POST", body });
       const json = await res.json();
@@ -315,7 +349,7 @@ export async function publishToIG(args: {
         const body = new URLSearchParams({
           image_url: imgUrl,
           is_carousel_item: "true",
-          access_token: creds.page_access_token,
+          access_token: igAccessToken,
         });
         const res = await fetch(url, { method: "POST", body });
         const json = await res.json();
@@ -327,7 +361,7 @@ export async function publishToIG(args: {
         media_type: "CAROUSEL",
         children: childIds.join(","),
         caption,
-        access_token: creds.page_access_token,
+        access_token: igAccessToken,
       });
       const res = await fetch(parentUrl, { method: "POST", body });
       const json = await res.json();
@@ -352,7 +386,7 @@ export async function publishToIG(args: {
     const publishUrl = `${GRAPH}/${igId}/media_publish`;
     const body = new URLSearchParams({
       creation_id: creationId,
-      access_token: creds.page_access_token,
+      access_token: igAccessToken,
     });
     const res = await fetch(publishUrl, { method: "POST", body });
     const json = await res.json();
@@ -364,7 +398,7 @@ export async function publishToIG(args: {
     let permalink: string | null = null;
     try {
       const permRes = await fetch(
-        `${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(creds.page_access_token)}`,
+        `${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(igAccessToken)}`,
       );
       const permJson = await permRes.json();
       if (permRes.ok && typeof permJson.permalink === "string") {
@@ -621,6 +655,9 @@ export async function publishReelToIG(args: {
   }
 
   const igId = creds.ig_business_account_id;
+  // why: IG Reel publishing uses the IG-capable token (instagram_basic +
+  // instagram_content_publish), same pattern as publishToIG.
+  const igAccessToken = creds.ig_page_access_token;
 
   try {
     // 1) Create the Reels container.
@@ -633,7 +670,7 @@ export async function publishReelToIG(args: {
       // why: share_to_feed=true posts to both Reels tab AND main feed for
       // max reach — aligns with project priority on views/exposure.
       share_to_feed: "true",
-      access_token: creds.page_access_token,
+      access_token: igAccessToken,
     });
     const containerRes = await fetch(containerUrl, {
       method: "POST",
@@ -659,7 +696,7 @@ export async function publishReelToIG(args: {
     for (let i = 0; i < MAX_POLLS; i++) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       const statusRes = await fetch(
-        `${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(creds.page_access_token)}`,
+        `${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(igAccessToken)}`,
       );
       const statusJson = (await statusRes.json()) as IGContainerStatus;
       if (!statusRes.ok && statusJson.error) {
@@ -699,7 +736,7 @@ export async function publishReelToIG(args: {
     const publishUrl = `${GRAPH}/${igId}/media_publish`;
     const publishBody = new URLSearchParams({
       creation_id: creationId,
-      access_token: creds.page_access_token,
+      access_token: igAccessToken,
     });
     const publishRes = await fetch(publishUrl, {
       method: "POST",
@@ -718,7 +755,7 @@ export async function publishReelToIG(args: {
     let permalink: string | null = null;
     try {
       const permRes = await fetch(
-        `${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(creds.page_access_token)}`,
+        `${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(igAccessToken)}`,
       );
       const permJson = (await permRes.json()) as { permalink?: string };
       if (permRes.ok && typeof permJson.permalink === "string") {
