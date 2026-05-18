@@ -8,7 +8,7 @@ import {
   setUserActiveAction,
   updateUserRoleAction,
   type UserRole,
-} from "@/app/(app)/settings/users/actions";
+} from "@/app/(app)/users/actions";
 
 export interface UsersTableRow {
   id: string;
@@ -17,7 +17,18 @@ export interface UsersTableRow {
   role: UserRole;
   is_active: boolean;
   created_at: string;
-  /** ISO timestamp of last successful sign-in, sourced from auth.users. */
+  /**
+   * ISO timestamp of last in-app activity (heartbeat from LastActiveBeacon).
+   * Preferred display source. Updates while the user is using the app, not
+   * just on login.
+   */
+  last_active_at: string | null;
+  /**
+   * ISO timestamp of last successful sign-in, sourced from auth.users.
+   * Kept as a fallback for never-active accounts (users who logged in once
+   * before the beacon shipped, or who have a session but haven't loaded a
+   * page since deploy).
+   */
   last_sign_in_at: string | null;
   /** True when this row represents the current admin viewing the page. */
   is_self: boolean;
@@ -48,7 +59,7 @@ export default function UsersTable({ rows }: UsersTableProps) {
             <th className="px-4 py-3 font-medium">Role</th>
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">Created</th>
-            <th className="px-4 py-3 font-medium">Last sign-in</th>
+            <th className="px-4 py-3 font-medium">Last active</th>
             <th className="px-4 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
@@ -132,7 +143,11 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
   const createdLabel = Number.isNaN(created.getTime())
     ? "—"
     : created.toLocaleDateString();
-  const lastSignInLabel = formatLastSignIn(row.last_sign_in_at);
+  // why: prefer the activity heartbeat (real usage) over the login timestamp.
+  // Fall back to last_sign_in_at for accounts that haven't pinged the beacon
+  // yet (e.g. logged in pre-deploy, or session not yet refreshed).
+  const activityIso = row.last_active_at ?? row.last_sign_in_at;
+  const lastActiveLabel = formatLastActive(activityIso);
 
   return (
     <>
@@ -201,15 +216,15 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
         <td
           className={clsx(
             "px-4 py-3 text-xs",
-            row.last_sign_in_at ? "text-neutral-600" : "text-neutral-400",
+            activityIso ? "text-neutral-600" : "text-neutral-400",
           )}
           title={
-            row.last_sign_in_at
-              ? new Date(row.last_sign_in_at).toLocaleString()
+            activityIso
+              ? new Date(activityIso).toLocaleString()
               : "Never signed in"
           }
         >
-          {lastSignInLabel}
+          {lastActiveLabel}
         </td>
         <td className="px-4 py-3">
           <div className="flex items-center justify-end gap-2">
@@ -306,20 +321,35 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
 }
 
 /**
- * Friendly relative-ish formatting for the Last sign-in cell:
- *   - Same calendar day → "today, 9:45 AM"
- *   - Yesterday        → "yesterday, 4:12 PM"
- *   - Within 7 days    → "3d ago"
- *   - Older            → "May 3, 2026"
- *   - Null/undefined   → "Never"
+ * Friendly relative-ish formatting for the Last active cell:
+ *   - Within 2 minutes  → "Active now"
+ *   - Within 60 minutes → "5 min ago"
+ *   - Within 24 hours   → "3h ago"
+ *   - Same calendar day → "today, 9:45 AM" (fallback for edge cases)
+ *   - Yesterday         → "yesterday, 4:12 PM"
+ *   - Within 7 days     → "3d ago"
+ *   - Older             → "May 3, 2026"
+ *   - Null/undefined    → "Never"
+ *
+ * Used for the heartbeat-tracked last_active_at value AND falls back to
+ * last_sign_in_at for accounts that haven't pinged the beacon yet.
  */
-function formatLastSignIn(iso: string | null | undefined): string {
+function formatLastActive(iso: string | null | undefined): string {
   if (!iso) return "Never";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  const diffHr = Math.floor(diffMs / 3_600_000);
   const diffDays = Math.floor(diffMs / 86_400_000);
+
+  // why: "Active now" gives admins a clean signal that the user has the
+  // app open right now. 2 min aligns with the server-side debounce so any
+  // recent heartbeat clears the threshold.
+  if (diffMs >= 0 && diffMin < 2) return "Active now";
+  if (diffMin < 60) return `${diffMin} min ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
 
   const sameDay =
     d.getFullYear() === now.getFullYear() &&

@@ -2620,7 +2620,7 @@ export type SaveCustomTemplateResult =
  *      slot first (two sequential UPDATEs in lieu of a transaction — the
  *      partial unique index would reject the INSERT otherwise).
  *   5. INSERT (when id is null) or UPDATE (when id is provided).
- *   6. Revalidate /post-builder + /settings/templates so the new template
+ *   6. Revalidate /post-builder + /templates so the new template
  *      appears in the variant grid + Manage Templates UI on next render.
  */
 export async function saveCustomTemplateAction(
@@ -2789,7 +2789,7 @@ export async function saveCustomTemplateAction(
       };
     }
     revalidatePath("/post-builder");
-    revalidatePath("/settings/templates");
+    revalidatePath("/templates");
     return { ok: true, id: data.id };
   } else {
     // UPDATE — keep preview unless a new one was uploaded. The payload
@@ -2826,7 +2826,7 @@ export async function saveCustomTemplateAction(
       return { ok: false, error: `Update failed: ${updateErr.message}` };
     }
     revalidatePath("/post-builder");
-    revalidatePath("/settings/templates");
+    revalidatePath("/templates");
     return { ok: true, id: input.id };
   }
 }
@@ -2996,7 +2996,7 @@ export async function archiveCustomTemplateAction(
   }
 
   revalidatePath("/post-builder");
-  revalidatePath("/settings/templates");
+  revalidatePath("/templates");
   return { ok: true, id };
 }
 
@@ -3072,7 +3072,7 @@ export async function setCustomTemplateDefaultAction(
   }
 
   revalidatePath("/post-builder");
-  revalidatePath("/settings/templates");
+  revalidatePath("/templates");
   return { ok: true, id };
 }
 
@@ -3116,6 +3116,6 @@ export async function renameCustomTemplateAction(
   }
 
   revalidatePath("/post-builder");
-  revalidatePath("/settings/templates");
+  revalidatePath("/templates");
   return { ok: true, id };
 }

@@ -17,8 +17,10 @@ interface AccountMenuProps {
  *
  * Items:
  *   - My account → /settings/security (any signed-in user)
- *   - Settings   → /settings (admin-only)
- *   - Sign out   → triggers the existing signOut server action
+ *   - Admin section (admin-only): Users, Templates, Maintenance, Settings —
+ *     surfaced as direct shortcuts so the most-touched admin pages are one
+ *     click from anywhere instead of two clicks under /settings.
+ *   - Sign out
  *
  * Open/close: click the trigger, click outside, Esc, or click any item. We
  * intentionally don't lock body scroll — this is a small dropdown, not a
@@ -116,14 +118,41 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
             label="My account"
             sub="Change password"
           />
+
           {isAdmin ? (
-            <MenuItem
-              href="/settings"
-              onSelect={() => setOpen(false)}
-              icon={<GearIcon />}
-              label="Settings"
-              sub="Feeds, credentials, users"
-            />
+            <>
+              <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-neutral-400">
+                Admin
+              </div>
+              <MenuItem
+                href="/users"
+                onSelect={() => setOpen(false)}
+                icon={<UsersIcon />}
+                label="Users"
+                sub="Invite, roles, activity"
+              />
+              <MenuItem
+                href="/templates"
+                onSelect={() => setOpen(false)}
+                icon={<LayersIcon />}
+                label="Templates"
+                sub="Custom Studio templates"
+              />
+              <MenuItem
+                href="/maintenance"
+                onSelect={() => setOpen(false)}
+                icon={<WrenchIcon />}
+                label="Maintenance"
+                sub="Cache, cleanup tools"
+              />
+              <MenuItem
+                href="/settings"
+                onSelect={() => setOpen(false)}
+                icon={<GearIcon />}
+                label="Settings"
+                sub="Credentials, feeds, more"
+              />
+            </>
           ) : null}
 
           <div className="my-1.5 border-t border-neutral-100" />
@@ -186,6 +215,71 @@ function UserIcon() {
         stroke="currentColor"
         strokeWidth={1.6}
         strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" aria-hidden="true">
+      <circle cx="9" cy="8" r="3.2" stroke="currentColor" strokeWidth={1.6} />
+      <path
+        d="M2.5 19.5c.9-2.8 3.4-4.5 6.5-4.5s5.6 1.7 6.5 4.5"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+      />
+      <circle
+        cx="17"
+        cy="9.5"
+        r="2.6"
+        stroke="currentColor"
+        strokeWidth={1.6}
+      />
+      <path
+        d="M16 14.5c2.2.1 4 1.5 4.7 3.3"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function LayersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" aria-hidden="true">
+      <path
+        d="M12 3l9 5-9 5-9-5 9-5z"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 13l9 5 9-5"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 17l9 5 9-5"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function WrenchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" aria-hidden="true">
+      <path
+        d="M15.5 3.5a4.5 4.5 0 00-5.9 5.9L3.5 15.5a2 2 0 102.8 2.8l6.1-6.1a4.5 4.5 0 005.9-5.9l-2.9 2.9-2.3-2.3 2.4-2.4z"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinejoin="round"
       />
     </svg>
   );

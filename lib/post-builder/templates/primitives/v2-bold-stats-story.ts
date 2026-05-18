@@ -83,7 +83,7 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
     border-radius: 2px;
   }
   .eyebrow-text {
-    font-size: 32px; font-weight: 700; letter-spacing: 0.32em;
+    font-size: 32px; font-weight: 700; letter-spacing: 0.26em;
     text-transform: uppercase; color: #FBF7EE;
     text-shadow: 0 2px 8px rgba(0,0,0,0.4);
   }
@@ -133,16 +133,11 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
     padding-top: 28px; border-top: 1px solid rgba(252,252,251,0.18);
     gap: 18px;
   }
-  .brand { display: flex; align-items: center; gap: 16px; }
-  .brand-mark {
-    width: 48px; height: 48px; border-radius: 10px;
-    background: linear-gradient(135deg, ${theme.accent} 0%, ${theme.accent_dark} 100%);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px; font-weight: 800; color: #18181B; letter-spacing: -0.02em;
-  }
-  .brand-text {
-    font-size: 22px; font-weight: 700; letter-spacing: 0.18em;
-    color: #FCFCFB; text-transform: uppercase;
+  .brand { display: flex; align-items: center; }
+  /* why: real C21 Alliance White lockup — canonical source
+     ./canvas-editor/templates/brand-logos.ts (C21_ALLIANCE_WHITE_LOGO). */
+  .brand img {
+    height: 52px; width: auto; object-fit: contain;
   }
   .mls-tag {
     font-size: 19px; font-weight: 600; letter-spacing: 0.16em;
@@ -184,8 +179,7 @@ ${commonHead(`${theme.eyebrow} · ${addressLine1}`)}
       </div>
       <div class="footer">
         <div class="brand">
-          <div class="brand-mark">21</div>
-          <div class="brand-text">Century 21 Alliance</div>
+          <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/1243286b-f208-47fb-a8f3-7fa1367951a2.png" alt="Century 21 Alliance" />
         </div>
         <div class="mls-tag">${escapeHtml(mlsHashtag)}</div>
       </div>

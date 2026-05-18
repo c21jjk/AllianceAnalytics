@@ -132,7 +132,7 @@ export async function backfillThumbnailCacheAction(args: {
     .is("thumbnail_cached_at", null)
     .not("thumbnail_url", "is", null);
 
-  revalidatePath("/settings");
+  revalidatePath("/maintenance");
 
   return {
     ok: true,

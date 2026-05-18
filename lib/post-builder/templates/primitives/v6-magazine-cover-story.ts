@@ -56,6 +56,27 @@ ${commonHead(`${theme.eyebrow} · ${cityName}`)}
     background-image: url("${heroImageDataUri}");
     background-size: cover; background-position: center;
   }
+  /* why: gold hairline seam — opacity 0.55 → 0.75 per design review 2026-05-17. */
+  .seam-rule {
+    position: absolute; top: 1179px; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, ${theme.accent} 0%, ${theme.accent_dark} 100%);
+    opacity: 0.75;
+    z-index: 2;
+  }
+  /* why: story-only top-right C21 brand anchor — the editorial cream panel
+     lives at y=1180 and gets cropped by IG/FB Story UI on some devices.
+     Sits at top:290 (STORY_SAFE_ZONE.top 250 + 40 buffer) so it's never
+     clipped. Mirrors layer_c21_badge_story in magazine-cover-factory. */
+  .c21-badge-top {
+    position: absolute; top: 290px; right: 40px;
+    width: 220px; height: 90px; z-index: 3;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0.92;
+  }
+  .c21-badge-top img {
+    max-width: 100%; max-height: 100%; height: auto; width: auto;
+    object-fit: contain;
+  }
   .panel {
     position: absolute; top: 1180px; left: 0; right: 0; bottom: 0;
     background: #FBF7EE;
@@ -74,15 +95,19 @@ ${commonHead(`${theme.eyebrow} · ${cityName}`)}
     font-size: 26px; font-weight: 700; letter-spacing: 0.16em;
     text-transform: uppercase; color: ${theme.accent_dark};
   }
-  .city {
+  /* why: address is now the editorial anchor (was city); long addresses
+     wrap to 2 lines via line-height 1.02 + generous container height. */
+  .address {
     margin-top: 26px;
     font-family: "Playfair Display", "Times New Roman", Georgia, serif;
-    font-size: 130px; font-weight: 700; line-height: 0.98; letter-spacing: -0.02em;
+    font-size: 130px; font-weight: 700; line-height: 1.02; letter-spacing: -0.02em;
     color: #18181B; word-break: break-word;
+    min-height: 286px;
   }
-  .address {
+  .city {
     margin-top: 20px;
-    font-size: 30px; font-weight: 500; letter-spacing: 0.08em;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 32px; font-weight: 600; letter-spacing: 0.24em;
     text-transform: uppercase; color: #3F3F3D; word-break: break-word;
   }
   .open-house {
@@ -115,13 +140,19 @@ ${commonHead(`${theme.eyebrow} · ${cityName}`)}
     display: inline-block; width: 4px; height: 4px; border-radius: 50%;
     background: ${theme.accent};
   }
+  /* why: footer brand-mark area — real C21 Alliance Grey lockup, canonical
+     source ./canvas-editor/templates/brand-logos.ts. Opacity 0.6 → 0.75. */
   .corner-mark {
-    text-align: right;
-    font-size: 13px; font-weight: 600; letter-spacing: 0.18em;
-    color: rgba(24,24,27,0.6); text-transform: uppercase; line-height: 1.45;
-    flex-shrink: 0;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+    opacity: 0.75; flex-shrink: 0;
   }
-  .corner-mark .mls { display: block; }
+  .corner-mark img {
+    height: 48px; width: auto; object-fit: contain;
+  }
+  .corner-mark .mls {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.18em;
+    color: rgba(24,24,27,0.85); text-transform: uppercase; line-height: 1;
+  }
   ${BADGE_CSS}
   /* Badge anchors on the hero photo, upper-right; nudged below the
      story top safe zone so platform UI doesn't clip it. */
@@ -131,6 +162,10 @@ ${commonHead(`${theme.eyebrow} · ${cityName}`)}
 <body>
   <div class="frame">
     <div class="hero"></div>
+    <div class="seam-rule"></div>
+    <div class="c21-badge-top">
+      <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/15c6c2ea-dc9f-45c1-8f65-3cd412ba8299.png" alt="Century 21 Alliance" />
+    </div>
     ${renderBadge(theme)}
     <div class="panel">
       <div>
@@ -138,8 +173,8 @@ ${commonHead(`${theme.eyebrow} · ${cityName}`)}
           <span class="eyebrow-rule"></span>
           <span class="eyebrow-text">${escapeHtml(theme.eyebrow)}</span>
         </div>
-        <div class="city">${escapeHtml(cityName)}</div>
         ${addressLine1 ? `<div class="address">${escapeHtml(addressLine1)}</div>` : ""}
+        ${cityName ? `<div class="city">${escapeHtml(cityName)}</div>` : ""}
         ${ohText ? `<div class="open-house">${escapeHtml(ohText)}</div>` : ""}
       </div>
       <div class="bottom-row">
@@ -158,7 +193,7 @@ ${commonHead(`${theme.eyebrow} · ${cityName}`)}
           }
         </div>
         <div class="corner-mark">
-          <span>Century 21 Alliance</span>
+          <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/15c6c2ea-dc9f-45c1-8f65-3cd412ba8299.png" alt="Century 21 Alliance" />
           <span class="mls">${escapeHtml(mlsHashtag)}</span>
         </div>
       </div>

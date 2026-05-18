@@ -61,6 +61,14 @@ ${commonSquareHead(`${theme.eyebrow} · ${cityName}`)}
     background-image: url("${heroImageDataUri}");
     background-size: cover; background-position: center;
   }
+  /* why: gold hairline at the photo / cream-panel seam — opacity bumped
+     0.55 → 0.75 per design review 2026-05-17 (mirrors magazine-cover-factory). */
+  .seam-rule {
+    position: absolute; top: 669px; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, ${theme.accent} 0%, ${theme.accent_dark} 100%);
+    opacity: 0.75;
+    z-index: 2;
+  }
   .panel {
     position: absolute; top: 670px; left: 0; right: 0; bottom: 0;
     background: #FBF7EE;
@@ -79,15 +87,19 @@ ${commonSquareHead(`${theme.eyebrow} · ${cityName}`)}
     font-size: 18px; font-weight: 700; letter-spacing: 0.16em;
     text-transform: uppercase; color: ${theme.accent_dark};
   }
-  .city {
+  /* why: address is now the editorial anchor (was city); long addresses
+     wrap to 2 lines via line-height 1.02 + generous container height. */
+  .address {
     margin-top: 18px;
     font-family: "Playfair Display", "Times New Roman", Georgia, serif;
-    font-size: 96px; font-weight: 700; line-height: 1; letter-spacing: -0.02em;
+    font-size: 96px; font-weight: 700; line-height: 1.02; letter-spacing: -0.02em;
     color: #18181B; word-break: break-word;
+    min-height: 211px;
   }
-  .address {
+  .city {
     margin-top: 14px;
-    font-size: 24px; font-weight: 500; letter-spacing: 0.08em;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 28px; font-weight: 600; letter-spacing: 0.24em;
     text-transform: uppercase; color: #3F3F3D; word-break: break-word;
   }
   .open-house {
@@ -120,13 +132,16 @@ ${commonSquareHead(`${theme.eyebrow} · ${cityName}`)}
     display: inline-block; width: 3px; height: 3px; border-radius: 50%;
     background: ${theme.accent};
   }
+  /* why: footer brand-mark area — real C21 Alliance Grey lockup, canonical
+     source ./canvas-editor/templates/brand-logos.ts. Opacity bumped 0.6 → 0.75
+     per design review 2026-05-17 (was reading too dusty against cream). */
   .corner-mark {
-    text-align: right;
-    font-size: 10px; font-weight: 600; letter-spacing: 0.18em;
-    color: rgba(24,24,27,0.6); text-transform: uppercase; line-height: 1.4;
-    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: flex-end;
+    opacity: 0.75; flex-shrink: 0;
   }
-  .corner-mark .mls { display: block; }
+  .corner-mark img {
+    height: 36px; width: auto; object-fit: contain;
+  }
   ${BADGE_CSS}
   /* Badge anchors on the hero photo, upper-right. */
   .badge-stamp { top: 88px; right: 56px; }
@@ -134,6 +149,7 @@ ${commonSquareHead(`${theme.eyebrow} · ${cityName}`)}
 <body>
   <div class="frame">
     <div class="hero"></div>
+    <div class="seam-rule"></div>
     ${renderBadge(theme)}
     <div class="panel">
       <div>
@@ -141,8 +157,8 @@ ${commonSquareHead(`${theme.eyebrow} · ${cityName}`)}
           <span class="eyebrow-rule"></span>
           <span class="eyebrow-text">${escapeHtml(theme.eyebrow)}</span>
         </div>
-        <div class="city">${escapeHtml(cityName)}</div>
         ${addressLine1 ? `<div class="address">${escapeHtml(addressLine1)}</div>` : ""}
+        ${cityName ? `<div class="city">${escapeHtml(cityName)}</div>` : ""}
         ${ohText ? `<div class="open-house">${escapeHtml(ohText)}</div>` : ""}
       </div>
       <div class="bottom-row">
@@ -161,9 +177,11 @@ ${commonSquareHead(`${theme.eyebrow} · ${cityName}`)}
           }
         </div>
         <div class="corner-mark">
-          <span>Century 21 Alliance</span>
-          <span class="mls">${escapeHtml(mlsHashtag)}</span>
+          <img src="https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/15c6c2ea-dc9f-45c1-8f65-3cd412ba8299.png" alt="Century 21 Alliance" />
         </div>
+        ${/* why: MLS hashtag hidden on square + portrait per design review 2026-05-17 —
+              it lives in caption + hashtags; the magazine layout reads cleaner without
+              a numeric stub in the footer. Story format keeps the hashtag visible. */ ""}
       </div>
     </div>
   </div>

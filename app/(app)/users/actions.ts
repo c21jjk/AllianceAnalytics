@@ -16,8 +16,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
  *     creates / updates / deletes an auth user also touches profiles in the
  *     same transaction-ish flow. (Supabase's admin API can't be wrapped in a
  *     SQL transaction with the table writes; we do best-effort sequencing.)
- *   - Self-actions (changeOwnPassword) live in `../security/actions.ts`. Those
- *     don't need admin role and use the user's own session, not service role.
+ *   - Self-actions (changeOwnPassword) live in `../settings/security/actions.ts`.
+ *     Those don't need admin role and use the user's own session, not service role.
  */
 
 export type UserRole = "admin" | "user";
@@ -116,7 +116,7 @@ export async function inviteUserAction(
   }
 
   revalidatePath("/settings");
-  revalidatePath("/settings/users");
+  revalidatePath("/users");
   return { ok: true, user_id: userId };
 }
 
@@ -173,7 +173,7 @@ export async function updateUserRoleAction(
     .eq("id", userId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/settings/users");
+  revalidatePath("/users");
   return { ok: true };
 }
 
@@ -222,7 +222,7 @@ export async function setUserActiveAction(
     .eq("id", userId);
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/settings/users");
+  revalidatePath("/users");
   return { ok: true };
 }
 
@@ -265,7 +265,7 @@ export async function deleteUserAction(userId: string): Promise<ActionResult> {
   // but be defensive — explicitly delete in case it's not configured.
   await admin.from("profiles").delete().eq("id", userId);
 
-  revalidatePath("/settings/users");
+  revalidatePath("/users");
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -291,7 +291,7 @@ export async function adminResetPasswordAction(
   });
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/settings/users");
+  revalidatePath("/users");
   return { ok: true };
 }
 

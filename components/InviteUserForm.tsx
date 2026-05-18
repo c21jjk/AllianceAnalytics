@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { inviteUserAction, type ActionResult } from "@/app/(app)/settings/users/actions";
+import { inviteUserAction, type ActionResult } from "@/app/(app)/users/actions";
 
 const initial: ActionResult = { ok: false };
 

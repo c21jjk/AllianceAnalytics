@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * CustomTemplatesTable — interactive table for /settings/templates.
+ * CustomTemplatesTable — interactive table for /templates.
  *
  * Rows are grouped by post_type. Each row shows preview thumbnail, name,
  * slot tuple, default badge, and three inline actions (rename, toggle

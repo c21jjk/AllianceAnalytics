@@ -16,8 +16,6 @@ import {
   type FBTokenStatus,
 } from "@/lib/post-builder/publish";
 import { PLATFORMS } from "./credentialSchemas";
-import ThumbnailCacheBackfillCard from "./ThumbnailCacheBackfillCard";
-import { getUncachedThumbnailCount } from "./thumbnail-cache-actions";
 import { setPublishTestModeAction } from "./actions";
 
 export const metadata = { title: "Settings — Alliance Social" };
@@ -28,11 +26,10 @@ export default async function SettingsPage() {
 
   const admin = createAdminClient();
 
-  const [feeds, credentials, offices, uncachedThumbnails, systemConfig] = await Promise.all([
+  const [feeds, credentials, offices, systemConfig] = await Promise.all([
     listMlsFeeds(),
     listCredentials(),
     listOffices({ active_only: false }),
-    getUncachedThumbnailCount(),
     loadSystemConfig(),
   ]);
 
@@ -60,16 +57,6 @@ export default async function SettingsPage() {
       console.warn("[settings] FB token status fetch failed:", e);
     }
   }
-
-  // Users — summary count for the link card. Detailed table + invite form
-  // live on /settings/users now.
-  const { data: users } = await admin
-    .from("profiles")
-    .select("id, role, is_active");
-  const userCount = users?.length ?? 0;
-  const adminCount = (users ?? []).filter(
-    (u) => u.role === "admin" && u.is_active,
-  ).length;
 
   // Dismissed-listings count for the audit card.
   const { count: dismissedCount } = await admin
@@ -185,79 +172,10 @@ export default async function SettingsPage() {
 
       <section>
         <SectionHeading
-          title="Maintenance"
-          subtitle="One-off admin tools for data cleanup and migrations."
-        />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ThumbnailCacheBackfillCard initialRemaining={uncachedThumbnails} />
-        </div>
-      </section>
-
-      <section>
-        <SectionHeading
-          title="Post Builder"
-          subtitle="Custom templates, brand assets, and the Studio editor library."
-        />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Link
-            href="/settings/templates"
-            className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-neutral-900 group-hover:text-gold-700">
-                Custom Templates
-              </h3>
-              <span className="text-xs text-neutral-400 group-hover:text-gold-600">
-                Manage →
-              </span>
-            </div>
-            <p className="text-xs text-neutral-500">
-              Canvas templates Larissa saved from the Post Builder Studio.
-              Mark one as the default for a slot to replace the factory
-              variant card.
-            </p>
-          </Link>
-        </div>
-      </section>
-
-      <section>
-        <SectionHeading
           title="Account & access"
-          subtitle="Manage who can sign in and update your own password."
+          subtitle="Update your own password and audit listings you've removed from the dashboard prompt strip."
         />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Link
-            href="/settings/users"
-            className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-neutral-900 group-hover:text-gold-700">
-                Users
-              </h3>
-              <span className="text-xs text-neutral-400 group-hover:text-gold-600">
-                Manage →
-              </span>
-            </div>
-            <p className="text-xs text-neutral-500">
-              Invite new accounts, change roles, disable or delete users.
-            </p>
-            <div className="mt-2 flex items-center gap-3 text-xs text-neutral-600">
-              <span>
-                <span className="font-semibold text-neutral-900">
-                  {userCount}
-                </span>{" "}
-                total
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>
-                <span className="font-semibold text-neutral-900">
-                  {adminCount}
-                </span>{" "}
-                admin
-              </span>
-            </div>
-          </Link>
-
           <Link
             href="/settings/security"
             className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
