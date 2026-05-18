@@ -88,6 +88,67 @@ export async function syncOne(
 }
 
 /**
+ * Invoke the MLS RETS sync for a single feed (CMC or SJSR for now; Bright
+ * slots in later). Public counterpart to the private invokeMlsSync helper —
+ * the dashboard SyncPanel calls this once per feed in a sequential loop so
+ * each feed's progress + result can render in its own pill.
+ *
+ * Errors from invokeMlsSync are caught and serialized into the standard
+ * MlsSyncResult shape (ok:false + errors[]) so the client can render a
+ * useful inline error without a try/catch wrapper at the call site.
+ */
+export async function syncOneMls(
+  feedShortCode: "cmc" | "sjsr",
+): Promise<MlsSyncResult> {
+  await requireAdmin();
+  try {
+    const result = await invokeMlsSync(feedShortCode);
+    revalidatePath("/", "layout");
+    return result;
+  } catch (e) {
+    return {
+      feed_short_code: feedShortCode,
+      feed_name: feedShortCode.toUpperCase(),
+      ok: false,
+      duration_ms: 0,
+      classes: [],
+      errors: [{ message: (e as Error).message }],
+      total_upserted: 0,
+    };
+  }
+}
+
+/**
+ * Run the cross-platform grouper RPC. Called by the SyncPanel after a Social
+ * batch completes so late arrivals get folded into existing groups (the same
+ * post-grouper logic syncAll runs at the end of its batch).
+ *
+ * Returns null when the RPC errors — surfaced to the UI as "grouper skipped"
+ * rather than a fatal sync failure.
+ */
+export async function runGrouperAction(): Promise<
+  { groups_created: number; posts_assigned: number } | null
+> {
+  await requireAdmin();
+  const supabase = createAdminClient();
+  try {
+    const { data, error } = await supabase.rpc("run_post_grouper");
+    if (error || !Array.isArray(data) || data.length === 0) return null;
+    const row = data[0] as {
+      groups_created?: number;
+      posts_assigned?: number;
+    };
+    return {
+      groups_created: Number(row.groups_created ?? 0),
+      posts_assigned: Number(row.posts_assigned ?? 0),
+    };
+  } catch (e) {
+    console.error("runGrouperAction failed —", e);
+    return null;
+  }
+}
+
+/**
  * Invoke the mls-rets-sync Edge Function for one Paragon feed. Same auth
  * pattern as the social syncs — service-role key, no cron involvement. The
  * function takes ~10-15s per feed (Cape May ≈ 14s end-to-end including
