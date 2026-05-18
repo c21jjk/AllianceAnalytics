@@ -20,6 +20,8 @@ import type {
 import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
 import {
   archiveBrandAssetAction,
+  listCustomTemplatesAction,
+  saveCustomTemplateAction,
   saveGeneratedPostAction,
   schedulePostAction,
   setPostTestModeAction,
@@ -28,6 +30,7 @@ import {
   updatePostCaptionsAction,
   uploadBrandAssetAction,
   upsertGeneratedPostFromStudioAction,
+  type CustomTemplateSummary,
 } from "./actions";
 
 // === Canvas Editor (Path C) — Phase 1, Step 2 wiring ===
@@ -286,7 +289,55 @@ export default function PostBuilderClient({
   const [studioContext, setStudioContext] = useState<{
     template: CanvasTemplateSchema;
     listing: MLSListingPayload;
+    /**
+     * When the canvas was hydrated from a custom template row, this
+     * carries the row's id + metadata so the SaveAsTemplate modal can
+     * default into UPDATE mode (keeping changes on the same row instead
+     * of inserting a sibling each save).
+     */
+    customTemplate?: {
+      id: string;
+      name: string;
+      isDefault: boolean;
+      fabricJson: unknown;
+    };
   } | null>(null);
+
+  // === Custom Templates (2026-05-17) ===
+  // why: user-authored canvas templates live in `custom_templates` and merge
+  // into the variant grid below. We fetch the list for the CURRENT
+  // (postType, format) tuple whenever either changes — the variant grid
+  // re-renders once the data arrives. Default custom templates REPLACE
+  // factory cards (matched by based_on_variant); non-default rows append
+  // as additional cards after the 6 factory variants.
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplateSummary[]>(
+    [],
+  );
+  const [customTemplatesLoading, setCustomTemplatesLoading] =
+    useState<boolean>(false);
+
+  /** Manual refetch trigger — called from the SaveAsTemplate onSaved callback. */
+  const refetchCustomTemplates = useCallback(async (): Promise<void> => {
+    setCustomTemplatesLoading(true);
+    try {
+      const res = await listCustomTemplatesAction(postType, format);
+      if (res.ok) {
+        setCustomTemplates(res.templates);
+      } else {
+        // why: don't surface as a top-level error — custom templates are an
+        // additive feature; the variant grid still renders factory cards
+        // when the fetch fails. Console-warn for diagnostics.
+        console.warn("[customTemplates] fetch failed:", res.error);
+        setCustomTemplates([]);
+      }
+    } finally {
+      setCustomTemplatesLoading(false);
+    }
+  }, [postType, format]);
+
+  useEffect(() => {
+    void refetchCustomTemplates();
+  }, [refetchCustomTemplates]);
 
   // Part 2 (Phase D) — Make-a-Reel follow-up prompt state. Populated by a
   // successful Studio save; when non-null, surfaces a modal asking the user
@@ -535,6 +586,106 @@ export default function PostBuilderClient({
   const listings = listingsByPostType[postType] ?? [];
   const variants = variantsByPostTypeAndFormat[postType]?.[format] ?? [];
 
+  /**
+   * Merge factory variants with custom templates for the variant grid.
+   *
+   * Rules:
+   *   1. For each factory variant card, if there's a custom template with
+   *      `is_default = true` AND `based_on_variant === variant`, REPLACE
+   *      the factory card with a custom card carrying the same variant
+   *      key (so the selection model and "active" state still work).
+   *   2. Append every non-default custom template AFTER the factory cards
+   *      as standalone cards. Their variant key is suffixed with the row
+   *      id so each appears as a distinct slot in the grid.
+   *
+   * The card shape adds a `customTemplate` discriminator: when present, the
+   * card renders the preview_image_url as its thumbnail and carries the
+   * fabric_json + id needed to open the custom template in Studio. Factory
+   * cards have `customTemplate: null` and behave exactly as before.
+   */
+  type MergedVariantCard = VariantOption & {
+    /** Per-card display name (custom card overrides the factory's). */
+    card_display_name: string;
+    /** Per-card description (custom card uses a "Custom template" marker). */
+    card_description: string;
+    /** When non-null, the card was sourced from a custom_templates row. */
+    customTemplate: {
+      id: string;
+      name: string;
+      fabricJson: unknown;
+      previewImageUrl: string | null;
+      isDefault: boolean;
+    } | null;
+  };
+
+  const mergedVariantCards = useMemo<MergedVariantCard[]>(() => {
+    const defaultsByVariant = new Map<string, CustomTemplateSummary>();
+    const nonDefaults: CustomTemplateSummary[] = [];
+    for (const ct of customTemplates) {
+      if (ct.is_default) {
+        // why: partial unique index ensures at most one default per slot,
+        // but we coalesce defensively on the client too — first wins if
+        // the DB ever ships two. Stable order matches the action's sort.
+        if (!defaultsByVariant.has(ct.based_on_variant)) {
+          defaultsByVariant.set(ct.based_on_variant, ct);
+        }
+      } else {
+        nonDefaults.push(ct);
+      }
+    }
+
+    const result: MergedVariantCard[] = [];
+    for (const v of variants) {
+      const override = defaultsByVariant.get(v.variant);
+      if (override) {
+        result.push({
+          ...v,
+          card_display_name: override.name,
+          card_description: `Custom template · based on ${v.display_name}`,
+          customTemplate: {
+            id: override.id,
+            name: override.name,
+            fabricJson: override.fabric_json,
+            previewImageUrl: override.preview_image_url,
+            isDefault: true,
+          },
+        });
+      } else {
+        result.push({
+          ...v,
+          card_display_name: v.display_name,
+          card_description: v.description,
+          customTemplate: null,
+        });
+      }
+    }
+    // Append non-default custom templates as extra cards.
+    for (const ct of nonDefaults) {
+      // why: re-use the factory variant's photo_count when known so the
+      // disable-on-insufficient-photos path stays consistent. Fall back to
+      // 1 when no matching factory variant exists (shouldn't happen with
+      // the v2/v3/v6/v8/v9/v10 allowlist, but defensive).
+      const baseFactory = variants.find((v) => v.variant === ct.based_on_variant);
+      result.push({
+        template_id: `custom_${ct.id}`,
+        variant: ct.based_on_variant,
+        display_name: ct.name,
+        description: `Custom template · based on ${baseFactory?.display_name ?? ct.based_on_variant}`,
+        photo_count: baseFactory?.photo_count ?? 1,
+        card_display_name: ct.name,
+        card_description: `Custom template · based on ${baseFactory?.display_name ?? ct.based_on_variant}`,
+        customTemplate: {
+          id: ct.id,
+          name: ct.name,
+          fabricJson: ct.fabric_json,
+          previewImageUrl: ct.preview_image_url,
+          isDefault: false,
+        },
+      });
+    }
+    return result;
+  }, [variants, customTemplates]);
+
   const currentVariant = useMemo(
     () => variants.find((v) => v.variant === variantId) ?? null,
     [variants, variantId],
@@ -598,9 +749,41 @@ export default function PostBuilderClient({
       agentName: selectedListing.agent_name ?? null,
       officeName: selectedListing.listing_office_name ?? null,
     });
-    setStudioContext({ template: studioTemplate, listing: payload });
+    // why: when a custom default exists for the active variant slot, hydrate
+    // Studio from its Fabric JSON instead of the factory schema. The
+    // factory `studioTemplate` is still passed so dimensions + format
+    // remain stable — only the layer content is overridden.
+    const customDefault = customTemplates.find(
+      (ct) =>
+        ct.is_default &&
+        ct.based_on_variant === variantId &&
+        ct.post_type === postType &&
+        ct.format === format,
+    );
+    if (customDefault) {
+      setStudioContext({
+        template: studioTemplate,
+        listing: payload,
+        customTemplate: {
+          id: customDefault.id,
+          name: customDefault.name,
+          isDefault: true,
+          fabricJson: customDefault.fabric_json,
+        },
+      });
+    } else {
+      setStudioContext({ template: studioTemplate, listing: payload });
+    }
     setStudioOpen(true);
-  }, [selectedListing, studioTemplate, availablePhotos]);
+  }, [
+    selectedListing,
+    studioTemplate,
+    availablePhotos,
+    customTemplates,
+    variantId,
+    postType,
+    format,
+  ]);
 
   /**
    * Phase A.1 — Click-to-Studio variant launcher.
@@ -648,7 +831,89 @@ export default function PostBuilderClient({
         agentName: selectedListing.agent_name ?? null,
         officeName: selectedListing.listing_office_name ?? null,
       });
-      setStudioContext({ template: tpl, listing: payload });
+      // why: if a user marked a custom template as the default for this
+      // slot, opening that factory variant should hydrate Studio from the
+      // CUSTOM Fabric JSON instead of the factory schema. Mirrors the
+      // variant-grid replacement logic — the default custom template is
+      // the user's authoritative starting point for this slot.
+      const customDefault = customTemplates.find(
+        (ct) =>
+          ct.is_default &&
+          ct.based_on_variant === nextVariant &&
+          ct.post_type === postType &&
+          ct.format === format,
+      );
+      if (customDefault) {
+        setStudioContext({
+          template: tpl,
+          listing: payload,
+          customTemplate: {
+            id: customDefault.id,
+            name: customDefault.name,
+            isDefault: true,
+            fabricJson: customDefault.fabric_json,
+          },
+        });
+      } else {
+        setStudioContext({ template: tpl, listing: payload });
+      }
+      setStudioOpen(true);
+    },
+    [selectedListing, postType, format, availablePhotos, customTemplates],
+  );
+
+  /**
+   * 2026-05-17 — Custom Templates entry point. The variant grid renders
+   * custom-template cards either by REPLACING the factory card (when
+   * is_default=true) or APPENDING after the factory variants. Both routes
+   * land here.
+   *
+   * The editor still needs a CanvasTemplateSchema to bootstrap (it sets up
+   * dimensions, format, the carousel strip, etc.) — we use the factory
+   * baseline for `based_on_variant` as the scaffold, then ride the
+   * `customTemplate` prop to make the editor load `customTemplate.fabricJson`
+   * via `canvas.loadFromJSON()` instead of the schema-driven hydration. The
+   * MLS-data re-bind happens on top of that load via the `boundField` data
+   * Fabric preserves through toJSON/loadFromJSON.
+   */
+  const openStudioForCustomTemplate = useCallback(
+    (customTpl: {
+      id: string;
+      name: string;
+      fabricJson: unknown;
+      isDefault: boolean;
+      basedOnVariant: PostVariant;
+    }): void => {
+      if (!selectedListing) return;
+      const baseTpl = findCanvasTemplate(
+        postType,
+        customTpl.basedOnVariant,
+        format,
+      );
+      if (!baseTpl) {
+        setError(
+          `Custom template references missing factory variant ${customTpl.basedOnVariant} for ${postType} / ${format}.`,
+        );
+        return;
+      }
+      setVariantId(customTpl.basedOnVariant);
+      setRenderResult(null);
+      setError(null);
+      const payload = mapListingToPayload(selectedListing, {
+        photos: availablePhotos.map((p) => p.url),
+        agentName: selectedListing.agent_name ?? null,
+        officeName: selectedListing.listing_office_name ?? null,
+      });
+      setStudioContext({
+        template: baseTpl,
+        listing: payload,
+        customTemplate: {
+          id: customTpl.id,
+          name: customTpl.name,
+          isDefault: customTpl.isDefault,
+          fabricJson: customTpl.fabricJson,
+        },
+      });
       setStudioOpen(true);
     },
     [selectedListing, postType, format, availablePhotos],
@@ -2255,14 +2520,22 @@ export default function PostBuilderClient({
                     </span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {variants.map((v) => {
-                      const active = v.variant === variantId;
+                    {mergedVariantCards.map((v) => {
+                      const isCustomCard = v.customTemplate !== null;
+                      // why: for a custom card we still want to highlight
+                      // it as "active" when the user has it selected. We
+                      // track active by template_id (which is unique per
+                      // card: factory id OR `custom_<uuid>`), not by
+                      // variant — otherwise a non-default custom card
+                      // would steal the active state from its factory
+                      // sibling whenever both share `based_on_variant`.
+                      const active = isCustomCard
+                        ? false // custom-only "active" state TBD; for now custom cards never look pre-selected
+                        : v.variant === variantId;
                       const photosAvailable = availablePhotos.length;
                       const insufficient =
                         photosAvailable > 0 && photosAvailable < v.photo_count;
                       const disabled = insufficient;
-                      // Build hero URL set for the preview. v1-v3 single photo,
-                      // v4 takes 2, v5 takes 3 — slice from the rolling window.
                       const previewHeroUrls = availablePhotos.length > 0
                         ? Array.from({ length: v.photo_count }, (_, i) =>
                             availablePhotos[(selectedPhotoIndex + i) % availablePhotos.length]?.url
@@ -2270,17 +2543,6 @@ export default function PostBuilderClient({
                         : selectedListing?.hero_image_url
                           ? [selectedListing.hero_image_url]
                           : [];
-                      // Phase A.1 (2026-05-16): every variant card whose
-                      // canvas-editor template exists is itself a click-to-
-                      // Studio launcher. The old per-card "Edit in Studio"
-                      // button was removed — it only ever appeared under the
-                      // ACTIVE card, which left the other 5 cards in the
-                      // 2x3 grid as dead targets. Canva-model: tile = launcher.
-                      //
-                      // `cardCanvasTemplate` resolves per-card (not via the
-                      // shared `studioTemplate` memo which is keyed to the
-                      // CURRENTLY-active variantId). This lets each card know
-                      // its own Studio-availability state independently.
                       const cardCanvasTemplate = findCanvasTemplate(
                         postType,
                         v.variant as PostVariant,
@@ -2290,30 +2552,44 @@ export default function PostBuilderClient({
                         !disabled &&
                         cardCanvasTemplate !== null &&
                         !!selectedListing;
+                      // why: clicking a custom card needs to bypass the
+                      // factory-variant routing — the editor must load
+                      // `fabric_json` instead of the factory schema. We
+                      // open Studio directly via openStudioForCustomTemplate
+                      // (no "activate then save" gating). Factory cards keep
+                      // the original "activate variant only" click semantics
+                      // so caption generation still routes through the
+                      // factory variant path.
+                      const handleCardClick = (): void => {
+                        if (disabled) return;
+                        if (isCustomCard && v.customTemplate) {
+                          openStudioForCustomTemplate({
+                            id: v.customTemplate.id,
+                            name: v.customTemplate.name,
+                            fabricJson: v.customTemplate.fabricJson,
+                            isDefault: v.customTemplate.isDefault,
+                            basedOnVariant: v.variant as PostVariant,
+                          });
+                          return;
+                        }
+                        changeVariant(v.variant as PostVariant);
+                      };
                       return (
                         <button
                           key={v.template_id}
                           type="button"
-                          onClick={() => {
-                            if (disabled) return;
-                            // Part 3 (Phase D) — variant card click ONLY
-                            // activates the variant. It no longer auto-
-                            // enters Studio, because doing so skipped
-                            // caption + hashtag generation entirely
-                            // (Studio doesn't run that pipeline). The
-                            // user now has to click "Generate" below to
-                            // produce caption + hashtags + render, and
-                            // can optionally enter Studio raw via the
-                            // hover-Edit affordance on top-right.
-                            changeVariant(v.variant as PostVariant);
-                          }}
+                          onClick={handleCardClick}
                           disabled={disabled}
                           title={
                             insufficient
                               ? `Needs ${v.photo_count} photos — this listing only has ${photosAvailable}.`
-                              : v.description
+                              : v.card_description
                           }
-                          aria-label={`Activate ${v.display_name}`}
+                          aria-label={
+                            isCustomCard
+                              ? `Open custom template ${v.card_display_name} in Studio`
+                              : `Activate ${v.card_display_name}`
+                          }
                           className={[
                             "group text-left rounded-xl border p-2.5 transition relative flex flex-col",
                             disabled
@@ -2325,23 +2601,68 @@ export default function PostBuilderClient({
                         >
                           {/* Large preview on top */}
                           <div className="relative">
-                            <VariantPreviewThumb
-                              templateId={v.template_id}
-                              listing={selectedListing}
-                              heroUrls={previewHeroUrls}
-                              format={format}
-                              disabled={disabled}
-                              size="large"
-                            />
-                            {/* Part 3 — explicit "Edit in Studio" affordance
-                                on top of the preview. Now a real button (not
-                                a decorative span) — opens Studio for THIS
-                                variant directly, skipping the
-                                caption/hashtag pipeline for users who just
-                                want to design first. stopPropagation
-                                prevents the outer card-click from also
-                                activating the variant a second time. */}
-                            {studioAvailable ? (
+                            {isCustomCard && v.customTemplate?.previewImageUrl ? (
+                              // why: custom cards show the user-authored PNG
+                              // captured at save-time. We render directly via
+                              // <img> rather than VariantPreviewThumb because
+                              // VariantPreviewThumb hits the HTML primitive
+                              // renderer (factory variants only) — there's no
+                              // equivalent runtime for Fabric custom JSON yet.
+                              // The preview was captured at 0.5x multiplier so
+                              // the file is small; we let it scale to fit.
+                              <div className="relative aspect-square w-full overflow-hidden rounded-md bg-neutral-100 ring-1 ring-neutral-200">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={v.customTemplate.previewImageUrl}
+                                  alt={`Preview of ${v.card_display_name}`}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              </div>
+                            ) : (
+                              <VariantPreviewThumb
+                                templateId={v.template_id}
+                                listing={selectedListing}
+                                heroUrls={previewHeroUrls}
+                                format={format}
+                                disabled={disabled}
+                                size="large"
+                              />
+                            )}
+                            {/* Custom indicator badge — top-left corner so it
+                                doesn't collide with the hover-Edit affordance
+                                (top-right). Gold pill matches the brand. */}
+                            {isCustomCard ? (
+                              <span
+                                className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-gold-500/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-900 shadow-md backdrop-blur-sm"
+                                aria-label={
+                                  v.customTemplate?.isDefault
+                                    ? "Custom default template"
+                                    : "Custom template"
+                                }
+                                title={
+                                  v.customTemplate?.isDefault
+                                    ? "Custom · default for this slot"
+                                    : "Custom template"
+                                }
+                              >
+                                <svg
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 24 24"
+                                  fill="currentColor"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                                </svg>
+                                {v.customTemplate?.isDefault ? "Default" : "Custom"}
+                              </span>
+                            ) : null}
+                            {/* Factory cards keep the hover-Edit pill on
+                                top-right. Custom cards don't render it
+                                because clicking the card body already opens
+                                Studio for them. */}
+                            {!isCustomCard && studioAvailable ? (
                               <span
                                 role="button"
                                 tabIndex={0}
@@ -2358,8 +2679,8 @@ export default function PostBuilderClient({
                                     );
                                   }
                                 }}
-                                aria-label={`Edit ${v.display_name} in Studio (skip caption)`}
-                                title={`Edit ${v.display_name} in Studio (skip caption)`}
+                                aria-label={`Edit ${v.card_display_name} in Studio (skip caption)`}
+                                title={`Edit ${v.card_display_name} in Studio (skip caption)`}
                                 className="absolute top-2 right-2 inline-flex cursor-pointer items-center gap-1 rounded-full bg-gold-500/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-900 opacity-0 shadow-md backdrop-blur-sm transition-opacity duration-150 hover:bg-gold-500 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-500 group-hover:opacity-100"
                               >
                                 <svg
@@ -2392,7 +2713,7 @@ export default function PostBuilderClient({
                                     : "text-neutral-900",
                               ].join(" ")}
                             >
-                              {v.display_name}
+                              {v.card_display_name}
                             </div>
                             <span
                               className={[
@@ -2415,7 +2736,7 @@ export default function PostBuilderClient({
                           >
                             {insufficient
                               ? `Needs ${v.photo_count} photos · only ${photosAvailable} available`
-                              : v.description}
+                              : v.card_description}
                           </div>
                         </button>
                       );
@@ -2799,6 +3120,51 @@ export default function PostBuilderClient({
         onArchiveBrandAsset={async (id) =>
           archiveBrandAssetAction({ id })
         }
+        customTemplate={studioContext?.customTemplate}
+        onSaveAsTemplate={async (input) => {
+          const res = await saveCustomTemplateAction(input);
+          if (res.ok) {
+            // why: refresh the variant grid so the just-saved template
+            // appears immediately. We also patch the live studioContext
+            // when this was an INSERT, so subsequent saves from the same
+            // session UPDATE the row instead of inserting a sibling.
+            void refetchCustomTemplates();
+            if (input.id === null) {
+              setStudioContext((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      customTemplate: {
+                        id: res.id,
+                        name: input.name,
+                        isDefault: input.makeDefault,
+                        // keep the existing canvas state; the user can still
+                        // edit until they explicitly close the editor.
+                        fabricJson:
+                          prev.customTemplate?.fabricJson ?? input.fabricJson,
+                      },
+                    }
+                  : prev,
+              );
+            } else {
+              setStudioContext((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      customTemplate: prev.customTemplate
+                        ? {
+                            ...prev.customTemplate,
+                            name: input.name,
+                            isDefault: input.makeDefault,
+                          }
+                        : prev.customTemplate,
+                    }
+                  : prev,
+              );
+            }
+          }
+          return res;
+        }}
         carousel={{
           slides: carouselSlides,
           onSlidesChanged: setCarouselSlides,

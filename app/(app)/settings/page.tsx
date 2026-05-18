@@ -195,6 +195,33 @@ export default async function SettingsPage() {
 
       <section>
         <SectionHeading
+          title="Post Builder"
+          subtitle="Custom templates, brand assets, and the Studio editor library."
+        />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Link
+            href="/settings/templates"
+            className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-neutral-900 group-hover:text-gold-700">
+                Custom Templates
+              </h3>
+              <span className="text-xs text-neutral-400 group-hover:text-gold-600">
+                Manage →
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500">
+              Canvas templates Larissa saved from the Post Builder Studio.
+              Mark one as the default for a slot to replace the factory
+              variant card.
+            </p>
+          </Link>
+        </div>
+      </section>
+
+      <section>
+        <SectionHeading
           title="Account & access"
           subtitle="Manage who can sign in and update your own password."
         />

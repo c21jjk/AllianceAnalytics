@@ -118,6 +118,9 @@ import ResizeMenu, {
 } from "./panels/ResizeMenu";
 import TemplatesPanel from "./panels/TemplatesPanel";
 import { CANVAS_TEMPLATES, findCanvasTemplate } from "./templates";
+import SaveAsTemplateModal, {
+  type CanvasStateSnapshot,
+} from "./SaveAsTemplateModal";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // why: fonts.css contains Google Fonts @import statements for the 9 fonts
@@ -795,6 +798,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     onResize,
     carousel,
     onMakeReel,
+    onSaveAsTemplate,
+    customTemplate,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -838,6 +843,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [layerVersion, setLayerVersion] = useState<number>(0);
   const [editorError, setEditorError] = useState<EditorError | null>(null);
   const [isLocalSaving, setIsLocalSaving] = useState<boolean>(false);
+  // why: drives the "Save as Template" modal. Closed by default; opens
+  // when the user clicks the header button (rendered only when the parent
+  // wired `onSaveAsTemplate`). State lives here (not at the parent) because
+  // the modal needs synchronous access to the canvas ref to read
+  // toJSON/toDataURL at submit-time.
+  const [saveAsTemplateModalOpen, setSaveAsTemplateModalOpen] =
+    useState<boolean>(false);
 
   // -------------------------------------------------------------------------
   // Phase 2 — undo/redo history hook
@@ -1420,6 +1432,101 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // re-sort by z. We can't just push them in z-order because async image
     // loads complete out of order. Two-pass approach: add as they arrive,
     // then call canvas.sendObjectToBack/bringObjectToFront to enforce z.
+    //
+    // Custom Templates branch (2026-05-17): when `customTemplate.fabricJson`
+    // is provided, we SKIP the schema-driven hydration and call
+    // `canvas.loadFromJSON()` instead. The fabricJson encodes every Fabric
+    // object the user had on canvas at save-time, including the `data`
+    // metadata that carries `boundField` for text/image layers. After load
+    // completes we walk the objects and re-bind any boundField values to
+    // the CURRENT listing — so when Larissa opens her saved template on a
+    // different property, the price + address + photos update automatically.
+    const hydrateFromCustomTemplate = async (): Promise<void> => {
+      try {
+        await document.fonts.ready;
+      } catch {
+        // ignore — see fonts.ready commentary in hydrateLayers
+      }
+      if (!fabricRef.current || cancelled) return;
+      try {
+        // why: loadFromJSON returns a Promise<Canvas> in Fabric v6. The
+        // reviver callback (second arg) fires per-object and is the
+        // canonical place to wire custom revival logic, but we don't need
+        // it — Fabric preserves arbitrary `data` properties through the
+        // serialization round-trip natively.
+        await fabricRef.current.loadFromJSON(
+          customTemplate!.fabricJson as Record<string, unknown>,
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setEditorError({
+          kind: "init",
+          message: `Custom template load failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+        return;
+      }
+      if (cancelled || !fabricRef.current) return;
+
+      // ---- Re-bind text + image layers to the CURRENT listing data ----
+      // why: the saved fabric_json was authored against a different listing
+      // (or with literal text). When we open it on a new listing, every
+      // text object with a `boundField` should re-resolve against the new
+      // MLS data; image objects with a boundField should swap to the new
+      // photo/logo URL. The `data` metadata on each object carries the
+      // layer id + kind we need, but boundField is stored on the original
+      // schema, not on the Fabric object. To reach it, we look up the
+      // matching layer in the factory template by id — custom templates
+      // are built FROM a factory variant, so the layer id space lines up
+      // 1:1 for the layers the user kept. Layers the user added (e.g.
+      // new text via the toolbar) have no schema entry and are left as-is.
+      const objectsForRebind = fabricRef.current.getObjects();
+      for (const obj of objectsForRebind) {
+        const data = getLayerData(obj);
+        if (!data) continue;
+        const schemaLayer = template.layers.find((l) => l.id === data.layerId);
+        if (!schemaLayer) continue;
+        if (isTextLayer(schemaLayer) && schemaLayer.boundField) {
+          const resolved = resolveTextBoundField(schemaLayer.boundField, listing);
+          if (resolved && resolved.trim().length > 0) {
+            // why: Textbox is the only Fabric text class we emit in
+            // createFabricTextbox. set() with `text` updates the content
+            // and triggers a layout pass; type-narrow via instanceof to
+            // satisfy TS.
+            if (obj instanceof Textbox) {
+              obj.set({ text: resolved });
+            }
+          }
+        } else if (
+          isImageLayer(schemaLayer) &&
+          schemaLayer.boundField
+        ) {
+          const resolved = resolveImageBoundField(
+            schemaLayer.boundField,
+            listing,
+          );
+          if (resolved && obj instanceof FabricImage) {
+            // why: setSrc is async (loads + replaces the underlying
+            // HTMLImageElement). We fire-and-forget here — the next
+            // renderAll after the await chain completes will show the
+            // new image. Errors swallow to a warning; the placeholder
+            // (or stale image) keeps showing if the swap fails.
+            try {
+              await obj.setSrc(resolved, { crossOrigin: "anonymous" });
+            } catch (err) {
+              console.warn("[customTemplate] image rebind failed:", err);
+            }
+          }
+        }
+      }
+
+      if (cancelled || !fabricRef.current) return;
+      fabricRef.current.requestRenderAll();
+      setLayerVersion((v) => v + 1);
+      history.start();
+    };
+
     const hydrateLayers = async (): Promise<void> => {
       // why: wait for fonts to be ready before drawing text. Otherwise the
       // first frame uses the fallback font and looks wrong until the custom
@@ -1519,7 +1626,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     };
 
     void loadBackground();
-    void hydrateLayers();
+    // why: dispatch on `customTemplate` presence. When a custom row is
+    // supplied, the saved Fabric JSON already encodes every object the
+    // user wants — we load + rebind to the current listing. Otherwise
+    // we hydrate from the factory schema as usual.
+    if (customTemplate?.fabricJson) {
+      void hydrateFromCustomTemplate();
+    } else {
+      void hydrateLayers();
+    }
 
     return () => {
       cancelled = true;
@@ -1544,7 +1659,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // parents pass a new object reference each render). The id pair is
     // sufficient for "should we recreate the canvas".
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [template.id, listing.id]);
+  }, [template.id, listing.id, customTemplate?.id]);
 
   // -------------------------------------------------------------------------
   // Layer panel data — derived from Fabric on each layerVersion bump
@@ -2400,6 +2515,93 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   }, [onSave, template, currentTemplate.id, listing.mlsNumber]);
 
   // -------------------------------------------------------------------------
+  // Custom Template — canvas-state snapshot + submit handler
+  // -------------------------------------------------------------------------
+  //
+  // why: the SaveAsTemplateModal needs the latest `canvas.toJSON()` AND a
+  // half-scale PNG preview at submit-time. Both reads are synchronous; we
+  // expose them as a single callback the modal calls inside its own submit
+  // handler so the data is captured at the moment of save (not at modal
+  // open, where the user might still be editing).
+  //
+  // The multiplier of 0.5 keeps the preview data URI to ~150-250KB for a
+  // 1080×1080 canvas — small enough to round-trip through a Server Action
+  // body without hitting Vercel's ~4.5MB ceiling. PNG (not JPEG) because
+  // the preview is small and the variant grid card benefits from the
+  // sharper edges on text overlays.
+  const getCanvasStateForTemplate = useCallback((): CanvasStateSnapshot | null => {
+    const canvas = fabricRef.current;
+    if (!canvas) return null;
+    // why: discard the active selection before snapshotting so the
+    // selection-corner artwork doesn't bleed into the preview PNG. Mirrors
+    // the discard inside handleExport.
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    let fabricJson: unknown;
+    let previewImageDataUri = "";
+    try {
+      fabricJson = canvas.toJSON();
+    } catch (err) {
+      console.warn("[SaveAsTemplate] toJSON failed:", err);
+      return null;
+    }
+    try {
+      previewImageDataUri = canvas.toDataURL({
+        format: "png",
+        multiplier: 0.5,
+        enableRetinaScaling: false,
+      });
+    } catch (err) {
+      // why: tainted-canvas → SecurityError. The Save flow downstream will
+      // reject without a preview; we return an empty string so the modal
+      // can show a helpful inline error rather than crashing here.
+      console.warn("[SaveAsTemplate] toDataURL failed:", err);
+      previewImageDataUri = "";
+    }
+    return { fabricJson, previewImageDataUri };
+  }, []);
+
+  // why: lookup the current variant's display name from the registry so the
+  // modal's checkbox copy reads naturally ("Make this the new default for
+  // Excellence Collection"). VARIANT_META lives in the templates registry
+  // (registry.ts) but isn't exported; the editor doesn't import it directly,
+  // so we replicate the display-name fallback table here. Source of truth
+  // stays the registry — keep these in sync if a new variant ships.
+  const VARIANT_DISPLAY_NAMES: Record<string, string> = useMemo(
+    () => ({
+      v1: "Hero Editorial",
+      v2: "Bold Stats",
+      v3: "Excellence Collection",
+      v4: "Two-Photo Diptych",
+      v5: "Three-Photo Grid",
+      v6: "Magazine Cover",
+      v7: "Polaroid",
+      v8: "Standard NEW LISTING",
+      v9: "Just Sold Celebration",
+      v10: "Coming Soon Teaser",
+    }),
+    [],
+  );
+  const POST_TYPE_DISPLAY_NAMES: Record<string, string> = useMemo(
+    () => ({
+      just_listed: "Just Listed",
+      just_sold: "Just Sold",
+      under_contract: "Under Contract",
+      open_house: "Open House",
+      price_reduction: "Price Reduced",
+    }),
+    [],
+  );
+  const FORMAT_DISPLAY_NAMES: Record<string, string> = useMemo(
+    () => ({
+      square_1x1: "Square (1:1)",
+      portrait_4x5: "Portrait (4:5)",
+      story_9x16: "Story (9:16)",
+    }),
+    [],
+  );
+
+  // -------------------------------------------------------------------------
   // Display-scale calculation for the canvas viewport
   // -------------------------------------------------------------------------
   // why: the canvas is 1080×1080 (or larger) logical pixels — way too big for
@@ -2570,6 +2772,48 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 <path d="M7 6.5l3 1.5-3 1.5z" fill="currentColor" />
               </svg>
               + Reel
+            </button>
+          ) : null}
+          {/* "Save as Template" — secondary, sits left of the primary Save
+              Post action. Rendered only when the parent wired
+              `onSaveAsTemplate` (typically the main Post Builder page; the
+              template-author / standalone embeds omit it). The button uses
+              the same h-8 chrome as +Reel / Resize so the cluster reads
+              uniform. */}
+          {onSaveAsTemplate ? (
+            <button
+              type="button"
+              onClick={() => setSaveAsTemplateModalOpen(true)}
+              disabled={effectiveSaving || dimensionWarning !== null}
+              aria-label={
+                customTemplate
+                  ? `Update template ${customTemplate.name}`
+                  : "Save current canvas as a reusable template"
+              }
+              title={
+                customTemplate
+                  ? `Update “${customTemplate.name}”`
+                  : "Save as Template"
+              }
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                {/* lucide BookmarkPlus */}
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />
+                <line x1="12" y1="7" x2="12" y2="13" />
+                <line x1="9" y1="10" x2="15" y2="10" />
+              </svg>
+              {customTemplate ? "Update template" : "Save as Template"}
             </button>
           ) : null}
           <button
@@ -3089,6 +3333,40 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           slides={carousel.slides}
           heroFormat={template.format}
           onClose={() => setCarouselPreviewOpen(false)}
+        />
+      ) : null}
+
+      {/* === Custom Template — Save as Template modal ===
+          Renders ABOVE the editor (z-[60] vs z-50) so the launcher button
+          in the header can keep its focus ring; the modal grabs focus on
+          mount. Only mounted when (a) the parent wired onSaveAsTemplate
+          and (b) the user opened it via the header button. */}
+      {onSaveAsTemplate && saveAsTemplateModalOpen ? (
+        <SaveAsTemplateModal
+          variantDisplayName={
+            VARIANT_DISPLAY_NAMES[template.variant] ?? template.variant
+          }
+          postTypeDisplayName={
+            POST_TYPE_DISPLAY_NAMES[template.category] ?? template.category
+          }
+          formatDisplayName={
+            FORMAT_DISPLAY_NAMES[template.format] ?? template.format
+          }
+          postType={template.category}
+          format={template.format}
+          basedOnVariant={template.variant}
+          existingTemplateId={customTemplate?.id ?? null}
+          existingName={customTemplate?.name}
+          existingIsDefault={customTemplate?.isDefault}
+          getCanvasState={getCanvasStateForTemplate}
+          onSubmit={async (input) => {
+            const res = await onSaveAsTemplate(input);
+            return res;
+          }}
+          onSaved={() => {
+            setSaveAsTemplateModalOpen(false);
+          }}
+          onClose={() => setSaveAsTemplateModalOpen(false)}
         />
       ) : null}
     </div>

@@ -2512,3 +2512,610 @@ function canonicalMlsHashtag(
   }
   return `#${normalized}`;
 }
+
+// ===========================================================================
+// CUSTOM TEMPLATES — author/save Fabric canvas templates in-app
+// ===========================================================================
+//
+// The factory canvas templates (`lib/post-builder/canvas-editor/templates/*`)
+// remain the immutable baseline — 90 hand-authored designs across v2/v3/v6/
+// v8/v9/v10 × 5 post types × 3 formats. Custom templates layer on top of
+// that registry:
+//
+//   • The user opens a factory variant in Studio, edits it, and clicks
+//     "Save as Template" — we serialize `canvas.toJSON()` and persist it
+//     as a row in `custom_templates` (linked to a base variant slot).
+//   • The user can mark a custom template as the default for its (post_type,
+//     format, based_on_variant) slot. When set, the variant grid REPLACES
+//     the factory card with the custom card, and post generation hydrates
+//     from the custom fabric_json instead of the factory schema.
+//   • Non-default custom templates render as ADDITIONAL cards in the
+//     variant grid, alongside the 6 factory cards.
+//
+// Storage: the preview PNG goes into the existing `post-builder-renders`
+// bucket under the `custom-templates/` prefix so we don't need a new bucket.
+// Same bucket the V1 + Path C renders use — keeps the asset enumerator
+// uniform.
+
+const CUSTOM_TEMPLATE_STORAGE_BUCKET = POST_RENDER_STORAGE_BUCKET;
+const CUSTOM_TEMPLATE_STORAGE_PREFIX = "custom-templates";
+
+// why: a generous but bounded cap on the preview PNG size. The canvas
+// `toDataURL({ multiplier: 0.5 })` typically produces a 150-300KB data URI
+// for a 1080×1080 template. 2 MB is well past the realistic ceiling but
+// blocks runaway payloads from a future bug.
+const MAX_CUSTOM_TEMPLATE_PREVIEW_BYTES = 2 * 1024 * 1024;
+
+const ALLOWED_CUSTOM_TEMPLATE_POST_TYPES = new Set<PostType>([
+  "just_listed",
+  "just_sold",
+  "under_contract",
+  "open_house",
+  "price_reduction",
+]);
+const ALLOWED_CUSTOM_TEMPLATE_FORMATS = new Set<PostFormat>([
+  "square_1x1",
+  "portrait_4x5",
+  "story_9x16",
+]);
+// why: factory variants in the active set. Custom templates must be based
+// on one of these — `based_on_variant` keys the variant-grid merge logic
+// (custom replaces factory when is_default=true and based_on matches).
+const ALLOWED_CUSTOM_TEMPLATE_BASE_VARIANTS = new Set<PostVariant>([
+  "v2",
+  "v3",
+  "v6",
+  "v8",
+  "v9",
+  "v10",
+]);
+
+export interface SaveCustomTemplateInput {
+  /** When null, INSERT a new row. When non-null, UPDATE that row in place. */
+  id: string | null;
+  /** Display name shown in the variant grid + Manage Templates UI. Required, trimmed. */
+  name: string;
+  postType: PostType;
+  format: PostFormat;
+  basedOnVariant: PostVariant;
+  /**
+   * Serialized Fabric canvas state. Pass `canvas.toJSON()` from the editor —
+   * we don't round-trip through the typed CanvasTemplateSchema because that
+   * lossy direction isn't built yet. The editor reloads via
+   * `canvas.loadFromJSON()`, which preserves all custom data fields
+   * (boundField on text layers etc.) needed for re-hydration.
+   */
+  fabricJson: unknown;
+  /**
+   * When true, mark this template as the default for its
+   * (postType, format, basedOnVariant) slot. The partial unique index
+   * enforces one default per slot; we proactively clear any existing
+   * default in the same slot before the write to avoid a 23505 conflict.
+   */
+  makeDefault: boolean;
+  /**
+   * PNG data URI from `canvas.toDataURL({ format: "png", multiplier: 0.5 })`.
+   * The half-scale multiplier keeps the payload under ~200KB for a typical
+   * 1080×1080 template. Required on INSERT; on UPDATE, the existing
+   * preview is reused when this is empty (`""`).
+   */
+  previewImageDataUri: string;
+}
+
+export type SaveCustomTemplateResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string };
+
+/**
+ * Persist a canvas-editor session as a reusable custom template. Called
+ * from the Studio "Save as Template" modal.
+ *
+ * Flow:
+ *   1. Auth check (any signed-in Alliance user can author templates).
+ *   2. Validate inputs (name, post_type, format, based_on_variant,
+ *      fabricJson shape, data URI format).
+ *   3. If a preview data URI is provided, decode + upload to the
+ *      `post-builder-renders` bucket under `custom-templates/{uuid}.png`.
+ *   4. If `makeDefault === true`, clear any existing default in the same
+ *      slot first (two sequential UPDATEs in lieu of a transaction — the
+ *      partial unique index would reject the INSERT otherwise).
+ *   5. INSERT (when id is null) or UPDATE (when id is provided).
+ *   6. Revalidate /post-builder + /settings/templates so the new template
+ *      appears in the variant grid + Manage Templates UI on next render.
+ */
+export async function saveCustomTemplateAction(
+  input: SaveCustomTemplateInput,
+): Promise<SaveCustomTemplateResult> {
+  let profile;
+  try {
+    profile = await requireUser();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Not authenticated: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  // ---- Validation ----
+  const name = (input.name ?? "").trim();
+  if (name.length === 0) {
+    return { ok: false, error: "Template name is required" };
+  }
+  if (name.length > 80) {
+    return { ok: false, error: "Template name must be 80 characters or fewer" };
+  }
+  if (!ALLOWED_CUSTOM_TEMPLATE_POST_TYPES.has(input.postType)) {
+    return { ok: false, error: `Invalid post_type: ${input.postType}` };
+  }
+  if (!ALLOWED_CUSTOM_TEMPLATE_FORMATS.has(input.format)) {
+    return { ok: false, error: `Invalid format: ${input.format}` };
+  }
+  if (!ALLOWED_CUSTOM_TEMPLATE_BASE_VARIANTS.has(input.basedOnVariant)) {
+    return {
+      ok: false,
+      error: `Invalid based_on_variant: ${input.basedOnVariant} (must be one of v2/v3/v6/v8/v9/v10)`,
+    };
+  }
+  if (
+    !input.fabricJson ||
+    typeof input.fabricJson !== "object" ||
+    Array.isArray(input.fabricJson)
+  ) {
+    return {
+      ok: false,
+      error: "fabricJson is required and must be an object (canvas.toJSON())",
+    };
+  }
+
+  const supabase = createAdminClient();
+
+  // ---- Preview upload (when provided) ----
+  // why: on INSERT we require a preview; on UPDATE, an empty string means
+  // "keep the existing preview." The Save-as-Template modal always supplies
+  // one on the first save, but a future rename-only flow may omit it.
+  let previewImageUrl: string | null = null;
+  if (input.previewImageDataUri && input.previewImageDataUri.length > 0) {
+    const dataUriPrefix = "data:image/png;base64,";
+    if (!input.previewImageDataUri.startsWith(dataUriPrefix)) {
+      return {
+        ok: false,
+        error: "previewImageDataUri must start with 'data:image/png;base64,'",
+      };
+    }
+    const base64Body = input.previewImageDataUri.slice(dataUriPrefix.length);
+    let bytes: Uint8Array;
+    try {
+      const buf = Buffer.from(base64Body, "base64");
+      bytes = new Uint8Array(buf);
+    } catch (e) {
+      return {
+        ok: false,
+        error: `Invalid base64 in previewImageDataUri: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      };
+    }
+    if (bytes.length === 0) {
+      return { ok: false, error: "Preview image is empty" };
+    }
+    if (bytes.length > MAX_CUSTOM_TEMPLATE_PREVIEW_BYTES) {
+      return {
+        ok: false,
+        error: `Preview image too large (${(bytes.length / 1024 / 1024).toFixed(
+          2,
+        )} MB); max ${MAX_CUSTOM_TEMPLATE_PREVIEW_BYTES / 1024 / 1024} MB`,
+      };
+    }
+    const previewId = crypto.randomUUID();
+    const previewPath = `${CUSTOM_TEMPLATE_STORAGE_PREFIX}/${previewId}.png`;
+    const { error: uploadErr } = await supabase.storage
+      .from(CUSTOM_TEMPLATE_STORAGE_BUCKET)
+      .upload(previewPath, bytes, {
+        contentType: "image/png",
+        upsert: false,
+        cacheControl: "31536000",
+      });
+    if (uploadErr) {
+      return {
+        ok: false,
+        error: `Preview upload failed: ${uploadErr.message}`,
+      };
+    }
+    const { data: pub } = supabase.storage
+      .from(CUSTOM_TEMPLATE_STORAGE_BUCKET)
+      .getPublicUrl(previewPath);
+    previewImageUrl = pub.publicUrl;
+  } else if (input.id === null) {
+    // INSERT path requires a preview — without one the variant grid card
+    // has no thumbnail. UPDATE can reuse the existing preview, hence the
+    // id === null gate.
+    return {
+      ok: false,
+      error: "previewImageDataUri is required when creating a new template",
+    };
+  }
+
+  // ---- Clear existing default in the same slot when makeDefault is true ----
+  // why: the partial unique index `(post_type, format, based_on_variant)
+  // WHERE is_default = true` will reject our write with a 23505 conflict
+  // if any other row in the same slot is currently the default. We clear
+  // it first to make the write deterministic. This is a two-statement
+  // operation without a transaction wrapper — if step 2 fails after
+  // step 1 succeeds, the slot is left with NO default until the user
+  // re-saves. Acceptable trade-off; the worst case is one variant card
+  // showing the factory baseline for a few minutes.
+  if (input.makeDefault) {
+    const { error: clearErr } = await supabase
+      .from("custom_templates")
+      .update({ is_default: false, updated_at: new Date().toISOString() })
+      .eq("post_type", input.postType)
+      .eq("format", input.format)
+      .eq("based_on_variant", input.basedOnVariant)
+      .eq("is_default", true)
+      // why: when updating an existing row that's ALREADY the default,
+      // don't clear ourselves — that would defeat the makeDefault intent
+      // and leave the slot with no default until the next write.
+      .neq("id", input.id ?? "00000000-0000-0000-0000-000000000000");
+    if (clearErr) {
+      return {
+        ok: false,
+        error: `Failed to clear existing default: ${clearErr.message}`,
+      };
+    }
+  }
+
+  // ---- INSERT or UPDATE ----
+  if (input.id === null) {
+    // INSERT — previewImageUrl guaranteed non-null by the validation above.
+    const { data, error: insertErr } = await supabase
+      .from("custom_templates")
+      .insert({
+        name,
+        post_type: input.postType,
+        format: input.format,
+        based_on_variant: input.basedOnVariant,
+        fabric_json: input.fabricJson as Json,
+        preview_image_url: previewImageUrl,
+        is_default: input.makeDefault,
+        is_archived: false,
+        created_by: profile.id,
+      })
+      .select("id")
+      .maybeSingle();
+    if (insertErr || !data?.id) {
+      return {
+        ok: false,
+        error: `Insert failed: ${insertErr?.message ?? "no id returned"}`,
+      };
+    }
+    revalidatePath("/post-builder");
+    revalidatePath("/settings/templates");
+    return { ok: true, id: data.id };
+  } else {
+    // UPDATE — keep preview unless a new one was uploaded. The payload
+    // type matches the Database['public']['Tables']['custom_templates']
+    // ['Update'] shape; we narrow explicitly via the supabase chain so
+    // the type system doesn't widen to `Record<string, unknown>` (which
+    // would fail the strict excess-property check).
+    const updatePayload: {
+      name: string;
+      post_type: string;
+      format: string;
+      based_on_variant: string;
+      fabric_json: Json;
+      is_default: boolean;
+      updated_at: string;
+      preview_image_url?: string;
+    } = {
+      name,
+      post_type: input.postType,
+      format: input.format,
+      based_on_variant: input.basedOnVariant,
+      fabric_json: input.fabricJson as Json,
+      is_default: input.makeDefault,
+      updated_at: new Date().toISOString(),
+    };
+    if (previewImageUrl !== null) {
+      updatePayload.preview_image_url = previewImageUrl;
+    }
+    const { error: updateErr } = await supabase
+      .from("custom_templates")
+      .update(updatePayload)
+      .eq("id", input.id);
+    if (updateErr) {
+      return { ok: false, error: `Update failed: ${updateErr.message}` };
+    }
+    revalidatePath("/post-builder");
+    revalidatePath("/settings/templates");
+    return { ok: true, id: input.id };
+  }
+}
+
+export type CustomTemplateSummary = {
+  id: string;
+  name: string;
+  post_type: PostType;
+  format: PostFormat;
+  based_on_variant: PostVariant;
+  fabric_json: unknown;
+  preview_image_url: string | null;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ListCustomTemplatesResult =
+  | { ok: true; templates: CustomTemplateSummary[] }
+  | { ok: false; error: string };
+
+/**
+ * Fetch non-archived custom templates for a specific (post_type, format)
+ * pair. Used by the variant grid to decide which factory cards to replace
+ * (is_default=true rows) and which to append (non-default rows).
+ *
+ * Sort: defaults first (so the replacement happens in a stable order),
+ * then most recently created.
+ */
+export async function listCustomTemplatesAction(
+  postType: PostType,
+  format: PostFormat,
+): Promise<ListCustomTemplatesResult> {
+  try {
+    await requireUser();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Not authenticated: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  if (!ALLOWED_CUSTOM_TEMPLATE_POST_TYPES.has(postType)) {
+    return { ok: false, error: `Invalid post_type: ${postType}` };
+  }
+  if (!ALLOWED_CUSTOM_TEMPLATE_FORMATS.has(format)) {
+    return { ok: false, error: `Invalid format: ${format}` };
+  }
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("custom_templates")
+    .select(
+      "id, name, post_type, format, based_on_variant, fabric_json, preview_image_url, is_default, created_at, updated_at",
+    )
+    .eq("post_type", postType)
+    .eq("format", format)
+    .eq("is_archived", false)
+    .order("is_default", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return { ok: false, error: `Query failed: ${error.message}` };
+  }
+
+  const templates: CustomTemplateSummary[] = (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    post_type: row.post_type as PostType,
+    format: row.format as PostFormat,
+    based_on_variant: row.based_on_variant as PostVariant,
+    fabric_json: row.fabric_json,
+    preview_image_url: row.preview_image_url,
+    is_default: row.is_default,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+
+  return { ok: true, templates };
+}
+
+/**
+ * List ALL non-archived custom templates across post_types and formats.
+ * Used by the Manage Templates UI in Settings — no per-slot filtering.
+ * Sort: post_type → format → is_default desc → created_at desc.
+ */
+export async function listAllCustomTemplatesAction(): Promise<ListCustomTemplatesResult> {
+  try {
+    await requireUser();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Not authenticated: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("custom_templates")
+    .select(
+      "id, name, post_type, format, based_on_variant, fabric_json, preview_image_url, is_default, created_at, updated_at",
+    )
+    .eq("is_archived", false)
+    .order("post_type", { ascending: true })
+    .order("format", { ascending: true })
+    .order("is_default", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return { ok: false, error: `Query failed: ${error.message}` };
+  }
+
+  const templates: CustomTemplateSummary[] = (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    post_type: row.post_type as PostType,
+    format: row.format as PostFormat,
+    based_on_variant: row.based_on_variant as PostVariant,
+    fabric_json: row.fabric_json,
+    preview_image_url: row.preview_image_url,
+    is_default: row.is_default,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+
+  return { ok: true, templates };
+}
+
+export type ArchiveCustomTemplateResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string };
+
+/**
+ * Soft-delete a custom template. Sets is_archived=true AND is_default=false
+ * (archiving the slot's current default must not silently leave the slot
+ * defaulting to nothing — we explicitly clear the flag so the factory
+ * card returns to the variant grid).
+ */
+export async function archiveCustomTemplateAction(
+  id: string,
+): Promise<ArchiveCustomTemplateResult> {
+  try {
+    await requireUser();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Not authenticated: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  if (!id) {
+    return { ok: false, error: "id is required" };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("custom_templates")
+    .update({
+      is_archived: true,
+      is_default: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    return { ok: false, error: `Archive failed: ${error.message}` };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/settings/templates");
+  return { ok: true, id };
+}
+
+export type SetCustomTemplateDefaultResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string };
+
+/**
+ * Toggle a custom template's `is_default` flag. When setting to true,
+ * first clears any existing default in the same (post_type, format,
+ * based_on_variant) slot to avoid the partial-unique-index 23505 conflict.
+ */
+export async function setCustomTemplateDefaultAction(
+  id: string,
+  isDefault: boolean,
+): Promise<SetCustomTemplateDefaultResult> {
+  try {
+    await requireUser();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Not authenticated: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  if (!id) {
+    return { ok: false, error: "id is required" };
+  }
+
+  const supabase = createAdminClient();
+
+  if (isDefault) {
+    // Read the row to find its slot, then clear any existing default in
+    // that slot before flipping this one on.
+    const { data: existing, error: readErr } = await supabase
+      .from("custom_templates")
+      .select("id, post_type, format, based_on_variant")
+      .eq("id", id)
+      .maybeSingle();
+    if (readErr || !existing) {
+      return {
+        ok: false,
+        error: `Lookup failed: ${readErr?.message ?? "row not found"}`,
+      };
+    }
+
+    const { error: clearErr } = await supabase
+      .from("custom_templates")
+      .update({ is_default: false, updated_at: new Date().toISOString() })
+      .eq("post_type", existing.post_type)
+      .eq("format", existing.format)
+      .eq("based_on_variant", existing.based_on_variant)
+      .eq("is_default", true)
+      .neq("id", id);
+    if (clearErr) {
+      return {
+        ok: false,
+        error: `Failed to clear existing default: ${clearErr.message}`,
+      };
+    }
+  }
+
+  const { error: updateErr } = await supabase
+    .from("custom_templates")
+    .update({
+      is_default: isDefault,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (updateErr) {
+    return { ok: false, error: `Update failed: ${updateErr.message}` };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/settings/templates");
+  return { ok: true, id };
+}
+
+/**
+ * Rename a custom template. Separate from saveCustomTemplateAction because
+ * the Manage Templates UI doesn't have the Fabric canvas in hand — it can
+ * only patch the row metadata.
+ */
+export async function renameCustomTemplateAction(
+  id: string,
+  name: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  try {
+    await requireUser();
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Not authenticated: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  const trimmed = (name ?? "").trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "Template name is required" };
+  }
+  if (trimmed.length > 80) {
+    return { ok: false, error: "Template name must be 80 characters or fewer" };
+  }
+  if (!id) {
+    return { ok: false, error: "id is required" };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("custom_templates")
+    .update({ name: trimmed, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    return { ok: false, error: `Rename failed: ${error.message}` };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/settings/templates");
+  return { ok: true, id };
+}

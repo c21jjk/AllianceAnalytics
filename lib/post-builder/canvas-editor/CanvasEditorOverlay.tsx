@@ -80,6 +80,13 @@ export interface CanvasEditorOverlayProps {
   isAdmin?: CanvasEditorProps["isAdmin"];
   onUploadBrandAsset?: CanvasEditorProps["onUploadBrandAsset"];
   onArchiveBrandAsset?: CanvasEditorProps["onArchiveBrandAsset"];
+  /**
+   * 2026-05-17 — Custom Templates. Pass through to enable the "Save as
+   * Template" header button + SaveAsTemplateModal flow. See
+   * CanvasEditorProps for the full contract.
+   */
+  onSaveAsTemplate?: CanvasEditorProps["onSaveAsTemplate"];
+  customTemplate?: CanvasEditorProps["customTemplate"];
 }
 
 export default function CanvasEditorOverlay(
@@ -204,6 +211,8 @@ export default function CanvasEditorOverlay(
           isAdmin={props.isAdmin}
           onUploadBrandAsset={props.onUploadBrandAsset}
           onArchiveBrandAsset={props.onArchiveBrandAsset}
+          onSaveAsTemplate={props.onSaveAsTemplate}
+          customTemplate={props.customTemplate}
         />
       </div>
     </div>

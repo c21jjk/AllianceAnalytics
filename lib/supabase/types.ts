@@ -268,6 +268,59 @@ export type Database = {
         }
         Relationships: []
       }
+      custom_templates: {
+        Row: {
+          based_on_variant: string
+          created_at: string
+          created_by: string | null
+          fabric_json: Json
+          format: string
+          id: string
+          is_archived: boolean
+          is_default: boolean
+          name: string
+          post_type: string
+          preview_image_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          based_on_variant: string
+          created_at?: string
+          created_by?: string | null
+          fabric_json: Json
+          format: string
+          id?: string
+          is_archived?: boolean
+          is_default?: boolean
+          name: string
+          post_type: string
+          preview_image_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          based_on_variant?: string
+          created_at?: string
+          created_by?: string | null
+          fabric_json?: Json
+          format?: string
+          id?: string
+          is_archived?: boolean
+          is_default?: boolean
+          name?: string
+          post_type?: string
+          preview_image_url?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       generated_posts: {
         Row: {
           additional_images: Json

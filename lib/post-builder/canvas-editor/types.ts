@@ -982,4 +982,68 @@ export interface CanvasEditorProps {
   onArchiveBrandAsset?: (
     id: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * 2026-05-17 — Custom Templates. When `onSaveAsTemplate` is provided,
+   * the editor renders a "Save as Template" button in the header alongside
+   * Save Post. The callback receives the serialized Fabric JSON, a
+   * preview PNG data URI, the user-entered metadata, and returns a result
+   * shape compatible with `saveCustomTemplateAction`. The parent is
+   * responsible for refetching its variant grid after a successful save.
+   *
+   * `customTemplate` (when set) signals that the canvas was hydrated from
+   * a user-authored custom template rather than a factory variant. The
+   * editor uses this to (a) load `customTemplate.fabricJson` via
+   * `canvas.loadFromJSON()` instead of the schema-driven hydration path,
+   * and (b) pre-fill the SaveAsTemplate modal with the existing template's
+   * id + name (so the Save action UPDATEs that row instead of inserting a
+   * sibling).
+   */
+  onSaveAsTemplate?: (input: {
+    id: string | null;
+    name: string;
+    postType:
+      | "just_listed"
+      | "just_sold"
+      | "under_contract"
+      | "open_house"
+      | "price_reduction";
+    format: PostFormat;
+    basedOnVariant:
+      | "v1"
+      | "v2"
+      | "v3"
+      | "v4"
+      | "v5"
+      | "v6"
+      | "v7"
+      | "v8"
+      | "v9"
+      | "v10";
+    fabricJson: unknown;
+    makeDefault: boolean;
+    previewImageDataUri: string;
+  }) => Promise<{ ok: true; id: string } | { ok: false; error: string }>;
+  /**
+   * Identifies a user-authored custom template that the canvas was opened
+   * from. When set, the editor:
+   *   • Loads `fabricJson` via `canvas.loadFromJSON()` instead of building
+   *     from the factory schema's layer list. The `boundField` data on
+   *     each text/image object is preserved by Fabric, so the MLS-data
+   *     re-bind pass (which keys on those fields) still applies after
+   *     load.
+   *   • Pre-fills the SaveAsTemplate modal with the existing template's
+   *     name + default state and switches to UPDATE mode (Save action
+   *     UPDATEs this row rather than inserting a sibling).
+   *
+   * The factory `template` prop is still required even when this is set —
+   * the editor uses it for canvas dimensions, format, and the carousel
+   * scaffold. The fabricJson layers override what the schema would have
+   * hydrated; they don't replace the template envelope.
+   */
+  customTemplate?: {
+    id: string;
+    name: string;
+    isDefault: boolean;
+    fabricJson: unknown;
+  };
 }
