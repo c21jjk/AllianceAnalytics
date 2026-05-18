@@ -27,11 +27,16 @@ export function computeEngagementRate(
 ): number | undefined {
   const reach = metrics.reach ?? metrics.impressions;
   if (!reach || reach <= 0) return undefined;
+  // why: matches Meta Business Suite's "Engagement" definition for FB Reels
+  // (reactions + comments + shares + clicks). IG/TT don't populate link_clicks
+  // so this is a no-op there. See lib/data/post-detail.ts for the matching
+  // app-side computation; both must stay in sync.
   const engagements =
     (metrics.likes ?? 0) +
     (metrics.comments ?? 0) +
     (metrics.shares ?? 0) +
-    (metrics.saves ?? 0);
+    (metrics.saves ?? 0) +
+    (metrics.link_clicks ?? 0);
   if (engagements === 0) return 0;
   return Math.round((engagements / reach) * 10000) / 10000;
 }

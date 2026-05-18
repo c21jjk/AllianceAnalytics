@@ -170,11 +170,17 @@ function postingFromRow(row: DbPostRow): PlatformPosting {
     platform === "tiktok"
       ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
       : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
+  // why: engagement formula mirrors Meta Business Suite's "Engagement" tally
+  // for FB Reels (reactions + comments + shares + clicks). On IG/TT the
+  // link_clicks field is 0/undefined so it has no effect. Confirmed against
+  // the 110 W Garfield Reel 2026-05-17 — Meta UI showed 267 engagement
+  // (28 + 3 + 17 + 219); our pre-fix tally was 48 (missing the 219 clicks).
   const engagements =
     readNum(m.likes) +
     readNum(m.comments) +
     readNum(m.shares) +
-    readNum(m.saves);
+    readNum(m.saves) +
+    readNum(m.link_clicks);
   const permalink = row.permalink ?? "";
   return {
     platform,

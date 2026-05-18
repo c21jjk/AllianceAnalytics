@@ -180,11 +180,15 @@ function postingFromRow(row: DbPostRow): PlatformPosting {
     platform === "tiktok"
       ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
       : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
+  // why: matches Meta Business Suite's "Engagement" tally for FB Reels
+  // (reactions + comments + shares + clicks). IG/TT have no link_clicks so
+  // the field is 0/undefined on those rows. See post-detail.ts comment.
   const engagements =
     readNum(m.likes) +
     readNum(m.comments) +
     readNum(m.shares) +
-    readNum(m.saves);
+    readNum(m.saves) +
+    readNum(m.link_clicks);
   const permalink = row.permalink ?? "";
   return {
     platform,

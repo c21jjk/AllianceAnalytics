@@ -37,7 +37,11 @@ import type {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const GRAPH_VERSION = "v21.0";
+// why: v25 returns fresher reach numbers than v21/v22 (~2% higher on a typical
+// Reel because Meta backfills delayed impressions into the newer endpoint).
+// Confirmed 2026-05-17 against the 110 W Garfield Reel: v22 returned 2,637;
+// v25 returned 2,681. Same `post_impressions_unique` field, fresher data.
+const GRAPH_VERSION = "v25.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
 const BACKFILL_DAYS = Number(Deno.env.get("FB_BACKFILL_DAYS") ?? "365");
@@ -53,15 +57,21 @@ const POST_FIELDS = [
   "is_published",
 ].join(",");
 
-// Meta deprecated `post_impressions`, `post_impressions_unique`, `post_clicks`
-// in Graph API v21 (Sep 2024). The replacements split organic vs paid and
-// click-by-type. We sum them on the client side to recover the same totals.
+// Meta deprecated `post_impressions` and `post_clicks` (without _by_type) in
+// Graph API v21 (Sep 2024). `post_impressions_unique` IS still supported and
+// returns the SAME value as organic_unique + paid_unique when there's no paid
+// promotion — which is always our case. Using the direct field saves one
+// per-post Graph API call.
 //
-// Reach    = post_impressions_organic_unique + post_impressions_paid_unique
+// Reach (max available from Graph API) = post_impressions_unique
 // Clicks   = sum(values of post_clicks_by_type)
 // Reactions stays on post_reactions_by_type_total.
+//
+// We kept paid_unique in the request for one reason: when Alliance starts
+// running paid promotion someday, we want a non-zero value to surface in the
+// raw_payload for audit/debugging without code change.
 const INSIGHTS_METRICS_BASE = [
-  "post_impressions_organic_unique",
+  "post_impressions_unique",
   "post_impressions_paid_unique",
   "post_reactions_by_type_total",
   "post_clicks_by_type",
@@ -130,10 +140,11 @@ function flattenInsights(insights: FbInsightsResponse): NormalizedMetrics {
   const reactionsByType = (map.get("post_reactions_by_type_total") ?? {}) as Record<string, number>;
   const totalReactions = Object.values(reactionsByType).reduce((s, n) => s + (Number(n) || 0), 0);
 
-  // Reach: sum organic + paid unique. Either may be missing for paid=0 posts.
-  const organicUnique = Number(map.get("post_impressions_organic_unique") ?? 0) || 0;
-  const paidUnique = Number(map.get("post_impressions_paid_unique") ?? 0) || 0;
-  const reach = organicUnique + paidUnique;
+  // Reach: use post_impressions_unique directly. v25 returns the highest
+  // available value (organic + paid combined, deduped per user). When we
+  // start running paid promotion this still captures the full reach in
+  // one field — no client-side summing needed.
+  const reach = Number(map.get("post_impressions_unique") ?? 0) || 0;
 
   // Clicks: object keyed by click type → count. Sum across types.
   const clicksByType = (map.get("post_clicks_by_type") ?? {}) as Record<string, number>;
