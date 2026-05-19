@@ -166,8 +166,16 @@ function shortcodeFor(platform: Platform, permalink: string): string | undefined
 function postingFromRow(row: DbPostRow): PlatformPosting {
   const platform = asPlatform(row.platform);
   const m = row.metrics ?? {};
+  // why: for video / Reel posts the "plays" value from fb-sync now stores the
+  // Reel-canonical play count (initial plays + replays) from /{video_id}?fields=views
+  // which matches Meta Business Suite's headline view number. For these posts
+  // plays is always >= reach (every reached viewer plays at least once,
+  // replays push it higher), so we display the bigger number as the primary
+  // reach metric. Carousel / photo posts have no plays value and fall back
+  // to the impressions-unique reach. TikTok was already plays-first.
+  const isVideo = row.media_type === "video" || row.media_type === "reel";
   const reach =
-    platform === "tiktok"
+    platform === "tiktok" || isVideo
       ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
       : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
   // why: engagement formula mirrors Meta Business Suite's "Engagement" tally

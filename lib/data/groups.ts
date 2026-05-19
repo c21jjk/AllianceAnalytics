@@ -176,8 +176,11 @@ function shortcodeFor(platform: Platform, permalink: string): string | undefined
 function postingFromRow(row: DbPostRow): PlatformPosting {
   const platform = asPlatform(row.platform);
   const m = row.metrics ?? {};
+  // why: video / Reel posts prefer plays (Reel-canonical total incl. replays)
+  // over reach. See post-detail.ts for the full rationale. Must stay in sync.
+  const isVideo = row.media_type === "video" || row.media_type === "reel";
   const reach =
-    platform === "tiktok"
+    platform === "tiktok" || isVideo
       ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
       : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
   // why: matches Meta Business Suite's "Engagement" tally for FB Reels

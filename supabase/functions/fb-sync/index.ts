@@ -102,6 +102,15 @@ interface FbPost {
     data: {
       media_type?: "photo" | "video" | "album" | "share";
       media?: { image?: { src?: string }; source?: string };
+      /**
+       * For video / Reel posts, `target.id` is the underlying video object id.
+       * We use it to query the Reel-canonical `views` field via
+       * /{video_id}?fields=views, which returns the same number Meta Business
+       * Suite shows (initial plays + replays). Probed against the 110 W
+       * Garfield Reel on 2026-05-17 — `views` = 4,447 vs Suite's 4,375 (~30
+       * min freshness lag is the entire gap).
+       */
+      target?: { id?: string; url?: string };
     }[];
   };
 }
@@ -258,6 +267,36 @@ export async function syncFacebook(): Promise<SyncResult> {
             }
           } catch (_e) {
             // silent — video metrics are bonus; base metrics still present
+          }
+
+          // ── Reel-canonical play count ────────────────────────────────────
+          // why: /post/insights?metric=post_video_views returns only 3-second
+          // qualified views (= 2,024 for 110 W Garfield Reel). Meta Business
+          // Suite shows the broader "all plays incl. replays" count = 4,375
+          // — and the ONLY API surface that exposes that number is the video
+          // object's `views` field. Probed exhaustively on 2026-05-17 across
+          // every endpoint × candidate metric combination; `views` on the
+          // video object was the unique match (returned 4,447, +1.6% vs Suite
+          // due to API freshness lead).
+          //
+          // The video id lives in the post's first attachment's `target.id`.
+          // If we can't resolve it (rare — would need a malformed attachment)
+          // we leave metrics.plays at whatever the 3-sec count gave us.
+          const videoId = fb.attachments?.data?.[0]?.target?.id;
+          if (videoId) {
+            try {
+              const videoObj = await fbFetch<{ views?: number }>(
+                `/${videoId}?fields=views`,
+                token,
+              );
+              if (typeof videoObj.views === "number" && videoObj.views > 0) {
+                metrics.plays = videoObj.views;
+              }
+            } catch (_e) {
+              // silent — leave plays at the 3-sec fallback; this just means
+              // the canonical play count wasn't fetchable for this post
+              // (e.g., a shared external video without a video object on FB).
+            }
           }
         }
 
