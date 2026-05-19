@@ -213,6 +213,81 @@ export async function syncFacebook(): Promise<SyncResult> {
       console.error("fb-sync: follower count fetch failed:", e);
     }
 
+    // ── Priority backfill: posts missing the Reel-canonical plays field ──
+    //
+    // why: the main feed walk below is reverse-chronological — when the
+    // function hits its ~150s timeout, the oldest video posts may not get
+    // re-processed. That left 52 FB video posts in the DB without
+    // `metrics.plays` after the v12 deploy. This pass runs FIRST and is
+    // surgical: one cheap API call per post (`/{video_id}?fields=views`)
+    // patches just the plays + engagement_rate fields. Once every post
+    // has plays, this loop is a no-op + adds <100ms to a sync run.
+    try {
+      const { data: missingRows } = await client
+        .from("posts")
+        .select("id, platform_post_id, metrics")
+        .eq("platform", "facebook")
+        .in("media_type", ["video", "reel"])
+        .filter("metrics->>plays", "is", null);
+
+      const candidates = missingRows ?? [];
+      for (const row of candidates) {
+        try {
+          // Resolve the underlying video object id via the post's attachments.
+          // We need the video object's id (not the post id) to query the
+          // `views` field that matches Meta Business Suite.
+          const attached = await fbFetch<{
+            attachments?: { data: { target?: { id?: string } }[] };
+          }>(
+            `/${row.platform_post_id}?fields=attachments{target}`,
+            token,
+          );
+          const videoId = attached.attachments?.data?.[0]?.target?.id;
+          if (!videoId) continue;
+
+          const videoObj = await fbFetch<{ views?: number }>(
+            `/${videoId}?fields=views`,
+            token,
+          );
+          if (typeof videoObj.views !== "number" || videoObj.views <= 0) continue;
+
+          // Merge plays into the existing metrics blob and re-compute the
+          // engagement rate (the formula in _shared/parse.ts now divides by
+          // whichever number is largest — reach or plays — so adding plays
+          // can shift the rate).
+          const existing = (row.metrics as Record<string, number>) ?? {};
+          const merged: Record<string, number> = {
+            ...existing,
+            plays: videoObj.views,
+          };
+          const er = computeEngagementRate(merged as NormalizedMetrics);
+          if (er !== undefined) merged.engagement_rate = er;
+
+          await client
+            .from("posts")
+            .update({
+              metrics: merged,
+              last_synced_at: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+        } catch (e) {
+          // why: don't bubble per-post errors here — the main feed walk will
+          // retry the post if the issue is transient (rate limit, etc).
+          console.warn(
+            `fb-sync: backfill failed for post ${row.platform_post_id}:`,
+            (e as Error).message,
+          );
+        }
+      }
+      if (candidates.length > 0) {
+        console.log(
+          `fb-sync: priority backfill processed ${candidates.length} missing-plays posts`,
+        );
+      }
+    } catch (e) {
+      console.error("fb-sync: priority backfill query failed:", e);
+    }
+
     const since = Math.floor(Date.now() / 1000) - BACKFILL_DAYS * 86400;
 
     let after: string | undefined;
