@@ -5,11 +5,8 @@ import {
   fetchOwnerStoryByToken,
   logOwnerStoryView,
   type OwnerStoryData,
-  type OwnerStoryOpenHouse,
-  type OwnerStoryPhoto,
   type OwnerStoryPost,
   type Platform,
-  type PropertyStatus,
 } from "@/lib/data/owner-story-db";
 import {
   formatCompactNumber,
@@ -20,33 +17,33 @@ import {
 import ShareLinkButton from "./ShareLinkButton";
 
 /**
- * Owner Story — the public, seller-facing "your home's marketing campaign"
- * page at /home/[token]. Anyone with the link can read; the token IS the
- * access control. The page is mobile-first; desktop just gets more breathing
- * room around the same content.
+ * Owner Story (Phase 8 design — locked 2026-05-19).
  *
- * Direction: story-format chapters, NOT a dashboard. Numbers are wrapped in
- * sentences. Company context is sprinkled inline; one big "the room behind us"
- * callout near the highlights. Status-adaptive ("Where it stands") swaps
- * tense + framing when the listing moves to Pending / Sold.
+ * Public, seller-facing "Your Listing Marketing Report" page at /home/[token].
+ * The token IS the access control; anyone with the link can view. Replaces the
+ * earlier 1,748-line story-format chapter design — this is a marketing-grade
+ * single-page report from the new C21 Alliance brand vision.
  *
- * Chapters (top → bottom on every viewport):
- *   1. Hero — optional personal note, listing photo, address, agent
- *   2. Launch moment — when posts started, how recently
- *   3. Reach chapter — total reach + one-line company context
- *   4. Highlights — top 3 posts by reach
- *   5. "The room behind us" — Alliance-wide reach callout
- *   6. Timeline — every post, newest first
- *   7. Conversation — engagement framed as people talking
- *   8. Where it stands — status-adaptive (active / pending / sold / expired)
- *   9. What now — text agent, share with family, ask about a post
+ * Top-to-bottom sections (match the brand mockup exactly):
+ *   1. Brand header band with gold "21" watermark
+ *   2. Property hero card — image, address, beds/baths/type/price, agent
+ *   3. Marketing Snapshot — 4 gold-circle stat tiles + "Campaign started"
+ *   4. What This Means + Featured Post (2-col)
+ *   5. Platform Performance — 3 cards (Facebook, TikTok, Instagram)
+ *   6. The Alliance Advantage — gold-tinted full-width card
+ *   7. Campaign Activity — most-recent post per platform
+ *   8. What Happens Next + Share CTA
+ *   9. Black agent footer
  *
- * Portals chapter (Zillow / Realtor / etc.) is deferred until ListTrac.
+ * All numbers are wired to real data from `OwnerStoryData`. Agent headshot
+ * comes from brand_assets.kind='agent_headshot' (already resolved by name
+ * match in lib/data/owner-story-db.ts). Phone / email render only when
+ * populated; the agent_name is the only hard requirement.
  */
 
 const barlow = Barlow({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
   variable: "--font-barlow",
 });
@@ -54,12 +51,23 @@ const barlow = Barlow({
 export const dynamic = "force-dynamic";
 
 const GOLD = "#C9A84C";
+const GOLD_SOFT_BG = "#FBF7EE";
+const GOLD_BORDER = "#E0C271";
 const INK = "#252526";
-const INK_SOFT = "#525253";
-const INK_MUTED = "#8a8a8c";
-const RULE = "#ececec";
-const BG = "#ffffff";
-const BG_SOFT = "#fafafa";
+const INK_SOFT = "#52525B";
+const INK_MUTED = "#9A9A9C";
+const RULE = "#ECECEC";
+const PAGE_BG = "#FAFAF7";
+const CARD_BG = "#FFFFFF";
+const FOOTER_BG = "#1A1A1B";
+
+const FONT_STACK = "'Barlow', system-ui, sans-serif";
+
+const PLATFORM_LABEL: Record<Platform, string> = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+};
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -85,9 +93,7 @@ export default async function OwnerStoryPage({ params }: PageProps) {
   const data = await fetchOwnerStoryByToken(token);
   if (!data) notFound();
 
-  // Fire-and-forget view log. Pull headers from the request so we can stash
-  // a trimmed user-agent + referrer host without holding the render. Any
-  // failure inside logOwnerStoryView is swallowed there.
+  // Fire-and-forget view log. Header lookup outside this block.
   try {
     const hdrs = await headers();
     void logOwnerStoryView(
@@ -96,1653 +102,1539 @@ export default async function OwnerStoryPage({ params }: PageProps) {
       hdrs.get("referer"),
     );
   } catch {
-    // headers() can throw outside a request scope — never block rendering.
+    // headers() can throw outside a request scope — never block render.
   }
 
-  return <StoryView data={data} />;
+  return <OwnerStoryView data={data} />;
 }
 
 /* ----------------------------------------------------------------------- *
- *  Top-level layout
+ *  Derived helpers                                                         *
  * ----------------------------------------------------------------------- */
 
-function StoryView({ data }: { data: OwnerStoryData }) {
-  const {
-    listing,
-    posts,
-    highlights,
-    photos,
-    open_houses,
-    totals,
-    company,
-    personal_note,
-  } = data;
-  const isFreshlyListed = posts.length === 0 && listing.status === "active";
+interface PlatformStat {
+  platform: Platform;
+  reach: number;
+  engagements: number;
+  posts: number;
+}
+
+function computePlatformStats(posts: OwnerStoryPost[]): PlatformStat[] {
+  const platforms: Platform[] = ["facebook", "tiktok", "instagram"];
+  const buckets: Record<Platform, PlatformStat> = {
+    facebook: { platform: "facebook", reach: 0, engagements: 0, posts: 0 },
+    instagram: { platform: "instagram", reach: 0, engagements: 0, posts: 0 },
+    tiktok: { platform: "tiktok", reach: 0, engagements: 0, posts: 0 },
+  };
+  for (const p of posts) {
+    const cell = buckets[p.platform];
+    if (!cell) continue;
+    cell.reach += p.reach;
+    cell.engagements += p.engagements;
+    cell.posts += 1;
+  }
+  return platforms.map((p) => buckets[p]);
+}
+
+/**
+ * Most-recent post per platform. Used for the Campaign Activity row so each
+ * platform card shows its latest activity. Falls back to null when a
+ * platform has no posts yet.
+ */
+function mostRecentByPlatform(
+  posts: OwnerStoryPost[],
+): Record<Platform, OwnerStoryPost | null> {
+  const out: Record<Platform, OwnerStoryPost | null> = {
+    facebook: null,
+    instagram: null,
+    tiktok: null,
+  };
+  const sorted = [...posts].sort((a, b) => {
+    const ta = a.posted_at ? Date.parse(a.posted_at) : 0;
+    const tb = b.posted_at ? Date.parse(b.posted_at) : 0;
+    return tb - ta;
+  });
+  for (const p of sorted) {
+    if (!out[p.platform]) out[p.platform] = p;
+  }
+  return out;
+}
+
+function describeBaths(full: number | null, half: number | null): string {
+  const f = full ?? 0;
+  const h = half ?? 0;
+  if (f === 0 && h === 0) return "—";
+  if (h === 0) return `${f}`;
+  return `${f}.${h}`;
+}
+
+function officeShortName(raw: string | null): string {
+  if (!raw) return "Century 21 Alliance";
+  const upper = raw.toUpperCase();
+  const idx = upper.indexOf("ALLIANCE");
+  if (idx < 0) return raw;
+  const tail = raw.slice(idx + "alliance".length).trim();
+  if (!tail) return "Century 21 Alliance";
+  return `Century 21 Alliance — ${titleCase(tail)}`;
+}
+
+function titleCase(s: string): string {
+  return s
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
+    .join(" ");
+}
+
+function initialsOf(name: string | null): string {
+  if (!name) return "—";
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts[parts.length - 1]?.[0] ?? "";
+  return (first + last).toUpperCase() || "—";
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Root view                                                               *
+ * ----------------------------------------------------------------------- */
+
+function OwnerStoryView({ data }: { data: OwnerStoryData }) {
+  const { listing, posts, highlights, totals, company } = data;
+  const featuredPost = highlights[0] ?? posts[0] ?? null;
+  const platformStats = computePlatformStats(posts);
+  const recentByPlatform = mostRecentByPlatform(posts);
+
+  const campaignStartLabel = data.first_post_at
+    ? formatShortDate(data.first_post_at)
+    : null;
+  const reportUpdatedLabel = formatShortDate(new Date().toISOString());
 
   return (
     <div
       className={barlow.variable}
       style={{
-        fontFamily: "'Barlow', system-ui, sans-serif",
-        backgroundColor: BG,
+        fontFamily: FONT_STACK,
+        backgroundColor: PAGE_BG,
         color: INK,
         minHeight: "100vh",
         fontWeight: 400,
-        WebkitFontSmoothing: "antialiased",
       }}
     >
-      <Header />
-      {/* Page-content container — mobile-first 720 cap, desktop bumps to 880
-          so hero photo + highlights breathe; prose chapters stay capped at
-          ~600 inside via their own constraints (see ChapterShell). */}
       <main
         style={{
+          maxWidth: 960,
           margin: "0 auto",
-          maxWidth: 720,
+          padding: "32px 24px 0",
         }}
-        className="story-main"
       >
-        <HeroChapter listing={listing} personalNote={personal_note} />
-        {photos.length > 0 ? <PhotoGalleryStrip photos={photos} /> : null}
-        {open_houses.length > 0 ? (
-          <OpenHouseChapter openHouses={open_houses} />
-        ) : null}
-        {isFreshlyListed ? (
-          <FreshlyListedChapter listingDate={listing.listing_date} />
-        ) : null}
-        {posts.length > 0 ? (
-          <LaunchChapter
-            firstPostAt={data.first_post_at}
-            daysSinceLaunch={data.days_since_launch}
-            postCount={totals.post_count}
-          />
-        ) : null}
-        {totals.reach > 0 ? (
-          <ReachChapter
-            totalReach={totals.reach}
-            postCount={totals.post_count}
-            company={company}
-          />
-        ) : null}
-        {highlights.length > 0 ? (
-          <HighlightsChapter highlights={highlights} company={company} />
-        ) : null}
-        {totals.reach > 0 ? (
-          <CompanyCalloutChapter company={company} totalReach={totals.reach} />
-        ) : null}
-        {posts.length > 0 ? <TimelineChapter posts={posts} /> : null}
-        {totals.engagements > 0 ? (
-          <ConversationChapter
-            engagements={totals.engagements}
-            postCount={totals.post_count}
-          />
-        ) : null}
-        {/* WhereItStands is suppressed for freshly-listed active homes — the
-            FreshlyListedChapter already owns that moment and rendering both
-            duplicates the "we're marketing your home" beat. */}
-        {!isFreshlyListed ? (
-          <WhereItStandsChapter
-            status={listing.status}
-            postCount={totals.post_count}
-            statusChangedAt={listing.status_changed_at}
-          />
-        ) : null}
-        <WhatNowChapter
-          address={listing.address}
-          agentName={listing.agent_name}
-          agentEmail={listing.agent_email}
-          agentPhone={listing.agent_phone}
+        <BrandHeader reportUpdatedLabel={reportUpdatedLabel} />
+        <PropertyHero listing={listing} />
+        <MarketingSnapshot
+          totals={totals}
+          topPostReach={featuredPost?.reach ?? 0}
+          campaignStartLabel={campaignStartLabel}
         />
-        <Footer />
+        <WhatThisMeansAndFeatured
+          totals={totals}
+          topPostReach={featuredPost?.reach ?? 0}
+          featured={featuredPost}
+        />
+        <PlatformPerformance stats={platformStats} />
+        <AllianceAdvantage
+          yearReach={company.window_365d.reach}
+          activeListings={company.active_listings}
+        />
+        <CampaignActivity recent={recentByPlatform} />
+        <WhatHappensNext token={data.token} address={listing.address} />
       </main>
-      {/* Single global style block — desktop max-width bump and roomier
-          chapter padding on >=768px. Kept inline so the public story page
-          stays self-contained (no global CSS leak into the auth'd app). */}
-      <style>{`
-        .story-gallery::-webkit-scrollbar { display: none; }
-        @media (min-width: 768px) {
-          .story-main { max-width: 880px; }
-          .story-chapter { padding-left: 48px !important; padding-right: 48px !important; padding-top: 56px !important; padding-bottom: 56px !important; }
-          .story-hero { padding: 56px 48px 36px !important; }
-          .story-footer { padding: 72px 48px 56px !important; }
-          .story-callout { padding: 72px 48px !important; }
-          .story-whatnow { padding: 64px 48px 36px !important; }
-          .story-header { padding: 24px 48px !important; }
-          .story-gallery { padding: 0 48px !important; }
-        }
-        /* Phase 7.5 — print stylesheet. Browser Print → Save as PDF gives
-           sellers a tangible artifact without us maintaining a separate
-           PDF route. Strips interactive chrome; keeps the story chapters,
-           hero photo, photo gallery, and agent block. */
-        @media print {
-          .story-header { display: none !important; }
-          .story-whatnow { display: none !important; }
-          .story-footer { display: none !important; }
-          .story-gallery {
-            overflow: visible !important;
-            display: grid !important;
-            grid-template-columns: repeat(3, 1fr) !important;
-            gap: 8px !important;
-            padding: 0 !important;
-          }
-          .story-gallery > div {
-            width: auto !important;
-            scroll-snap-align: unset !important;
-          }
-          .story-main { max-width: 100% !important; }
-          .story-chapter,
-          .story-hero,
-          .story-callout {
-            padding: 28px 24px !important;
-            break-inside: avoid;
-          }
-          /* Force-light background so photos and gold accents render on
-             white paper even when the browser's print-color setting is off. */
-          html, body { background: #ffffff !important; }
-        }
-      `}</style>
+      <AgentFooter listing={data.listing} />
     </div>
   );
 }
 
 /* ----------------------------------------------------------------------- *
- *  Chapters
+ *  Section: Brand header                                                   *
  * ----------------------------------------------------------------------- */
 
-function Header() {
+function BrandHeader({ reportUpdatedLabel }: { reportUpdatedLabel: string }) {
   return (
-    <header
-      className="story-header"
-      style={{
-        padding: "20px 24px",
-        borderBottom: `1px solid ${RULE}`,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-      }}
-    >
-      <span
+    <header style={{ position: "relative", padding: "16px 0 32px" }}>
+      <div
+        aria-hidden
         style={{
-          fontSize: 11,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-          color: INK_MUTED,
+          position: "absolute",
+          right: -20,
+          top: -10,
+          fontSize: 220,
+          lineHeight: 1,
+          fontWeight: 700,
+          color: GOLD,
+          opacity: 0.08,
+          pointerEvents: "none",
+          letterSpacing: "-0.04em",
+          userSelect: "none",
         }}
       >
-        Century 21 Alliance
-      </span>
-      <C21Seal />
+        21
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          letterSpacing: "0.22em",
+          textTransform: "uppercase",
+          fontWeight: 700,
+          color: GOLD,
+        }}
+      >
+        Century 21<sup style={{ fontSize: 8 }}>®</sup>{" "}
+        <span style={{ fontWeight: 500, color: INK_SOFT }}>Alliance</span>
+      </div>
+      <h1
+        style={{
+          marginTop: 6,
+          fontSize: "clamp(36px, 6vw, 54px)",
+          lineHeight: 1.04,
+          letterSpacing: "-0.025em",
+          fontWeight: 700,
+          color: INK,
+        }}
+      >
+        Your Listing
+        <br />
+        Marketing Report
+      </h1>
+      <div style={{ marginTop: 10, fontSize: 15, color: INK_SOFT }}>
+        Weekly social media update for your home
+      </div>
+      <div
+        style={{
+          marginTop: 14,
+          fontSize: 12,
+          color: INK_MUTED,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          fontWeight: 500,
+        }}
+      >
+        <CalendarGlyph />
+        Report updated {reportUpdatedLabel}
+      </div>
     </header>
   );
 }
 
-function HeroChapter({
-  listing,
-  personalNote,
-}: {
-  listing: OwnerStoryData["listing"];
-  personalNote: string | null;
-}) {
-  const firstLine = firstLineOfAddress(listing.address);
-  const secondLine = secondLineOfAddress(listing);
+/* ----------------------------------------------------------------------- *
+ *  Section: Property hero                                                  *
+ * ----------------------------------------------------------------------- */
+
+function PropertyHero({ listing }: { listing: OwnerStoryData["listing"] }) {
+  const baths = describeBaths(listing.bathrooms_full, listing.bathrooms_half);
+  const placeLine = [listing.city, listing.state, listing.zip]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+,/g, ",")
+    .trim();
 
   return (
-    <section className="story-hero" style={{ padding: "40px 24px 28px" }}>
-      {personalNote ? (
+    <Card style={{ marginBottom: 24, overflow: "hidden", padding: 0 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 1fr)",
+          gap: 0,
+        }}
+      >
         <div
           style={{
-            marginBottom: 32,
-            paddingLeft: 16,
-            borderLeft: `2px solid ${GOLD}`,
+            backgroundColor: "#eeeeee",
+            minHeight: 280,
+            backgroundImage: listing.hero_image_url
+              ? `url(${listing.hero_image_url})`
+              : undefined,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
           }}
-        >
+          role={listing.hero_image_url ? "img" : undefined}
+          aria-label={
+            listing.hero_image_url
+              ? `${listing.address ?? "Listing"} hero photo`
+              : undefined
+          }
+        />
+        <div style={{ padding: "28px 28px 24px" }}>
           <div
             style={{
-              fontSize: 11,
-              letterSpacing: "0.22em",
-              textTransform: "uppercase",
-              fontWeight: 500,
-              color: INK_MUTED,
-              marginBottom: 8,
-            }}
-          >
-            A note from {listing.agent_name?.split(" ")[0] ?? "your agent"}
-          </div>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 16,
-              lineHeight: 1.6,
+              fontSize: 22,
+              fontWeight: 600,
+              lineHeight: 1.15,
               color: INK,
-              fontWeight: 400,
             }}
           >
-            {personalNote}
-          </p>
-        </div>
-      ) : null}
-
-      <div
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-          color: INK_MUTED,
-        }}
-      >
-        Here&apos;s how we&apos;re marketing your home
-      </div>
-      <h1
-        style={{
-          marginTop: 14,
-          fontSize: "clamp(28px, 6vw, 38px)",
-          lineHeight: 1.05,
-          letterSpacing: "-0.025em",
-          fontWeight: 500,
-          color: INK,
-        }}
-      >
-        {firstLine || "Your home"}
-      </h1>
-      {secondLine ? (
-        <div
-          style={{
-            marginTop: 6,
-            fontSize: "clamp(16px, 3.6vw, 18px)",
-            lineHeight: 1.3,
-            color: INK_SOFT,
-            fontWeight: 400,
-          }}
-        >
-          {secondLine}
-        </div>
-      ) : null}
-
-      <FactsStrip listing={listing} />
-
-      {/* Hero photo */}
-      <div
-        style={{
-          marginTop: 28,
-          width: "100%",
-          aspectRatio: "4 / 3",
-          backgroundColor: "#f4f4f4",
-          overflow: "hidden",
-          borderRadius: 4,
-        }}
-      >
-        {listing.hero_image_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={listing.hero_image_url}
-            alt={listing.address ?? "Your home"}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-            }}
-          />
-        ) : (
-          <div
-            aria-hidden="true"
-            style={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: INK_MUTED,
-              fontSize: 12,
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
-            }}
-          >
-            No cover photo on file
+            {listing.address ?? "—"}
           </div>
-        )}
-      </div>
+          {placeLine ? (
+            <div style={{ marginTop: 4, fontSize: 14, color: INK_SOFT }}>
+              {placeLine}
+            </div>
+          ) : null}
 
-      {listing.agent_name ? (
-        <AgentBlock
-          agentName={listing.agent_name}
-          agentEmail={listing.agent_email}
-          agentHeadshotUrl={listing.agent_headshot_url}
-          listingOfficeName={listing.listing_office_name}
-        />
-      ) : null}
-    </section>
-  );
-}
-
-function AgentBlock({
-  agentName,
-  agentEmail,
-  agentHeadshotUrl,
-  listingOfficeName,
-}: {
-  agentName: string;
-  agentEmail: string | null;
-  agentHeadshotUrl: string | null;
-  listingOfficeName: string | null;
-}) {
-  const officeDisplay = normalizeOfficeName(listingOfficeName);
-  const initials = computeInitials(agentName);
-
-  return (
-    <div
-      style={{
-        marginTop: 32,
-        paddingTop: 24,
-        borderTop: `1px solid ${RULE}`,
-        display: "flex",
-        alignItems: "center",
-        gap: 14,
-      }}
-    >
-      {/* Phase 7 — real headshot when brand_assets has one matched by name;
-          falls back to the gold-trim initials medallion otherwise. */}
-      {agentHeadshotUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={agentHeadshotUrl}
-          alt={agentName}
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: "50%",
-            objectFit: "cover",
-            border: `1px solid ${RULE}`,
-            flexShrink: 0,
-            display: "block",
-          }}
-        />
-      ) : (
-        <div
-          aria-hidden="true"
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: "50%",
-            backgroundColor: BG_SOFT,
-            border: `1px solid ${RULE}`,
-            color: INK,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 15,
-            fontWeight: 500,
-            letterSpacing: "0.02em",
-            flexShrink: 0,
-          }}
-        >
-          {initials}
-        </div>
-      )}
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div
-          style={{
-            fontSize: 10,
-            letterSpacing: "0.22em",
-            textTransform: "uppercase",
-            fontWeight: 500,
-            color: INK_MUTED,
-          }}
-        >
-          Your agent
-        </div>
-        <div
-          style={{
-            marginTop: 2,
-            fontSize: 17,
-            color: INK,
-            fontWeight: 500,
-            lineHeight: 1.2,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {agentName}
-        </div>
-        {officeDisplay ? (
           <div
             style={{
-              marginTop: 2,
-              fontSize: 13,
-              color: INK_SOFT,
-              fontWeight: 400,
-              lineHeight: 1.3,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              marginTop: 20,
+              display: "grid",
+              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+              gap: 12,
+              borderTop: `1px solid ${RULE}`,
+              borderBottom: `1px solid ${RULE}`,
+              padding: "16px 0",
             }}
           >
-            {officeDisplay}
-          </div>
-        ) : null}
-      </div>
-      {agentEmail ? (
-        <a
-          href={`mailto:${agentEmail}`}
-          aria-label={`Email ${agentName}`}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "10px 14px",
-            border: `1px solid ${INK}`,
-            color: INK,
-            textDecoration: "none",
-            fontSize: 12,
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            fontWeight: 500,
-            borderRadius: 2,
-            flexShrink: 0,
-          }}
-        >
-          Email
-        </a>
-      ) : null}
-    </div>
-  );
-}
-
-function computeInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "··";
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return (
-    (parts[0]!.charAt(0) + (parts[parts.length - 1]?.charAt(0) ?? ""))
-      .toUpperCase()
-  );
-}
-
-/**
- * Paragon office names land here as `CENTURY 21 ALLIANCE wc` or similar —
- * caps + a short-code suffix. Pretty up for seller display: title-case the
- * brand and drop short-code-only fragments.
- */
-function normalizeOfficeName(raw: string | null): string | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  // Strip trailing 2-3 letter office short codes (e.g. "wc", "ws", "cmc")
-  // when they're appended without a separating word.
-  const withoutSuffix = trimmed.replace(/\s+[a-z]{2,4}$/i, "");
-  // Title-case run of CENTURY 21 ALLIANCE → Century 21 Alliance
-  const cased = withoutSuffix.replace(/\b[A-Z][A-Z]+\b/g, (word) =>
-    word.charAt(0) + word.slice(1).toLowerCase(),
-  );
-  // "CENTURY" stays special because the regex above only catches all-caps
-  // multi-letter runs; numbers like "21" pass through.
-  return cased;
-}
-
-function PhotoGalleryStrip({ photos }: { photos: OwnerStoryPhoto[] }) {
-  // Cap at 8 so the page doesn't turn into a photo album. Sellers can see
-  // them all by clicking into Zillow / the MLS — this strip is just to
-  // remind them their home looks great.
-  const display = photos.slice(0, 8);
-  return (
-    <section
-      aria-label="More photos of your home"
-      style={{
-        padding: "0 0 32px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          overflowX: "auto",
-          padding: "0 24px",
-          scrollSnapType: "x mandatory",
-          WebkitOverflowScrolling: "touch",
-          scrollbarWidth: "none",
-        }}
-        className="story-gallery"
-      >
-        {display.map((photo, idx) => (
-          <div
-            key={idx}
-            style={{
-              flex: "0 0 auto",
-              width: 220,
-              aspectRatio: "4 / 3",
-              backgroundColor: "#f4f4f4",
-              borderRadius: 4,
-              overflow: "hidden",
-              scrollSnapAlign: "start",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={photo.url}
-              alt={photo.caption ?? `Listing photo ${idx + 2}`}
-              loading="lazy"
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                display: "block",
-              }}
+            <PropertyStatCell
+              icon={<BedGlyph />}
+              label={`${listing.bedrooms ?? "—"} Beds`}
+            />
+            <PropertyStatCell icon={<BathGlyph />} label={`${baths} Baths`} />
+            <PropertyStatCell
+              icon={<HomeGlyph />}
+              label={listing.property_type ?? "Home"}
+            />
+            <PropertyStatCell
+              icon={<TagGlyph />}
+              label={
+                listing.list_price != null
+                  ? `Listed at ${formatCurrency(listing.list_price)}`
+                  : "—"
+              }
             />
           </div>
-        ))}
+
+          <div
+            style={{
+              marginTop: 20,
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+            }}
+          >
+            <AgentAvatar
+              url={listing.agent_headshot_url}
+              name={listing.agent_name}
+            />
+            <div>
+              <div style={{ fontSize: 12, color: INK_SOFT }}>Your agent,</div>
+              <div
+                style={{
+                  fontSize: 16,
+                  fontWeight: 600,
+                  color: INK,
+                  lineHeight: 1.15,
+                }}
+              >
+                {listing.agent_name ?? "Century 21 Alliance"}
+              </div>
+              <div style={{ fontSize: 13, color: INK_SOFT, marginTop: 2 }}>
+                {officeShortName(listing.listing_office_name)}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </section>
+    </Card>
   );
 }
 
-function OpenHouseChapter({
-  openHouses,
+function PropertyStatCell({
+  icon,
+  label,
 }: {
-  openHouses: OwnerStoryOpenHouse[];
+  icon: React.ReactNode;
+  label: string;
 }) {
-  const now = Date.now();
-  const upcoming = openHouses.filter(
-    (oh) => new Date(oh.start_at).getTime() >= now,
-  );
-  const past = openHouses.filter(
-    (oh) => new Date(oh.start_at).getTime() < now,
-  );
-
-  if (upcoming.length === 0 && past.length === 0) return null;
-
-  const eyebrow = upcoming.length > 0 ? "Open House" : "Open Houses Held";
-  const heading =
-    upcoming.length > 0
-      ? past.length > 0
-        ? "We’ve opened your home to buyers — and we’re doing it again."
-        : "We’re opening your home to buyers."
-      : past.length === 1
-        ? "We opened your home to buyers."
-        : "We opened your home to buyers more than once.";
-
   return (
-    <ChapterShell eyebrow={eyebrow}>
-      <h2 style={chapterHeadingStyle}>{heading}</h2>
-      <div style={{ marginTop: 20 }}>
-        {upcoming.map((oh) => (
-          <OpenHouseRow key={oh.id} openHouse={oh} kind="upcoming" />
-        ))}
-        {past.map((oh) => (
-          <OpenHouseRow key={oh.id} openHouse={oh} kind="past" />
-        ))}
-      </div>
-    </ChapterShell>
-  );
-}
-
-function OpenHouseRow({
-  openHouse,
-  kind,
-}: {
-  openHouse: OwnerStoryOpenHouse;
-  kind: "upcoming" | "past";
-}) {
-  const date = formatShortDate(openHouse.start_at);
-  const startTime = formatTimeOfDay(openHouse.start_at);
-  const endTime = openHouse.end_at ? formatTimeOfDay(openHouse.end_at) : null;
-  const timeLabel = endTime ? `${startTime} – ${endTime}` : startTime;
-
-  return (
-    <div
-      style={{
-        padding: "16px 0",
-        borderTop: `1px solid ${RULE}`,
-        display: "flex",
-        alignItems: "baseline",
-        justifyContent: "space-between",
-        gap: 16,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 17,
-            fontWeight: 500,
-            color: INK,
-            letterSpacing: "-0.01em",
-          }}
-        >
-          {date}
-        </div>
-        <div
-          style={{
-            marginTop: 2,
-            fontSize: 14,
-            color: INK_SOFT,
-          }}
-        >
-          {timeLabel}
-        </div>
-      </div>
-      <div
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ color: GOLD }}>{icon}</span>
+      <span
         style={{
-          fontSize: 11,
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
+          fontSize: 13,
+          color: INK,
           fontWeight: 500,
-          color: kind === "upcoming" ? GOLD : INK_MUTED,
-          flexShrink: 0,
+          lineHeight: 1.25,
         }}
       >
-        {kind === "upcoming" ? "Upcoming" : "Held"}
-      </div>
+        {label}
+      </span>
     </div>
   );
 }
 
-function formatTimeOfDay(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: d.getMinutes() === 0 ? undefined : "2-digit",
-  });
-}
-
-function FactsStrip({ listing }: { listing: OwnerStoryData["listing"] }) {
-  const facts: { label: string; value: string }[] = [];
-
-  if (listing.bedrooms !== null && listing.bedrooms !== undefined) {
-    facts.push({
-      label: listing.bedrooms === 1 ? "bedroom" : "bedrooms",
-      value: String(listing.bedrooms),
-    });
+function AgentAvatar({
+  url,
+  name,
+}: {
+  url: string | null;
+  name: string | null;
+}) {
+  if (url) {
+    return (
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: "50%",
+          background: `url(${url}) center/cover`,
+          flexShrink: 0,
+          border: `2px solid ${GOLD_BORDER}`,
+        }}
+        role="img"
+        aria-label={name ? `${name} headshot` : "Agent headshot"}
+      />
+    );
   }
-  const bathTotal =
-    (listing.bathrooms_full ?? 0) + 0.5 * (listing.bathrooms_half ?? 0);
-  if (bathTotal > 0) {
-    facts.push({
-      label: bathTotal === 1 ? "bath" : "baths",
-      value: bathTotal % 1 === 0 ? String(bathTotal) : bathTotal.toFixed(1),
-    });
-  }
-  if (listing.list_price !== null && listing.list_price !== undefined) {
-    facts.push({
-      label: "listed",
-      value: formatCurrency(listing.list_price),
-    });
-  }
-  if (listing.property_type) {
-    facts.push({
-      label: "type",
-      value: listing.property_type,
-    });
-  }
-
-  if (facts.length === 0) return null;
-
   return (
     <div
       style={{
-        marginTop: 24,
+        width: 56,
+        height: 56,
+        borderRadius: "50%",
+        backgroundColor: GOLD_SOFT_BG,
+        color: GOLD,
         display: "flex",
-        flexWrap: "wrap",
-        gap: "16px 28px",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 700,
+        fontSize: 18,
+        flexShrink: 0,
+        border: `2px solid ${GOLD_BORDER}`,
       }}
+      aria-hidden
     >
-      {facts.map((fact, idx) => (
-        <div
-          key={`${fact.label}-${idx}`}
-          style={{ display: "flex", flexDirection: "column", gap: 2 }}
-        >
-          <div
-            style={{
-              fontSize: 10,
-              letterSpacing: "0.22em",
-              textTransform: "uppercase",
-              fontWeight: 500,
-              color: INK_MUTED,
-            }}
-          >
-            {fact.label}
-          </div>
-          <div
-            style={{
-              fontSize: 17,
-              fontWeight: 500,
-              color: INK,
-              fontVariantNumeric: "tabular-nums",
-              letterSpacing: "-0.01em",
-              lineHeight: 1.1,
-            }}
-          >
-            {fact.value}
-          </div>
-        </div>
-      ))}
+      {initialsOf(name)}
     </div>
-  );
-}
-
-function FreshlyListedChapter({
-  listingDate,
-}: {
-  listingDate: string | null;
-}) {
-  const listedOn = listingDate ? formatShortDate(listingDate) : null;
-  return (
-    <ChapterShell eyebrow="Just Listed">
-      <h2 style={chapterHeadingStyle}>
-        Your home is officially on the market.
-      </h2>
-      <p style={{ ...proseStyle, marginTop: 16 }}>
-        {listedOn ? (
-          <>
-            We brought your listing live on{" "}
-            <strong style={strongStyle}>{listedOn}</strong>.{" "}
-          </>
-        ) : null}
-        Your agent and the Alliance social team are preparing your first round
-        of posts — Instagram, TikTok, and Facebook all start here. This page
-        will update with every post that goes out, so feel free to keep it
-        bookmarked.
-      </p>
-    </ChapterShell>
-  );
-}
-
-function LaunchChapter({
-  firstPostAt,
-  daysSinceLaunch,
-  postCount,
-}: {
-  firstPostAt: string | null;
-  daysSinceLaunch: number | null;
-  postCount: number;
-}) {
-  if (!firstPostAt) return null;
-  const launchDate = formatShortDate(firstPostAt);
-  const ago =
-    daysSinceLaunch === null
-      ? null
-      : daysSinceLaunch === 0
-        ? "today"
-        : daysSinceLaunch === 1
-          ? "yesterday"
-          : `${daysSinceLaunch} days ago`;
-
-  return (
-    <ChapterShell eyebrow="Launch">
-      <p style={proseStyle}>
-        We started marketing your home on{" "}
-        <strong style={strongStyle}>{launchDate}</strong>
-        {ago ? <> ({ago})</> : null}. Since then, we&apos;ve put{" "}
-        <strong style={strongStyle}>
-          {formatNumber(postCount)} {postCount === 1 ? "post" : "posts"}
-        </strong>{" "}
-        in front of Century 21 Alliance&apos;s combined Instagram, TikTok, and
-        Facebook audience.
-      </p>
-    </ChapterShell>
   );
 }
 
 /* ----------------------------------------------------------------------- *
- *  Phase 7.5 — auto-pick the most-favorable comparison window
- *
- *  Walks 30-day → 90-day → 365-day and returns the FIRST window whose
- *  per-post average reach the listing's comparison-value beats. Returns
- *  null when no window beats — in which case the comparison line is
- *  omitted entirely (honest framing, never "above average" when it isn't).
+ *  Section: Marketing Snapshot                                             *
  * ----------------------------------------------------------------------- */
-type BaselineLabel = "30-day average" | "90-day average" | "1-year average";
 
-interface PickedBaseline {
-  perPostReach: number;
-  label: BaselineLabel;
-}
-
-function pickFavorableBaseline(
-  comparisonPerPost: number,
-  company: OwnerStoryData["company"],
-): PickedBaseline | null {
-  const candidates: Array<[number, number, BaselineLabel]> = [
-    [company.window_30d.reach, company.window_30d.posts, "30-day average"],
-    [company.window_90d.reach, company.window_90d.posts, "90-day average"],
-    [company.window_365d.reach, company.window_365d.posts, "1-year average"],
-  ];
-  for (const [reach, posts, label] of candidates) {
-    if (posts <= 0) continue;
-    const perPost = reach / posts;
-    if (perPost > 0 && comparisonPerPost >= perPost) {
-      return { perPostReach: perPost, label };
-    }
-  }
-  return null;
-}
-
-function ReachChapter({
-  totalReach,
-  postCount,
-  company,
+function MarketingSnapshot({
+  totals,
+  topPostReach,
+  campaignStartLabel,
 }: {
-  totalReach: number;
-  postCount: number;
-  company: OwnerStoryData["company"];
+  totals: OwnerStoryData["totals"];
+  topPostReach: number;
+  campaignStartLabel: string | null;
 }) {
-  // Phase 7.5 — compare this listing's per-post average reach against the
-  // most-favorable accurate company window. Honest framing: if no window
-  // beats, the comparison line is omitted entirely.
-  const listingPerPost = postCount > 0 ? totalReach / postCount : 0;
-  const picked =
-    listingPerPost > 0 ? pickFavorableBaseline(listingPerPost, company) : null;
-
   return (
-    <ChapterShell eyebrow="Reach">
+    <section style={{ marginBottom: 24 }}>
+      <SectionHeader
+        title="Marketing Snapshot"
+        rightSlot={
+          campaignStartLabel ? (
+            <span
+              style={{
+                fontSize: 12,
+                color: INK_MUTED,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <CalendarGlyph /> Campaign started {campaignStartLabel}
+            </span>
+          ) : null
+        }
+      />
       <div
         style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "baseline",
-          gap: "0 20px",
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 16,
         }}
       >
-        <div
-          style={{
-            fontSize: "clamp(56px, 13vw, 84px)",
-            lineHeight: 0.95,
-            letterSpacing: "-0.04em",
-            fontWeight: 500,
-            color: INK,
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {formatCompactNumber(totalReach)}
-        </div>
-        <div
-          style={{
-            fontSize: 18,
-            color: INK_SOFT,
-            fontWeight: 400,
-          }}
-        >
-          people reached so far
-        </div>
+        <StatTile
+          icon={<PeopleGlyph />}
+          value={formatCompactNumber(totals.reach)}
+          label="People Reached"
+        />
+        <StatTile
+          icon={<HeartGlyph />}
+          value={formatNumber(totals.engagements)}
+          label="Engagements"
+        />
+        <StatTile
+          icon={<PencilGlyph />}
+          value={formatNumber(totals.post_count)}
+          label="Posts Published"
+        />
+        <StatTile
+          icon={<TrendGlyph />}
+          value={formatCompactNumber(topPostReach)}
+          label="Top Post Reach"
+        />
       </div>
-      <p style={{ ...proseStyle, marginTop: 24 }}>
-        Every one of those views is a real person on Instagram, TikTok, or
-        Facebook seeing your home in their feed.
-        {picked ? (
-          <>
-            {" "}
-            That&apos;s{" "}
-            <strong style={strongStyle}>
-              above what an Alliance listing typically reaches
-            </strong>{" "}
-            on a per-post basis over the last {picked.label.replace(
-              " average",
-              "",
-            )}.
-          </>
-        ) : null}
-      </p>
-    </ChapterShell>
+    </section>
   );
 }
 
-function HighlightsChapter({
-  highlights,
-  company,
+function StatTile({
+  icon,
+  value,
+  label,
 }: {
-  highlights: OwnerStoryPost[];
-  company: OwnerStoryData["company"];
+  icon: React.ReactNode;
+  value: string;
+  label: string;
 }) {
-  // Phase 7.5 — pick the most-favorable accurate window for the highlights
-  // multiplier line. Falls back to no comparison if no window beats.
-  const maxHighlightReach = highlights.reduce(
-    (m, p) => (p.reach > m ? p.reach : m),
-    0,
-  );
-  const picked =
-    maxHighlightReach > 0
-      ? pickFavorableBaseline(maxHighlightReach, company)
-      : null;
-  const baseline = picked?.perPostReach ?? 0;
-  const singular = highlights.length === 1;
-
   return (
-    <ChapterShell eyebrow={singular ? "Standout" : "Highlights"}>
-      <h2 style={chapterHeadingStyle}>
-        {singular
-          ? "The post that broke through."
-          : "The posts that broke through."}
-      </h2>
-      <p style={{ ...proseStyle, marginTop: 16 }}>
-        {singular
-          ? "Here's the moment that pulled the most eyes onto your home so far."
-          : "These are the moments that pulled the most eyes onto your home."}
-      </p>
-      <div style={{ marginTop: 24 }}>
-        {highlights.map((post) => (
-          <HighlightPost key={post.id} post={post} baseline={baseline} />
-        ))}
+    <Card style={{ padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            backgroundColor: GOLD,
+            color: "#fff",
+            flexShrink: 0,
+          }}
+        >
+          {icon}
+        </span>
+        <div>
+          <div
+            style={{
+              fontSize: 26,
+              fontWeight: 700,
+              color: INK,
+              lineHeight: 1,
+            }}
+          >
+            {value}
+          </div>
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: 12,
+              color: INK_SOFT,
+              fontWeight: 500,
+            }}
+          >
+            {label}
+          </div>
+        </div>
       </div>
-    </ChapterShell>
+    </Card>
   );
 }
 
-function HighlightPost({
-  post,
-  baseline,
+/* ----------------------------------------------------------------------- *
+ *  Section: What This Means + Featured Post                                *
+ * ----------------------------------------------------------------------- */
+
+function WhatThisMeansAndFeatured({
+  totals,
+  topPostReach,
+  featured,
 }: {
-  post: OwnerStoryPost;
-  baseline: number;
+  totals: OwnerStoryData["totals"];
+  topPostReach: number;
+  featured: OwnerStoryPost | null;
 }) {
-  const thumb = post.thumbnail_url;
-  const beats = baseline > 0 && post.reach >= baseline;
+  const summary = buildSummaryParagraph(totals, topPostReach);
+  return (
+    <section
+      style={{
+        marginBottom: 24,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+        gap: 16,
+      }}
+    >
+      <Card style={{ padding: 22 }}>
+        <h3 style={sectionTitleStyle}>What This Means</h3>
+        <p
+          style={{
+            marginTop: 12,
+            fontSize: 14,
+            lineHeight: 1.6,
+            color: INK_SOFT,
+          }}
+        >
+          {summary}
+        </p>
+      </Card>
+
+      <Card style={{ padding: 22 }}>
+        <h3 style={sectionTitleStyle}>Featured Post</h3>
+        <div
+          style={{
+            marginTop: 12,
+            display: "grid",
+            gridTemplateColumns: "120px minmax(0, 1fr)",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          <FeaturedThumb post={featured} />
+          <div>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 10px",
+                borderRadius: 999,
+                backgroundColor: GOLD,
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+              }}
+            >
+              ★ Top Performer
+            </span>
+            {featured ? (
+              <>
+                <div
+                  style={{
+                    marginTop: 12,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: INK,
+                  }}
+                >
+                  {PLATFORM_LABEL[featured.platform]}
+                  {featured.posted_at ? (
+                    <span
+                      style={{
+                        marginLeft: 10,
+                        color: INK_MUTED,
+                        fontSize: 12,
+                        fontWeight: 500,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <CalendarGlyph /> {formatShortDate(featured.posted_at)}
+                    </span>
+                  ) : null}
+                </div>
+                <div
+                  style={{
+                    marginTop: 14,
+                    display: "flex",
+                    gap: 28,
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 22,
+                        fontWeight: 700,
+                        color: INK,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {formatCompactNumber(featured.reach)}
+                    </div>
+                    <div
+                      style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
+                    >
+                      reach
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 22,
+                        fontWeight: 700,
+                        color: INK,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {formatNumber(featured.engagements)}
+                    </div>
+                    <div
+                      style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
+                    >
+                      engagements
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ marginTop: 12, fontSize: 13, color: INK_MUTED }}>
+                Your campaign&apos;s top-performing post will appear here once
+                content lands across Facebook, Instagram, and TikTok.
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+function FeaturedThumb({ post }: { post: OwnerStoryPost | null }) {
+  if (!post || !post.thumbnail_url) {
+    return (
+      <div
+        style={{
+          width: 120,
+          height: 120,
+          borderRadius: 8,
+          backgroundColor: "#eeeeee",
+        }}
+        aria-hidden
+      />
+    );
+  }
   return (
     <div
       style={{
-        marginBottom: 24,
-        borderTop: `1px solid ${RULE}`,
-        paddingTop: 20,
+        width: 120,
+        height: 120,
+        borderRadius: 8,
+        background: `url(${post.thumbnail_url}) center/cover`,
       }}
-    >
-      {thumb ? (
-        <div
-          style={{
-            width: "100%",
-            aspectRatio: "1 / 1",
-            backgroundColor: "#f4f4f4",
-            overflow: "hidden",
-            position: "relative",
-            borderRadius: 4,
-          }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={thumb}
-            alt=""
-            aria-hidden="true"
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              filter: "blur(16px)",
-              transform: "scale(1.15)",
-              opacity: 0.55,
-            }}
-          />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={thumb}
-            alt={`Post from ${formatShortDate(post.posted_at ?? new Date().toISOString())}`}
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-            }}
-          />
-        </div>
-      ) : null}
-      <div style={{ marginTop: 14 }}>
-        <div
-          style={{
-            fontSize: 11,
-            letterSpacing: "0.18em",
-            textTransform: "uppercase",
-            fontWeight: 500,
-            color: INK_MUTED,
-          }}
-        >
-          {platformLabel(post.platform)}
-          {post.posted_at ? ` · ${formatShortDate(post.posted_at)}` : ""}
-        </div>
-        <p
-          style={{
-            ...proseStyle,
-            marginTop: 8,
-            fontSize: 16,
-            lineHeight: 1.55,
-          }}
-        >
-          Reached{" "}
-          <strong style={strongStyle}>
-            {formatCompactNumber(post.reach)} people
-          </strong>
-          {beats ? (
-            <>
-              {" "}
-              — about{" "}
-              {formatCompactNumber(Math.max(1, Math.round(post.reach / Math.max(1, baseline))))}× what an Alliance post typically does.
-            </>
-          ) : null}
-          {post.engagements > 0 ? (
-            <>
-              {" "}
-              {formatNumber(post.engagements)}{" "}
-              {post.engagements === 1 ? "engagement" : "engagements"} so far.
-            </>
-          ) : null}
-        </p>
-      </div>
-    </div>
+      role="img"
+      aria-label={`${PLATFORM_LABEL[post.platform]} top post thumbnail`}
+    />
   );
 }
 
-function CompanyCalloutChapter({
-  company,
-  totalReach,
-}: {
-  company: OwnerStoryData["company"];
-  totalReach: number;
-}) {
-  const yearly = company.window_365d.reach;
-  const listings = company.active_listings;
-  if (yearly === 0) return null;
-
-  return (
-    <section
-      className="story-callout"
-      style={{
-        padding: "56px 24px",
-        margin: "32px 0",
-        backgroundColor: BG_SOFT,
-        borderTop: `1px solid ${RULE}`,
-        borderBottom: `1px solid ${RULE}`,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-          color: INK_MUTED,
-        }}
-      >
-        Behind your campaign
-      </div>
-      <p
-        style={{
-          ...proseStyle,
-          marginTop: 16,
-          fontSize: 18,
-          lineHeight: 1.55,
-        }}
-      >
-        Your home isn&apos;t being marketed in a silo. Alliance has reached{" "}
-        <strong style={strongStyle}>
-          {formatCompactNumber(yearly)} people
-        </strong>{" "}
-        across our active listings in the last year.{" "}
-        <strong style={strongStyle}>
-          {formatCompactNumber(totalReach)}
-        </strong>{" "}
-        of those views were for your home
-        {listings > 0 ? (
-          <>
-            {" "}
-            — one of <strong style={strongStyle}>{formatNumber(listings)}</strong>{" "}
-            we&apos;re actively marketing right now
-          </>
-        ) : null}
-        .
-      </p>
-      <p
-        style={{
-          marginTop: 16,
-          fontSize: 14,
-          color: INK_SOFT,
-          fontWeight: 400,
-        }}
-      >
-        Other firms don&apos;t open the books like this.{" "}
-        <span style={{ color: GOLD, fontWeight: 500 }}>Alliance does.</span>
-      </p>
-    </section>
-  );
-}
-
-function TimelineChapter({ posts }: { posts: OwnerStoryPost[] }) {
-  return (
-    <ChapterShell eyebrow="The Campaign">
-      <h2 style={chapterHeadingStyle}>Every post we&apos;ve put behind your home.</h2>
-      <p style={{ ...proseStyle, marginTop: 16 }}>
-        Newest first. Nothing hidden.
-      </p>
-      <ol
-        style={{
-          marginTop: 24,
-          listStyle: "none",
-          padding: 0,
-        }}
-      >
-        {posts.map((post, idx) => (
-          <TimelineRow
-            key={post.id}
-            post={post}
-            isFirst={idx === 0}
-            isLast={idx === posts.length - 1}
-          />
-        ))}
-      </ol>
-    </ChapterShell>
-  );
-}
-
-function TimelineRow({
-  post,
-  isFirst,
-  isLast,
-}: {
-  post: OwnerStoryPost;
-  isFirst: boolean;
-  isLast: boolean;
-}) {
-  const thumb = post.thumbnail_url;
-  const caption = post.caption || "No caption recorded.";
-  return (
-    <li
-      style={{
-        display: "grid",
-        gridTemplateColumns: "72px minmax(0, 1fr)",
-        gap: 16,
-        padding: "20px 0",
-        borderTop: isFirst ? `1px solid ${RULE}` : undefined,
-        borderBottom: `1px solid ${isLast ? RULE : RULE}`,
-        alignItems: "flex-start",
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          width: 72,
-          height: 72,
-          overflow: "hidden",
-          backgroundColor: "#f4f4f4",
-          borderRadius: 4,
-        }}
-      >
-        {thumb ? (
-          <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={thumb}
-              alt=""
-              aria-hidden="true"
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                filter: "blur(12px)",
-                transform: "scale(1.2)",
-                opacity: 0.55,
-              }}
-            />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={thumb}
-              alt=""
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-              }}
-            />
-          </>
-        ) : null}
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 10,
-            letterSpacing: "0.18em",
-            textTransform: "uppercase",
-            fontWeight: 500,
-            color: INK_MUTED,
-          }}
-        >
-          {platformLabel(post.platform)}
-          {post.posted_at ? ` · ${formatShortDate(post.posted_at)}` : ""}
-        </div>
-        <p
-          style={{
-            margin: "6px 0 0",
-            fontSize: 14,
-            lineHeight: 1.55,
-            color: INK,
-            fontWeight: 400,
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
-        >
-          {caption}
-        </p>
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: 12,
-            color: INK_SOFT,
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {formatCompactNumber(post.reach)} reached
-          {post.engagements > 0 ? (
-            <>
-              <span style={{ color: INK_MUTED }}> · </span>
-              {formatCompactNumber(post.engagements)}{" "}
-              {post.engagements === 1 ? "engagement" : "engagements"}
-            </>
-          ) : null}
-        </div>
-      </div>
-    </li>
-  );
-}
-
-function ConversationChapter({
-  engagements,
-  postCount,
-}: {
-  engagements: number;
-  postCount: number;
-}) {
-  return (
-    <ChapterShell eyebrow="Conversation">
-      <p style={proseStyle}>
-        People aren&apos;t just scrolling past. Across{" "}
-        <strong style={strongStyle}>
-          {formatNumber(postCount)} {postCount === 1 ? "post" : "posts"}
-        </strong>
-        , your home has earned{" "}
-        <strong style={strongStyle}>
-          {formatNumber(engagements)} engagements
-        </strong>{" "}
-        — likes, comments, shares, and saves from real people in the Alliance
-        audience.
-      </p>
-    </ChapterShell>
-  );
-}
-
-function WhereItStandsChapter({
-  status,
-  postCount,
-  statusChangedAt,
-}: {
-  status: PropertyStatus;
-  postCount: number;
-  statusChangedAt: string;
-}) {
-  // Phase 6 — 72-hour grace window. When a UC/Sold flip happened in the
-  // last 72 hours, render a softer transition framing instead of the full
-  // celebration copy. Gives the seller a beat to process offline before
-  // the page tells the world. Active/expired statuses are unaffected.
-  const flippedRecentlyMs = Date.now() - new Date(statusChangedAt).getTime();
-  const inGraceWindow =
-    Number.isFinite(flippedRecentlyMs) &&
-    flippedRecentlyMs >= 0 &&
-    flippedRecentlyMs < 72 * 3_600_000;
-
-  let eyebrow = "Where it stands";
-  let heading = "We’re continuing to market your home.";
-  let body =
-    "Each week brings new posts and new eyes on your listing — we’ll keep this page fresh as the campaign continues.";
-
-  if (status === "pending") {
-    if (inGraceWindow) {
-      eyebrow = "Update";
-      heading = "We’ve moved into the contract phase.";
-      body =
-        "Posts will keep going while we work through the steps to closing. Hold tight — your agent will be in touch as the dates firm up.";
-    } else {
-      eyebrow = "Under contract";
-      heading = "Your home found its buyer.";
-      body =
-        postCount > 0
-          ? "Here’s the full campaign that got it there — every post is preserved above. We’ll keep this page live through closing."
-          : "We’ll keep this page live through closing.";
-    }
-  } else if (status === "sold") {
-    if (inGraceWindow) {
-      eyebrow = "Update";
-      heading = "Closing complete.";
-      body =
-        "Congratulations. Take a beat — your agent will be in touch shortly. We’ll keep this page live as a campaign recap for you to share and keep.";
-    } else {
-      eyebrow = "Sold";
-      heading = "Mission accomplished.";
-      body =
-        postCount > 0
-          ? "This is the campaign that sold your home. Thank you for trusting Alliance with one of the biggest decisions you’ll make."
-          : "Thank you for trusting Alliance with one of the biggest decisions you’ll make.";
-    }
-  } else if (status === "expired") {
-    // Gracefully degrade to active framing — don't read tragic.
-    eyebrow = "Where it stands";
-    heading = "Here’s the campaign so far.";
-    body =
-      "Talk to your agent about next steps — the work that went into this page is preserved.";
+function buildSummaryParagraph(
+  totals: OwnerStoryData["totals"],
+  topReach: number,
+): string {
+  if (totals.post_count === 0) {
+    return "Your home is queued up for the Alliance social media campaign. Reach and engagement stats will appear here as soon as Facebook, Instagram, and TikTok posts go live.";
   }
-
-  return (
-    <ChapterShell eyebrow={eyebrow}>
-      <h2 style={chapterHeadingStyle}>{heading}</h2>
-      <p style={{ ...proseStyle, marginTop: 16 }}>{body}</p>
-    </ChapterShell>
-  );
+  const reachLabel = formatNumber(totals.reach);
+  const engLabel = formatNumber(totals.engagements);
+  const topLabel = formatNumber(topReach);
+  return `Your home is gaining meaningful visibility across Facebook, Instagram, and TikTok. Since launch, the campaign has reached ${reachLabel} people and generated ${engLabel} engagements. The strongest post reached ${topLabel} people, showing solid exposure beyond standard MLS visibility.`;
 }
 
-function WhatNowChapter({
-  address,
-  agentName,
-  agentEmail,
-  agentPhone,
-}: {
-  address: string | null;
-  agentName: string | null;
-  agentEmail: string | null;
-  agentPhone: string | null;
-}) {
-  const firstName = agentName?.split(" ")[0] ?? "your agent";
-  const subjectLine = address
-    ? `Question about ${address}`
-    : "Question about my listing";
-  const mailto = agentEmail
-    ? `mailto:${agentEmail}?subject=${encodeURIComponent(subjectLine)}`
-    : null;
-  const askMailto = agentEmail
-    ? `mailto:${agentEmail}?subject=${encodeURIComponent(
-        address ? `Question about a post — ${address}` : "Question about a post",
-      )}`
-    : null;
-  // Phase 7 — tap-to-text via sms: URI. Opens the visitor's Messages app
-  // with the agent's number + a friendly body pre-filled. Falls through
-  // cleanly when agent_phone is null.
-  const smsBody = address
-    ? `Hi ${firstName} — question about ${address}.`
-    : `Hi ${firstName} — question about my listing.`;
-  const cleanedPhone = agentPhone
-    ? normalizePhoneForSms(agentPhone)
-    : null;
-  const smsHref = cleanedPhone
-    ? `sms:${cleanedPhone}?&body=${encodeURIComponent(smsBody)}`
-    : null;
+/* ----------------------------------------------------------------------- *
+ *  Section: Platform Performance                                           *
+ * ----------------------------------------------------------------------- */
 
+function PlatformPerformance({ stats }: { stats: PlatformStat[] }) {
   return (
-    <section
-      className="story-whatnow"
-      style={{ padding: "48px 24px 24px" }}
-    >
+    <section style={{ marginBottom: 24 }}>
+      <SectionHeader title="Platform Performance" />
       <div
         style={{
-          fontSize: 11,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-          color: INK_MUTED,
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 16,
         }}
       >
-        What now
-      </div>
-      <h2 style={{ ...chapterHeadingStyle, marginTop: 14 }}>
-        Got a thought, a question, or want to share this?
-      </h2>
-      <div
-        style={{
-          marginTop: 24,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
-        {smsHref ? (
-          <a href={smsHref} style={primaryActionStyle}>
-            Text {firstName}
-            <ArrowRight />
-          </a>
-        ) : null}
-        {mailto ? (
-          <a
-            href={mailto}
-            style={smsHref ? secondaryActionStyle : primaryActionStyle}
-          >
-            Email {firstName}
-            {!smsHref ? <ArrowRight /> : null}
-          </a>
-        ) : null}
-        <ShareLinkButton style={secondaryActionStyle} address={address} />
-        {askMailto ? (
-          <a
-            href={askMailto}
-            style={secondaryActionStyle}
-          >
-            Ask about a specific post
-          </a>
-        ) : null}
+        {stats.map((s) => (
+          <Card key={s.platform} style={{ padding: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <PlatformGlyph platform={s.platform} />
+              <span
+                style={{ fontSize: 15, fontWeight: 600, color: INK }}
+              >
+                {PLATFORM_LABEL[s.platform]}
+              </span>
+            </div>
+            <div
+              style={{
+                marginTop: 16,
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: INK,
+                    lineHeight: 1,
+                  }}
+                >
+                  {formatNumber(s.reach)}
+                </div>
+                <div
+                  style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
+                >
+                  reach
+                </div>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: INK,
+                    lineHeight: 1,
+                  }}
+                >
+                  {formatNumber(s.engagements)}
+                </div>
+                <div
+                  style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
+                >
+                  engagements
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
       </div>
     </section>
   );
 }
 
-/**
- * Convert a Paragon-style display phone ("(609) 555-1234" / "609.555.1234")
- * into something `sms:` can navigate to. We strip everything that isn't a
- * digit or a leading +; mobile OSes accept either form.
- */
-function normalizePhoneForSms(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const hasPlus = trimmed.startsWith("+");
-  const digits = trimmed.replace(/[^\d]/g, "");
-  if (digits.length < 7) return null;
-  return hasPlus ? `+${digits}` : digits;
+/* ----------------------------------------------------------------------- *
+ *  Section: The Alliance Advantage                                         *
+ * ----------------------------------------------------------------------- */
+
+function AllianceAdvantage({
+  yearReach,
+  activeListings,
+}: {
+  yearReach: number;
+  activeListings: number;
+}) {
+  return (
+    <section style={{ marginBottom: 24 }}>
+      <Card
+        style={{
+          padding: "28px",
+          backgroundColor: GOLD_SOFT_BG,
+          border: `1px solid ${GOLD_BORDER}`,
+        }}
+      >
+        <h3 style={{ ...sectionTitleStyle, margin: 0 }}>
+          The Alliance Advantage
+        </h3>
+        <div
+          style={{
+            marginTop: 16,
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1.1fr) auto minmax(0, 1.6fr)",
+            gap: 24,
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 38,
+                fontWeight: 700,
+                color: GOLD,
+                lineHeight: 1,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              {formatCompactNumber(yearReach)}
+            </div>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 13,
+                color: INK_SOFT,
+                maxWidth: 200,
+              }}
+            >
+              People reached across active listings in the last year
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 32,
+                fontWeight: 700,
+                color: GOLD,
+                lineHeight: 1,
+              }}
+            >
+              {formatNumber(activeListings)}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: INK_SOFT,
+                textAlign: "center",
+                maxWidth: 140,
+                lineHeight: 1.3,
+              }}
+            >
+              Listings currently being marketed
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <C21ShieldGlyph />
+            <p
+              style={{
+                margin: 0,
+                fontSize: 13,
+                color: INK_SOFT,
+                lineHeight: 1.55,
+              }}
+            >
+              Your listing is part of a broader marketing system built to
+              create visibility, track performance, and keep sellers informed.
+            </p>
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
 }
 
-function Footer() {
+/* ----------------------------------------------------------------------- *
+ *  Section: Campaign Activity                                              *
+ * ----------------------------------------------------------------------- */
+
+function CampaignActivity({
+  recent,
+}: {
+  recent: Record<Platform, OwnerStoryPost | null>;
+}) {
+  const order: Platform[] = ["facebook", "tiktok", "instagram"];
+  return (
+    <section style={{ marginBottom: 24 }}>
+      <SectionHeader title="Campaign Activity" />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 16,
+        }}
+      >
+        {order.map((p) => (
+          <CampaignActivityCard key={p} platform={p} post={recent[p]} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CampaignActivityCard({
+  platform,
+  post,
+}: {
+  platform: Platform;
+  post: OwnerStoryPost | null;
+}) {
+  return (
+    <Card style={{ padding: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <PlatformGlyph platform={platform} size={20} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: INK }}>
+            {PLATFORM_LABEL[platform]}
+          </span>
+        </div>
+        {post?.posted_at ? (
+          <span
+            style={{
+              fontSize: 11,
+              color: INK_MUTED,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <CalendarGlyph /> {formatShortDate(post.posted_at)}
+          </span>
+        ) : null}
+      </div>
+
+      {post ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "64px minmax(0, 1fr)",
+            gap: 12,
+            alignItems: "center",
+          }}
+        >
+          <div
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: 8,
+              backgroundColor: "#eeeeee",
+              background: post.thumbnail_url
+                ? `url(${post.thumbnail_url}) center/cover`
+                : undefined,
+            }}
+            aria-hidden
+          />
+          <div style={{ fontSize: 13, color: INK_SOFT, lineHeight: 1.6 }}>
+            <div>
+              <strong style={{ color: INK }}>
+                {formatNumber(post.reach)}
+              </strong>{" "}
+              reached
+            </div>
+            <div>
+              <strong style={{ color: INK }}>
+                {formatNumber(post.engagements)}
+              </strong>{" "}
+              engagements
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: INK_MUTED }}>
+          No {PLATFORM_LABEL[platform]} activity yet.
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Section: What Happens Next                                              *
+ * ----------------------------------------------------------------------- */
+
+function WhatHappensNext({
+  address,
+}: {
+  token: string;
+  address: string | null;
+}) {
+  return (
+    <section style={{ marginBottom: 32 }}>
+      <Card
+        style={{
+          padding: 22,
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1.4fr) auto",
+          gap: 20,
+          alignItems: "center",
+        }}
+      >
+        <div>
+          <h3 style={sectionTitleStyle}>What Happens Next</h3>
+          <p
+            style={{
+              marginTop: 10,
+              fontSize: 14,
+              color: INK_SOFT,
+              lineHeight: 1.55,
+            }}
+          >
+            We&apos;ll continue monitoring performance, publishing new content,
+            and updating this report each week so you always have a clear view
+            of your listing&apos;s marketing activity.
+          </p>
+        </div>
+        <ShareLinkButton
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 18px",
+            borderRadius: 999,
+            border: `1px solid ${GOLD_BORDER}`,
+            backgroundColor: "#fff",
+            color: INK,
+            fontWeight: 600,
+            fontSize: 13,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            fontFamily: FONT_STACK,
+          }}
+          address={address}
+        />
+      </Card>
+    </section>
+  );
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Section: Agent footer                                                   *
+ * ----------------------------------------------------------------------- */
+
+function AgentFooter({ listing }: { listing: OwnerStoryData["listing"] }) {
+  const name = listing.agent_name ?? "Century 21 Alliance";
+  const office = officeShortName(listing.listing_office_name);
+  const phone = listing.agent_phone?.trim();
+  const email = listing.agent_email?.trim();
   return (
     <footer
-      className="story-footer"
       style={{
-        padding: "56px 24px 40px",
-        textAlign: "center",
+        marginTop: 40,
+        backgroundColor: FOOTER_BG,
+        color: "#FFFFFF",
+        padding: "18px 24px",
       }}
     >
       <div
         style={{
-          display: "inline-flex",
+          maxWidth: 960,
+          margin: "0 auto",
+          display: "flex",
+          flexWrap: "wrap",
           alignItems: "center",
-          gap: 10,
-          opacity: 0.7,
+          gap: 18,
+          fontSize: 13,
         }}
       >
-        <C21Seal />
-        <span style={{ fontSize: 13, color: INK }}>Century 21 Alliance</span>
-      </div>
-      <div
-        style={{
-          marginTop: 20,
-          fontSize: 10,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-          color: INK_MUTED,
-        }}
-      >
-        This page updates automatically
+        <span
+          style={{
+            fontSize: 13,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            fontWeight: 700,
+            color: GOLD,
+          }}
+        >
+          Century 21<sup style={{ fontSize: 7 }}>®</sup>{" "}
+          <span style={{ color: "#cfcfcf", fontWeight: 500 }}>Alliance</span>
+        </span>
+        <span style={{ color: "#cfcfcf" }}>
+          <strong style={{ color: "#fff", fontWeight: 600 }}>{name}</strong>
+          <span style={{ margin: "0 8px", opacity: 0.5 }}>|</span>
+          {office}
+        </span>
+        <span style={{ flex: 1 }} />
+        {phone ? (
+          <FooterContact
+            icon={<PhoneGlyph />}
+            label={phone}
+            href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+          />
+        ) : null}
+        {email ? (
+          <FooterContact
+            icon={<EnvelopeGlyph />}
+            label={email}
+            href={`mailto:${email}`}
+          />
+        ) : null}
+        <FooterContact
+          icon={<GlobeGlyph />}
+          label="c21alliance.com"
+          href="https://www.c21alliance.com"
+        />
       </div>
     </footer>
   );
 }
 
-/* ----------------------------------------------------------------------- *
- *  Shared atoms
- * ----------------------------------------------------------------------- */
-
-function ChapterShell({
-  eyebrow,
-  children,
+function FooterContact({
+  icon,
+  label,
+  href,
 }: {
-  eyebrow: string;
-  children: React.ReactNode;
+  icon: React.ReactNode;
+  label: string;
+  href: string;
 }) {
   return (
-    <section className="story-chapter" style={{ padding: "44px 24px" }}>
-      <div
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-          color: INK_MUTED,
-        }}
-      >
-        {eyebrow}
-      </div>
-      <div style={{ marginTop: 18 }}>{children}</div>
-    </section>
+    <a
+      href={href}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        color: "#fff",
+        textDecoration: "none",
+        fontWeight: 500,
+      }}
+    >
+      <span style={{ color: GOLD, display: "inline-flex" }}>{icon}</span>
+      {label}
+    </a>
   );
 }
 
-// Prose stays readable even when the outer container grows to 880px on
-// desktop. Caps the line length at ~64-70ch so paragraphs don't sprawl.
-const proseStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 17,
-  lineHeight: 1.6,
-  color: INK,
-  fontWeight: 400,
-  maxWidth: 600,
-};
+/* ----------------------------------------------------------------------- *
+ *  Primitives                                                              *
+ * ----------------------------------------------------------------------- */
 
-const strongStyle: React.CSSProperties = {
-  fontWeight: 500,
-  color: INK,
-};
-
-const chapterHeadingStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: "clamp(24px, 5vw, 30px)",
-  lineHeight: 1.1,
-  letterSpacing: "-0.02em",
-  fontWeight: 500,
-  color: INK,
-  maxWidth: 600,
-};
-
-const primaryActionStyle: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 10,
-  padding: "16px 24px",
-  backgroundColor: INK,
-  color: "#ffffff",
-  textDecoration: "none",
-  fontSize: 14,
-  letterSpacing: "0.12em",
-  textTransform: "uppercase",
-  fontWeight: 500,
-  borderRadius: 2,
-};
-
-const secondaryActionStyle: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 10,
-  padding: "14px 24px",
-  border: `1px solid ${INK}`,
-  backgroundColor: "transparent",
-  color: INK,
-  textDecoration: "none",
-  fontSize: 13,
-  letterSpacing: "0.12em",
-  textTransform: "uppercase",
-  fontWeight: 500,
-  borderRadius: 2,
-  cursor: "pointer",
-  fontFamily: "inherit",
-};
-
-function ArrowRight() {
+function Card({
+  style,
+  children,
+}: {
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
   return (
-    <svg viewBox="0 0 24 24" width={14} height={14} fill="none" aria-hidden="true">
-      <path
-        d="M5 12h14m0 0l-5-5m5 5l-5 5"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <div
+      style={{
+        backgroundColor: CARD_BG,
+        border: `1px solid ${RULE}`,
+        borderRadius: 12,
+        boxShadow:
+          "0 1px 2px rgba(24,24,27,0.04), 0 1px 3px rgba(24,24,27,0.06)",
+        padding: 20,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SectionHeader({
+  title,
+  rightSlot,
+}: {
+  title: string;
+  rightSlot?: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 12,
+        marginBottom: 14,
+      }}
+    >
+      <h2 style={sectionTitleStyle}>{title}</h2>
+      {rightSlot}
+    </div>
+  );
+}
+
+const sectionTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 22,
+  fontWeight: 700,
+  color: INK,
+  letterSpacing: "-0.01em",
+};
+
+/* ----------------------------------------------------------------------- *
+ *  Inline SVG glyphs (kept inline so the report is self-contained)         *
+ * ----------------------------------------------------------------------- */
+
+function CalendarGlyph() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+function BedGlyph() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2 4v16" />
+      <path d="M2 8h18a2 2 0 0 1 2 2v10" />
+      <circle cx="7" cy="13" r="2" />
+      <path d="M10 13h12" />
+    </svg>
+  );
+}
+function BathGlyph() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+      <path d="M3 12h18" />
+      <path d="M5 12v5a4 4 0 0 0 4 4h6a4 4 0 0 0 4-4v-5" />
+    </svg>
+  );
+}
+function HomeGlyph() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 11l9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <polyline points="9 22 9 12 15 12 15 22" />
+    </svg>
+  );
+}
+function TagGlyph() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z" />
+      <circle cx="7" cy="7" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+function PeopleGlyph() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+function HeartGlyph() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 21s-7-4.35-9.5-9.27C1 8 3.5 4 7.5 4c2 0 3.5 1 4.5 2.5C13 5 14.5 4 16.5 4c4 0 6.5 4 5 7.73C19 16.65 12 21 12 21z" />
+    </svg>
+  );
+}
+function PencilGlyph() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z" />
+    </svg>
+  );
+}
+function TrendGlyph() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="3 17 9 11 13 15 21 7" />
+      <polyline points="14 7 21 7 21 14" />
+    </svg>
+  );
+}
+function PhoneGlyph() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.72 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0 1 22 16.92z" />
+    </svg>
+  );
+}
+function EnvelopeGlyph() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+      <polyline points="22,6 12,13 2,6" />
+    </svg>
+  );
+}
+function GlobeGlyph() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
     </svg>
   );
 }
 
-function C21Seal() {
+function PlatformGlyph({
+  platform,
+  size = 22,
+}: {
+  platform: Platform;
+  size?: number;
+}) {
+  if (platform === "facebook") {
+    return (
+      <span
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          backgroundColor: "#1877F2",
+          color: "#fff",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontWeight: 700,
+          fontSize: size * 0.55,
+          flexShrink: 0,
+        }}
+      >
+        f
+      </span>
+    );
+  }
+  if (platform === "instagram") {
+    return (
+      <span
+        style={{
+          width: size,
+          height: size,
+          borderRadius: 6,
+          background:
+            "linear-gradient(135deg, #f9ce34 0%, #ee2a7b 50%, #6228d7 100%)",
+          color: "#fff",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontWeight: 700,
+          fontSize: size * 0.55,
+          flexShrink: 0,
+        }}
+      >
+        IG
+      </span>
+    );
+  }
   return (
-    <svg width={20} height={24} viewBox="0 0 20 24" aria-hidden="true">
-      <rect width={20} height={24} fill={GOLD} />
+    <span
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 6,
+        backgroundColor: "#000",
+        color: "#fff",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: 700,
+        fontSize: size * 0.45,
+        letterSpacing: "-0.05em",
+        flexShrink: 0,
+      }}
+    >
+      TT
+    </span>
+  );
+}
+
+function C21ShieldGlyph() {
+  return (
+    <svg
+      width="76"
+      height="76"
+      viewBox="0 0 76 76"
+      aria-hidden
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        d="M38 4 L66 14 V36 C66 52 54 64 38 70 C22 64 10 52 10 36 V14 Z"
+        fill="none"
+        stroke={GOLD}
+        strokeWidth="3"
+      />
       <text
-        x="50%"
-        y="58%"
+        x="38"
+        y="46"
         textAnchor="middle"
-        dominantBaseline="middle"
-        fontFamily="'Barlow', system-ui, sans-serif"
-        fontSize={10}
-        fontWeight={500}
-        fill="#ffffff"
-        letterSpacing="0.04em"
+        fontFamily="Barlow, sans-serif"
+        fontWeight="700"
+        fontSize="22"
+        fill={GOLD}
+        letterSpacing="-0.04em"
       >
         21
       </text>
     </svg>
   );
-}
-
-/* ----------------------------------------------------------------------- *
- *  Helpers
- * ----------------------------------------------------------------------- */
-
-function platformLabel(p: Platform): string {
-  if (p === "facebook") return "Facebook";
-  if (p === "instagram") return "Instagram";
-  return "TikTok";
-}
-
-function firstLineOfAddress(address: string | null): string {
-  if (!address) return "";
-  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
-  if (parts.length === 0) return address;
-  return parts[0] ?? "";
-}
-
-function secondLineOfAddress(listing: OwnerStoryData["listing"]): string {
-  // Prefer the explicit city/state/zip fields when available — the
-  // properties table carries them separately and it's cleaner than re-parsing
-  // a comma-joined address string.
-  const city = listing.city?.trim();
-  const state = listing.state?.trim();
-  const zip = listing.zip?.trim();
-  if (city && state) {
-    return [`${city}, ${state}`, zip].filter(Boolean).join(" ");
-  }
-  if (city) return city;
-  if (!listing.address) return "";
-  // Fallback: pull everything after the first comma in the joined address.
-  const parts = listing.address
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length <= 1) return "";
-  return parts.slice(1).join(", ");
 }
