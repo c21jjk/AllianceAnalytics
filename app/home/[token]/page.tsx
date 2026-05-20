@@ -21,6 +21,7 @@ import {
   formatShortDate,
 } from "@/lib/format";
 import ShareLinkButton from "./ShareLinkButton";
+import SharePostButton from "./SharePostButton";
 
 /**
  * Owner Story (Phase 8 design — locked 2026-05-19).
@@ -258,10 +259,14 @@ function OwnerStoryView({
           topPostReach={featuredPost?.reach ?? 0}
           campaignStartLabel={campaignStartLabel}
         />
-        <WhatThisMeansAndFeatured
+        <HelpSpreadTheWord
+          recent={recentByPlatform}
+          topPostId={featuredPost?.id ?? null}
+          listingAddress={listing.address}
+        />
+        <WhatThisMeans
           totals={totals}
           topPostReach={featuredPost?.reach ?? 0}
-          featured={featuredPost}
         />
         <PlatformPerformance stats={platformStats} />
         <AllianceAdvantage
@@ -270,7 +275,6 @@ function OwnerStoryView({
           activeOffices={vitals.active_offices}
           sealUrl={brandLogos.seal_full_url}
         />
-        <CampaignActivity recent={recentByPlatform} />
         <WhatHappensNext token={data.token} address={listing.address} />
       </main>
       <AgentFooter listing={data.listing} />
@@ -712,28 +716,293 @@ function StatTile({
 }
 
 /* ----------------------------------------------------------------------- *
- *  Section: What This Means + Featured Post                                *
+ *  Section: Help Spread the Word                                           *
+ *                                                                          *
+ *  Combines Larissa's "ask the seller to share" message with the three     *
+ *  per-platform post cards (FB / TT / IG). Each card has a clickable       *
+ *  thumbnail that opens the actual social post in a new tab + a Share      *
+ *  chip that fires the native share sheet (or copies to clipboard).        *
+ *  Position: between Marketing Snapshot and What This Means, so the        *
+ *  seller sees the topline numbers, then is prompted to amplify.           *
  * ----------------------------------------------------------------------- */
 
-function WhatThisMeansAndFeatured({
+function HelpSpreadTheWord({
+  recent,
+  topPostId,
+  listingAddress,
+}: {
+  recent: Record<Platform, OwnerStoryPost | null>;
+  topPostId: string | null;
+  listingAddress: string | null;
+}) {
+  const order: Platform[] = ["facebook", "tiktok", "instagram"];
+  return (
+    <section style={{ marginBottom: 24 }}>
+      <Card
+        style={{
+          padding: "28px",
+          backgroundColor: GOLD_SOFT_BG,
+          border: `1px solid ${GOLD_BORDER}`,
+        }}
+      >
+        <h3 style={{ ...sectionTitleStyle, margin: 0 }}>
+          Help Spread the Word
+        </h3>
+        <p
+          style={{
+            margin: "12px 0 0 0",
+            fontSize: 14,
+            lineHeight: 1.6,
+            color: INK_SOFT,
+            maxWidth: 760,
+          }}
+        >
+          To help maximize exposure even further, we encourage you to share
+          your home&apos;s posts with friends, family, and on your own social
+          media pages. Every share, comment, and interaction helps increase
+          visibility and reach more potential buyers.
+        </p>
+        <div
+          style={{
+            marginTop: 20,
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: 14,
+          }}
+        >
+          {order.map((p) => (
+            <ShareablePostCard
+              key={p}
+              platform={p}
+              post={recent[p]}
+              isTopPerformer={
+                recent[p] !== null && recent[p]?.id === topPostId
+              }
+              listingAddress={listingAddress}
+            />
+          ))}
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+function ShareablePostCard({
+  platform,
+  post,
+  isTopPerformer,
+  listingAddress,
+}: {
+  platform: Platform;
+  post: OwnerStoryPost | null;
+  isTopPerformer: boolean;
+  listingAddress: string | null;
+}) {
+  return (
+    <div
+      style={{
+        backgroundColor: "#fff",
+        border: `1px solid ${RULE}`,
+        borderRadius: 10,
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        boxShadow:
+          "0 1px 2px rgba(24,24,27,0.04), 0 1px 3px rgba(24,24,27,0.06)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <PlatformGlyph platform={platform} size={20} />
+          <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
+            {PLATFORM_LABEL[platform]}
+          </span>
+        </div>
+        {post?.posted_at ? (
+          <span
+            style={{
+              fontSize: 11,
+              color: INK_MUTED,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <CalendarGlyph /> {formatShortDate(post.posted_at)}
+          </span>
+        ) : null}
+      </div>
+
+      {isTopPerformer && post ? (
+        <span
+          style={{
+            alignSelf: "flex-start",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "3px 10px",
+            borderRadius: 999,
+            backgroundColor: GOLD,
+            color: "#fff",
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+          }}
+        >
+          ★ Top Performer
+        </span>
+      ) : null}
+
+      <ThumbnailLink post={post} platform={platform} />
+
+      {post ? (
+        <div style={{ display: "flex", gap: 14, fontSize: 12, color: INK_SOFT }}>
+          <div>
+            <strong style={{ color: INK }}>{formatNumber(post.reach)}</strong>{" "}
+            reached
+          </div>
+          <div>
+            <strong style={{ color: INK }}>
+              {formatNumber(post.engagements)}
+            </strong>{" "}
+            engagements
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: INK_MUTED }}>
+          No {PLATFORM_LABEL[platform]} post yet.
+        </div>
+      )}
+
+      {post?.permalink ? (
+        <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
+          <a
+            href={post.permalink}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              flex: 1,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: `1px solid ${RULE}`,
+              backgroundColor: "#fff",
+              color: INK,
+              fontWeight: 600,
+              fontSize: 12,
+              textDecoration: "none",
+            }}
+          >
+            View post →
+          </a>
+          <SharePostButton
+            url={post.permalink}
+            platformLabel={PLATFORM_LABEL[platform]}
+            address={listingAddress}
+            style={{
+              flex: 1,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: `1px solid ${GOLD_BORDER}`,
+              backgroundColor: GOLD,
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: "pointer",
+              fontFamily: FONT_STACK,
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ThumbnailLink({
+  post,
+  platform,
+}: {
+  post: OwnerStoryPost | null;
+  platform: Platform;
+}) {
+  const placeholder = (
+    <div
+      style={{
+        width: "100%",
+        aspectRatio: "1 / 1",
+        borderRadius: 8,
+        backgroundColor: "#eeeeee",
+      }}
+      aria-hidden
+    />
+  );
+
+  if (!post) return placeholder;
+
+  const tile = (
+    <div
+      style={{
+        width: "100%",
+        aspectRatio: "1 / 1",
+        borderRadius: 8,
+        background: post.thumbnail_url
+          ? `url(${post.thumbnail_url}) center/cover`
+          : "#eeeeee",
+        cursor: post.permalink ? "pointer" : "default",
+      }}
+      role={post.thumbnail_url ? "img" : undefined}
+      aria-label={
+        post.thumbnail_url
+          ? `${PLATFORM_LABEL[platform]} post thumbnail — click to view`
+          : undefined
+      }
+    />
+  );
+
+  if (post.permalink) {
+    return (
+      <a
+        href={post.permalink}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Open ${PLATFORM_LABEL[platform]} post in a new tab`}
+        style={{ display: "block" }}
+      >
+        {tile}
+      </a>
+    );
+  }
+  return tile;
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Section: What This Means (standalone, full-width)                       *
+ * ----------------------------------------------------------------------- */
+
+function WhatThisMeans({
   totals,
   topPostReach,
-  featured,
 }: {
   totals: OwnerStoryData["totals"];
   topPostReach: number;
-  featured: OwnerStoryPost | null;
 }) {
   const summary = buildSummaryParagraph(totals, topPostReach);
   return (
-    <section
-      style={{
-        marginBottom: 24,
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-        gap: 16,
-      }}
-    >
+    <section style={{ marginBottom: 24 }}>
       <Card style={{ padding: 22 }}>
         <h3 style={sectionTitleStyle}>What This Means</h3>
         <p
@@ -742,149 +1011,13 @@ function WhatThisMeansAndFeatured({
             fontSize: 14,
             lineHeight: 1.6,
             color: INK_SOFT,
+            maxWidth: 760,
           }}
         >
           {summary}
         </p>
       </Card>
-
-      <Card style={{ padding: 22 }}>
-        <h3 style={sectionTitleStyle}>Featured Post</h3>
-        <div
-          style={{
-            marginTop: 12,
-            display: "grid",
-            gridTemplateColumns: "120px minmax(0, 1fr)",
-            gap: 16,
-            alignItems: "start",
-          }}
-        >
-          <FeaturedThumb post={featured} />
-          <div>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "4px 10px",
-                borderRadius: 999,
-                backgroundColor: GOLD,
-                color: "#fff",
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: "0.04em",
-              }}
-            >
-              ★ Top Performer
-            </span>
-            {featured ? (
-              <>
-                <div
-                  style={{
-                    marginTop: 12,
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: INK,
-                  }}
-                >
-                  {PLATFORM_LABEL[featured.platform]}
-                  {featured.posted_at ? (
-                    <span
-                      style={{
-                        marginLeft: 10,
-                        color: INK_MUTED,
-                        fontSize: 12,
-                        fontWeight: 500,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 4,
-                      }}
-                    >
-                      <CalendarGlyph /> {formatShortDate(featured.posted_at)}
-                    </span>
-                  ) : null}
-                </div>
-                <div
-                  style={{
-                    marginTop: 14,
-                    display: "flex",
-                    gap: 28,
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 22,
-                        fontWeight: 700,
-                        color: INK,
-                        lineHeight: 1,
-                      }}
-                    >
-                      {formatCompactNumber(featured.reach)}
-                    </div>
-                    <div
-                      style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
-                    >
-                      reach
-                    </div>
-                  </div>
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 22,
-                        fontWeight: 700,
-                        color: INK,
-                        lineHeight: 1,
-                      }}
-                    >
-                      {formatNumber(featured.engagements)}
-                    </div>
-                    <div
-                      style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
-                    >
-                      engagements
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div style={{ marginTop: 12, fontSize: 13, color: INK_MUTED }}>
-                Your campaign&apos;s top-performing post will appear here once
-                content lands across Facebook, Instagram, and TikTok.
-              </div>
-            )}
-          </div>
-        </div>
-      </Card>
     </section>
-  );
-}
-
-function FeaturedThumb({ post }: { post: OwnerStoryPost | null }) {
-  if (!post || !post.thumbnail_url) {
-    return (
-      <div
-        style={{
-          width: 120,
-          height: 120,
-          borderRadius: 8,
-          backgroundColor: "#eeeeee",
-        }}
-        aria-hidden
-      />
-    );
-  }
-  return (
-    <div
-      style={{
-        width: 120,
-        height: 120,
-        borderRadius: 8,
-        background: `url(${post.thumbnail_url}) center/cover`,
-      }}
-      role="img"
-      aria-label={`${PLATFORM_LABEL[post.platform]} top post thumbnail`}
-    />
   );
 }
 
@@ -1104,117 +1237,6 @@ function AllianceAdvantage({
         </div>
       </Card>
     </section>
-  );
-}
-
-/* ----------------------------------------------------------------------- *
- *  Section: Campaign Activity                                              *
- * ----------------------------------------------------------------------- */
-
-function CampaignActivity({
-  recent,
-}: {
-  recent: Record<Platform, OwnerStoryPost | null>;
-}) {
-  const order: Platform[] = ["facebook", "tiktok", "instagram"];
-  return (
-    <section style={{ marginBottom: 24 }}>
-      <SectionHeader title="Campaign Activity" />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 16,
-        }}
-      >
-        {order.map((p) => (
-          <CampaignActivityCard key={p} platform={p} post={recent[p]} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CampaignActivityCard({
-  platform,
-  post,
-}: {
-  platform: Platform;
-  post: OwnerStoryPost | null;
-}) {
-  return (
-    <Card style={{ padding: 16 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 12,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <PlatformGlyph platform={platform} size={20} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: INK }}>
-            {PLATFORM_LABEL[platform]}
-          </span>
-        </div>
-        {post?.posted_at ? (
-          <span
-            style={{
-              fontSize: 11,
-              color: INK_MUTED,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-            }}
-          >
-            <CalendarGlyph /> {formatShortDate(post.posted_at)}
-          </span>
-        ) : null}
-      </div>
-
-      {post ? (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "64px minmax(0, 1fr)",
-            gap: 12,
-            alignItems: "center",
-          }}
-        >
-          <div
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: 8,
-              backgroundColor: "#eeeeee",
-              background: post.thumbnail_url
-                ? `url(${post.thumbnail_url}) center/cover`
-                : undefined,
-            }}
-            aria-hidden
-          />
-          <div style={{ fontSize: 13, color: INK_SOFT, lineHeight: 1.6 }}>
-            <div>
-              <strong style={{ color: INK }}>
-                {formatNumber(post.reach)}
-              </strong>{" "}
-              reached
-            </div>
-            <div>
-              <strong style={{ color: INK }}>
-                {formatNumber(post.engagements)}
-              </strong>{" "}
-              engagements
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div style={{ fontSize: 12, color: INK_MUTED }}>
-          No {PLATFORM_LABEL[platform]} activity yet.
-        </div>
-      )}
-    </Card>
   );
 }
 
