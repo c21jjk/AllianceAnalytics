@@ -421,7 +421,7 @@ export async function fetchOwnerStoryByToken(
     supabase
       .from("posts")
       .select(
-        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics",
+        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type",
       )
       .eq("property_id", propRow.id)
       .order("posted_at", { ascending: false }),
@@ -443,6 +443,7 @@ export async function fetchOwnerStoryByToken(
     thumbnail_url: string | null;
     permalink: string | null;
     metrics: Record<string, unknown> | null;
+    media_type: string | null;
   };
 
   let fallbackRows: RawPost[] = [];
@@ -450,7 +451,7 @@ export async function fetchOwnerStoryByToken(
     const { data: groupPostRows } = await supabase
       .from("posts")
       .select(
-        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics",
+        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type",
       )
       .in("group_id", groupIds)
       .order("posted_at", { ascending: false });
@@ -467,17 +468,30 @@ export async function fetchOwnerStoryByToken(
     return tb - ta;
   });
 
+  // Reach + engagement formulas mirror lib/data/post-detail.ts EXACTLY so the
+  // numbers on the Owner Story match what John and the team see on the
+  // dashboard post detail. Last drift was caught 2026-05-20: Owner Story was
+  // showing FB Reel reach as 2,875 while the dashboard showed 4.7K because we
+  // weren't using `plays` for video posts, and engagements were ~232 short
+  // because we weren't summing `link_clicks` (which carry the bulk of FB Reel
+  // engagement per Meta Business Suite). Keep these aligned.
   const posts: OwnerStoryPost[] = merged.map((p) => {
     const m = (p.metrics ?? {}) as Record<string, unknown>;
-    const reach = readNum(m.reach) || readNum(m.impressions);
+    const platform = asPlatform(p.platform);
+    const isVideo = p.media_type === "video" || p.media_type === "reel";
+    const reach =
+      platform === "tiktok" || isVideo
+        ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
+        : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
     const engagements =
       readNum(m.likes) +
       readNum(m.comments) +
       readNum(m.shares) +
-      readNum(m.saves);
+      readNum(m.saves) +
+      readNum(m.link_clicks);
     return {
       id: p.id,
-      platform: asPlatform(p.platform),
+      platform,
       posted_at: p.posted_at,
       caption: (p.caption ?? "").trim(),
       thumbnail_url: p.thumbnail_url,
