@@ -10,7 +10,9 @@ import {
 } from "@/lib/data/owner-story-db";
 import {
   fetchOwnerStoryBrandLogos,
+  fetchAllianceVitals,
   type OwnerStoryBrandLogos,
+  type AllianceVitals,
 } from "@/lib/data/brand-logos";
 import {
   formatCompactNumber,
@@ -94,9 +96,10 @@ export async function generateMetadata({ params }: PageProps) {
 
 export default async function OwnerStoryPage({ params }: PageProps) {
   const { token } = await params;
-  const [data, brandLogos] = await Promise.all([
+  const [data, brandLogos, vitals] = await Promise.all([
     fetchOwnerStoryByToken(token),
     fetchOwnerStoryBrandLogos(),
+    fetchAllianceVitals(),
   ]);
   if (!data) notFound();
 
@@ -112,7 +115,9 @@ export default async function OwnerStoryPage({ params }: PageProps) {
     // headers() can throw outside a request scope — never block render.
   }
 
-  return <OwnerStoryView data={data} brandLogos={brandLogos} />;
+  return (
+    <OwnerStoryView data={data} brandLogos={brandLogos} vitals={vitals} />
+  );
 }
 
 /* ----------------------------------------------------------------------- *
@@ -208,9 +213,11 @@ function initialsOf(name: string | null): string {
 function OwnerStoryView({
   data,
   brandLogos,
+  vitals,
 }: {
   data: OwnerStoryData;
   brandLogos: OwnerStoryBrandLogos;
+  vitals: AllianceVitals;
 }) {
   const { listing, posts, highlights, totals, company } = data;
   const featuredPost = highlights[0] ?? posts[0] ?? null;
@@ -243,6 +250,7 @@ function OwnerStoryView({
         <BrandHeader
           reportUpdatedLabel={reportUpdatedLabel}
           wordmarkUrl={brandLogos.wordmark_url}
+          sealCroppedUrl={brandLogos.seal_cropped_url}
         />
         <PropertyHero listing={listing} />
         <MarketingSnapshot
@@ -258,8 +266,9 @@ function OwnerStoryView({
         <PlatformPerformance stats={platformStats} />
         <AllianceAdvantage
           yearReach={company.window_365d.reach}
-          activeListings={company.active_listings}
-          sealUrl={brandLogos.seal_url}
+          activeAgents={vitals.active_agents}
+          activeOffices={vitals.active_offices}
+          sealUrl={brandLogos.seal_full_url}
         />
         <CampaignActivity recent={recentByPlatform} />
         <WhatHappensNext token={data.token} address={listing.address} />
@@ -276,36 +285,58 @@ function OwnerStoryView({
 function BrandHeader({
   reportUpdatedLabel,
   wordmarkUrl,
+  sealCroppedUrl,
 }: {
   reportUpdatedLabel: string;
   wordmarkUrl: string | null;
+  sealCroppedUrl: string | null;
 }) {
   return (
     <header style={{ position: "relative", padding: "16px 0 32px" }}>
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          right: -20,
-          top: -10,
-          fontSize: 220,
-          lineHeight: 1,
-          fontWeight: 700,
-          color: GOLD,
-          opacity: 0.08,
-          pointerEvents: "none",
-          letterSpacing: "-0.04em",
-          userSelect: "none",
-        }}
-      >
-        21
-      </div>
+      {sealCroppedUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={sealCroppedUrl}
+          alt=""
+          aria-hidden
+          style={{
+            position: "absolute",
+            right: -30,
+            top: -20,
+            width: 280,
+            height: 280,
+            objectFit: "contain",
+            opacity: 0.14,
+            pointerEvents: "none",
+            userSelect: "none",
+          }}
+        />
+      ) : (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            right: -20,
+            top: -10,
+            fontSize: 220,
+            lineHeight: 1,
+            fontWeight: 700,
+            color: GOLD,
+            opacity: 0.08,
+            pointerEvents: "none",
+            letterSpacing: "-0.04em",
+            userSelect: "none",
+          }}
+        >
+          21
+        </div>
+      )}
       {wordmarkUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={wordmarkUrl}
           alt="Century 21 Alliance"
-          style={{ display: "block", height: 22, width: "auto" }}
+          style={{ display: "block", height: 66, width: "auto" }}
         />
       ) : (
         <div
@@ -942,13 +973,22 @@ function PlatformPerformance({ stats }: { stats: PlatformStat[] }) {
 
 function AllianceAdvantage({
   yearReach,
-  activeListings,
+  activeAgents,
+  activeOffices,
   sealUrl,
 }: {
   yearReach: number;
-  activeListings: number;
+  activeAgents: number;
+  activeOffices: number;
   sealUrl: string | null;
 }) {
+  // Embed office count in the tagline when we have a real number; otherwise
+  // fall back to the generic copy. Keeps the section honest if the office
+  // count query ever returns 0.
+  const taglinePrefix =
+    activeOffices > 0
+      ? `Your listing is part of a broader marketing system across ${activeOffices} South Jersey offices`
+      : "Your listing is part of a broader marketing system";
   return (
     <section style={{ marginBottom: 24 }}>
       <Card
@@ -965,11 +1005,12 @@ function AllianceAdvantage({
           style={{
             marginTop: 16,
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1.1fr) auto minmax(0, 1.6fr)",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.6fr)",
             gap: 24,
             alignItems: "center",
           }}
         >
+          {/* Reach (kept) */}
           <div>
             <div
               style={{
@@ -987,51 +1028,51 @@ function AllianceAdvantage({
                 marginTop: 8,
                 fontSize: 13,
                 color: INK_SOFT,
-                maxWidth: 200,
+                maxWidth: 220,
+                lineHeight: 1.45,
               }}
             >
               People reached across active listings in the last year
             </div>
           </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 12,
-            }}
-          >
+
+          {/* Agents (replaces the prior "listings being marketed" stat) */}
+          <div>
             <div
               style={{
-                fontSize: 32,
+                fontSize: 38,
                 fontWeight: 700,
                 color: GOLD,
                 lineHeight: 1,
+                letterSpacing: "-0.02em",
               }}
             >
-              {formatNumber(activeListings)}
+              {formatNumber(activeAgents)}
             </div>
             <div
               style={{
-                fontSize: 12,
+                marginTop: 8,
+                fontSize: 13,
                 color: INK_SOFT,
-                textAlign: "center",
-                maxWidth: 140,
-                lineHeight: 1.3,
+                maxWidth: 240,
+                lineHeight: 1.45,
               }}
             >
-              Listings currently being marketed
+              Professional real estate agents working to market and sell your
+              property
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+
+          {/* Seal + tagline */}
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
             {sealUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={sealUrl}
                 alt="Century 21 Alliance Seal"
                 style={{
-                  width: 92,
-                  height: 92,
+                  width: 110,
+                  height: 110,
                   objectFit: "contain",
                   flexShrink: 0,
                 }}
@@ -1047,8 +1088,8 @@ function AllianceAdvantage({
                 lineHeight: 1.55,
               }}
             >
-              Your listing is part of a broader marketing system built to
-              create visibility, track performance, and keep sellers informed.
+              {taglinePrefix} — built to create visibility, track performance,
+              and keep sellers informed.
             </p>
           </div>
         </div>
