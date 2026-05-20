@@ -228,7 +228,13 @@ function topCampaignRow(campaign: WeeklyTopCampaign, rank: number): string {
     .map((p) => {
       const stats = campaign.perPlatform[p];
       const reach = stats?.reach ?? 0;
-      return `<span style="display:inline-block;margin-right:6px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;color:#ffffff;background:${PLATFORM_COLOR[p]};letter-spacing:0.04em;">${escapeHtml(PLATFORM_LABEL[p])} ${formatNumber(reach)}</span>`;
+      const permalink = stats?.permalink ?? null;
+      const pillStyles = `display:inline-block;margin-right:6px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;color:#ffffff;background:${PLATFORM_COLOR[p]};letter-spacing:0.04em;text-decoration:none;`;
+      const label = `${escapeHtml(PLATFORM_LABEL[p])} ${formatNumber(reach)}`;
+      if (permalink) {
+        return `<a href="${escapeAttr(permalink)}" style="${pillStyles}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      }
+      return `<span style="${pillStyles}">${label}</span>`;
     })
     .join("");
 
@@ -488,9 +494,16 @@ function renderText(d: WeeklySocialReportData, aiTakeaway: string): string {
         .join(" · ");
       lines.push(`  ${idx + 1}. ${formatNumber(c.mergedReach)} merged reach`);
       lines.push(`     ${platformBreakdown}`);
+      // Per-platform deep links (when available).
+      for (const p of c.platforms) {
+        const url = c.perPlatform[p]?.permalink;
+        if (url) {
+          lines.push(`     - ${PLATFORM_LABEL[p]}: ${url}`);
+        }
+      }
       lines.push(`     ${truncate(c.caption ?? "", 100) || "(no caption)"}`);
       lines.push(`     ${place}`);
-      lines.push(`     ${APP_BASE_URL}${c.linkPath}`);
+      lines.push(`     Dashboard: ${APP_BASE_URL}${c.linkPath}`);
     });
     lines.push(``);
   }

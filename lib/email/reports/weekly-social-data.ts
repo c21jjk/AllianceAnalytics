@@ -35,6 +35,17 @@ export interface WeeklyPlatformStats {
   reach: number;
 }
 
+/**
+ * Per-platform stats within a single campaign. Extends WeeklyPlatformStats
+ * with the best (highest-reach) permalink for that platform inside the group,
+ * so the email template can deep-link each platform badge directly to the
+ * actual FB / IG / TT post.
+ */
+export interface WeeklyCampaignPlatformStats extends WeeklyPlatformStats {
+  /** Highest-reach permalink for this platform within the campaign group. */
+  permalink: string | null;
+}
+
 export interface WeeklyTopCampaign {
   /** Group id when the campaign spans multiple platforms; otherwise the post id with a `post:` prefix. */
   key: string;
@@ -42,8 +53,8 @@ export interface WeeklyTopCampaign {
   linkPath: string;
   /** Reach summed across every platform in the campaign. */
   mergedReach: number;
-  /** Per-platform reach within this campaign. */
-  perPlatform: Partial<Record<WeeklyPlatform, WeeklyPlatformStats>>;
+  /** Per-platform reach within this campaign, plus best-permalink per platform for deep links. */
+  perPlatform: Partial<Record<WeeklyPlatform, WeeklyCampaignPlatformStats>>;
   /** Representative caption snippet. */
   caption: string | null;
   /** Representative thumbnail. */
@@ -440,7 +451,9 @@ export async function loadWeeklySocialReportData(
       key: string;
       groupId: string | null;
       mergedReach: number;
-      perPlatform: Partial<Record<WeeklyPlatform, WeeklyPlatformStats>>;
+      perPlatform: Partial<Record<WeeklyPlatform, WeeklyCampaignPlatformStats>>;
+      /** Best (highest-reach) permalink seen per platform, used for deep links. */
+      bestPermalinkReach: Partial<Record<WeeklyPlatform, number>>;
       // Use the post with the highest reach within the group as the representative.
       representative: PostRow | null;
       representativeReach: number;
@@ -456,6 +469,7 @@ export async function loadWeeklySocialReportData(
           groupId: row.group_id,
           mergedReach: 0,
           perPlatform: {},
+          bestPermalinkReach: {},
           representative: null,
           representativeReach: -1,
           platforms: new Set(),
@@ -465,9 +479,18 @@ export async function loadWeeklySocialReportData(
       const r = reachOf(row);
       acc.mergedReach += r;
       acc.platforms.add(row.platform);
-      const cell = acc.perPlatform[row.platform] ?? emptyStats();
+      const existing = acc.perPlatform[row.platform];
+      const cell: WeeklyCampaignPlatformStats =
+        existing ?? { posts: 0, reach: 0, permalink: null };
       cell.posts += 1;
       cell.reach += r;
+      // Track best permalink per platform: the post inside this group with the
+      // highest reach on that platform "wins" — that's the most useful link target.
+      const bestSoFar = acc.bestPermalinkReach[row.platform] ?? -1;
+      if (r > bestSoFar && row.permalink) {
+        cell.permalink = row.permalink;
+        acc.bestPermalinkReach[row.platform] = r;
+      }
       acc.perPlatform[row.platform] = cell;
       if (r > acc.representativeReach) {
         acc.representativeReach = r;
