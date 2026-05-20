@@ -108,6 +108,8 @@ export interface WeeklySocialReportData {
   /* ---- YTD numbers ---- */
   ytd: AggregateWindow;
   ytdYoY: AggregateWindow;
+  /** Per-platform YTD reach + posts (current year). Used for in-cell mini-splits. */
+  ytdByPlatform: Record<WeeklyPlatform, WeeklyPlatformStats>;
 
   /* ---- campaign / listing / office / agent breakdowns (current week) ---- */
   topCampaigns: WeeklyTopCampaign[];
@@ -365,6 +367,11 @@ export async function loadWeeklySocialReportData(
     },
     ytd: emptyAggregate(),
     ytdYoY: emptyAggregate(),
+    ytdByPlatform: {
+      facebook: emptyStats(),
+      instagram: emptyStats(),
+      tiktok: emptyStats(),
+    },
     topCampaigns: [],
     listings: [],
     listingsTotal: 0,
@@ -425,6 +432,8 @@ export async function loadWeeklySocialReportData(
     const weekYoYTotals = sumStats(bucketStats(weekYoYRows));
     const ytd = aggregateOver(ytdRows);
     const ytdYoY = aggregateOver(ytdYoYRows);
+    // Per-platform YTD breakdown for the in-cell mini-splits.
+    const ytdByPlatform = bucketStats(ytdRows);
 
     /* ---- Top campaigns (group-aware) ---- */
     interface CampaignAccumulator {
@@ -634,6 +643,7 @@ export async function loadWeeklySocialReportData(
       prevByPlatform,
       ytd,
       ytdYoY,
+      ytdByPlatform,
       topCampaigns,
       listings,
       listingsTotal: listingCounts.size,

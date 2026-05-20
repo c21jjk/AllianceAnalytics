@@ -264,21 +264,28 @@ function topCampaignRow(campaign: WeeklyTopCampaign, rank: number): string {
 }
 
 function renderYtd(d: WeeklySocialReportData): string {
+  const reachSplit = platformSplitRows(d.ytdByPlatform, "reach");
+  const postsSplit = platformSplitRows(d.ytdByPlatform, "posts");
   return `<div style="padding:20px 28px;border-bottom:1px solid #f0f0f0;">
     <div style="font-size:11px;color:#71717a;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;margin-bottom:14px;">
       Year-to-date · ${escapeHtml(d.ytdYearLabel)} vs. ${escapeHtml(d.ytdYoYYearLabel)}
     </div>
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
       <tr>
-        ${ytdCell("Reach", d.ytd.reach, d.ytdYoY.reach)}
-        ${ytdCell("Posts", d.ytd.posts, d.ytdYoY.posts)}
-        ${ytdCell("Listings", d.ytd.listings, d.ytdYoY.listings)}
+        ${ytdCell("Reach", d.ytd.reach, d.ytdYoY.reach, reachSplit)}
+        ${ytdCell("Posts", d.ytd.posts, d.ytdYoY.posts, postsSplit)}
+        ${ytdCell("Listings", d.ytd.listings, d.ytdYoY.listings, null)}
       </tr>
     </table>
   </div>`;
 }
 
-function ytdCell(label: string, current: number, prev: number): string {
+function ytdCell(
+  label: string,
+  current: number,
+  prev: number,
+  miniSplitHtml: string | null,
+): string {
   const delta = deltaParts(current, prev);
   const yoyText =
     prev > 0
@@ -289,13 +296,36 @@ function ytdCell(label: string, current: number, prev: number): string {
       <div style="font-size:11px;color:#71717a;letter-spacing:0.05em;text-transform:uppercase;font-weight:600;">${escapeHtml(label)}</div>
       <div style="font-size:24px;font-weight:700;color:${BRAND_GREY};margin-top:4px;line-height:1;">${formatNumber(current)}</div>
       <div style="font-size:11px;color:${prev > 0 ? delta.color : "#71717a"};margin-top:8px;font-weight:600;">${yoyText}</div>
-      <div style="font-size:11px;color:#a1a1aa;margin-top:2px;">${formatNumber(prev)} in ${escapeHtml(yearLabelFromAggregate())}</div>
+      <div style="font-size:11px;color:#a1a1aa;margin-top:2px;">${formatNumber(prev)} in prior year</div>
+      ${miniSplitHtml ?? ""}
     </div>
   </td>`;
+}
 
-  function yearLabelFromAggregate(): string {
-    return "prior year";
-  }
+/**
+ * Renders a tiny 3-row platform split (FB / IG / TT) below the headline number
+ * in a YTD cell. `field` selects which platform stat (`reach` or `posts`) to show.
+ */
+function platformSplitRows(
+  byPlatform: Record<WeeklyPlatform, WeeklyPlatformStats>,
+  field: "reach" | "posts",
+): string {
+  const platforms: WeeklyPlatform[] = ["facebook", "instagram", "tiktok"];
+  const rows = platforms
+    .map((p) => {
+      const value = byPlatform[p][field];
+      return `<tr>
+        <td style="padding:2px 0;width:14px;vertical-align:middle;">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${PLATFORM_COLOR[p]};"></span>
+        </td>
+        <td style="padding:2px 0;font-size:11px;color:#3f3f46;">${escapeHtml(PLATFORM_LABEL[p])}</td>
+        <td style="padding:2px 0;font-size:11px;color:${BRAND_GREY};font-weight:600;text-align:right;">${formatNumber(value)}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin-top:10px;border-top:1px solid #f5f5f5;padding-top:6px;">
+    ${rows}
+  </table>`;
 }
 
 function renderOfficeSpotlight(d: WeeklySocialReportData): string {
@@ -469,9 +499,19 @@ function renderText(d: WeeklySocialReportData, aiTakeaway: string): string {
   lines.push(
     `  Reach    ${formatNumber(d.ytd.reach).padStart(10)} · prior year ${formatNumber(d.ytdYoY.reach)} (${signedPct(d.ytd.reach, d.ytdYoY.reach)})`,
   );
+  for (const p of ["facebook", "instagram", "tiktok"] as WeeklyPlatform[]) {
+    lines.push(
+      `      ${PLATFORM_LABEL[p].padEnd(10)} ${formatNumber(d.ytdByPlatform[p].reach).padStart(8)}`,
+    );
+  }
   lines.push(
     `  Posts    ${String(d.ytd.posts).padStart(10)} · prior year ${d.ytdYoY.posts} (${signedPct(d.ytd.posts, d.ytdYoY.posts)})`,
   );
+  for (const p of ["facebook", "instagram", "tiktok"] as WeeklyPlatform[]) {
+    lines.push(
+      `      ${PLATFORM_LABEL[p].padEnd(10)} ${String(d.ytdByPlatform[p].posts).padStart(8)}`,
+    );
+  }
   lines.push(
     `  Listings ${String(d.ytd.listings).padStart(10)} · prior year ${d.ytdYoY.listings} (${signedPct(d.ytd.listings, d.ytdYoY.listings)})`,
   );
