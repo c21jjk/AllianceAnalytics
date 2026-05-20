@@ -242,6 +242,8 @@ interface PostRow {
   group_id: string | null;
   office_id: string | null;
   agent_name: string | null;
+  /** Used by reachOf() to mirror the dashboard's video-aware reach formula. */
+  media_type: string | null;
 }
 
 interface PropertyRow {
@@ -256,14 +258,35 @@ interface OfficeRow {
   display_name: string | null;
 }
 
-function reachOf(row: Pick<PostRow, "metrics">): number {
+/**
+ * Mirrors the dashboard's per-post reach formula from lib/data/post-detail.ts.
+ *
+ *   - For TikTok or any video/reel: prefer `plays` (always >= reach because
+ *     replays push it higher), then fall back to `reach`, then `impressions`.
+ *   - For static / photo / carousel posts: prefer `reach`, then `impressions`,
+ *     then `plays`.
+ *
+ * Keeps the weekly email's totals reconciled with what John and the team see
+ * on /posts/[id] and the dashboard post cards.
+ */
+function reachOf(
+  row: Pick<PostRow, "metrics" | "media_type" | "platform">,
+): number {
+  const m = row.metrics ?? {};
+  const isVideo =
+    row.media_type === "video" || row.media_type === "reel";
+  if (row.platform === "tiktok" || isVideo) {
+    return (
+      readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
+    );
+  }
   return (
-    readNum(row.metrics?.reach) || readNum(row.metrics?.impressions)
+    readNum(m.reach) || readNum(m.impressions) || readNum(m.plays)
   );
 }
 
 function bucketStats(
-  rows: Pick<PostRow, "platform" | "metrics">[],
+  rows: Pick<PostRow, "platform" | "metrics" | "media_type">[],
 ): Record<WeeklyPlatform, WeeklyPlatformStats> {
   const out: Record<WeeklyPlatform, WeeklyPlatformStats> = {
     facebook: emptyStats(),
@@ -358,7 +381,7 @@ export async function loadWeeklySocialReportData(
     const { data, error } = await supabase
       .from("posts")
       .select(
-        "id, platform, caption, permalink, thumbnail_url, posted_at, metrics, property_id, group_id, office_id, agent_name",
+        "id, platform, caption, permalink, thumbnail_url, posted_at, metrics, property_id, group_id, office_id, agent_name, media_type",
       )
       .gte("posted_at", win.ytdYoYStartIso)
       .lt("posted_at", win.weekEndIso);
