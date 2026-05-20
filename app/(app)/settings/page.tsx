@@ -4,6 +4,7 @@ import MlsFeedCard from "@/components/MlsFeedCard";
 import CredentialCard from "@/components/CredentialCard";
 import OfficeCard from "@/components/OfficeCard";
 import TestModeBanner from "@/components/TestModeBanner";
+import SendTestEmailButton from "@/components/SendTestEmailButton";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listMlsFeeds } from "@/lib/data/mls-feeds";
@@ -216,6 +217,20 @@ export default async function SettingsPage() {
               dismissed
             </div>
           </Link>
+        </div>
+      </section>
+
+      <section>
+        <SectionHeading
+          title="Email diagnostics"
+          subtitle="Verify the Resend integration end-to-end. Sends a hardcoded test email from SocialMediaReport@c21anj.com."
+        />
+        <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">
+          <SendTestEmailButton recipient="c21jjk@gmail.com" />
+          <p className="mt-3 text-[11px] text-neutral-500">
+            On success you&apos;ll see a Resend message id. Failures surface the
+            underlying error (missing key, unverified domain, etc.) inline.
+          </p>
         </div>
       </section>
     </div>
