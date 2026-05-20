@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reachOf as sharedReachOf } from "@/lib/data/post-metrics";
 
 /**
  * Data fetcher for the weekly social media email report.
@@ -226,15 +227,6 @@ export function getReportWindow(now: Date = new Date()) {
 /* Read helpers                                                          */
 /* --------------------------------------------------------------------- */
 
-function readNum(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.length > 0) {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
-  }
-  return 0;
-}
-
 function emptyStats(): WeeklyPlatformStats {
   return { posts: 0, reach: 0 };
 }
@@ -272,30 +264,17 @@ interface OfficeRow {
 }
 
 /**
- * Mirrors the dashboard's per-post reach formula from lib/data/post-detail.ts.
- *
- *   - For TikTok or any video/reel: prefer `plays` (always >= reach because
- *     replays push it higher), then fall back to `reach`, then `impressions`.
- *   - For static / photo / carousel posts: prefer `reach`, then `impressions`,
- *     then `plays`.
- *
- * Keeps the weekly email's totals reconciled with what John and the team see
- * on /posts/[id] and the dashboard post cards.
+ * Per-post reach — thin wrapper around the shared post-metrics helper so the
+ * weekly email, dashboard, and Owner Story all use identical math.
  */
 function reachOf(
   row: Pick<PostRow, "metrics" | "media_type" | "platform">,
 ): number {
-  const m = row.metrics ?? {};
-  const isVideo =
-    row.media_type === "video" || row.media_type === "reel";
-  if (row.platform === "tiktok" || isVideo) {
-    return (
-      readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
-    );
-  }
-  return (
-    readNum(m.reach) || readNum(m.impressions) || readNum(m.plays)
-  );
+  return sharedReachOf({
+    metrics: row.metrics,
+    media_type: row.media_type,
+    platform: row.platform,
+  });
 }
 
 function bucketStats(

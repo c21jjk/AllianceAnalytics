@@ -2,6 +2,7 @@ import "server-only";
 import { getPostById } from "@/lib/data";
 import { listOffices } from "@/lib/data/offices";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reachOf, engagementsOf } from "@/lib/data/post-metrics";
 import type {
   Platform,
   Post,
@@ -127,15 +128,6 @@ function asLinkMethod(value: string | null): PostLinkMethod | undefined {
   return undefined;
 }
 
-function readNum(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.length > 0) {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
-  }
-  return 0;
-}
-
 function rowToPropertyRef(row: DbPropertyRow): PropertyRef {
   const addressParts = [row.address, row.city, row.state].filter(Boolean);
   return {
@@ -165,30 +157,11 @@ function shortcodeFor(platform: Platform, permalink: string): string | undefined
 
 function postingFromRow(row: DbPostRow): PlatformPosting {
   const platform = asPlatform(row.platform);
-  const m = row.metrics ?? {};
-  // why: for video / Reel posts the "plays" value from fb-sync now stores the
-  // Reel-canonical play count (initial plays + replays) from /{video_id}?fields=views
-  // which matches Meta Business Suite's headline view number. For these posts
-  // plays is always >= reach (every reached viewer plays at least once,
-  // replays push it higher), so we display the bigger number as the primary
-  // reach metric. Carousel / photo posts have no plays value and fall back
-  // to the impressions-unique reach. TikTok was already plays-first.
-  const isVideo = row.media_type === "video" || row.media_type === "reel";
-  const reach =
-    platform === "tiktok" || isVideo
-      ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
-      : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
-  // why: engagement formula mirrors Meta Business Suite's "Engagement" tally
-  // for FB Reels (reactions + comments + shares + clicks). On IG/TT the
-  // link_clicks field is 0/undefined so it has no effect. Confirmed against
-  // the 110 W Garfield Reel 2026-05-17 — Meta UI showed 267 engagement
-  // (28 + 3 + 17 + 219); our pre-fix tally was 48 (missing the 219 clicks).
-  const engagements =
-    readNum(m.likes) +
-    readNum(m.comments) +
-    readNum(m.shares) +
-    readNum(m.saves) +
-    readNum(m.link_clicks);
+  // Reach + engagements via lib/data/post-metrics — same formula used by the
+  // Owner Story and the weekly social email, so numbers never drift between
+  // the dashboard, the seller-facing report, and the leadership email.
+  const reach = reachOf(row);
+  const engagements = engagementsOf(row);
   const permalink = row.permalink ?? "";
   return {
     platform,

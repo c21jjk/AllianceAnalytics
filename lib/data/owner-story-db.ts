@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reachOf, engagementsOf } from "@/lib/data/post-metrics";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
 
 /* ----------------------------------------------------------------------- *
@@ -357,15 +358,6 @@ export interface OwnerStoryData {
   first_post_at: string | null;
 }
 
-function readNum(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.length > 0) {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return 0;
-}
-
 function asPlatform(v: unknown): Platform {
   if (v === "facebook" || v === "instagram" || v === "tiktok") return v;
   return "instagram";
@@ -468,38 +460,19 @@ export async function fetchOwnerStoryByToken(
     return tb - ta;
   });
 
-  // Reach + engagement formulas mirror lib/data/post-detail.ts EXACTLY so the
-  // numbers on the Owner Story match what John and the team see on the
-  // dashboard post detail. Last drift was caught 2026-05-20: Owner Story was
-  // showing FB Reel reach as 2,875 while the dashboard showed 4.7K because we
-  // weren't using `plays` for video posts, and engagements were ~232 short
-  // because we weren't summing `link_clicks` (which carry the bulk of FB Reel
-  // engagement per Meta Business Suite). Keep these aligned.
-  const posts: OwnerStoryPost[] = merged.map((p) => {
-    const m = (p.metrics ?? {}) as Record<string, unknown>;
-    const platform = asPlatform(p.platform);
-    const isVideo = p.media_type === "video" || p.media_type === "reel";
-    const reach =
-      platform === "tiktok" || isVideo
-        ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
-        : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
-    const engagements =
-      readNum(m.likes) +
-      readNum(m.comments) +
-      readNum(m.shares) +
-      readNum(m.saves) +
-      readNum(m.link_clicks);
-    return {
-      id: p.id,
-      platform,
-      posted_at: p.posted_at,
-      caption: (p.caption ?? "").trim(),
-      thumbnail_url: p.thumbnail_url,
-      permalink: p.permalink,
-      reach,
-      engagements,
-    };
-  });
+  // Reach + engagements via the shared lib/data/post-metrics helpers so the
+  // Owner Story renders the EXACT same numbers as the dashboard post detail
+  // and the weekly social email. Don't fork the formula here.
+  const posts: OwnerStoryPost[] = merged.map((p) => ({
+    id: p.id,
+    platform: asPlatform(p.platform),
+    posted_at: p.posted_at,
+    caption: (p.caption ?? "").trim(),
+    thumbnail_url: p.thumbnail_url,
+    permalink: p.permalink,
+    reach: reachOf(p),
+    engagements: engagementsOf(p),
+  }));
 
   // 4) Highlights — top 3 by reach, ties broken by recency.
   const highlights = [...posts]
