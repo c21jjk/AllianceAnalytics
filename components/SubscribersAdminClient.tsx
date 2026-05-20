@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import clsx from "clsx";
 import {
   addSubscriberAction,
   toggleSubscriberFlagAction,
+  bulkToggleSubscriberFlagAction,
   deleteSubscriberAction,
   importAllianceRosterAction,
 } from "@/app/(app)/settings/subscribers/actions";
@@ -293,6 +294,11 @@ function SubscriberTable({
       </div>
     );
   }
+  // Column-span calc for the bulk-toggle header row (Name + Email + optional
+  // Role + optional Office). Used so the "select all / deselect all" cells
+  // line up under the same column headers above them.
+  const leftSpan = 2 + (showRoleColumn ? 1 : 0) + (showOfficeColumn ? 1 : 0);
+  const ids = rows.map((r) => r.id);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -320,6 +326,43 @@ function SubscriberTable({
               Actions
             </th>
           </tr>
+          <tr className="border-t border-neutral-200 bg-neutral-100/60">
+            <td
+              colSpan={leftSpan}
+              className="px-4 py-1.5 text-[10px] uppercase tracking-wider text-neutral-500 font-medium"
+            >
+              Select all / deselect all
+            </td>
+            <td className="text-center px-2 py-1.5">
+              <TriStateHeaderCheckbox
+                ids={ids}
+                checkedCount={rows.filter((r) => r.receives_weekly_social_report).length}
+                field="receives_weekly_social_report"
+              />
+            </td>
+            <td className="text-center px-2 py-1.5">
+              <TriStateHeaderCheckbox
+                ids={ids}
+                checkedCount={rows.filter((r) => r.receives_owner_story).length}
+                field="receives_owner_story"
+              />
+            </td>
+            <td className="text-center px-2 py-1.5">
+              <TriStateHeaderCheckbox
+                ids={ids}
+                checkedCount={rows.filter((r) => r.receives_office_post_alerts).length}
+                field="receives_office_post_alerts"
+              />
+            </td>
+            <td className="text-center px-2 py-1.5">
+              <TriStateHeaderCheckbox
+                ids={ids}
+                checkedCount={rows.filter((r) => r.is_active).length}
+                field="is_active"
+              />
+            </td>
+            <td />
+          </tr>
         </thead>
         <tbody className="divide-y divide-neutral-100">
           {rows.map((r) => (
@@ -333,6 +376,69 @@ function SubscriberTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Header-row checkbox that bulk-toggles a subscription flag across every row
+ * in scope. Three visual states:
+ *   - checked        → every row has the flag set
+ *   - indeterminate  → some rows have it set, others don't (mixed)
+ *   - unchecked      → no rows have it set
+ *
+ * Click semantics:
+ *   - checked or indeterminate → set all to false (deselect all)
+ *   - unchecked                → set all to true  (select all)
+ *
+ * `indeterminate` isn't an HTML attribute, so we set it via ref + useEffect.
+ */
+function TriStateHeaderCheckbox({
+  ids,
+  checkedCount,
+  field,
+}: {
+  ids: string[];
+  checkedCount: number;
+  field: FlagField;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [isPending, startTransition] = useTransition();
+  const total = ids.length;
+  const allChecked = total > 0 && checkedCount === total;
+  const indeterminate = checkedCount > 0 && checkedCount < total;
+
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  function handleChange() {
+    if (isPending || ids.length === 0) return;
+    // checked or indeterminate → turn ALL off; otherwise turn ALL on.
+    const nextValue = !(allChecked || indeterminate);
+    startTransition(async () => {
+      await bulkToggleSubscriberFlagAction(ids, field, nextValue);
+    });
+  }
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={allChecked}
+      onChange={handleChange}
+      disabled={isPending || total === 0}
+      title={
+        allChecked
+          ? "All selected — click to deselect all"
+          : indeterminate
+            ? "Mixed — click to deselect all"
+            : "None selected — click to select all"
+      }
+      className={clsx(
+        "rounded border-neutral-400 text-gold-600 focus:ring-gold-400 cursor-pointer",
+        isPending && "opacity-50 cursor-not-allowed",
+      )}
+    />
   );
 }
 

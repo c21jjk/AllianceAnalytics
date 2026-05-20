@@ -183,6 +183,41 @@ export async function updateSubscriber(
   return { ok: true };
 }
 
+/**
+ * Bulk-set a single subscription flag on a set of subscribers. Used by the
+ * header tri-state checkboxes in the /settings/subscribers admin UI to
+ * "select all" / "deselect all" within a section or per-office group.
+ *
+ * Single Supabase round-trip via .in("id", ids).update(...) — much cheaper
+ * than firing N individual server actions when an office has 50+ agents.
+ */
+export type BulkToggleField =
+  | "receives_weekly_social_report"
+  | "receives_owner_story"
+  | "receives_office_post_alerts"
+  | "is_active";
+
+export async function bulkToggleFlag(
+  ids: string[],
+  field: BulkToggleField,
+  value: boolean,
+): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  if (ids.length === 0) return { ok: true, count: 0 };
+  const supabase = createAdminClient();
+  const patch: {
+    receives_weekly_social_report?: boolean;
+    receives_owner_story?: boolean;
+    receives_office_post_alerts?: boolean;
+    is_active?: boolean;
+  } = { [field]: value };
+  const { error } = await supabase
+    .from("email_subscribers")
+    .update(patch)
+    .in("id", ids);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, count: ids.length };
+}
+
 export async function deleteSubscriber(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {

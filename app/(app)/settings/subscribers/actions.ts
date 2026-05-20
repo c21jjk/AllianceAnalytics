@@ -6,8 +6,10 @@ import {
   createSubscriber,
   updateSubscriber,
   deleteSubscriber,
+  bulkToggleFlag,
   importAllianceRoster,
   type SubscriberCategory,
+  type BulkToggleField,
 } from "@/lib/data/email-subscribers";
 
 /**
@@ -126,6 +128,28 @@ export async function toggleSubscriberFlagAction(
   if (!result.ok) return { ok: false, error: result.error };
   revalidate();
   return { ok: true };
+}
+
+/**
+ * Bulk "select all / deselect all" header toggle. Sets a single subscription
+ * flag to a fixed value across the supplied subscriber ids. Powers the
+ * indeterminate-aware checkboxes at the top of each Leadership / Agents
+ * (per-office) table on /settings/subscribers.
+ */
+export async function bulkToggleSubscriberFlagAction(
+  ids: string[],
+  field: BulkToggleField,
+  value: boolean,
+): Promise<ActionResult> {
+  await requireAdmin();
+  if (ids.length === 0) return { ok: true };
+  const result = await bulkToggleFlag(ids, field, value);
+  if (!result.ok) return { ok: false, error: result.error };
+  revalidate();
+  return {
+    ok: true,
+    info: `Updated ${result.count} ${result.count === 1 ? "row" : "rows"}.`,
+  };
 }
 
 export async function deleteSubscriberAction(
