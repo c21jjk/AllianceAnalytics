@@ -32,8 +32,14 @@ export default function SharePostButton({
     const title = address
       ? `${address} on ${platformLabel}`
       : `${platformLabel} post`;
-    const text =
-      "Help spread the word — every share, comment, and interaction grows the reach of this listing.";
+    // Default message is written in the seller's voice — assumes the share
+    // sheet target is a friend or family member, not a real-estate prospect.
+    // Platform label is woven in so a seller who shares FB + IG + TT to the
+    // same recipient ends up with three distinct messages (and the friend
+    // knows immediately which platform to engage on).
+    const text = address
+      ? `We just listed our home at ${address} — would love your help spreading the word on ${platformLabel}. A quick like or share goes a long way!`
+      : `We just listed our home — would love your help spreading the word on ${platformLabel}. A quick like or share goes a long way!`;
 
     if (
       typeof navigator !== "undefined" &&
