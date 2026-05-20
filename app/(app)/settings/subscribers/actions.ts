@@ -6,7 +6,7 @@ import {
   createSubscriber,
   updateSubscriber,
   deleteSubscriber,
-  importActiveListingAgents,
+  importAllianceRoster,
   type SubscriberCategory,
 } from "@/lib/data/email-subscribers";
 
@@ -139,9 +139,9 @@ export async function deleteSubscriberAction(
   return { ok: true };
 }
 
-export async function importActiveListingAgentsAction(): Promise<ActionResult> {
+export async function importAllianceRosterAction(): Promise<ActionResult> {
   await requireAdmin();
-  const result = await importActiveListingAgents();
+  const result = await importAllianceRoster();
   revalidate();
   return {
     ok: true,

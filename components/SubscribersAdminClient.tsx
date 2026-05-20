@@ -6,7 +6,7 @@ import {
   addSubscriberAction,
   toggleSubscriberFlagAction,
   deleteSubscriberAction,
-  importActiveListingAgentsAction,
+  importAllianceRosterAction,
 } from "@/app/(app)/settings/subscribers/actions";
 import type { SubscriberWithOffice } from "@/lib/data/email-subscribers";
 
@@ -190,10 +190,10 @@ function AgentsSection({ agentsByOffice }: { agentsByOffice: OfficeGroup[] }) {
       <div className="flex items-end justify-between mb-3 gap-3">
         <SectionHeading
           title="Agents"
-          subtitle="Imported from the MLS roster. Grouped by office."
+          subtitle="Full Alliance roster from Darwin. Grouped by office."
           count={total}
         />
-        <ImportFromMlsButton />
+        <ImportRosterButton />
       </div>
 
       {agentsByOffice.length === 0 ? (
@@ -202,8 +202,8 @@ function AgentsSection({ agentsByOffice }: { agentsByOffice: OfficeGroup[] }) {
             No agents subscribed yet
           </p>
           <p className="mt-1 text-xs text-neutral-500">
-            Click <strong>Import from MLS</strong> above to pull in every active
-            listing agent whose property is currently live.
+            Click <strong>Import full Alliance roster</strong> above to pull in
+            every active Century 21 Alliance agent across all 8 offices.
           </p>
         </div>
       ) : (
@@ -231,7 +231,7 @@ function AgentsSection({ agentsByOffice }: { agentsByOffice: OfficeGroup[] }) {
   );
 }
 
-function ImportFromMlsButton() {
+function ImportRosterButton() {
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{
     kind: "idle" | "ok" | "err";
@@ -241,7 +241,7 @@ function ImportFromMlsButton() {
   function handleClick() {
     setFeedback({ kind: "idle" });
     startTransition(async () => {
-      const result = await importActiveListingAgentsAction();
+      const result = await importAllianceRosterAction();
       setFeedback(
         result.ok
           ? { kind: "ok", message: result.info }
@@ -261,7 +261,7 @@ function ImportFromMlsButton() {
           isPending && "opacity-60 cursor-not-allowed",
         )}
       >
-        {isPending ? "Importing…" : "Import from MLS"}
+        {isPending ? "Importing…" : "Import full Alliance roster"}
       </button>
       {feedback.kind === "ok" && feedback.message ? (
         <span className="text-[11px] text-emerald-700">{feedback.message}</span>

@@ -196,63 +196,81 @@ export async function deleteSubscriber(
 }
 
 /**
- * Import all active listing-side Alliance agents from properties → mls_agents
- * → email_subscribers. Skips agents already present (matched by lowercase
- * email). Defaults receives_owner_story=true for newly-imported agents —
- * that's the primary reason the agent rows exist.
+ * Import the full Alliance roster from mls_agents → email_subscribers.
  *
- * Returns counts so the UI can render "Imported N new agents (M already
- * subscribed)" feedback.
+ * Source of truth is `mls_agents WHERE source='darwin' AND is_active=true`
+ * (populated from AllianceDash's Darwin-based `agents` table — see the
+ * 2026-05-19 sync notes). Co-op agents (CMC-side non-Alliance brokers) are
+ * NOT in mls_agents from the Darwin pull, so they're naturally excluded.
+ *
+ * Office linkage: `mls_agents.source_office_id` (Darwin office id stored as
+ * text) joins to `offices.darwin_office_id` (integer). We map each agent's
+ * Darwin office to one of our 8 Alliance offices via that key.
+ *
+ * Defaults for new subscriber rows:
+ *   - receives_office_post_alerts = true   → every agent in an office is
+ *     notified when a new listing post goes live in their market.
+ *   - receives_owner_story = true          → only matters when they're the
+ *     listing agent on a property; harmless on others.
+ *   - receives_weekly_social_report = false → leadership-only flow.
+ *
+ * Idempotent: skips emails already present in email_subscribers
+ * (case-insensitive). Run as often as needed after re-syncing Darwin.
  */
-export async function importActiveListingAgents(): Promise<{
+export async function importAllianceRoster(): Promise<{
   ok: true;
   imported: number;
   skipped: number;
 }> {
   const supabase = createAdminClient();
 
-  // Pull distinct (agent_email, agent_name, office_id) tuples from active
-  // listings where Alliance owns the listing side. We filter to listing-side
-  // only — co-op agents are explicitly out-of-scope per project rules.
-  const { data: propRows } = await supabase
-    .from("properties")
-    .select("agent_email, agent_name, office_id")
-    .in("alliance_role", ["listing", "both"])
-    .in("status", ["active", "pending"])
-    .not("agent_email", "is", null);
-  const props = propRows ?? [];
+  // Pull all active Darwin agents with emails.
+  const { data: agentRows } = await supabase
+    .from("mls_agents")
+    .select("id, full_name, email, source_office_id")
+    .eq("source", "darwin")
+    .eq("is_active", true)
+    .not("email", "is", null);
+  const agents = agentRows ?? [];
 
-  // Dedupe by lowercase email.
-  interface Candidate {
-    email: string;
-    name: string;
-    office_id: string | null;
-  }
-  const byEmail = new Map<string, Candidate>();
-  for (const p of props) {
-    if (!p.agent_email) continue;
-    const key = p.agent_email.trim().toLowerCase();
-    if (key.length === 0) continue;
-    if (!byEmail.has(key)) {
-      byEmail.set(key, {
-        email: p.agent_email.trim(),
-        name: (p.agent_name ?? p.agent_email).trim(),
-        office_id: p.office_id ?? null,
-      });
+  // Map Darwin office_id (text) → our offices.id via offices.darwin_office_id.
+  const { data: officeRows } = await supabase
+    .from("offices")
+    .select("id, darwin_office_id")
+    .not("darwin_office_id", "is", null);
+  const officeByDarwin = new Map<string, string>();
+  for (const o of officeRows ?? []) {
+    if (o.darwin_office_id !== null) {
+      officeByDarwin.set(String(o.darwin_office_id), o.id);
     }
   }
 
-  // Look up matching mls_agents rows for back-pointer + canonical name.
-  const { data: mlsRows } = await supabase
-    .from("mls_agents")
-    .select("id, full_name, email")
-    .in("email", Array.from(byEmail.keys()));
-  const mlsByEmail = new Map<
-    string,
-    { id: string; full_name: string; email: string | null }
-  >();
-  for (const row of mlsRows ?? []) {
-    if (row.email) mlsByEmail.set(row.email.trim().toLowerCase(), row);
+  // Dedupe agents by lowercase email (handles referral-office aliases that
+  // share relodept@gmail.com, etc.) and prefer a row that has the longest
+  // non-empty full_name as the canonical display.
+  interface Candidate {
+    id: string;
+    name: string;
+    email: string;
+    office_id: string | null;
+  }
+  const byEmail = new Map<string, Candidate>();
+  for (const a of agents) {
+    if (!a.email) continue;
+    const key = a.email.trim().toLowerCase();
+    if (key.length === 0) continue;
+    const candidate: Candidate = {
+      id: a.id,
+      name: (a.full_name ?? "").trim(),
+      email: a.email.trim(),
+      office_id: a.source_office_id
+        ? officeByDarwin.get(String(a.source_office_id).trim()) ?? null
+        : null,
+    };
+    const existing = byEmail.get(key);
+    if (!existing || candidate.name.length > existing.name.length) {
+      byEmail.set(key, candidate);
+    }
   }
 
   // Skip emails already in email_subscribers.
@@ -282,17 +300,16 @@ export async function importActiveListingAgents(): Promise<{
       skipped++;
       continue;
     }
-    const mls = mlsByEmail.get(key) ?? null;
     inserts.push({
       category: "agent",
-      name: mls?.full_name ?? c.name,
+      name: c.name.length > 0 ? c.name : c.email,
       email: c.email,
-      mls_agent_id: mls?.id ?? null,
-      role: "Listing Agent",
+      mls_agent_id: c.id,
+      role: "Agent",
       office_id: c.office_id,
       receives_weekly_social_report: false,
       receives_owner_story: true,
-      receives_office_post_alerts: false,
+      receives_office_post_alerts: true,
       is_active: true,
     });
   }
