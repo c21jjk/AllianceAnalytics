@@ -321,6 +321,72 @@ export type Database = {
           },
         ]
       }
+      email_subscribers: {
+        Row: {
+          category: string
+          created_at: string
+          email: string
+          id: string
+          is_active: boolean
+          mls_agent_id: string | null
+          name: string
+          notes: string | null
+          office_id: string | null
+          receives_office_post_alerts: boolean
+          receives_owner_story: boolean
+          receives_weekly_social_report: boolean
+          role: string | null
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          email: string
+          id?: string
+          is_active?: boolean
+          mls_agent_id?: string | null
+          name: string
+          notes?: string | null
+          office_id?: string | null
+          receives_office_post_alerts?: boolean
+          receives_owner_story?: boolean
+          receives_weekly_social_report?: boolean
+          role?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          email?: string
+          id?: string
+          is_active?: boolean
+          mls_agent_id?: string | null
+          name?: string
+          notes?: string | null
+          office_id?: string | null
+          receives_office_post_alerts?: boolean
+          receives_owner_story?: boolean
+          receives_weekly_social_report?: boolean
+          role?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_subscribers_mls_agent_id_fkey"
+            columns: ["mls_agent_id"]
+            isOneToOne: false
+            referencedRelation: "mls_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_subscribers_office_id_fkey"
+            columns: ["office_id"]
+            isOneToOne: false
+            referencedRelation: "offices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       generated_posts: {
         Row: {
           additional_images: Json
@@ -507,6 +573,60 @@ export type Database = {
         }
         Relationships: []
       }
+      mls_agents: {
+        Row: {
+          created_at: string
+          email: string | null
+          first_name: string | null
+          full_name: string
+          id: string
+          is_active: boolean
+          last_name: string | null
+          license_number: string | null
+          phone: string | null
+          raw_payload: Json | null
+          source: string
+          source_agent_id: string
+          source_office_id: string | null
+          synced_at: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          first_name?: string | null
+          full_name: string
+          id?: string
+          is_active?: boolean
+          last_name?: string | null
+          license_number?: string | null
+          phone?: string | null
+          raw_payload?: Json | null
+          source: string
+          source_agent_id: string
+          source_office_id?: string | null
+          synced_at?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          first_name?: string | null
+          full_name?: string
+          id?: string
+          is_active?: boolean
+          last_name?: string | null
+          license_number?: string | null
+          phone?: string | null
+          raw_payload?: Json | null
+          source?: string
+          source_agent_id?: string
+          source_office_id?: string | null
+          synced_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       mls_feeds: {
         Row: {
           api_key: string | null
@@ -625,6 +745,7 @@ export type Database = {
           city: string | null
           cmc_office_id: string | null
           created_at: string
+          darwin_office_id: number | null
           display_name: string | null
           division: string | null
           id: string
@@ -654,6 +775,7 @@ export type Database = {
           city?: string | null
           cmc_office_id?: string | null
           created_at?: string
+          darwin_office_id?: number | null
           display_name?: string | null
           division?: string | null
           id?: string
@@ -683,6 +805,7 @@ export type Database = {
           city?: string | null
           cmc_office_id?: string | null
           created_at?: string
+          darwin_office_id?: number | null
           display_name?: string | null
           division?: string | null
           id?: string

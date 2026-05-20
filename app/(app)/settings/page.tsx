@@ -6,6 +6,8 @@ import OfficeCard from "@/components/OfficeCard";
 import TestModeBanner from "@/components/TestModeBanner";
 import SendTestEmailButton from "@/components/SendTestEmailButton";
 import SendWeeklyReportPreviewButton from "@/components/SendWeeklyReportPreviewButton";
+import SendWeeklyReportDistributionButton from "@/components/SendWeeklyReportDistributionButton";
+import { getWeeklySocialReportRecipientEmails } from "@/lib/data/email-subscribers";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listMlsFeeds } from "@/lib/data/mls-feeds";
@@ -28,12 +30,14 @@ export default async function SettingsPage() {
 
   const admin = createAdminClient();
 
-  const [feeds, credentials, offices, systemConfig] = await Promise.all([
-    listMlsFeeds(),
-    listCredentials(),
-    listOffices({ active_only: false }),
-    loadSystemConfig(),
-  ]);
+  const [feeds, credentials, offices, systemConfig, weeklyRecipients] =
+    await Promise.all([
+      listMlsFeeds(),
+      listCredentials(),
+      listOffices({ active_only: false }),
+      loadSystemConfig(),
+      getWeeklySocialReportRecipientEmails(),
+    ]);
 
   // Build platform → summary map for the credential cards.
   const credByPlatform = new Map(
@@ -250,8 +254,34 @@ export default async function SettingsPage() {
             <p className="mt-3 text-[11px] text-neutral-500">
               Builds the full weekly recap with the prior Mon&ndash;Sun&apos;s
               real data and emails it to c21jjk@gmail.com only. Iterate on the
-              design here before turning on the distribution list (John + Larissa
-              + Chuck) or the Monday-morning cron.
+              design here before triggering the full distribution list.
+            </p>
+          </div>
+
+          <div className="border-t border-neutral-100 pt-5">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Weekly social media report — full distribution
+              </h3>
+              <Link
+                href="/settings/subscribers"
+                className="text-[11px] text-gold-700 hover:text-gold-800 whitespace-nowrap"
+              >
+                Manage subscribers →
+              </Link>
+            </div>
+            <SendWeeklyReportDistributionButton
+              recipientCount={weeklyRecipients.length}
+            />
+            <p className="mt-3 text-[11px] text-neutral-500">
+              Sends to{" "}
+              <strong className="text-neutral-700">
+                {weeklyRecipients.length}
+              </strong>{" "}
+              {weeklyRecipients.length === 1 ? "subscriber" : "subscribers"}{" "}
+              with <em>Weekly social report</em> opted in. A confirmation dialog
+              appears before the send fires. The Monday-morning cron uses the
+              same list automatically.
             </p>
           </div>
         </div>
