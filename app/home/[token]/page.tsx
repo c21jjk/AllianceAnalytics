@@ -9,6 +9,10 @@ import {
   type Platform,
 } from "@/lib/data/owner-story-db";
 import {
+  fetchOwnerStoryBrandLogos,
+  type OwnerStoryBrandLogos,
+} from "@/lib/data/brand-logos";
+import {
   formatCompactNumber,
   formatCurrency,
   formatNumber,
@@ -90,7 +94,10 @@ export async function generateMetadata({ params }: PageProps) {
 
 export default async function OwnerStoryPage({ params }: PageProps) {
   const { token } = await params;
-  const data = await fetchOwnerStoryByToken(token);
+  const [data, brandLogos] = await Promise.all([
+    fetchOwnerStoryByToken(token),
+    fetchOwnerStoryBrandLogos(),
+  ]);
   if (!data) notFound();
 
   // Fire-and-forget view log. Header lookup outside this block.
@@ -105,7 +112,7 @@ export default async function OwnerStoryPage({ params }: PageProps) {
     // headers() can throw outside a request scope — never block render.
   }
 
-  return <OwnerStoryView data={data} />;
+  return <OwnerStoryView data={data} brandLogos={brandLogos} />;
 }
 
 /* ----------------------------------------------------------------------- *
@@ -198,7 +205,13 @@ function initialsOf(name: string | null): string {
  *  Root view                                                               *
  * ----------------------------------------------------------------------- */
 
-function OwnerStoryView({ data }: { data: OwnerStoryData }) {
+function OwnerStoryView({
+  data,
+  brandLogos,
+}: {
+  data: OwnerStoryData;
+  brandLogos: OwnerStoryBrandLogos;
+}) {
   const { listing, posts, highlights, totals, company } = data;
   const featuredPost = highlights[0] ?? posts[0] ?? null;
   const platformStats = computePlatformStats(posts);
@@ -227,7 +240,10 @@ function OwnerStoryView({ data }: { data: OwnerStoryData }) {
           padding: "32px 24px 0",
         }}
       >
-        <BrandHeader reportUpdatedLabel={reportUpdatedLabel} />
+        <BrandHeader
+          reportUpdatedLabel={reportUpdatedLabel}
+          wordmarkUrl={brandLogos.wordmark_url}
+        />
         <PropertyHero listing={listing} />
         <MarketingSnapshot
           totals={totals}
@@ -243,6 +259,7 @@ function OwnerStoryView({ data }: { data: OwnerStoryData }) {
         <AllianceAdvantage
           yearReach={company.window_365d.reach}
           activeListings={company.active_listings}
+          sealUrl={brandLogos.seal_url}
         />
         <CampaignActivity recent={recentByPlatform} />
         <WhatHappensNext token={data.token} address={listing.address} />
@@ -256,7 +273,13 @@ function OwnerStoryView({ data }: { data: OwnerStoryData }) {
  *  Section: Brand header                                                   *
  * ----------------------------------------------------------------------- */
 
-function BrandHeader({ reportUpdatedLabel }: { reportUpdatedLabel: string }) {
+function BrandHeader({
+  reportUpdatedLabel,
+  wordmarkUrl,
+}: {
+  reportUpdatedLabel: string;
+  wordmarkUrl: string | null;
+}) {
   return (
     <header style={{ position: "relative", padding: "16px 0 32px" }}>
       <div
@@ -277,21 +300,30 @@ function BrandHeader({ reportUpdatedLabel }: { reportUpdatedLabel: string }) {
       >
         21
       </div>
-      <div
-        style={{
-          fontSize: 13,
-          letterSpacing: "0.22em",
-          textTransform: "uppercase",
-          fontWeight: 700,
-          color: GOLD,
-        }}
-      >
-        Century 21<sup style={{ fontSize: 8 }}>®</sup>{" "}
-        <span style={{ fontWeight: 500, color: INK_SOFT }}>Alliance</span>
-      </div>
+      {wordmarkUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={wordmarkUrl}
+          alt="Century 21 Alliance"
+          style={{ display: "block", height: 22, width: "auto" }}
+        />
+      ) : (
+        <div
+          style={{
+            fontSize: 13,
+            letterSpacing: "0.22em",
+            textTransform: "uppercase",
+            fontWeight: 700,
+            color: GOLD,
+          }}
+        >
+          Century 21<sup style={{ fontSize: 8 }}>®</sup>{" "}
+          <span style={{ fontWeight: 500, color: INK_SOFT }}>Alliance</span>
+        </div>
+      )}
       <h1
         style={{
-          marginTop: 6,
+          marginTop: 14,
           fontSize: "clamp(36px, 6vw, 54px)",
           lineHeight: 1.04,
           letterSpacing: "-0.025em",
@@ -411,29 +443,31 @@ function PropertyHero({ listing }: { listing: OwnerStoryData["listing"] }) {
 
           <div
             style={{
-              marginTop: 20,
+              marginTop: 22,
               display: "flex",
               alignItems: "center",
-              gap: 14,
+              gap: 18,
             }}
           >
             <AgentAvatar
               url={listing.agent_headshot_url}
               name={listing.agent_name}
+              size={92}
             />
             <div>
-              <div style={{ fontSize: 12, color: INK_SOFT }}>Your agent,</div>
+              <div style={{ fontSize: 13, color: INK_SOFT }}>Your agent,</div>
               <div
                 style={{
-                  fontSize: 16,
-                  fontWeight: 600,
+                  fontSize: 20,
+                  fontWeight: 700,
                   color: INK,
                   lineHeight: 1.15,
+                  marginTop: 2,
                 }}
               >
                 {listing.agent_name ?? "Century 21 Alliance"}
               </div>
-              <div style={{ fontSize: 13, color: INK_SOFT, marginTop: 2 }}>
+              <div style={{ fontSize: 13, color: INK_SOFT, marginTop: 4 }}>
                 {officeShortName(listing.listing_office_name)}
               </div>
             </div>
@@ -471,20 +505,23 @@ function PropertyStatCell({
 function AgentAvatar({
   url,
   name,
+  size = 56,
 }: {
   url: string | null;
   name: string | null;
+  size?: number;
 }) {
   if (url) {
     return (
       <div
         style={{
-          width: 56,
-          height: 56,
+          width: size,
+          height: size,
           borderRadius: "50%",
           background: `url(${url}) center/cover`,
           flexShrink: 0,
           border: `2px solid ${GOLD_BORDER}`,
+          boxShadow: "0 2px 8px rgba(24,24,27,0.10)",
         }}
         role="img"
         aria-label={name ? `${name} headshot` : "Agent headshot"}
@@ -494,8 +531,8 @@ function AgentAvatar({
   return (
     <div
       style={{
-        width: 56,
-        height: 56,
+        width: size,
+        height: size,
         borderRadius: "50%",
         backgroundColor: GOLD_SOFT_BG,
         color: GOLD,
@@ -503,9 +540,10 @@ function AgentAvatar({
         alignItems: "center",
         justifyContent: "center",
         fontWeight: 700,
-        fontSize: 18,
+        fontSize: Math.round(size * 0.32),
         flexShrink: 0,
         border: `2px solid ${GOLD_BORDER}`,
+        boxShadow: "0 2px 8px rgba(24,24,27,0.10)",
       }}
       aria-hidden
     >
@@ -905,9 +943,11 @@ function PlatformPerformance({ stats }: { stats: PlatformStat[] }) {
 function AllianceAdvantage({
   yearReach,
   activeListings,
+  sealUrl,
 }: {
   yearReach: number;
   activeListings: number;
+  sealUrl: string | null;
 }) {
   return (
     <section style={{ marginBottom: 24 }}>
@@ -984,7 +1024,21 @@ function AllianceAdvantage({
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <C21ShieldGlyph />
+            {sealUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={sealUrl}
+                alt="Century 21 Alliance Seal"
+                style={{
+                  width: 92,
+                  height: 92,
+                  objectFit: "contain",
+                  flexShrink: 0,
+                }}
+              />
+            ) : (
+              <C21ShieldGlyph />
+            )}
             <p
               style={{
                 margin: 0,
