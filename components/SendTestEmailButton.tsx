@@ -37,6 +37,7 @@ export default function SendTestEmailButton({
       const res = await fetch("/api/email/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: recipient }),
       });
       const body = (await res.json().catch(() => ({}))) as ApiResponse;
       if (res.ok && body.ok) {

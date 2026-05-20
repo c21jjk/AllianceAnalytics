@@ -7,18 +7,49 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/email/test
  *
- * Smoke-test endpoint. Sends a Resend round-trip to a hardcoded recipient
- * (c21jjk@gmail.com) so we can verify deliverability end-to-end without
- * needing to wire up a real notification path first.
+ * Smoke-test endpoint. Sends a Resend round-trip to one of the allowlisted
+ * admin addresses so we can verify deliverability end-to-end without needing
+ * to wire up a real notification path first.
  *
- * Admin-gated to prevent ad-hoc triggering. No request body required;
- * recipient is NOT user-controllable so the endpoint can't be repurposed.
+ * Admin-gated to prevent ad-hoc triggering. Recipient is selected via the
+ * POST body `{ to?: string }` but MUST match an entry in ALLOWED_RECIPIENTS;
+ * anything else returns 400. This keeps the endpoint from being repurposed
+ * to mail arbitrary addresses while still letting us pick which admin
+ * inbox to target from the settings UI.
+ *
+ * If `to` is omitted, defaults to the first entry in ALLOWED_RECIPIENTS so
+ * curl-based smoke tests still work with no body.
  */
 
-const SMOKE_TEST_RECIPIENT = "c21jjk@gmail.com";
+const ALLOWED_RECIPIENTS = new Set<string>([
+  "c21jjk@gmail.com",
+  "larissa@c21anj.com",
+]);
 
-export async function POST() {
+const DEFAULT_RECIPIENT = "c21jjk@gmail.com";
+
+export async function POST(request: Request) {
   await requireAdmin();
+
+  // Tolerate an empty body for curl-based smoke testing.
+  let toRaw: string | undefined;
+  try {
+    const body = (await request.json().catch(() => ({}))) as { to?: unknown };
+    if (typeof body.to === "string") toRaw = body.to.trim();
+  } catch {
+    // No body — fall through to default recipient.
+  }
+
+  const recipient = toRaw && toRaw.length > 0 ? toRaw : DEFAULT_RECIPIENT;
+  if (!ALLOWED_RECIPIENTS.has(recipient)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `Recipient ${recipient} is not in the allowlist.`,
+      },
+      { status: 400 },
+    );
+  }
 
   const env = process.env.VERCEL_ENV ?? "local";
   const sentAt = new Date().toISOString();
@@ -52,12 +83,12 @@ export async function POST() {
               </tr>
               <tr>
                 <td style="padding:6px 0;color:#71717a;">Recipient</td>
-                <td style="padding:6px 0;font-weight:600;">${SMOKE_TEST_RECIPIENT}</td>
+                <td style="padding:6px 0;font-weight:600;">${recipient}</td>
               </tr>
             </table>
             <p style="margin:20px 0 0 0;font-size:12px;color:#71717a;line-height:1.5;">
               Triggered from /settings → Email diagnostics. Reply to this email to verify
-              that the alias forwards to your inbox.
+              that the alias forwards to John's inbox.
             </p>
           </div>
         </div>
@@ -73,14 +104,14 @@ export async function POST() {
     "",
     `Environment: ${env}`,
     `Sent at:     ${sentAt}`,
-    `Recipient:   ${SMOKE_TEST_RECIPIENT}`,
+    `Recipient:   ${recipient}`,
     "",
     "Triggered from /settings → Email diagnostics. Reply to this email to",
-    "verify that the alias forwards to your inbox.",
+    "verify that the alias forwards to John's inbox.",
   ].join("\n");
 
   const result = await sendEmail({
-    to: SMOKE_TEST_RECIPIENT,
+    to: recipient,
     subject: "Resend smoke test — Alliance Social Analytics",
     html,
     text,

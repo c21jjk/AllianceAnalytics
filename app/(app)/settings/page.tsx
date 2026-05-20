@@ -226,7 +226,10 @@ export default async function SettingsPage() {
           subtitle="Verify the Resend integration end-to-end. Sends a hardcoded test email from SocialMediaReport@c21anj.com."
         />
         <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">
-          <SendTestEmailButton recipient="c21jjk@gmail.com" />
+          <div className="flex flex-col gap-3">
+            <SendTestEmailButton recipient="c21jjk@gmail.com" />
+            <SendTestEmailButton recipient="larissa@c21anj.com" />
+          </div>
           <p className="mt-3 text-[11px] text-neutral-500">
             On success you&apos;ll see a Resend message id. Failures surface the
             underlying error (missing key, unverified domain, etc.) inline.
