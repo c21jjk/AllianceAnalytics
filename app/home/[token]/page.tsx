@@ -348,17 +348,15 @@ function BrandHeader({
             alt=""
             aria-hidden
             style={{
-              position: "absolute",
-              right: -30,
-              top: "50%",
-              transform: "translateY(-50%)",
-              width: 220,
-              height: 220,
+              height: 96,
+              width: "auto",
+              maxWidth: 120,
               objectFit: "contain",
-              opacity: 0.7,
-              pointerEvents: "none",
+              opacity: 0.85,
+              flexShrink: 0,
               userSelect: "none",
-              zIndex: 0,
+              position: "relative",
+              zIndex: 1,
             }}
           />
         ) : null}
