@@ -4,32 +4,55 @@ import { createAdminClient } from "@/lib/supabase/admin";
 /**
  * Data fetcher for the weekly social media email report.
  *
- * Window = the most-recently-completed Mon→Sun period in America/New_York,
- * so a report fired Monday 8 AM ET covers the week that just ended Sunday.
+ * Pulls everything needed for the leadership recap in a single round-trip
+ * to `posts` (the date range from Jan 1 last year through "now") plus one
+ * small lookup for office display names. Falls back to a zero-shaped object
+ * if anything goes wrong — the report should never block the send pipeline.
  *
- * All reach numbers are sourced from `posts.metrics.reach` (falling back to
- * `metrics.impressions` for parity with company-rollup.ts). We never throw —
- * the report should degrade gracefully if a single platform's data is
- * unavailable rather than blocking the entire send.
+ * Windows are computed in America/New_York:
+ *   - `week`   = most recently completed Mon → Sun
+ *   - `prevWeek` = the week before that (for WoW deltas)
+ *   - `weekYoY`  = same Mon → Sun, shifted back 52 weeks (for week-of-last-year)
+ *   - `ytd`    = Jan 1 (this year, ET) → end of `week`
+ *   - `ytdYoY` = Jan 1 (last year, ET) → end of `week`, shifted back 52 weeks
+ *
+ * Aggregates returned:
+ *   - per-platform reach + posts (current + prev for WoW)
+ *   - YTD totals (this year + last year for YoY)
+ *   - week-of-last-year totals (for week YoY)
+ *   - top 3 campaigns (group-aware, reach merged across platforms within a group)
+ *   - listings represented (with top 3 by post count)
+ *   - office spotlight (top office by current-week reach)
+ *   - agent leaderboard (top 3 normalized agents by current-week reach)
  */
 
 export type WeeklyPlatform = "facebook" | "instagram" | "tiktok";
+
+const PLATFORMS: WeeklyPlatform[] = ["facebook", "instagram", "tiktok"];
 
 export interface WeeklyPlatformStats {
   posts: number;
   reach: number;
 }
 
-export interface WeeklyTopPost {
-  id: string;
-  platform: WeeklyPlatform;
+export interface WeeklyTopCampaign {
+  /** Group id when the campaign spans multiple platforms; otherwise the post id with a `post:` prefix. */
+  key: string;
+  /** URL-safe slug for /groups/[id] (or /posts/[id] if singleton). */
+  linkPath: string;
+  /** Reach summed across every platform in the campaign. */
+  mergedReach: number;
+  /** Per-platform reach within this campaign. */
+  perPlatform: Partial<Record<WeeklyPlatform, WeeklyPlatformStats>>;
+  /** Representative caption snippet. */
   caption: string | null;
-  permalink: string | null;
+  /** Representative thumbnail. */
   thumbnail_url: string | null;
-  reach: number;
   posted_at: string | null;
   property_address: string | null;
   property_city: string | null;
+  /** Which platforms participated, in stable order. */
+  platforms: WeeklyPlatform[];
 }
 
 export interface WeeklyListingMention {
@@ -39,45 +62,97 @@ export interface WeeklyListingMention {
   post_count: number;
 }
 
+export interface WeeklyOfficeSpotlight {
+  office_id: string;
+  name: string;
+  reach: number;
+  posts: number;
+}
+
+export interface WeeklyAgentLeader {
+  display_name: string;
+  reach: number;
+  posts: number;
+}
+
+export interface AggregateWindow {
+  reach: number;
+  posts: number;
+  listings: number;
+}
+
 export interface WeeklySocialReportData {
-  /** Inclusive start of window, ISO instant. */
+  /* ---- window labels & ISO bounds ---- */
   weekStartIso: string;
-  /** Exclusive end of window (= next Monday 00:00 ET), ISO instant. */
   weekEndIso: string;
-  /** Human-readable date labels (e.g. "May 12" / "May 18"). */
   weekStartLabel: string;
   weekEndLabel: string;
-  /** Same fields for the prior week, used to compute WoW deltas. */
   prevWeekStartIso: string;
   prevWeekEndIso: string;
+  weekYoYStartIso: string;
+  weekYoYEndIso: string;
+  ytdStartIso: string;
+  ytdEndIso: string;
+  ytdYoYStartIso: string;
+  ytdYoYEndIso: string;
+  ytdYearLabel: string;
+  ytdYoYYearLabel: string;
 
+  /* ---- this-week numbers ---- */
   totals: WeeklyPlatformStats;
   prevTotals: WeeklyPlatformStats;
+  weekYoY: WeeklyPlatformStats;
   byPlatform: Record<WeeklyPlatform, WeeklyPlatformStats>;
   prevByPlatform: Record<WeeklyPlatform, WeeklyPlatformStats>;
 
-  topPosts: WeeklyTopPost[];
+  /* ---- YTD numbers ---- */
+  ytd: AggregateWindow;
+  ytdYoY: AggregateWindow;
+
+  /* ---- campaign / listing / office / agent breakdowns (current week) ---- */
+  topCampaigns: WeeklyTopCampaign[];
   listings: WeeklyListingMention[];
-  /** Total distinct listings represented in the week's posts. */
   listingsTotal: number;
+  officeSpotlight: WeeklyOfficeSpotlight | null;
+  agentLeaderboard: WeeklyAgentLeader[];
 }
 
-const PLATFORMS: WeeklyPlatform[] = ["facebook", "instagram", "tiktok"];
-const emptyStats = (): WeeklyPlatformStats => ({ posts: 0, reach: 0 });
+/* --------------------------------------------------------------------- */
+/* Window math (America/New_York)                                        */
+/* --------------------------------------------------------------------- */
 
-function readNum(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.length > 0) {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
-  }
-  return 0;
+function nyMidnightIso(d: Date): string {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const probe = new Date(`${yyyy}-${mm}-${dd}T12:00:00Z`);
+  const offsetParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    timeZoneName: "longOffset",
+  }).formatToParts(probe);
+  const tzName =
+    offsetParts.find((p) => p.type === "timeZoneName")?.value ?? "GMT-04:00";
+  const offset = tzName.replace(/^GMT/, "") || "-04:00";
+  return `${yyyy}-${mm}-${dd}T00:00:00${offset}`;
+}
+
+function formatMonthDay(d: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+}
+
+function shiftDays(d: Date, days: number): Date {
+  const out = new Date(d);
+  out.setUTCDate(out.getUTCDate() + days);
+  return out;
 }
 
 /**
- * Compute the report window in America/New_York.
- * Returns the most recently completed Mon 00:00 → next Mon 00:00 window,
- * along with the prior week for WoW comparison.
+ * Compute all windows the report needs in one shot. Anchored to NY-local
+ * Monday boundaries.
  */
 export function getReportWindow(now: Date = new Date()) {
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -98,65 +173,61 @@ export function getReportWindow(now: Date = new Date()) {
   const month = parseInt(get("month"), 10);
   const day = parseInt(get("day"), 10);
 
-  // Days back to the start of "last complete week" (the Monday that began it).
-  // Today=Mon → 7. Today=Tue → 8. Today=Sun → 13.
+  // Days back to "last complete week"'s Monday.
   const daysToLastMon = wd === 0 ? 13 : 6 + wd;
-
-  // Compose calendar dates by walking back from today in UTC-date arithmetic
-  // (we'll re-anchor to ET when forming UTC instants below).
   const probe = new Date(Date.UTC(year, month - 1, day));
-  const lastMon = new Date(probe);
-  lastMon.setUTCDate(probe.getUTCDate() - daysToLastMon);
-  const dayAfterLastSun = new Date(lastMon);
-  dayAfterLastSun.setUTCDate(lastMon.getUTCDate() + 7);
-  const prevWeekMon = new Date(lastMon);
-  prevWeekMon.setUTCDate(lastMon.getUTCDate() - 7);
-  const lastSun = new Date(lastMon);
-  lastSun.setUTCDate(lastMon.getUTCDate() + 6);
 
-  const weekStartIso = nyMidnightIso(lastMon);
-  const weekEndIso = nyMidnightIso(dayAfterLastSun);
-  const prevWeekStartIso = nyMidnightIso(prevWeekMon);
-  const prevWeekEndIso = weekStartIso;
+  const weekStartDate = shiftDays(probe, -daysToLastMon);
+  const weekEndDate = shiftDays(weekStartDate, 7); // exclusive
+  const weekLastDate = shiftDays(weekStartDate, 6); // Sunday (label only)
+  const prevWeekStartDate = shiftDays(weekStartDate, -7);
+  const weekYoYStartDate = shiftDays(weekStartDate, -7 * 52);
+  const weekYoYEndDate = shiftDays(weekEndDate, -7 * 52);
+
+  // YTD: Jan 1 (NY) of weekEnd's year → weekEnd.
+  // YTD YoY: Jan 1 of last year (NY) → weekEnd shifted back 52 weeks.
+  const weekEndYear = weekEndDate.getUTCFullYear();
+  const ytdStartDate = new Date(Date.UTC(weekEndYear, 0, 1));
+  const ytdYoYStartDate = new Date(Date.UTC(weekEndYear - 1, 0, 1));
+  const ytdYoYEndDate = shiftDays(weekEndDate, -7 * 52);
 
   return {
-    weekStartIso,
-    weekEndIso,
-    prevWeekStartIso,
-    prevWeekEndIso,
-    weekStartLabel: formatMonthDay(lastMon),
-    weekEndLabel: formatMonthDay(lastSun),
+    weekStartIso: nyMidnightIso(weekStartDate),
+    weekEndIso: nyMidnightIso(weekEndDate),
+    prevWeekStartIso: nyMidnightIso(prevWeekStartDate),
+    prevWeekEndIso: nyMidnightIso(weekStartDate),
+    weekYoYStartIso: nyMidnightIso(weekYoYStartDate),
+    weekYoYEndIso: nyMidnightIso(weekYoYEndDate),
+    ytdStartIso: nyMidnightIso(ytdStartDate),
+    ytdEndIso: nyMidnightIso(weekEndDate),
+    ytdYoYStartIso: nyMidnightIso(ytdYoYStartDate),
+    ytdYoYEndIso: nyMidnightIso(ytdYoYEndDate),
+    weekStartLabel: formatMonthDay(weekStartDate),
+    weekEndLabel: formatMonthDay(weekLastDate),
+    ytdYearLabel: String(weekEndYear),
+    ytdYoYYearLabel: String(weekEndYear - 1),
   };
 }
 
-/**
- * Treat the y/m/d of `d` (in UTC) as a calendar date in America/New_York,
- * and return the ISO instant for midnight ET on that date.
- * Uses Intl to get the correct UTC offset (handles EDT vs EST automatically).
- */
-function nyMidnightIso(d: Date): string {
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  // Probe noon UTC of that date to read the NY tz offset.
-  const probe = new Date(`${yyyy}-${mm}-${dd}T12:00:00Z`);
-  const offsetParts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    timeZoneName: "longOffset",
-  }).formatToParts(probe);
-  const tzName =
-    offsetParts.find((p) => p.type === "timeZoneName")?.value ?? "GMT-04:00";
-  // longOffset returns "GMT-04:00" or "GMT-05:00"; strip "GMT".
-  const offset = tzName.replace(/^GMT/, "") || "-04:00";
-  return `${yyyy}-${mm}-${dd}T00:00:00${offset}`;
+/* --------------------------------------------------------------------- */
+/* Read helpers                                                          */
+/* --------------------------------------------------------------------- */
+
+function readNum(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.length > 0) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
 }
 
-function formatMonthDay(d: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: "UTC",
-    month: "short",
-    day: "numeric",
-  }).format(d);
+function emptyStats(): WeeklyPlatformStats {
+  return { posts: 0, reach: 0 };
+}
+
+function emptyAggregate(): AggregateWindow {
+  return { reach: 0, posts: 0, listings: 0 };
 }
 
 interface PostRow {
@@ -168,6 +239,9 @@ interface PostRow {
   posted_at: string | null;
   metrics: Record<string, unknown> | null;
   property_id: string | null;
+  group_id: string | null;
+  office_id: string | null;
+  agent_name: string | null;
 }
 
 interface PropertyRow {
@@ -176,7 +250,18 @@ interface PropertyRow {
   city: string | null;
 }
 
-/** Bucket a flat list of posts by platform. */
+interface OfficeRow {
+  id: string;
+  name: string;
+  display_name: string | null;
+}
+
+function reachOf(row: Pick<PostRow, "metrics">): number {
+  return (
+    readNum(row.metrics?.reach) || readNum(row.metrics?.impressions)
+  );
+}
+
 function bucketStats(
   rows: Pick<PostRow, "platform" | "metrics">[],
 ): Record<WeeklyPlatform, WeeklyPlatformStats> {
@@ -186,18 +271,17 @@ function bucketStats(
     tiktok: emptyStats(),
   };
   for (const row of rows) {
-    const platform = row.platform;
-    if (!PLATFORMS.includes(platform)) continue;
-    const reach =
-      readNum(row.metrics?.reach) || readNum(row.metrics?.impressions);
-    out[platform].posts += 1;
-    out[platform].reach += reach;
+    if (!PLATFORMS.includes(row.platform)) continue;
+    out[row.platform].posts += 1;
+    out[row.platform].reach += reachOf(row);
   }
   return out;
 }
 
-function sumStats(map: Record<WeeklyPlatform, WeeklyPlatformStats>) {
-  const out: WeeklyPlatformStats = emptyStats();
+function sumStats(
+  map: Record<WeeklyPlatform, WeeklyPlatformStats>,
+): WeeklyPlatformStats {
+  const out = emptyStats();
   for (const p of PLATFORMS) {
     out.posts += map[p].posts;
     out.reach += map[p].reach;
@@ -205,19 +289,47 @@ function sumStats(map: Record<WeeklyPlatform, WeeklyPlatformStats>) {
   return out;
 }
 
+function aggregateOver(rows: PostRow[]): AggregateWindow {
+  const listingSet = new Set<string>();
+  let reach = 0;
+  let posts = 0;
+  for (const row of rows) {
+    if (!PLATFORMS.includes(row.platform)) continue;
+    reach += reachOf(row);
+    posts += 1;
+    if (row.property_id) listingSet.add(row.property_id);
+  }
+  return { reach, posts, listings: listingSet.size };
+}
+
 /**
- * Pull the data for the weekly report. Safe: returns a zero-shaped object
- * if anything goes wrong.
+ * Normalize an agent name for grouping: trim, collapse whitespace, lowercase.
+ * Returns null for blank inputs so we can drop those posts from the leaderboard.
  */
+function normalizeAgentKey(raw: string | null): string | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/\s+/g, " ").trim().toLowerCase();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function displayAgentName(raw: string | null): string {
+  if (!raw) return "Unknown";
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+/* --------------------------------------------------------------------- */
+/* Public API                                                            */
+/* --------------------------------------------------------------------- */
+
 export async function loadWeeklySocialReportData(
   now: Date = new Date(),
 ): Promise<WeeklySocialReportData> {
   const win = getReportWindow(now);
-
   const empty: WeeklySocialReportData = {
     ...win,
     totals: emptyStats(),
     prevTotals: emptyStats(),
+    weekYoY: emptyStats(),
     byPlatform: {
       facebook: emptyStats(),
       instagram: emptyStats(),
@@ -228,76 +340,198 @@ export async function loadWeeklySocialReportData(
       instagram: emptyStats(),
       tiktok: emptyStats(),
     },
-    topPosts: [],
+    ytd: emptyAggregate(),
+    ytdYoY: emptyAggregate(),
+    topCampaigns: [],
     listings: [],
     listingsTotal: 0,
+    officeSpotlight: null,
+    agentLeaderboard: [],
   };
 
   try {
     const supabase = createAdminClient();
 
-    // Pull both weeks in one round-trip — small data set, simple in JS.
+    // Single big query covering ytdLastYear → weekEnd. We then bucket into the
+    // various windows in JS. Total rows is small (<2k for one brokerage over
+    // ~17 months) so this is well within request limits.
     const { data, error } = await supabase
       .from("posts")
       .select(
-        "id, platform, caption, permalink, thumbnail_url, posted_at, metrics, property_id",
+        "id, platform, caption, permalink, thumbnail_url, posted_at, metrics, property_id, group_id, office_id, agent_name",
       )
-      .gte("posted_at", win.prevWeekStartIso)
+      .gte("posted_at", win.ytdYoYStartIso)
       .lt("posted_at", win.weekEndIso);
     if (error || !data) return empty;
 
-    // Bucket into current and previous windows.
     const rows = data as unknown as PostRow[];
+
+    // Pre-compute timestamp once per row.
+    const stamped = rows
+      .filter((r) => r.posted_at && PLATFORMS.includes(r.platform))
+      .map((r) => ({ row: r, t: new Date(r.posted_at as string).getTime() }))
+      .filter((x) => !Number.isNaN(x.t));
+
+    const weekStartT = new Date(win.weekStartIso).getTime();
+    const weekEndT = new Date(win.weekEndIso).getTime();
+    const prevWeekStartT = new Date(win.prevWeekStartIso).getTime();
+    const weekYoYStartT = new Date(win.weekYoYStartIso).getTime();
+    const weekYoYEndT = new Date(win.weekYoYEndIso).getTime();
+    const ytdStartT = new Date(win.ytdStartIso).getTime();
+    const ytdYoYStartT = new Date(win.ytdYoYStartIso).getTime();
+    const ytdYoYEndT = new Date(win.ytdYoYEndIso).getTime();
+
     const current: PostRow[] = [];
     const previous: PostRow[] = [];
-    const weekStart = new Date(win.weekStartIso).getTime();
-    const weekEnd = new Date(win.weekEndIso).getTime();
-    const prevStart = new Date(win.prevWeekStartIso).getTime();
-    for (const row of rows) {
-      if (!row.posted_at) continue;
-      const t = new Date(row.posted_at).getTime();
-      if (Number.isNaN(t)) continue;
-      if (t >= weekStart && t < weekEnd) current.push(row);
-      else if (t >= prevStart && t < weekStart) previous.push(row);
+    const weekYoYRows: PostRow[] = [];
+    const ytdRows: PostRow[] = [];
+    const ytdYoYRows: PostRow[] = [];
+
+    for (const { row, t } of stamped) {
+      if (t >= weekStartT && t < weekEndT) current.push(row);
+      else if (t >= prevWeekStartT && t < weekStartT) previous.push(row);
+      if (t >= weekYoYStartT && t < weekYoYEndT) weekYoYRows.push(row);
+      if (t >= ytdStartT && t < weekEndT) ytdRows.push(row);
+      if (t >= ytdYoYStartT && t < ytdYoYEndT) ytdYoYRows.push(row);
     }
 
     const byPlatform = bucketStats(current);
     const prevByPlatform = bucketStats(previous);
     const totals = sumStats(byPlatform);
     const prevTotals = sumStats(prevByPlatform);
+    const weekYoYTotals = sumStats(bucketStats(weekYoYRows));
+    const ytd = aggregateOver(ytdRows);
+    const ytdYoY = aggregateOver(ytdYoYRows);
 
-    // Top 3 posts of the current week by reach.
-    const enriched = current
-      .map((r) => {
-        const reach =
-          readNum(r.metrics?.reach) || readNum(r.metrics?.impressions);
-        return { row: r, reach };
-      })
-      .filter((x) => PLATFORMS.includes(x.row.platform))
-      .sort((a, b) => b.reach - a.reach)
-      .slice(0, 3);
-
-    // Pull addresses for the top posts + listings count.
-    const listingCounts = new Map<string, number>();
-    for (const r of current) {
-      if (r.property_id) {
-        listingCounts.set(
-          r.property_id,
-          (listingCounts.get(r.property_id) ?? 0) + 1,
-        );
+    /* ---- Top campaigns (group-aware) ---- */
+    interface CampaignAccumulator {
+      key: string;
+      groupId: string | null;
+      mergedReach: number;
+      perPlatform: Partial<Record<WeeklyPlatform, WeeklyPlatformStats>>;
+      // Use the post with the highest reach within the group as the representative.
+      representative: PostRow | null;
+      representativeReach: number;
+      platforms: Set<WeeklyPlatform>;
+    }
+    const campaigns = new Map<string, CampaignAccumulator>();
+    for (const row of current) {
+      const key = row.group_id ? `group:${row.group_id}` : `post:${row.id}`;
+      let acc = campaigns.get(key);
+      if (!acc) {
+        acc = {
+          key,
+          groupId: row.group_id,
+          mergedReach: 0,
+          perPlatform: {},
+          representative: null,
+          representativeReach: -1,
+          platforms: new Set(),
+        };
+        campaigns.set(key, acc);
+      }
+      const r = reachOf(row);
+      acc.mergedReach += r;
+      acc.platforms.add(row.platform);
+      const cell = acc.perPlatform[row.platform] ?? emptyStats();
+      cell.posts += 1;
+      cell.reach += r;
+      acc.perPlatform[row.platform] = cell;
+      if (r > acc.representativeReach) {
+        acc.representativeReach = r;
+        acc.representative = row;
       }
     }
-    const propertyIds = new Set<string>();
-    for (const x of enriched) {
-      if (x.row.property_id) propertyIds.add(x.row.property_id);
+    const sortedCampaigns = Array.from(campaigns.values())
+      .filter((c) => c.representative !== null)
+      .sort((a, b) => b.mergedReach - a.mergedReach)
+      .slice(0, 3);
+
+    /* ---- Listings represented ---- */
+    const listingCounts = new Map<string, number>();
+    for (const row of current) {
+      if (!row.property_id) continue;
+      listingCounts.set(
+        row.property_id,
+        (listingCounts.get(row.property_id) ?? 0) + 1,
+      );
     }
-    // Top 3 listings by post count for the "Listings represented" section.
     const topListingIds = Array.from(listingCounts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
       .map(([id]) => id);
-    for (const id of topListingIds) propertyIds.add(id);
 
+    /* ---- Office spotlight ---- */
+    const officeReach = new Map<string, { reach: number; posts: number }>();
+    for (const row of current) {
+      if (!row.office_id) continue;
+      const cell = officeReach.get(row.office_id) ?? { reach: 0, posts: 0 };
+      cell.reach += reachOf(row);
+      cell.posts += 1;
+      officeReach.set(row.office_id, cell);
+    }
+    let topOfficeId: string | null = null;
+    let topOfficeReach = -1;
+    for (const [id, cell] of officeReach) {
+      if (cell.reach > topOfficeReach) {
+        topOfficeReach = cell.reach;
+        topOfficeId = id;
+      }
+    }
+
+    /* ---- Agent leaderboard ---- */
+    interface AgentAccumulator {
+      key: string;
+      displayCandidates: Map<string, number>;
+      reach: number;
+      posts: number;
+    }
+    const agentMap = new Map<string, AgentAccumulator>();
+    for (const row of current) {
+      const key = normalizeAgentKey(row.agent_name);
+      if (!key) continue;
+      let acc = agentMap.get(key);
+      if (!acc) {
+        acc = {
+          key,
+          displayCandidates: new Map(),
+          reach: 0,
+          posts: 0,
+        };
+        agentMap.set(key, acc);
+      }
+      const candidate = displayAgentName(row.agent_name);
+      acc.displayCandidates.set(
+        candidate,
+        (acc.displayCandidates.get(candidate) ?? 0) + 1,
+      );
+      acc.reach += reachOf(row);
+      acc.posts += 1;
+    }
+    const agentLeaderboard: WeeklyAgentLeader[] = Array.from(agentMap.values())
+      .sort((a, b) => b.reach - a.reach)
+      .slice(0, 3)
+      .map((acc) => {
+        // Pick the display variant that appeared most often.
+        let bestName = "Unknown";
+        let bestCount = -1;
+        for (const [name, count] of acc.displayCandidates) {
+          if (count > bestCount) {
+            bestCount = count;
+            bestName = name;
+          }
+        }
+        return { display_name: bestName, reach: acc.reach, posts: acc.posts };
+      });
+
+    /* ---- Pull property / office display names in two small queries ---- */
+    const propertyIds = new Set<string>();
+    for (const id of topListingIds) propertyIds.add(id);
+    for (const c of sortedCampaigns) {
+      if (c.representative?.property_id) {
+        propertyIds.add(c.representative.property_id);
+      }
+    }
     let propertiesById = new Map<string, PropertyRow>();
     if (propertyIds.size > 0) {
       const { data: props } = await supabase
@@ -311,20 +545,40 @@ export async function loadWeeklySocialReportData(
       }
     }
 
-    const topPosts: WeeklyTopPost[] = enriched.map(({ row, reach }) => {
-      const prop = row.property_id
-        ? propertiesById.get(row.property_id)
+    let officeName: string | null = null;
+    if (topOfficeId) {
+      const { data: officeRow } = await supabase
+        .from("offices")
+        .select("id, name, display_name")
+        .eq("id", topOfficeId)
+        .maybeSingle();
+      if (officeRow) {
+        const o = officeRow as unknown as OfficeRow;
+        officeName = o.display_name?.trim() || o.name;
+      }
+    }
+
+    /* ---- Materialize the shapes ---- */
+    const topCampaigns: WeeklyTopCampaign[] = sortedCampaigns.map((c) => {
+      const rep = c.representative as PostRow;
+      const prop = rep.property_id
+        ? propertiesById.get(rep.property_id)
         : undefined;
+      const platforms = PLATFORMS.filter((p) => c.platforms.has(p));
+      const linkPath = c.groupId
+        ? `/groups/${c.groupId}`
+        : `/posts/${rep.id}`;
       return {
-        id: row.id,
-        platform: row.platform,
-        caption: row.caption,
-        permalink: row.permalink,
-        thumbnail_url: row.thumbnail_url,
-        reach,
-        posted_at: row.posted_at,
+        key: c.key,
+        linkPath,
+        mergedReach: c.mergedReach,
+        perPlatform: c.perPlatform,
+        caption: rep.caption,
+        thumbnail_url: rep.thumbnail_url,
+        posted_at: rep.posted_at,
         property_address: prop?.address ?? null,
         property_city: prop?.city ?? null,
+        platforms,
       };
     });
 
@@ -338,15 +592,30 @@ export async function loadWeeklySocialReportData(
       };
     });
 
+    const officeSpotlight: WeeklyOfficeSpotlight | null =
+      topOfficeId && officeName
+        ? {
+            office_id: topOfficeId,
+            name: officeName,
+            reach: officeReach.get(topOfficeId)?.reach ?? 0,
+            posts: officeReach.get(topOfficeId)?.posts ?? 0,
+          }
+        : null;
+
     return {
       ...win,
       totals,
       prevTotals,
+      weekYoY: weekYoYTotals,
       byPlatform,
       prevByPlatform,
-      topPosts,
+      ytd,
+      ytdYoY,
+      topCampaigns,
       listings,
       listingsTotal: listingCounts.size,
+      officeSpotlight,
+      agentLeaderboard,
     };
   } catch {
     return empty;

@@ -2,6 +2,7 @@ import "server-only";
 import { sendEmail, type SendEmailResult } from "@/lib/email/send";
 import { loadWeeklySocialReportData } from "./weekly-social-data";
 import { renderWeeklySocialEmail } from "./weekly-social-template";
+import { generateWeeklyTakeaway } from "./weekly-social-ai-takeaway";
 
 /**
  * Orchestrator for the weekly social media report email.
@@ -30,7 +31,8 @@ export async function sendWeeklySocialReport(opts: {
     return { ok: false, error: "Empty recipient list." };
   }
   const data = await loadWeeklySocialReportData(opts.now ?? new Date());
-  const { subject, html, text } = renderWeeklySocialEmail(data);
+  const aiTakeaway = await generateWeeklyTakeaway(data);
+  const { subject, html, text } = renderWeeklySocialEmail(data, aiTakeaway);
 
   const result = await sendEmail({
     to: opts.to,
