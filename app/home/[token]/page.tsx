@@ -292,69 +292,82 @@ function BrandHeader({
   sealCroppedUrl: string | null;
 }) {
   return (
-    <header style={{ position: "relative", padding: "16px 0 32px" }}>
-      {sealCroppedUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={sealCroppedUrl}
-          alt=""
-          aria-hidden
-          style={{
-            position: "absolute",
-            right: -30,
-            top: -20,
-            width: 280,
-            height: 280,
-            objectFit: "contain",
-            opacity: 0.14,
-            pointerEvents: "none",
-            userSelect: "none",
-          }}
-        />
-      ) : (
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            right: -20,
-            top: -10,
-            fontSize: 220,
-            lineHeight: 1,
-            fontWeight: 700,
-            color: GOLD,
-            opacity: 0.08,
-            pointerEvents: "none",
-            letterSpacing: "-0.04em",
-            userSelect: "none",
-          }}
-        >
-          21
-        </div>
-      )}
-      {wordmarkUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={wordmarkUrl}
-          alt="Century 21 Alliance"
-          style={{ display: "block", height: 66, width: "auto" }}
-        />
-      ) : (
-        <div
-          style={{
-            fontSize: 13,
-            letterSpacing: "0.22em",
-            textTransform: "uppercase",
-            fontWeight: 700,
-            color: GOLD,
-          }}
-        >
-          Century 21<sup style={{ fontSize: 8 }}>®</sup>{" "}
-          <span style={{ fontWeight: 500, color: INK_SOFT }}>Alliance</span>
-        </div>
-      )}
+    <header style={{ padding: "0 0 32px" }}>
+      {/* Cream brand band — visually unifies the wordmark + cropped seal
+          and separates them from the headline below. Both logos sit inside
+          this band; the seal renders at near-full opacity so the gold tone
+          reads properly against the cream backdrop. */}
+      <div
+        style={{
+          position: "relative",
+          backgroundColor: GOLD_SOFT_BG,
+          borderRadius: 12,
+          padding: "20px 28px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 20,
+          overflow: "hidden",
+          minHeight: 120,
+          border: `1px solid ${GOLD_BORDER}`,
+        }}
+      >
+        {wordmarkUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={wordmarkUrl}
+            alt="Century 21 Alliance"
+            style={{
+              display: "block",
+              height: 66,
+              width: "auto",
+              flexShrink: 0,
+              position: "relative",
+              zIndex: 1,
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              fontSize: 28,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              color: GOLD,
+              zIndex: 1,
+            }}
+          >
+            Century 21<sup style={{ fontSize: 14 }}>®</sup>{" "}
+            <span style={{ fontWeight: 500, color: INK_SOFT }}>Alliance</span>
+          </div>
+        )}
+        {sealCroppedUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={sealCroppedUrl}
+            alt=""
+            aria-hidden
+            style={{
+              position: "absolute",
+              right: -30,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 220,
+              height: 220,
+              objectFit: "contain",
+              opacity: 0.7,
+              pointerEvents: "none",
+              userSelect: "none",
+              zIndex: 0,
+            }}
+          />
+        ) : null}
+      </div>
+
+      {/* Headline lives BELOW the brand band on the regular page bg. */}
       <h1
         style={{
-          marginTop: 14,
+          marginTop: 24,
           fontSize: "clamp(36px, 6vw, 54px)",
           lineHeight: 1.04,
           letterSpacing: "-0.025em",
@@ -362,9 +375,7 @@ function BrandHeader({
           color: INK,
         }}
       >
-        Your Listing
-        <br />
-        Marketing Report
+        Your Social Media Report
       </h1>
       <div style={{ marginTop: 10, fontSize: 15, color: INK_SOFT }}>
         Weekly social media update for your home
