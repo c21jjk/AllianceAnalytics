@@ -242,10 +242,10 @@ function OwnerStoryView({
       }}
     >
       <main
+        className="px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8"
         style={{
           maxWidth: 960,
           margin: "0 auto",
-          padding: "32px 24px 0",
         }}
       >
         <BrandHeader
@@ -302,17 +302,15 @@ function BrandHeader({
           this band; the seal renders at near-full opacity so the gold tone
           reads properly against the cream backdrop. */}
       <div
+        className="px-4 py-4 sm:px-7 sm:py-5 gap-3 sm:gap-5"
         style={{
           position: "relative",
           backgroundColor: GOLD_SOFT_BG,
           borderRadius: 12,
-          padding: "20px 28px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 20,
           overflow: "hidden",
-          minHeight: 120,
           border: `1px solid ${GOLD_BORDER}`,
         }}
       >
@@ -321,11 +319,13 @@ function BrandHeader({
           <img
             src={wordmarkUrl}
             alt="Century 21 Alliance"
+            className="h-10 sm:h-16"
             style={{
               display: "block",
-              height: 66,
               width: "auto",
-              flexShrink: 0,
+              flexShrink: 1,
+              minWidth: 0,
+              maxWidth: "70%",
               position: "relative",
               zIndex: 1,
             }}
@@ -333,7 +333,7 @@ function BrandHeader({
         ) : (
           <div
             style={{
-              fontSize: 28,
+              fontSize: 22,
               letterSpacing: "0.18em",
               textTransform: "uppercase",
               fontWeight: 700,
@@ -341,7 +341,7 @@ function BrandHeader({
               zIndex: 1,
             }}
           >
-            Century 21<sup style={{ fontSize: 14 }}>®</sup>{" "}
+            Century 21<sup style={{ fontSize: 11 }}>®</sup>{" "}
             <span style={{ fontWeight: 500, color: INK_SOFT }}>Alliance</span>
           </div>
         )}
@@ -351,10 +351,9 @@ function BrandHeader({
             src={sealCroppedUrl}
             alt=""
             aria-hidden
+            className="h-14 sm:h-24"
             style={{
-              height: 96,
               width: "auto",
-              maxWidth: 120,
               objectFit: "contain",
               opacity: 0.85,
               flexShrink: 0,
@@ -370,8 +369,8 @@ function BrandHeader({
       <h1
         style={{
           marginTop: 24,
-          fontSize: "clamp(36px, 6vw, 54px)",
-          lineHeight: 1.04,
+          fontSize: "clamp(28px, 7vw, 54px)",
+          lineHeight: 1.05,
           letterSpacing: "-0.025em",
           fontWeight: 700,
           color: INK,
@@ -414,17 +413,11 @@ function PropertyHero({ listing }: { listing: OwnerStoryData["listing"] }) {
 
   return (
     <Card style={{ marginBottom: 24, overflow: "hidden", padding: 0 }}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 1fr)",
-          gap: 0,
-        }}
-      >
+      <div className="grid grid-cols-1 lg:grid-cols-[1.05fr_1fr]">
         <div
+          className="min-h-[220px] sm:min-h-[280px]"
           style={{
             backgroundColor: "#eeeeee",
-            minHeight: 280,
             backgroundImage: listing.hero_image_url
               ? `url(${listing.hero_image_url})`
               : undefined,
@@ -438,10 +431,10 @@ function PropertyHero({ listing }: { listing: OwnerStoryData["listing"] }) {
               : undefined
           }
         />
-        <div style={{ padding: "28px 28px 24px" }}>
+        <div className="p-5 sm:p-7">
           <div
+            className="text-xl sm:text-[22px]"
             style={{
-              fontSize: 22,
               fontWeight: 600,
               lineHeight: 1.15,
               color: INK,
@@ -456,11 +449,8 @@ function PropertyHero({ listing }: { listing: OwnerStoryData["listing"] }) {
           ) : null}
 
           <div
+            className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4"
             style={{
-              marginTop: 20,
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: 12,
               borderTop: `1px solid ${RULE}`,
               borderBottom: `1px solid ${RULE}`,
               padding: "16px 0",
@@ -629,13 +619,7 @@ function MarketingSnapshot({
           ) : null
         }
       />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-          gap: 16,
-        }}
-      >
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <StatTile
           icon={<PeopleGlyph />}
           value={formatCompactNumber(totals.reach)}
@@ -749,11 +733,12 @@ function HelpSpreadTheWord({
           Help Spread the Word
         </h3>
         <p
+          className="text-base sm:text-lg"
           style={{
-            margin: "12px 0 0 0",
-            fontSize: 14,
-            lineHeight: 1.6,
-            color: INK_SOFT,
+            margin: "14px 0 0 0",
+            lineHeight: 1.55,
+            color: INK,
+            fontWeight: 500,
             maxWidth: 760,
           }}
         >
@@ -762,14 +747,7 @@ function HelpSpreadTheWord({
           media pages. Every share, comment, and interaction helps increase
           visibility and reach more potential buyers.
         </p>
-        <div
-          style={{
-            marginTop: 20,
-            display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-            gap: 14,
-          }}
-        >
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
           {order.map((p) => (
             <ShareablePostCard
               key={p}
@@ -1042,13 +1020,7 @@ function PlatformPerformance({ stats }: { stats: PlatformStat[] }) {
   return (
     <section style={{ marginBottom: 24 }}>
       <SectionHeader title="Platform Performance" />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 16,
-        }}
-      >
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         {stats.map((s) => (
           <Card key={s.platform} style={{ padding: 18 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1134,8 +1106,8 @@ function AllianceAdvantage({
   return (
     <section style={{ marginBottom: 24 }}>
       <Card
+        className="p-5 sm:p-7"
         style={{
-          padding: "28px",
           backgroundColor: GOLD_SOFT_BG,
           border: `1px solid ${GOLD_BORDER}`,
         }}
@@ -1144,13 +1116,7 @@ function AllianceAdvantage({
           The Alliance Advantage
         </h3>
         <div
-          style={{
-            marginTop: 16,
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.6fr)",
-            gap: 24,
-            alignItems: "center",
-          }}
+          className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_1.1fr_1.6fr] gap-5 sm:gap-6 items-center"
         >
           {/* Reach (kept) */}
           <div>
@@ -1205,16 +1171,15 @@ function AllianceAdvantage({
             </div>
           </div>
 
-          {/* Seal + tagline */}
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          {/* Seal + tagline — stacks seal above tagline on mobile. */}
+          <div className="flex flex-col sm:flex-row items-center sm:items-center gap-3 sm:gap-5">
             {sealUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={sealUrl}
                 alt="Century 21 Alliance Seal"
+                className="w-24 h-24 sm:w-[110px] sm:h-[110px]"
                 style={{
-                  width: 110,
-                  height: 110,
                   objectFit: "contain",
                   flexShrink: 0,
                 }}
@@ -1223,6 +1188,7 @@ function AllianceAdvantage({
               <C21ShieldGlyph />
             )}
             <p
+              className="text-center sm:text-left"
               style={{
                 margin: 0,
                 fontSize: 13,
@@ -1253,13 +1219,7 @@ function WhatHappensNext({
   return (
     <section style={{ marginBottom: 32 }}>
       <Card
-        style={{
-          padding: 22,
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1.4fr) auto",
-          gap: 20,
-          alignItems: "center",
-        }}
+        className="p-5 sm:p-6 grid grid-cols-1 md:grid-cols-[1.4fr_auto] gap-4 sm:gap-5 items-start md:items-center"
       >
         <div>
           <h3 style={sectionTitleStyle}>What Happens Next</h3>
@@ -1310,21 +1270,18 @@ function AgentFooter({ listing }: { listing: OwnerStoryData["listing"] }) {
   const email = listing.agent_email?.trim();
   return (
     <footer
+      className="px-4 sm:px-6 py-5"
       style={{
         marginTop: 40,
         backgroundColor: FOOTER_BG,
         color: "#FFFFFF",
-        padding: "18px 24px",
       }}
     >
       <div
+        className="flex flex-col md:flex-row md:items-center gap-3 md:gap-5"
         style={{
           maxWidth: 960,
           margin: "0 auto",
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 18,
           fontSize: 13,
         }}
       >
@@ -1345,7 +1302,7 @@ function AgentFooter({ listing }: { listing: OwnerStoryData["listing"] }) {
           <span style={{ margin: "0 8px", opacity: 0.5 }}>|</span>
           {office}
         </span>
-        <span style={{ flex: 1 }} />
+        <span className="hidden md:block" style={{ flex: 1 }} />
         {phone ? (
           <FooterContact
             icon={<PhoneGlyph />}
@@ -1403,13 +1360,16 @@ function FooterContact({
 
 function Card({
   style,
+  className,
   children,
 }: {
   style?: React.CSSProperties;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
     <div
+      className={className}
       style={{
         backgroundColor: CARD_BG,
         border: `1px solid ${RULE}`,
