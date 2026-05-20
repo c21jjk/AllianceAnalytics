@@ -5,6 +5,7 @@ import CredentialCard from "@/components/CredentialCard";
 import OfficeCard from "@/components/OfficeCard";
 import TestModeBanner from "@/components/TestModeBanner";
 import SendTestEmailButton from "@/components/SendTestEmailButton";
+import SendWeeklyReportPreviewButton from "@/components/SendWeeklyReportPreviewButton";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listMlsFeeds } from "@/lib/data/mls-feeds";
@@ -225,15 +226,34 @@ export default async function SettingsPage() {
           title="Email diagnostics"
           subtitle="Verify the Resend integration end-to-end. Sends a hardcoded test email from SocialMediaReport@c21anj.com."
         />
-        <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5">
-          <div className="flex flex-col gap-3">
-            <SendTestEmailButton recipient="c21jjk@gmail.com" />
-            <SendTestEmailButton recipient="larissa@c21anj.com" />
+        <div className="rounded-xl border border-neutral-200 bg-white shadow-card p-5 space-y-5">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
+              Smoke test
+            </h3>
+            <div className="flex flex-col gap-3">
+              <SendTestEmailButton recipient="c21jjk@gmail.com" />
+              <SendTestEmailButton recipient="larissa@c21anj.com" />
+            </div>
+            <p className="mt-3 text-[11px] text-neutral-500">
+              Confirms Resend is wired. On success you&apos;ll see a Resend
+              message id. Failures surface the underlying error (missing key,
+              unverified domain, etc.) inline.
+            </p>
           </div>
-          <p className="mt-3 text-[11px] text-neutral-500">
-            On success you&apos;ll see a Resend message id. Failures surface the
-            underlying error (missing key, unverified domain, etc.) inline.
-          </p>
+
+          <div className="border-t border-neutral-100 pt-5">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
+              Weekly social media report — design preview
+            </h3>
+            <SendWeeklyReportPreviewButton />
+            <p className="mt-3 text-[11px] text-neutral-500">
+              Builds the full weekly recap with the prior Mon&ndash;Sun&apos;s
+              real data and emails it to c21jjk@gmail.com only. Iterate on the
+              design here before turning on the distribution list (John + Larissa
+              + Chuck) or the Monday-morning cron.
+            </p>
+          </div>
         </div>
       </section>
     </div>
