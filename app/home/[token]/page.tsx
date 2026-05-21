@@ -150,27 +150,110 @@ function computePlatformStats(posts: OwnerStoryPost[]): PlatformStat[] {
 }
 
 /**
- * Most-recent post per platform. Used for the Campaign Activity row so each
- * platform card shows its latest activity. Falls back to null when a
- * platform has no posts yet.
+ * Bucket posts by `group_id` (campaign), then return them as
+ * `CampaignSummary[]` sorted newest-first. Posts with no group_id are
+ * treated as singleton campaigns so they still surface in the timeline.
+ *
+ * Each campaign exposes:
+ *   - Representative thumbnail + caption (first non-empty, prefer the
+ *     post with the highest reach so the seller sees the strongest visual)
+ *   - Per-platform variants in stable FB → IG → TT order
+ *   - Anchored date = earliest post in the group (when the campaign launched)
+ *   - Merged reach = sum across the group's platforms
  */
-function mostRecentByPlatform(
-  posts: OwnerStoryPost[],
-): Record<Platform, OwnerStoryPost | null> {
-  const out: Record<Platform, OwnerStoryPost | null> = {
-    facebook: null,
-    instagram: null,
-    tiktok: null,
-  };
-  const sorted = [...posts].sort((a, b) => {
-    const ta = a.posted_at ? Date.parse(a.posted_at) : 0;
-    const tb = b.posted_at ? Date.parse(b.posted_at) : 0;
+export interface CampaignVariant {
+  platform: Platform;
+  permalink: string | null;
+  reach: number;
+  engagements: number;
+  posted_at: string | null;
+}
+
+export interface CampaignSummary {
+  key: string;
+  anchored_at: string | null;
+  representative_caption: string;
+  representative_thumbnail_url: string | null;
+  merged_reach: number;
+  variants: CampaignVariant[];
+}
+
+function groupByCampaign(posts: OwnerStoryPost[]): CampaignSummary[] {
+  const buckets = new Map<string, OwnerStoryPost[]>();
+  for (const p of posts) {
+    const key = p.group_id ? `group:${p.group_id}` : `post:${p.id}`;
+    const list = buckets.get(key) ?? [];
+    list.push(p);
+    buckets.set(key, list);
+  }
+
+  const summaries: CampaignSummary[] = [];
+  for (const [key, group] of buckets) {
+    if (group.length === 0) continue;
+
+    // Anchored date = earliest post (when this campaign launched).
+    let earliest: number | null = null;
+    let anchoredIso: string | null = null;
+    for (const p of group) {
+      if (!p.posted_at) continue;
+      const t = Date.parse(p.posted_at);
+      if (!Number.isFinite(t)) continue;
+      if (earliest === null || t < earliest) {
+        earliest = t;
+        anchoredIso = p.posted_at;
+      }
+    }
+
+    // Representative thumbnail + caption — prefer the highest-reach post in
+    // the group (its content is the strongest visual / hook).
+    const byReachDesc = [...group].sort((a, b) => b.reach - a.reach);
+    const rep =
+      byReachDesc.find((p) => p.thumbnail_url) ??
+      byReachDesc.find((p) => p.caption.trim().length > 0) ??
+      byReachDesc[0];
+
+    // Per-platform variants — keep one per platform (the highest-reach one
+    // when there are multiples on the same platform within the group).
+    const byPlatform = new Map<Platform, OwnerStoryPost>();
+    for (const p of group) {
+      const existing = byPlatform.get(p.platform);
+      if (!existing || p.reach > existing.reach) {
+        byPlatform.set(p.platform, p);
+      }
+    }
+    const order: Platform[] = ["facebook", "instagram", "tiktok"];
+    const variants: CampaignVariant[] = [];
+    for (const platform of order) {
+      const post = byPlatform.get(platform);
+      if (!post) continue;
+      variants.push({
+        platform,
+        permalink: post.permalink,
+        reach: post.reach,
+        engagements: post.engagements,
+        posted_at: post.posted_at,
+      });
+    }
+
+    const merged_reach = variants.reduce((sum, v) => sum + v.reach, 0);
+
+    summaries.push({
+      key,
+      anchored_at: anchoredIso,
+      representative_caption: rep.caption,
+      representative_thumbnail_url: rep.thumbnail_url,
+      merged_reach,
+      variants,
+    });
+  }
+
+  // Newest-first.
+  summaries.sort((a, b) => {
+    const ta = a.anchored_at ? Date.parse(a.anchored_at) : 0;
+    const tb = b.anchored_at ? Date.parse(b.anchored_at) : 0;
     return tb - ta;
   });
-  for (const p of sorted) {
-    if (!out[p.platform]) out[p.platform] = p;
-  }
-  return out;
+  return summaries;
 }
 
 function describeBaths(full: number | null, half: number | null): string {
@@ -223,7 +306,16 @@ function OwnerStoryView({
   const { listing, posts, highlights, totals, company } = data;
   const featuredPost = highlights[0] ?? posts[0] ?? null;
   const platformStats = computePlatformStats(posts);
-  const recentByPlatform = mostRecentByPlatform(posts);
+  const campaigns = groupByCampaign(posts);
+  // The campaign with the highest merged reach gets the ★ Top Performer pill.
+  let topCampaignKey: string | null = null;
+  let topCampaignReach = -1;
+  for (const c of campaigns) {
+    if (c.merged_reach > topCampaignReach) {
+      topCampaignReach = c.merged_reach;
+      topCampaignKey = c.key;
+    }
+  }
 
   const campaignStartLabel = data.first_post_at
     ? formatShortDate(data.first_post_at)
@@ -260,8 +352,8 @@ function OwnerStoryView({
           campaignStartLabel={campaignStartLabel}
         />
         <HelpSpreadTheWord
-          recent={recentByPlatform}
-          topPostId={featuredPost?.id ?? null}
+          campaigns={campaigns}
+          topCampaignKey={topCampaignKey}
           listingAddress={listing.address}
         />
         <WhatThisMeans

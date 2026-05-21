@@ -579,6 +579,7 @@ export type Database = {
           email: string | null
           first_name: string | null
           full_name: string
+          headshot_label_override: string | null
           id: string
           is_active: boolean
           last_name: string | null
@@ -613,6 +614,7 @@ export type Database = {
           email?: string | null
           first_name?: string | null
           full_name?: string
+          headshot_label_override?: string | null
           id?: string
           is_active?: boolean
           last_name?: string | null

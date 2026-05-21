@@ -134,6 +134,22 @@ function normalizeAgentName(raw: string): string | null {
   return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
+/**
+ * Resolve an agent's headshot URL with a two-pass strategy:
+ *
+ *   1. Per-agent OVERRIDE — look up the agent in `mls_agents` by normalized
+ *      name; if they have a `headshot_label_override` set, find a
+ *      brand_assets row with `label = override` and return that URL. This
+ *      handles nickname mismatches (e.g., MLS "Nicolette Gorski" → Studio
+ *      "Nikki Gorski") without needing a global nickname dictionary.
+ *
+ *   2. Name-match FALLBACK — the prior behavior: pull active agent_headshot
+ *      rows whose label contains the last name, normalize labels in memory,
+ *      and match on first+last. Catches "John J. Koch" ↔ "John Koch" etc.
+ *
+ * Returns null when neither path finds a usable URL; the story view falls
+ * back to the initials medallion.
+ */
 export async function fetchAgentHeadshotUrl(
   agentName: string,
 ): Promise<string | null> {
@@ -143,15 +159,41 @@ export async function fetchAgentHeadshotUrl(
   if (!first) return null;
 
   const supabase = createAdminClient();
+
+  // 1) Override path — preferred. Larissa sets these on /settings (Phase 2)
+  //    or via direct SQL when a name mismatch is spotted.
   try {
-    // Narrow by last-name LIKE first to keep the result set small, then
-    // normalize labels in memory and match on (first+last). The
-    // brand-assets table is small (low hundreds) so the join is cheap.
+    const { data: agentRow } = await supabase
+      .from("mls_agents")
+      .select("headshot_label_override")
+      .ilike("full_name", agentName.trim())
+      .not("headshot_label_override", "is", null)
+      .limit(1)
+      .maybeSingle();
+    const overrideLabel = agentRow?.headshot_label_override?.trim();
+    if (overrideLabel) {
+      const { data: overrideRow } = await supabase
+        .from("brand_assets")
+        .select("public_url")
+        .eq("kind", "agent_headshot")
+        .eq("status", "active")
+        .ilike("label", overrideLabel)
+        .limit(1)
+        .maybeSingle();
+      if (overrideRow?.public_url) return overrideRow.public_url;
+    }
+  } catch {
+    // Fall through to name-match path on any failure.
+  }
+
+  // 2) Name-match fallback.
+  try {
     const lastNeedle = last ?? first;
     const { data, error } = await supabase
       .from("brand_assets")
       .select("label, public_url")
       .eq("kind", "agent_headshot")
+      .eq("status", "active")
       .ilike("label", `%${lastNeedle}%`)
       .limit(50);
     if (error || !data) return null;
@@ -288,6 +330,8 @@ export interface OwnerStoryPost {
   permalink: string | null;
   reach: number;
   engagements: number;
+  /** post_groups.id when set — lets the view re-aggregate by campaign. */
+  group_id: string | null;
 }
 
 export interface OwnerStoryListing {
@@ -413,7 +457,7 @@ export async function fetchOwnerStoryByToken(
     supabase
       .from("posts")
       .select(
-        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type",
+        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type, group_id",
       )
       .eq("property_id", propRow.id)
       .order("posted_at", { ascending: false }),
@@ -436,6 +480,7 @@ export async function fetchOwnerStoryByToken(
     permalink: string | null;
     metrics: Record<string, unknown> | null;
     media_type: string | null;
+    group_id: string | null;
   };
 
   let fallbackRows: RawPost[] = [];
@@ -443,7 +488,7 @@ export async function fetchOwnerStoryByToken(
     const { data: groupPostRows } = await supabase
       .from("posts")
       .select(
-        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type",
+        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type, group_id",
       )
       .in("group_id", groupIds)
       .order("posted_at", { ascending: false });
@@ -472,6 +517,7 @@ export async function fetchOwnerStoryByToken(
     permalink: p.permalink,
     reach: reachOf(p),
     engagements: engagementsOf(p),
+    group_id: p.group_id,
   }));
 
   // 4) Highlights — top 3 by reach, ties broken by recency.
