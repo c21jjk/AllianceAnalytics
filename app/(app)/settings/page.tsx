@@ -7,6 +7,7 @@ import TestModeBanner from "@/components/TestModeBanner";
 import SendTestEmailButton from "@/components/SendTestEmailButton";
 import SendWeeklyReportPreviewButton from "@/components/SendWeeklyReportPreviewButton";
 import SendWeeklyReportDistributionButton from "@/components/SendWeeklyReportDistributionButton";
+import SendOfficePostAnnouncementPreviewButton from "@/components/SendOfficePostAnnouncementPreviewButton";
 import { getWeeklySocialReportRecipientEmails } from "@/lib/data/email-subscribers";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -282,6 +283,30 @@ export default async function SettingsPage() {
               with <em>Weekly social report</em> opted in. A confirmation dialog
               appears before the send fires. The Monday-morning cron uses the
               same list automatically.
+            </p>
+          </div>
+
+          <div className="border-t border-neutral-100 pt-5">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Office post announcement — design preview
+              </h3>
+              <Link
+                href="/settings/announcements"
+                className="text-[11px] text-gold-700 hover:text-gold-800 whitespace-nowrap"
+              >
+                Recent sends →
+              </Link>
+            </div>
+            <SendOfficePostAnnouncementPreviewButton />
+            <p className="mt-3 text-[11px] text-neutral-500">
+              Picks the first eligible group (category &ldquo;Property
+              Promotion&rdquo; with an office or division audience) and sends
+              the rendered email to{" "}
+              <strong className="text-neutral-700">c21jjk@gmail.com</strong>{" "}
+              only. The real cron fires every morning at 8 AM ET and emails
+              the roster one message per new campaign — if three property
+              posts went up overnight, three separate emails go out.
             </p>
           </div>
         </div>

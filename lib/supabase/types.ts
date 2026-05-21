@@ -738,6 +738,41 @@ export type Database = {
         }
         Relationships: []
       }
+      office_post_announcements: {
+        Row: {
+          audience_scope: string
+          created_at: string
+          group_id: string
+          last_error: string | null
+          recipient_count: number
+          sent_at: string
+        }
+        Insert: {
+          audience_scope: string
+          created_at?: string
+          group_id: string
+          last_error?: string | null
+          recipient_count?: number
+          sent_at?: string
+        }
+        Update: {
+          audience_scope?: string
+          created_at?: string
+          group_id?: string
+          last_error?: string | null
+          recipient_count?: number
+          sent_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "office_post_announcements_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: true
+            referencedRelation: "post_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       offices: {
         Row: {
           address: string | null
