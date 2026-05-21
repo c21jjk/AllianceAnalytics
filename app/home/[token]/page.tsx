@@ -803,15 +803,14 @@ function StatTile({
  * ----------------------------------------------------------------------- */
 
 function HelpSpreadTheWord({
-  recent,
-  topPostId,
+  campaigns,
+  topCampaignKey,
   listingAddress,
 }: {
-  recent: Record<Platform, OwnerStoryPost | null>;
-  topPostId: string | null;
+  campaigns: CampaignSummary[];
+  topCampaignKey: string | null;
   listingAddress: string | null;
 }) {
-  const order: Platform[] = ["facebook", "tiktok", "instagram"];
   return (
     <section style={{ marginBottom: 24 }}>
       <Card
@@ -839,82 +838,206 @@ function HelpSpreadTheWord({
           media pages. Every share, comment, and interaction helps increase
           visibility and reach more potential buyers.
         </p>
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-          {order.map((p) => (
-            <ShareablePostCard
-              key={p}
-              platform={p}
-              post={recent[p]}
-              isTopPerformer={
-                recent[p] !== null && recent[p]?.id === topPostId
-              }
-              listingAddress={listingAddress}
-            />
-          ))}
-        </div>
+
+        {campaigns.length === 0 ? (
+          <div
+            style={{
+              marginTop: 20,
+              padding: "20px",
+              border: `1px dashed ${GOLD_BORDER}`,
+              borderRadius: 10,
+              backgroundColor: "#fff",
+              textAlign: "center",
+              fontSize: 13,
+              color: INK_SOFT,
+            }}
+          >
+            Your home&apos;s social campaign is launching soon — posts will
+            appear here as they go live.
+          </div>
+        ) : (
+          <CampaignTimeline
+            campaigns={campaigns}
+            topCampaignKey={topCampaignKey}
+            listingAddress={listingAddress}
+          />
+        )}
       </Card>
     </section>
   );
 }
 
-function ShareablePostCard({
-  platform,
-  post,
+/**
+ * Vertical campaign timeline. Each campaign is a card with a gold dot anchor
+ * on the left and a continuous gold rail behind the dots. On mobile (<640
+ * px) the rail collapses — the date becomes a small chip above each card
+ * and the card stretches edge-to-edge.
+ */
+function CampaignTimeline({
+  campaigns,
+  topCampaignKey,
+  listingAddress,
+}: {
+  campaigns: CampaignSummary[];
+  topCampaignKey: string | null;
+  listingAddress: string | null;
+}) {
+  return (
+    <div
+      className="mt-6 relative"
+      style={{ paddingLeft: 0 }}
+    >
+      {/* Vertical rail — desktop only. Hidden on mobile via Tailwind. */}
+      <div
+        aria-hidden
+        className="hidden sm:block absolute"
+        style={{
+          left: 119,
+          top: 10,
+          bottom: 10,
+          width: 1,
+          backgroundColor: GOLD_BORDER,
+        }}
+      />
+      <div className="flex flex-col gap-6">
+        {campaigns.map((c) => (
+          <CampaignTimelineRow
+            key={c.key}
+            campaign={c}
+            isTopPerformer={c.key === topCampaignKey && c.merged_reach > 0}
+            listingAddress={listingAddress}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CampaignTimelineRow({
+  campaign,
   isTopPerformer,
   listingAddress,
 }: {
-  platform: Platform;
-  post: OwnerStoryPost | null;
+  campaign: CampaignSummary;
   isTopPerformer: boolean;
   listingAddress: string | null;
 }) {
+  const dateLabel = campaign.anchored_at
+    ? formatShortDate(campaign.anchored_at)
+    : "Pending";
+  const yearLabel = campaign.anchored_at
+    ? new Date(campaign.anchored_at).getFullYear()
+    : "";
+
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-0 relative">
+      {/* Desktop date column + dot */}
+      <div className="hidden sm:flex sm:items-center sm:flex-shrink-0" style={{ width: 140 }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            width: 100,
+            paddingRight: 8,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 700,
+              color: INK,
+              lineHeight: 1.1,
+            }}
+          >
+            {dateLabel}
+          </div>
+          {yearLabel ? (
+            <div
+              style={{
+                fontSize: 11,
+                color: INK_MUTED,
+                fontWeight: 500,
+                marginTop: 2,
+              }}
+            >
+              {yearLabel}
+            </div>
+          ) : null}
+        </div>
+        <span
+          aria-hidden
+          style={{
+            width: 12,
+            height: 12,
+            borderRadius: "50%",
+            backgroundColor: GOLD,
+            border: `2px solid ${GOLD_SOFT_BG}`,
+            boxShadow: `0 0 0 1px ${GOLD_BORDER}`,
+            display: "inline-block",
+            position: "relative",
+            zIndex: 1,
+          }}
+        />
+      </div>
+
+      {/* Mobile date chip — sits ABOVE the card */}
+      <div className="sm:hidden">
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "4px 10px",
+            borderRadius: 999,
+            backgroundColor: GOLD,
+            color: "#fff",
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: "0.04em",
+          }}
+        >
+          <CalendarGlyph /> {dateLabel}
+          {yearLabel ? `, ${yearLabel}` : ""}
+        </span>
+      </div>
+
+      {/* Card */}
+      <div className="flex-1 min-w-0 sm:pl-5">
+        <CampaignCard
+          campaign={campaign}
+          isTopPerformer={isTopPerformer}
+          listingAddress={listingAddress}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CampaignCard({
+  campaign,
+  isTopPerformer,
+  listingAddress,
+}: {
+  campaign: CampaignSummary;
+  isTopPerformer: boolean;
+  listingAddress: string | null;
+}) {
+  const captionSnippet = truncate(campaign.representative_caption, 160);
   return (
     <div
       style={{
         backgroundColor: "#fff",
         border: `1px solid ${RULE}`,
-        borderRadius: 10,
-        padding: 14,
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
+        borderRadius: 12,
+        padding: 16,
         boxShadow:
           "0 1px 2px rgba(24,24,27,0.04), 0 1px 3px rgba(24,24,27,0.06)",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <PlatformGlyph platform={platform} size={20} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
-            {PLATFORM_LABEL[platform]}
-          </span>
-        </div>
-        {post?.posted_at ? (
-          <span
-            style={{
-              fontSize: 11,
-              color: INK_MUTED,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-            }}
-          >
-            <CalendarGlyph /> {formatShortDate(post.posted_at)}
-          </span>
-        ) : null}
-      </div>
-
-      {isTopPerformer && post ? (
+      {isTopPerformer ? (
         <span
           style={{
-            alignSelf: "flex-start",
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
@@ -926,45 +1049,123 @@ function ShareablePostCard({
             fontWeight: 700,
             letterSpacing: "0.04em",
             textTransform: "uppercase",
+            marginBottom: 10,
           }}
         >
           ★ Top Performer
         </span>
       ) : null}
 
-      <ThumbnailLink post={post} platform={platform} />
-
-      {post ? (
-        <div style={{ display: "flex", gap: 14, fontSize: 12, color: INK_SOFT }}>
-          <div>
-            <strong style={{ color: INK }}>{formatNumber(post.reach)}</strong>{" "}
-            reached
+      <div className="grid grid-cols-1 sm:grid-cols-[120px_minmax(0,1fr)] gap-3 sm:gap-4 items-start">
+        <CampaignThumb
+          url={campaign.representative_thumbnail_url}
+          alt={captionSnippet || "Campaign thumbnail"}
+        />
+        <div className="min-w-0">
+          <div style={{
+            fontSize: 11,
+            color: INK_MUTED,
+            fontWeight: 600,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+          }}>
+            Merged reach
           </div>
-          <div>
-            <strong style={{ color: INK }}>
-              {formatNumber(post.engagements)}
-            </strong>{" "}
-            engagements
+          <div style={{
+            fontSize: 22,
+            fontWeight: 700,
+            color: INK,
+            lineHeight: 1,
+            marginTop: 2,
+          }}>
+            {formatNumber(campaign.merged_reach)}
           </div>
+          {captionSnippet ? (
+            <p style={{
+              margin: "10px 0 0 0",
+              fontSize: 13,
+              color: INK_SOFT,
+              lineHeight: 1.5,
+            }}>
+              {captionSnippet}
+            </p>
+          ) : null}
         </div>
-      ) : (
-        <div style={{ fontSize: 12, color: INK_MUTED }}>
-          No {PLATFORM_LABEL[platform]} post yet.
-        </div>
-      )}
+      </div>
 
-      {post?.permalink ? (
-        <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
+      <div className="mt-4 flex flex-col gap-2">
+        {campaign.variants.map((v) => (
+          <CampaignPlatformRow
+            key={v.platform}
+            variant={v}
+            listingAddress={listingAddress}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CampaignThumb({ url, alt }: { url: string | null; alt: string }) {
+  if (!url) {
+    return (
+      <div
+        className="w-full sm:w-[120px] aspect-square rounded-lg"
+        style={{ backgroundColor: "#eeeeee" }}
+        aria-hidden
+      />
+    );
+  }
+  return (
+    <div
+      className="w-full sm:w-[120px] aspect-square rounded-lg"
+      style={{ background: `url(${url}) center/cover`, backgroundColor: "#eeeeee" }}
+      role="img"
+      aria-label={alt}
+    />
+  );
+}
+
+function CampaignPlatformRow({
+  variant,
+  listingAddress,
+}: {
+  variant: CampaignVariant;
+  listingAddress: string | null;
+}) {
+  return (
+    <div
+      className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3"
+      style={{
+        padding: "10px 12px",
+        borderRadius: 8,
+        backgroundColor: "#fafafa",
+        border: `1px solid ${RULE}`,
+      }}
+    >
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <PlatformGlyph platform={variant.platform} size={20} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
+          {PLATFORM_LABEL[variant.platform]}
+        </span>
+        <span style={{ fontSize: 12, color: INK_MUTED, marginLeft: 8 }}>
+          {formatNumber(variant.reach)} reach
+        </span>
+        <span style={{ fontSize: 12, color: INK_MUTED }}>
+          · {formatNumber(variant.engagements)} engagements
+        </span>
+      </div>
+      {variant.permalink ? (
+        <div className="flex gap-2 flex-shrink-0">
           <a
-            href={post.permalink}
+            href={variant.permalink}
             target="_blank"
             rel="noopener noreferrer"
             style={{
-              flex: 1,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              padding: "8px 12px",
+              padding: "6px 12px",
               borderRadius: 999,
               border: `1px solid ${RULE}`,
               backgroundColor: "#fff",
@@ -972,20 +1173,20 @@ function ShareablePostCard({
               fontWeight: 600,
               fontSize: 12,
               textDecoration: "none",
+              whiteSpace: "nowrap",
             }}
           >
             View post →
           </a>
           <SharePostButton
-            url={post.permalink}
-            platformLabel={PLATFORM_LABEL[platform]}
+            url={variant.permalink}
+            platformLabel={PLATFORM_LABEL[variant.platform]}
             address={listingAddress}
             style={{
-              flex: 1,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              padding: "8px 12px",
+              padding: "6px 12px",
               borderRadius: 999,
               border: `1px solid ${GOLD_BORDER}`,
               backgroundColor: GOLD,
@@ -993,6 +1194,7 @@ function ShareablePostCard({
               fontWeight: 600,
               fontSize: 12,
               cursor: "pointer",
+              whiteSpace: "nowrap",
               fontFamily: FONT_STACK,
             }}
           />
@@ -1002,61 +1204,10 @@ function ShareablePostCard({
   );
 }
 
-function ThumbnailLink({
-  post,
-  platform,
-}: {
-  post: OwnerStoryPost | null;
-  platform: Platform;
-}) {
-  const placeholder = (
-    <div
-      style={{
-        width: "100%",
-        aspectRatio: "1 / 1",
-        borderRadius: 8,
-        backgroundColor: "#eeeeee",
-      }}
-      aria-hidden
-    />
-  );
-
-  if (!post) return placeholder;
-
-  const tile = (
-    <div
-      style={{
-        width: "100%",
-        aspectRatio: "1 / 1",
-        borderRadius: 8,
-        background: post.thumbnail_url
-          ? `url(${post.thumbnail_url}) center/cover`
-          : "#eeeeee",
-        cursor: post.permalink ? "pointer" : "default",
-      }}
-      role={post.thumbnail_url ? "img" : undefined}
-      aria-label={
-        post.thumbnail_url
-          ? `${PLATFORM_LABEL[platform]} post thumbnail — click to view`
-          : undefined
-      }
-    />
-  );
-
-  if (post.permalink) {
-    return (
-      <a
-        href={post.permalink}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={`Open ${PLATFORM_LABEL[platform]} post in a new tab`}
-        style={{ display: "block" }}
-      >
-        {tile}
-      </a>
-    );
-  }
-  return tile;
+function truncate(s: string, max: number): string {
+  const trimmed = s.trim();
+  if (trimmed.length <= max) return trimmed;
+  return trimmed.slice(0, max - 1).trimEnd() + "…";
 }
 
 /* ----------------------------------------------------------------------- *
