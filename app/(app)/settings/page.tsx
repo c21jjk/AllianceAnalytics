@@ -248,14 +248,23 @@ export default async function SettingsPage() {
           </div>
 
           <div className="border-t border-neutral-100 pt-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
-              Weekly social media report — design preview
-            </h3>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Weekly social media report — design preview
+              </h3>
+              <Link
+                href="/settings/preview/weekly-report"
+                className="text-[11px] text-gold-700 hover:text-gold-800 whitespace-nowrap"
+              >
+                Open in browser →
+              </Link>
+            </div>
             <SendWeeklyReportPreviewButton />
             <p className="mt-3 text-[11px] text-neutral-500">
               Builds the full weekly recap with the prior Mon&ndash;Sun&apos;s
-              real data and emails it to c21jjk@gmail.com only. Iterate on the
-              design here before triggering the full distribution list.
+              real data and emails it to c21jjk@gmail.com only. Or use{" "}
+              <strong className="text-neutral-700">Open in browser</strong> to
+              see the same render inline without an inbox round-trip.
             </p>
           </div>
 
@@ -291,12 +300,20 @@ export default async function SettingsPage() {
               <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
                 Office post announcement — design preview
               </h3>
-              <Link
-                href="/settings/announcements"
-                className="text-[11px] text-gold-700 hover:text-gold-800 whitespace-nowrap"
-              >
-                Recent sends →
-              </Link>
+              <div className="flex items-center gap-3 whitespace-nowrap">
+                <Link
+                  href="/settings/preview/office-post-announcement"
+                  className="text-[11px] text-gold-700 hover:text-gold-800"
+                >
+                  Open in browser →
+                </Link>
+                <Link
+                  href="/settings/announcements"
+                  className="text-[11px] text-gold-700 hover:text-gold-800"
+                >
+                  Recent sends →
+                </Link>
+              </div>
             </div>
             <SendOfficePostAnnouncementPreviewButton />
             <p className="mt-3 text-[11px] text-neutral-500">
@@ -304,9 +321,10 @@ export default async function SettingsPage() {
               Promotion&rdquo; with an office or division audience) and sends
               the rendered email to{" "}
               <strong className="text-neutral-700">c21jjk@gmail.com</strong>{" "}
-              only. The real cron fires every morning at 8 AM ET and emails
-              the roster one message per new campaign — if three property
-              posts went up overnight, three separate emails go out.
+              only. Or use{" "}
+              <strong className="text-neutral-700">Open in browser</strong> for
+              the same render inline. The real cron fires every morning at
+              8&nbsp;AM ET and emails the roster one message per new campaign.
             </p>
           </div>
         </div>

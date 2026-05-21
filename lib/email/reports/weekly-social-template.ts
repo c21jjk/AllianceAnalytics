@@ -72,23 +72,32 @@ export function renderWeeklySocialEmail(
 /* --------------------------------------------------------------------- */
 
 function renderHtml(d: WeeklySocialReportData, aiTakeaway: string): string {
+  // Email-safe centering via wrapping table — see office-post-announcement
+  // template for the same pattern (Gmail anchors div+margin-auto to the
+  // left edge; table align=center is universally honored).
   return `<!doctype html>
 <html>
-  <body style="margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Barlow',Helvetica,Arial,sans-serif;color:${BRAND_GREY};">
-    <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;overflow:hidden;">
-      ${renderHeader(d)}
-      ${renderBigPictureBanner(d)}
-      ${renderHeadline(d)}
-      ${renderPlatformRow(d)}
-      ${renderTopCampaigns(d)}
-      ${renderYtd(d)}
-      ${renderOfficeSpotlight(d)}
-      ${renderAgentLeaderboard(d)}
-      ${renderListings(d)}
-      ${renderInsight(aiTakeaway)}
-      ${renderManagerCta()}
-      ${renderFooter()}
-    </div>
+  <body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Barlow',Helvetica,Arial,sans-serif;color:${BRAND_GREY};">
+    <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-collapse:collapse;background:#f5f5f5;">
+      <tr>
+        <td align="center" style="padding:24px;">
+          <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" width="640" style="width:100%;max-width:640px;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;overflow:hidden;">
+            <tr><td>${renderHeader(d)}</td></tr>
+            <tr><td>${renderBigPictureBanner(d)}</td></tr>
+            <tr><td>${renderHeadline(d)}</td></tr>
+            <tr><td>${renderPlatformRow(d)}</td></tr>
+            <tr><td>${renderTopCampaigns(d)}</td></tr>
+            <tr><td>${renderYtd(d)}</td></tr>
+            <tr><td>${renderOfficeSpotlight(d)}</td></tr>
+            <tr><td>${renderAgentLeaderboard(d)}</td></tr>
+            <tr><td>${renderListings(d)}</td></tr>
+            <tr><td>${renderInsight(aiTakeaway)}</td></tr>
+            <tr><td>${renderManagerCta()}</td></tr>
+            <tr><td>${renderFooter()}</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   </body>
 </html>`;
 }

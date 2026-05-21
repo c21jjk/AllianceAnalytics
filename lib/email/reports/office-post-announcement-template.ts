@@ -63,16 +63,26 @@ export function renderOfficePostAnnouncement(
 /* --------------------------------------------------------------------- */
 
 function renderHtml(c: AnnouncementCandidate, addressLine: string): string {
+  // Email-safe centering: Gmail historically ignores `margin:0 auto` on a
+  // div wrapper, anchoring the card to the left edge of the viewport with
+  // empty space to the right. Wrapping in a `<table align="center">` is the
+  // canonical fix — Gmail / Outlook / Apple Mail all honor it.
   return `<!doctype html>
 <html>
-  <body style="margin:0;padding:16px;background:${PAGE_BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Barlow',Helvetica,Arial,sans-serif;color:${INK};">
-    <div style="max-width:560px;margin:0 auto;background:${CARD_BG};border:1px solid ${RULE};border-radius:14px;overflow:hidden;">
-      ${renderBrandBand(c)}
-      ${renderHero(c, addressLine)}
-      ${renderCta()}
-      ${renderPlatformCards(c)}
-      ${renderFooter(c)}
-    </div>
+  <body style="margin:0;padding:0;background:${PAGE_BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Barlow',Helvetica,Arial,sans-serif;color:${INK};">
+    <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-collapse:collapse;background:${PAGE_BG};">
+      <tr>
+        <td align="center" style="padding:16px;">
+          <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" width="560" style="width:100%;max-width:560px;background:${CARD_BG};border:1px solid ${RULE};border-radius:14px;overflow:hidden;">
+            <tr><td>${renderBrandBand(c)}</td></tr>
+            <tr><td>${renderHero(c, addressLine)}</td></tr>
+            <tr><td>${renderCta()}</td></tr>
+            <tr><td>${renderPlatformCards(c)}</td></tr>
+            <tr><td>${renderFooter(c)}</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   </body>
 </html>`;
 }
