@@ -100,6 +100,48 @@ export default function UpcomingOpenHousesRow({
             ) : null}
           </div>
         </button>
+
+        {/* Multi-property OH entry point — sibling to the toggle button so
+            clicking the CTA doesn't expand/collapse the card.
+            why: this used to live in the Post Builder's OH listings column,
+            but the dashboard is where Larissa is already scanning open
+            houses and deciding what to promote, so the affordance was moved
+            here on 2026-05-21. Conditional on having 2+ open houses — below
+            that threshold a multi-property post is nonsensical, so the CTA
+            simply doesn't render (no muted hint on the dashboard). */}
+        {openHouses.length >= 2 ? (
+          <Link
+            href="/post-builder/multi-oh"
+            className="shrink-0 inline-flex items-center gap-2 rounded-md border border-gold-300 bg-gold-50 px-2.5 py-1.5 text-xs sm:text-sm font-medium text-gold-800 transition hover:border-gold-500 hover:bg-gold-100"
+            title="Build a Multi-property Open House post"
+            aria-label={`Build Multi-property Open House post (${openHouses.length} open houses)`}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              {/* why: 4-house glyph reads as "multiple properties" at a
+                  glance — same icon used in the Post Builder predecessor of
+                  this CTA so the visual identity stays consistent. */}
+              <path d="M2 14h12" />
+              <path d="M3 14V9l2-1.5L7 9v5" />
+              <path d="M9 14V9l2-1.5L13 9v5" />
+            </svg>
+            {/* Full label hidden on mobile; the icon + title attribute keep
+                the affordance accessible at narrow widths. */}
+            <span className="hidden sm:inline">Build Multi-Property Open House</span>
+            <span className="rounded-full bg-gold-200/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold-900 tabular-nums">
+              {openHouses.length}
+            </span>
+          </Link>
+        ) : null}
       </header>
 
       {!collapsed && hydrated ? (

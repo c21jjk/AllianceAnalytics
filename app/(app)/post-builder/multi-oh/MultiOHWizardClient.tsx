@@ -163,6 +163,14 @@ export default function MultiOHWizardClient({
   const [format, setFormat] = useState<PostFormat>("portrait_4x5");
   const [perPropertyVariant, setPerPropertyVariant] = useState<PerPropertyVariant>("v1");
 
+  // ---- step 3 — carousel preview focus ---------------------------------
+  // why: Step 3 shows a featured slide preview at the top + a ribbon of
+  // thumbnails below. The user clicks a thumbnail to swap which slide is
+  // featured. We track focus by KEY ("hero" or the property's mls_number)
+  // rather than by index so a drag-reorder doesn't change which slide is
+  // featured — the user stays anchored on the slide they were looking at.
+  const [focusedSlideKey, setFocusedSlideKey] = useState<string>("hero");
+
   // ---- step 3 — generate state -----------------------------------------
   const [generating, setGenerating] = useState(false);
   const [generateStatusIdx, setGenerateStatusIdx] = useState(0);
@@ -321,7 +329,7 @@ export default function MultiOHWizardClient({
     dragMlsRef.current = mls;
   }, []);
 
-  const onDragOver = useCallback((e: React.DragEvent<HTMLLIElement>): void => {
+  const onDragOver = useCallback((e: React.DragEvent<HTMLElement>): void => {
     e.preventDefault(); // allow drop
   }, []);
 
@@ -486,6 +494,9 @@ export default function MultiOHWizardClient({
             selectedListings={selectedListings}
             format={format}
             variant={perPropertyVariant}
+            perPropertyHostingAgent={perPropertyHostingAgent}
+            focusedSlideKey={focusedSlideKey}
+            onFocusChange={setFocusedSlideKey}
             onDragStart={onDragStart}
             onDragOver={onDragOver}
             onDrop={onDrop}
@@ -1006,16 +1017,41 @@ function VariantCard({ meta, active, onClick }: VariantCardProps) {
 }
 
 // ===========================================================================
-// Step 3 — Review + generate
+// Step 3 — Review + generate (carousel preview)
 // ===========================================================================
+//
+// 2026-05-21 — Step 3 was rewritten from a text-only summary into a visual
+// "carousel preview." The user sees what they're about to render before
+// clicking Generate:
+//
+//   • Featured slide preview (top) — ratio-correct CSS mock at ~480px wide
+//     that matches the chosen format + variant. Shows the focused slide
+//     (hero by default, or any property the user clicks in the ribbon).
+//   • Slide ribbon (middle) — every slide as a small thumbnail in carousel
+//     order. Property thumbs are drag-reorderable; the hero is pinned at
+//     position 1. Clicking a thumb focuses it in the preview above.
+//   • Compact summary line (bottom) — single-line metadata + render-time
+//     hint, replacing what used to be two separate cards.
+//
+// The mocks are CSS approximations, not real renders. They convey shape,
+// layout, and structure — not pixel fidelity. Real renders happen in the
+// 20-40s generate phase.
 
 interface Step3Props {
   eventTitle: string;
   selectedListings: readonly PostBuilderListing[];
   format: PostFormat;
   variant: PerPropertyVariant;
+  /** Per-property hosting agent map (mls_number → name). Featured property
+   *  mocks read this to display the correct host, falling back to the
+   *  listing's own agent_name when no override is set. */
+  perPropertyHostingAgent: Record<string, string>;
+  /** Which slide is currently featured in the big preview. "hero" or a
+   *  property's mls_number. Survives drag-reorders cleanly. */
+  focusedSlideKey: string;
+  onFocusChange: (key: string) => void;
   onDragStart: (mls: string) => void;
-  onDragOver: (e: React.DragEvent<HTMLLIElement>) => void;
+  onDragOver: (e: React.DragEvent<HTMLElement>) => void;
   onDrop: (targetMls: string) => void;
 }
 
@@ -1024,91 +1060,701 @@ function Step3Review({
   selectedListings,
   format,
   variant,
+  perPropertyHostingAgent,
+  focusedSlideKey,
+  onFocusChange,
   onDragStart,
   onDragOver,
   onDrop,
 }: Step3Props) {
+  // Resolve the focused slide. If the user previously focused a property
+  // that's no longer in the picked set (shouldn't happen on Step 3 normally,
+  // but defensive), fall back to the hero.
+  const focusedListing =
+    focusedSlideKey === "hero"
+      ? null
+      : selectedListings.find((l) => l.mls_number === focusedSlideKey) ?? null;
+  const isHeroFocused = focusedListing === null;
+  const focusedPosition = isHeroFocused
+    ? 1
+    : selectedListings.findIndex((l) => l.mls_number === focusedSlideKey) + 2;
+
+  const totalSlides = selectedListings.length + 1;
+
   return (
-    <section className="space-y-4">
+    <section className="space-y-5">
+      {/* ─── Featured slide preview ────────────────────────────────── */}
       <div className="card p-5">
-        <div className="text-xs font-semibold uppercase tracking-[0.1em] text-gold-700 mb-1">
-          Summary
+        <div className="flex items-baseline justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-semibold text-neutral-900">
+              Slide {focusedPosition} of {totalSlides}
+              <span className="text-neutral-500 font-normal ml-2">
+                {isHeroFocused ? "· Event hero" : `· ${variant.toUpperCase()} property card`}
+              </span>
+            </h3>
+            <div className="text-xs text-neutral-500 mt-0.5">
+              Preview is a layout mock — the final render adds full polish, real photo composition, and brand polish.
+            </div>
+          </div>
+          <span className="text-xs text-neutral-500 hidden sm:inline">
+            {prettyFormat(format)}
+          </span>
         </div>
-        <div className="text-base font-semibold text-neutral-900 leading-snug">
-          {eventTitle || "Untitled event"}{" "}
-          <span className="text-neutral-400 font-normal">·</span>{" "}
-          <span className="text-neutral-700">
-            {selectedListings.length} {selectedListings.length === 1 ? "property" : "properties"}
-          </span>{" "}
-          <span className="text-neutral-400 font-normal">·</span>{" "}
-          <span className="text-neutral-700">{variant} cards</span>{" "}
-          <span className="text-neutral-400 font-normal">·</span>{" "}
-          <span className="text-neutral-700">{prettyFormat(format)}</span>
-        </div>
-        <div className="text-xs text-neutral-500 mt-2">
-          Hero slide = event overview · slides {selectedListings.length > 0 ? `2-${selectedListings.length + 1}` : "—"} = per-property cards.
+        <div className="flex justify-center">
+          <FeaturedSlideMock
+            format={format}
+            variant={variant}
+            kind={isHeroFocused ? "hero" : "property"}
+            eventTitle={eventTitle}
+            properties={selectedListings}
+            listing={focusedListing}
+            hostingAgent={
+              focusedListing
+                ? perPropertyHostingAgent[focusedListing.mls_number] ?? focusedListing.agent_name ?? ""
+                : ""
+            }
+          />
         </div>
       </div>
 
+      {/* ─── Slide ribbon ──────────────────────────────────────────── */}
       <div className="card p-5">
         <div className="flex items-baseline justify-between mb-3">
           <h3 className="text-sm font-semibold text-neutral-900">
             Carousel order
           </h3>
           <span className="text-xs text-neutral-500">
-            Drag to re-order — this is your final chance.
+            Tap a slide to preview · drag properties to re-order
           </span>
         </div>
-        <ul className="space-y-2">
-          {selectedListings.map((l, idx) => (
-            <li
-              key={l.mls_number}
-              draggable
-              onDragStart={() => onDragStart(l.mls_number)}
-              onDragOver={onDragOver}
-              onDrop={() => onDrop(l.mls_number)}
-              className="rounded-lg border border-neutral-200 bg-white p-3 flex items-center gap-3 cursor-move hover:border-neutral-300 hover:bg-neutral-50 transition"
-            >
-              <div
-                aria-hidden="true"
-                className="text-neutral-400 text-lg select-none leading-none"
-                title="Drag to reorder"
-              >
-                ⋮⋮
-              </div>
-              <div className="w-7 h-7 rounded-full bg-gold-500 text-white flex items-center justify-center text-xs font-bold shrink-0">
-                {idx + 2 /* slide 1 is the hero */}
-              </div>
-              {l.hero_image_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={l.hero_image_url}
-                  alt=""
-                  className="w-12 h-12 rounded-md object-cover bg-neutral-100 shrink-0"
-                  loading="lazy"
-                />
-              ) : (
-                <div className="w-12 h-12 rounded-md bg-neutral-100 shrink-0" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-neutral-900 truncate">
-                  {l.address ?? l.mls_number}
-                </div>
-                <div className="text-xs text-neutral-500 truncate">
-                  {[l.city, l.state].filter(Boolean).join(", ")}
-                  {l.oh_start_at ? ` · ${formatOhBadge(l.oh_start_at, l.oh_end_at ?? null)}` : ""}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <SlideRibbon
+          format={format}
+          variant={variant}
+          eventTitle={eventTitle}
+          selectedListings={selectedListings}
+          focusedSlideKey={focusedSlideKey}
+          onFocusChange={onFocusChange}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        />
       </div>
 
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600">
-        Rendering takes about 20-40 seconds depending on the number of properties. You&apos;ll be redirected to Post Builder when it&apos;s ready.
+      {/* ─── Compact summary + render hint ─────────────────────────── */}
+      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
+        <div className="text-sm text-neutral-700 leading-snug">
+          <span className="font-semibold text-neutral-900">{totalSlides} slides total</span>
+          <span className="text-neutral-400 mx-2">·</span>
+          <span>{prettyFormat(format)}</span>
+          <span className="text-neutral-400 mx-2">·</span>
+          <span>{prettyVariant(variant)}</span>
+        </div>
+        <div className="text-xs text-neutral-500 mt-1">
+          Rendering takes about 20-40 seconds. You&apos;ll be redirected to Post Builder when it&apos;s ready.
+        </div>
       </div>
     </section>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Featured slide mock — large, content-rich CSS approximation of the slide.
+// ---------------------------------------------------------------------------
+
+/**
+ * Tailwind aspect-ratio classes per PostFormat. Used by both the featured
+ * mock and the ribbon thumbnails — same source of truth so a Square pick
+ * shows square mocks everywhere, etc.
+ */
+const FORMAT_ASPECT: Record<PostFormat, string> = {
+  square_1x1: "aspect-square",
+  portrait_4x5: "aspect-[4/5]",
+  story_9x16: "aspect-[9/16]",
+};
+
+interface FeaturedSlideMockProps {
+  format: PostFormat;
+  variant: PerPropertyVariant;
+  kind: "hero" | "property";
+  eventTitle: string;
+  properties: readonly PostBuilderListing[];
+  listing: PostBuilderListing | null;
+  hostingAgent: string;
+}
+
+function FeaturedSlideMock({
+  format,
+  variant,
+  kind,
+  eventTitle,
+  properties,
+  listing,
+  hostingAgent,
+}: FeaturedSlideMockProps) {
+  // Cap featured width per format so square doesn't dominate vs story.
+  // Story gets a narrower max (it's tall, will fill vertically); square
+  // and portrait get the full ~480px.
+  const widthClass =
+    format === "story_9x16" ? "w-[280px]" : "w-full max-w-[440px]";
+
+  return (
+    <div className={`${widthClass} ${FORMAT_ASPECT[format]} relative shadow-md rounded-sm overflow-hidden ring-1 ring-neutral-200`}>
+      {kind === "hero" ? (
+        <HeroSlideBody
+          eventTitle={eventTitle}
+          properties={properties}
+          size="featured"
+        />
+      ) : listing ? (
+        <PropertySlideBody
+          variant={variant}
+          listing={listing}
+          hostingAgent={hostingAgent}
+          size="featured"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hero slide body — used by both featured + ribbon, scaled via `size` prop.
+// ---------------------------------------------------------------------------
+
+interface HeroSlideBodyProps {
+  eventTitle: string;
+  properties: readonly PostBuilderListing[];
+  size: "featured" | "thumb";
+}
+
+function HeroSlideBody({ eventTitle, properties, size }: HeroSlideBodyProps) {
+  const isThumb = size === "thumb";
+  // Cap the rendered rows so a 9-property event doesn't blow out the layout
+  // — the real render uses computeRowDensity to shrink, but for the mock
+  // we just truncate with a "+N more" line.
+  const maxRows = isThumb ? 3 : 6;
+  const visible = properties.slice(0, maxRows);
+  const overflow = properties.length - visible.length;
+
+  return (
+    <div className="w-full h-full bg-[#FCFCFB] flex flex-col p-[6%]">
+      {/* eyebrow */}
+      <div className="flex items-center gap-1.5">
+        <span
+          aria-hidden="true"
+          className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+          style={{ width: isThumb ? 14 : 36, height: 2 }}
+        />
+        <span
+          className={`font-bold uppercase tracking-[0.2em] text-[#A68A4A] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
+        >
+          Open House Event
+        </span>
+      </div>
+      {/* title */}
+      <div
+        className={`mt-[3%] font-serif font-bold text-[#18181B] leading-[1.05] ${isThumb ? "text-[7px]" : "text-[20px]"}`}
+        style={{ fontFamily: "Georgia, serif" }}
+      >
+        {eventTitle || "Untitled event"}
+      </div>
+      {/* property list */}
+      <div className={`mt-[4%] flex-1 flex flex-col ${isThumb ? "gap-[2px]" : "gap-1.5"} overflow-hidden`}>
+        {visible.map((p, i) => (
+          <div
+            key={p.mls_number}
+            className={`flex items-center ${isThumb ? "gap-1" : "gap-2"}`}
+          >
+            <span
+              aria-hidden="true"
+              className={`shrink-0 rounded-full bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center ${isThumb ? "w-[7px] h-[7px] text-[4px]" : "w-4 h-4 text-[9px]"}`}
+            >
+              {i + 1}
+            </span>
+            <span
+              className={`truncate text-[#525250] ${isThumb ? "text-[4px]" : "text-[10px]"}`}
+            >
+              {p.address ?? p.mls_number}
+            </span>
+          </div>
+        ))}
+        {overflow > 0 ? (
+          <div
+            className={`text-[#A68A4A] font-semibold ${isThumb ? "text-[4px]" : "text-[9px]"}`}
+          >
+            + {overflow} more
+          </div>
+        ) : null}
+      </div>
+      {/* brand strip */}
+      <div className={`${isThumb ? "mt-1 pt-1" : "mt-2 pt-2"} border-t border-[#18181B]/30 relative`}>
+        {/* gold accent on top edge */}
+        <span
+          aria-hidden="true"
+          className="absolute top-[-1px] left-0 bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+          style={{ width: isThumb ? 18 : 56, height: 2 }}
+        />
+        <div className="flex items-center justify-between">
+          <div className={`flex items-center ${isThumb ? "gap-[3px]" : "gap-1.5"}`}>
+            <span
+              className={`bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-5 h-5 text-[9px]"}`}
+            >
+              21
+            </span>
+            <span
+              className={`font-semibold text-[#18181B] ${isThumb ? "text-[4px]" : "text-[10px]"}`}
+            >
+              Century 21 Alliance
+            </span>
+          </div>
+          <span
+            className={`uppercase tracking-wider text-[#525250] ${isThumb ? "text-[3px]" : "text-[8px]"}`}
+          >
+            Open House Event
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Property slide body — switches layout based on variant (v1/v2/v3).
+// ---------------------------------------------------------------------------
+
+interface PropertySlideBodyProps {
+  variant: PerPropertyVariant;
+  listing: PostBuilderListing;
+  hostingAgent: string;
+  size: "featured" | "thumb";
+}
+
+function PropertySlideBody({
+  variant,
+  listing,
+  hostingAgent,
+  size,
+}: PropertySlideBodyProps) {
+  switch (variant) {
+    case "v1":
+      return <PropertyV1Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
+    case "v2":
+      return <PropertyV2Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
+    case "v3":
+      return <PropertyV3Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
+  }
+}
+
+interface VariantMockProps {
+  listing: PostBuilderListing;
+  hostingAgent: string;
+  size: "featured" | "thumb";
+}
+
+/** v1 — Hero Editorial. Full-bleed photo, gold eyebrow at top, address +
+ *  price along the bottom with a dark gradient for legibility. */
+function PropertyV1Mock({ listing, hostingAgent, size }: VariantMockProps) {
+  const isThumb = size === "thumb";
+  const photo = listing.hero_image_url ?? "";
+  return (
+    <div className="w-full h-full relative bg-neutral-300">
+      {photo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={photo}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+          loading="lazy"
+        />
+      ) : null}
+      {/* darkening gradient for text legibility */}
+      <div className="absolute inset-x-0 bottom-0 h-[55%] bg-gradient-to-t from-black/85 via-black/55 to-transparent" />
+      {/* eyebrow */}
+      <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
+        <span
+          aria-hidden="true"
+          className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+          style={{ width: isThumb ? 12 : 32, height: 2 }}
+        />
+        <span
+          className={`font-bold uppercase tracking-[0.2em] text-[#C9A961] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
+        >
+          Open House
+        </span>
+      </div>
+      {/* bottom text block */}
+      <div
+        className={`absolute inset-x-0 bottom-0 text-white ${isThumb ? "p-1.5" : "p-3"}`}
+      >
+        <div
+          className={`font-serif font-bold leading-tight ${isThumb ? "text-[7px]" : "text-base"}`}
+          style={{ fontFamily: "Georgia, serif" }}
+        >
+          {listing.address ?? listing.mls_number}
+        </div>
+        <div
+          className={`opacity-90 ${isThumb ? "text-[5px] mt-0.5" : "text-xs mt-1"}`}
+        >
+          {[listing.city, listing.state].filter(Boolean).join(", ")}
+        </div>
+        {typeof listing.list_price === "number" ? (
+          <div
+            className={`font-bold text-[#C9A961] ${isThumb ? "text-[7px] mt-0.5" : "text-lg mt-1.5"}`}
+          >
+            ${listing.list_price.toLocaleString()}
+          </div>
+        ) : null}
+        {!isThumb && listing.oh_start_at ? (
+          <div className="mt-1.5 text-xs text-[#C9A961]/90 font-medium">
+            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
+          </div>
+        ) : null}
+        {!isThumb && hostingAgent ? (
+          <div className="mt-1 text-[10px] text-white/80">
+            Hosted by {hostingAgent}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** v2 — Bold Stats. Photo top ~58%, dark data pane bottom ~42% with
+ *  bd/ba/price stats. */
+function PropertyV2Mock({ listing, hostingAgent, size }: VariantMockProps) {
+  const isThumb = size === "thumb";
+  const photo = listing.hero_image_url ?? "";
+  return (
+    <div className="w-full h-full flex flex-col">
+      {/* photo */}
+      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "58%" }}>
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : null}
+        {/* eyebrow over photo */}
+        <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
+          <span
+            aria-hidden="true"
+            className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+            style={{ width: isThumb ? 12 : 32, height: 2 }}
+          />
+          <span
+            className={`font-bold uppercase tracking-[0.2em] text-[#C9A961] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
+            style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
+          >
+            Open House
+          </span>
+        </div>
+      </div>
+      {/* dark data pane */}
+      <div
+        className={`text-white ${isThumb ? "p-1.5" : "p-3"}`}
+        style={{ flexBasis: "42%", background: "#18181B" }}
+      >
+        <div
+          className={`font-serif font-bold leading-tight ${isThumb ? "text-[7px]" : "text-base"}`}
+          style={{ fontFamily: "Georgia, serif" }}
+        >
+          {listing.address ?? listing.mls_number}
+        </div>
+        <div
+          className={`opacity-80 ${isThumb ? "text-[5px] mt-0.5" : "text-xs mt-1"}`}
+        >
+          {[listing.city, listing.state].filter(Boolean).join(", ")}
+        </div>
+        {/* stats row */}
+        {!isThumb ? (
+          <div className="mt-2 flex items-center gap-3 text-xs text-white/85">
+            {typeof listing.bedrooms === "number" ? (
+              <span>
+                <span className="font-bold text-white">{listing.bedrooms}</span> bd
+              </span>
+            ) : null}
+            {typeof listing.bathrooms_full === "number" ? (
+              <span>
+                <span className="font-bold text-white">
+                  {listing.bathrooms_full + (listing.bathrooms_half ?? 0) * 0.5}
+                </span>{" "}
+                ba
+              </span>
+            ) : null}
+            {typeof listing.list_price === "number" ? (
+              <span className="text-[#C9A961] font-bold">
+                ${listing.list_price.toLocaleString()}
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-1 flex gap-1 opacity-70">
+            <span className="block w-3 h-1 rounded-sm bg-white/60" />
+            <span className="block w-3 h-1 rounded-sm bg-white/60" />
+            <span className="block w-4 h-1 rounded-sm bg-[#C9A961]" />
+          </div>
+        )}
+        {!isThumb && listing.oh_start_at ? (
+          <div className="mt-1.5 text-[10px] text-[#C9A961] font-medium">
+            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
+          </div>
+        ) : null}
+        {!isThumb && hostingAgent ? (
+          <div className="mt-0.5 text-[10px] text-white/70">
+            Hosted by {hostingAgent}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** v3 — Side-by-Side. Photo left ~55%, cream pane right ~45% with stats
+ *  stacked vertically. */
+function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
+  const isThumb = size === "thumb";
+  const photo = listing.hero_image_url ?? "";
+  return (
+    <div className="w-full h-full flex">
+      {/* photo half */}
+      <div className="relative bg-neutral-300" style={{ flexBasis: "55%" }}>
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : null}
+      </div>
+      {/* data pane */}
+      <div
+        className={`flex flex-col bg-[#FCFCFB] text-[#18181B] ${isThumb ? "p-1.5" : "p-3"}`}
+        style={{ flexBasis: "45%" }}
+      >
+        {/* eyebrow */}
+        <div className={`flex items-center ${isThumb ? "gap-1" : "gap-1.5"}`}>
+          <span
+            aria-hidden="true"
+            className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+            style={{ width: isThumb ? 10 : 24, height: 2 }}
+          />
+          <span
+            className={`font-bold uppercase tracking-[0.2em] text-[#A68A4A] ${isThumb ? "text-[4px]" : "text-[9px]"}`}
+          >
+            Open House
+          </span>
+        </div>
+        <div
+          className={`mt-1 font-serif font-bold leading-tight ${isThumb ? "text-[6px]" : "text-sm"}`}
+          style={{ fontFamily: "Georgia, serif" }}
+        >
+          {listing.address ?? listing.mls_number}
+        </div>
+        <div
+          className={`opacity-70 ${isThumb ? "text-[4px] mt-0.5" : "text-[10px] mt-0.5"}`}
+        >
+          {[listing.city, listing.state].filter(Boolean).join(", ")}
+        </div>
+        <div className="flex-1" />
+        {!isThumb && typeof listing.list_price === "number" ? (
+          <div className="text-[#A68A4A] font-bold text-base">
+            ${listing.list_price.toLocaleString()}
+          </div>
+        ) : null}
+        {!isThumb && listing.oh_start_at ? (
+          <div className="mt-1 text-[10px] text-[#525250] font-medium">
+            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
+          </div>
+        ) : null}
+        {!isThumb && hostingAgent ? (
+          <div className="mt-0.5 text-[10px] text-[#525250]">
+            Hosted by {hostingAgent}
+          </div>
+        ) : null}
+        {isThumb ? (
+          <div className="flex gap-0.5">
+            <span className="block flex-1 h-0.5 bg-[#A68A4A]" />
+            <span className="block flex-1 h-0.5 bg-[#525250]/40" />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Slide ribbon — every slide as a small thumb, drag-reorderable on props.
+// ---------------------------------------------------------------------------
+
+interface SlideRibbonProps {
+  format: PostFormat;
+  variant: PerPropertyVariant;
+  eventTitle: string;
+  selectedListings: readonly PostBuilderListing[];
+  focusedSlideKey: string;
+  onFocusChange: (key: string) => void;
+  onDragStart: (mls: string) => void;
+  onDragOver: (e: React.DragEvent<HTMLElement>) => void;
+  onDrop: (targetMls: string) => void;
+}
+
+function SlideRibbon({
+  format,
+  variant,
+  eventTitle,
+  selectedListings,
+  focusedSlideKey,
+  onFocusChange,
+  onDragStart,
+  onDragOver,
+  onDrop,
+}: SlideRibbonProps) {
+  // why: thumbs are fixed-HEIGHT so the layout stays predictable as count
+  // grows. Width derives from the format's aspect ratio. Story is a tall
+  // thumb (narrow), square is a square thumb, portrait is in between.
+  // 100px tall fits comfortably on mobile; the ribbon scrolls horizontally
+  // when total width exceeds the container.
+  const thumbHeight = 110;
+  const thumbWidthClass: Record<PostFormat, string> = {
+    square_1x1: "w-[110px]",
+    portrait_4x5: "w-[88px]",
+    story_9x16: "w-[62px]",
+  };
+
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-2 -mb-2">
+      {/* Hero thumb — pinned at position 1, not draggable */}
+      <SlideThumb
+        keyId="hero"
+        position={1}
+        focused={focusedSlideKey === "hero"}
+        onFocus={() => onFocusChange("hero")}
+        draggable={false}
+        widthClass={thumbWidthClass[format]}
+        heightPx={thumbHeight}
+        label="Event hero"
+      >
+        <HeroSlideBody
+          eventTitle={eventTitle}
+          properties={selectedListings}
+          size="thumb"
+        />
+      </SlideThumb>
+
+      {/* Property thumbs — drag-reorderable */}
+      {selectedListings.map((l, idx) => (
+        <SlideThumb
+          key={l.mls_number}
+          keyId={l.mls_number}
+          position={idx + 2}
+          focused={focusedSlideKey === l.mls_number}
+          onFocus={() => onFocusChange(l.mls_number)}
+          draggable
+          onDragStart={() => onDragStart(l.mls_number)}
+          onDragOver={onDragOver}
+          onDrop={() => onDrop(l.mls_number)}
+          widthClass={thumbWidthClass[format]}
+          heightPx={thumbHeight}
+          label={l.address ?? l.mls_number}
+        >
+          <PropertySlideBody
+            variant={variant}
+            listing={l}
+            hostingAgent=""
+            size="thumb"
+          />
+        </SlideThumb>
+      ))}
+    </div>
+  );
+}
+
+interface SlideThumbProps {
+  keyId: string;
+  position: number;
+  focused: boolean;
+  onFocus: () => void;
+  draggable: boolean;
+  onDragStart?: () => void;
+  onDragOver?: (e: React.DragEvent<HTMLElement>) => void;
+  onDrop?: () => void;
+  widthClass: string;
+  heightPx: number;
+  /** Used for the title attribute / a11y label. */
+  label: string;
+  children: React.ReactNode;
+}
+
+function SlideThumb({
+  position,
+  focused,
+  onFocus,
+  draggable,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  widthClass,
+  heightPx,
+  label,
+  children,
+}: SlideThumbProps) {
+  return (
+    <div className={`shrink-0 ${widthClass} flex flex-col items-center gap-1`}>
+      <button
+        type="button"
+        onClick={onFocus}
+        draggable={draggable}
+        onDragStart={onDragStart}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        title={label}
+        aria-label={`Slide ${position}: ${label}`}
+        aria-current={focused ? "true" : undefined}
+        className={[
+          "relative w-full overflow-hidden rounded-sm transition shadow-sm",
+          focused
+            ? "ring-2 ring-gold-500 ring-offset-2 ring-offset-white shadow-md"
+            : "ring-1 ring-neutral-200 hover:ring-neutral-300",
+          draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+        ].join(" ")}
+        style={{ height: heightPx }}
+      >
+        {children}
+        {/* Position chip — top-left corner */}
+        <span
+          aria-hidden="true"
+          className={[
+            "absolute top-1 left-1 w-4 h-4 rounded-full text-white text-[9px] font-bold flex items-center justify-center shadow-sm",
+            focused ? "bg-gold-500" : "bg-neutral-800/80",
+          ].join(" ")}
+        >
+          {position}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 3 helpers
+// ---------------------------------------------------------------------------
+
+/** Short display name for the variant in summary copy. */
+function prettyVariant(v: PerPropertyVariant): string {
+  switch (v) {
+    case "v1":
+      return "v1 Hero Editorial";
+    case "v2":
+      return "v2 Bold Stats";
+    case "v3":
+      return "v3 Side-by-Side";
+  }
 }
 
 // ===========================================================================

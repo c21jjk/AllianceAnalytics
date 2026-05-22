@@ -2298,54 +2298,12 @@ export default function PostBuilderClient({
       <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
         {/* Left: Listing picker */}
         <section className="card p-4">
-          {/* Phase D — Multi-property Open House entry point.
-              Lives at the top of the listings column ONLY when the active
-              post type is Open House. Moved here from the page header so
-              the affordance is co-located with the workflow it belongs to
-              (Larissa is already deciding "OH single vs OH multi" when she
-              picks the Open House chip — the choice should be visible
-              right there, not behind a separate header button).
-              Surfaces 2+ open houses as an active link with a count;
-              below the 2-listing minimum it renders a muted hint so the
-              feature stays discoverable without offering a no-op. */}
-          {postType === "open_house" ? (
-            listings.length >= 2 ? (
-              <Link
-                href="/post-builder/multi-oh"
-                className="mb-3 flex items-center justify-between gap-2 rounded-md border border-gold-300 bg-gold-50 px-3 py-2 text-sm font-medium text-gold-800 transition hover:border-gold-500 hover:bg-gold-100"
-              >
-                <span className="flex items-center gap-2">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    {/* why: 4-house glyph reads as "multiple properties" at
-                        a glance — different from the single-house implication
-                        of the standard picker rows below. */}
-                    <path d="M2 14h12" />
-                    <path d="M3 14V9l2-1.5L7 9v5" />
-                    <path d="M9 14V9l2-1.5L13 9v5" />
-                  </svg>
-                  Multi-property OH
-                </span>
-                <span className="rounded-full bg-gold-200/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold-900">
-                  {listings.length}
-                </span>
-              </Link>
-            ) : (
-              <div className="mb-3 rounded-md border border-dashed border-neutral-300 bg-neutral-50/60 px-3 py-2 text-[12px] leading-snug text-neutral-500">
-                Hosting more than one this weekend? Schedule a 2nd open
-                house and a Multi-property OH option will appear here.
-              </div>
-            )
-          ) : null}
+          {/* 2026-05-21 — the Multi-property Open House entry point that
+              used to live here was relocated to the dashboard's Open
+              Houses card (components/UpcomingOpenHousesRow.tsx). That's
+              where Larissa is already scanning open houses and deciding
+              what to promote, so the affordance now sits right next to
+              the list that drives the decision. */}
           <div className="eyebrow mb-2">Step 1 · Pick a listing</div>
           <input
             type="search"
