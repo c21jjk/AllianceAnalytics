@@ -3,29 +3,31 @@
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { saveTemplateSchemaForFormatAction } from "../../actions";
+import TemplateCanvasEditor from "./TemplateCanvasEditor";
 import type { TemplateDefinition } from "@/lib/template-builder";
-import type { PostFormat } from "@/lib/post-builder/types";
+import type {
+  PostFormat,
+  PostBuilderListing,
+} from "@/lib/post-builder/types";
 
 /**
- * Template visual editor — Phase 2B FOUNDATION.
+ * Template visual editor — Session A.
  *
- * What ships in 2B-foundation (this file):
- *   - Format-switcher tabs (Square 1:1, Portrait 4:5, Story 9:16)
- *   - Per-format JSON textarea authoring mode (paste valid JSON, save)
- *   - Save plumbing wired to saveTemplateSchemaForFormatAction
- *   - "Define this format" / "Remove this format" toggle so authors can
- *     add or drop format coverage one at a time
- *   - Live read-only preview of the parsed JSON (validates the paste)
+ * The page is now organized as:
+ *   1. Header strip: template name + back link
+ *   2. Format-switcher tabs (Square / Portrait / Story) with
+ *      "defined" indicator dots
+ *   3. Per-format card showing the current state + "Open visual editor"
+ *      CTA that pops up the canvas overlay
+ *   4. Collapsible "Raw schema (advanced)" panel — the JSON textarea
+ *      fallback for admins who want to hand-author or paste a schema
+ *      without the visual editor. Useful for debugging + power-user
+ *      flows. Same save plumbing as the canvas editor.
+ *   5. Placeholder reference sidebar (unchanged from foundation)
  *
- * What ships in 2B-real (next session):
- *   - Replace the textarea with the Fabric.js canvas surface from
- *     lib/post-builder/canvas-editor/
- *   - Layer panel, placeholder picker dropdown, text/image/shape tools
- *   - Live preview against a sample listing (with bindings resolved)
- *
- * The JSON-textarea mode IS the schema-save contract — the canvas
- * editor (when it lands) will emit the same JSON shape into the same
- * server action. So Phase 2B-real becomes a UI swap, not a re-plumb.
+ * The canvas editor mounts as a modal overlay (it IS the existing
+ * CanvasEditorOverlay used by Post Builder Studio) — it's not inline
+ * on this page.
  */
 
 const FORMAT_TABS: Array<{ id: PostFormat; label: string; aspect: string }> = [
@@ -36,120 +38,18 @@ const FORMAT_TABS: Array<{ id: PostFormat; label: string; aspect: string }> = [
 
 interface Props {
   template: TemplateDefinition;
+  /** Sample listing fetched server-side. Used by the canvas editor as
+   *  visual context (real photos, real text). Null when DB has no
+   *  active listings. */
+  sampleListing: PostBuilderListing | null;
 }
 
-export default function TemplateEditorClient({ template }: Props) {
+export default function TemplateEditorClient({
+  template,
+  sampleListing,
+}: Props) {
   const [activeFormat, setActiveFormat] = useState<PostFormat>("portrait_4x5");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  // Per-tab draft buffers — editing one format's JSON doesn't lose the
-  // others' unsaved work. Initialized from the saved schema.
-  const [drafts, setDrafts] = useState<Record<PostFormat, string>>(() => ({
-    square_1x1: stringifyOrEmpty(template.schema.square_1x1),
-    portrait_4x5: stringifyOrEmpty(template.schema.portrait_4x5),
-    story_9x16: stringifyOrEmpty(template.schema.story_9x16),
-  }));
-
-  const activeDraft = drafts[activeFormat];
-  const savedJson = stringifyOrEmpty(template.schema[activeFormat]);
-  const dirty = activeDraft !== savedJson;
-
-  // Parse the active draft — used for both validation feedback and the
-  // "live preview" panel. We tolerate empty (= format not defined).
-  const parsed = useMemo(() => {
-    if (activeDraft.trim().length === 0) {
-      return { ok: true, value: null as unknown };
-    }
-    try {
-      const v = JSON.parse(activeDraft);
-      if (typeof v !== "object" || v === null || Array.isArray(v)) {
-        return {
-          ok: false,
-          error: "Schema must be a JSON object (got array or primitive).",
-        };
-      }
-      return { ok: true, value: v };
-    } catch (e) {
-      return {
-        ok: false,
-        error: e instanceof Error ? e.message : "Invalid JSON.",
-      };
-    }
-  }, [activeDraft]);
-
-  function onDraftChange(value: string): void {
-    setDrafts((prev) => ({ ...prev, [activeFormat]: value }));
-    setError(null);
-    setSuccess(null);
-  }
-
-  function onSave(): void {
-    if (!parsed.ok) {
-      setError(parsed.error ?? "Invalid JSON.");
-      return;
-    }
-    setError(null);
-    setSuccess(null);
-    startTransition(async () => {
-      const result = await saveTemplateSchemaForFormatAction(
-        template.id,
-        activeFormat,
-        parsed.value,
-      );
-      if (result.ok) {
-        setSuccess(
-          parsed.value === null
-            ? "Format removed."
-            : "Schema saved.",
-        );
-        setTimeout(() => setSuccess(null), 2500);
-      } else {
-        setError(result.error ?? "Failed to save.");
-      }
-    });
-  }
-
-  function onRemoveFormat(): void {
-    const confirmed = window.confirm(
-      `Remove "${labelForFormat(activeFormat)}" from this template? The picker will stop showing it for that format. You can add it back any time.`,
-    );
-    if (!confirmed) return;
-    setDrafts((prev) => ({ ...prev, [activeFormat]: "" }));
-    setError(null);
-    setSuccess(null);
-    startTransition(async () => {
-      const result = await saveTemplateSchemaForFormatAction(
-        template.id,
-        activeFormat,
-        null,
-      );
-      if (result.ok) {
-        setSuccess("Format removed.");
-        setTimeout(() => setSuccess(null), 2500);
-      } else {
-        setError(result.error ?? "Failed to remove format.");
-      }
-    });
-  }
-
-  function onInsertStarter(): void {
-    const dims = STARTER_DIMS[activeFormat];
-    const starter = {
-      version: 1,
-      width: dims.width,
-      height: dims.height,
-      layers: [],
-    };
-    setDrafts((prev) => ({
-      ...prev,
-      [activeFormat]: JSON.stringify(starter, null, 2),
-    }));
-    setError(null);
-  }
-
-  const formatDefined = savedJson.length > 0;
+  const [canvasOpen, setCanvasOpen] = useState(false);
 
   return (
     <div className="space-y-5">
@@ -171,9 +71,10 @@ export default function TemplateEditorClient({ template }: Props) {
           <h1 className="text-2xl font-bold text-neutral-900 leading-tight">
             {template.name}
           </h1>
-          <div className="mt-1 text-xs text-neutral-500">
-            Phase 2B foundation — JSON-textarea authoring mode. The visual
-            canvas editor lands in a follow-up session.
+          <div className="mt-1 text-xs text-neutral-500 max-w-2xl">
+            Pick a format below and click <strong>Open visual editor</strong> to
+            design with the Fabric.js canvas. Each format has its own schema —
+            you save one at a time.
           </div>
         </div>
       </div>
@@ -184,90 +85,30 @@ export default function TemplateEditorClient({ template }: Props) {
         schema={template.schema}
       />
 
-      {/* Status alerts */}
-      {error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
-          {error}
-        </div>
-      ) : null}
-      {success ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          {success}
-        </div>
-      ) : null}
-
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
-        {/* Editor column */}
-        <div className="card p-5 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold text-neutral-900">
-                {labelForFormat(activeFormat)} schema
-              </h2>
-              <div className="text-xs text-neutral-500 mt-0.5">
-                JSON document conforming to the canvas-editor template
-                schema. Phase 2B-real replaces this with a visual canvas.
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {activeDraft.trim().length === 0 ? (
-                <button
-                  type="button"
-                  onClick={onInsertStarter}
-                  disabled={pending}
-                  className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60 transition-colors"
-                >
-                  Insert starter
-                </button>
-              ) : null}
-              {formatDefined ? (
-                <button
-                  type="button"
-                  onClick={onRemoveFormat}
-                  disabled={pending}
-                  className="rounded-md border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60 transition-colors"
-                >
-                  Remove format
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={onSave}
-                disabled={pending || !parsed.ok || !dirty}
-                className="rounded-md bg-gold-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-gold-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-              >
-                {pending ? "Saving…" : "Save schema"}
-              </button>
-            </div>
-          </div>
-
-          <textarea
-            value={activeDraft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            placeholder='{\n  "version": 1,\n  "width": 1080,\n  "height": 1350,\n  "layers": []\n}'
-            spellCheck={false}
-            className="block w-full rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 font-mono text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
-            style={{ minHeight: 360, resize: "vertical" }}
+        <div className="space-y-5">
+          <ActiveFormatCard
+            template={template}
+            format={activeFormat}
+            onOpenCanvas={() => setCanvasOpen(true)}
           />
 
-          {!parsed.ok ? (
-            <div className="text-xs text-rose-700">
-              <span className="font-semibold">JSON parse error:</span>{" "}
-              {parsed.error}
-            </div>
-          ) : activeDraft.trim().length === 0 ? (
-            <div className="text-xs text-neutral-500">
-              Empty — this format will be undefined on the template (picker
-              hides it for that aspect ratio).
-            </div>
-          ) : (
-            <div className="text-xs text-emerald-700">Valid JSON.</div>
-          )}
+          <RawSchemaPanel
+            template={template}
+            format={activeFormat}
+          />
         </div>
 
-        {/* Sidebar: placeholder reference */}
         <PlaceholderReference />
       </div>
+
+      <TemplateCanvasEditor
+        template={template}
+        format={activeFormat}
+        sampleListing={sampleListing}
+        open={canvasOpen}
+        onClose={() => setCanvasOpen(false)}
+      />
     </div>
   );
 }
@@ -319,6 +160,192 @@ function FormatTabs({
         );
       })}
     </div>
+  );
+}
+
+function ActiveFormatCard({
+  template,
+  format,
+  onOpenCanvas,
+}: {
+  template: TemplateDefinition;
+  format: PostFormat;
+  onOpenCanvas: () => void;
+}) {
+  const formatTab = FORMAT_TABS.find((t) => t.id === format);
+  const defined = template.schema[format] !== null && template.schema[format] !== undefined;
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-900">
+            {formatTab?.label} {formatTab?.aspect}
+          </h2>
+          <div className="text-xs text-neutral-500 mt-0.5">
+            {defined
+              ? "This format has a saved schema. Open the visual editor to make changes."
+              : "This format isn't defined yet. Opening the editor will start you with a blank canvas at the right dimensions — design from scratch."}
+          </div>
+        </div>
+        <span
+          aria-hidden="true"
+          className={[
+            "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1",
+            defined
+              ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+              : "bg-neutral-100 text-neutral-600 ring-neutral-200",
+          ].join(" ")}
+        >
+          {defined ? "Defined" : "Not defined"}
+        </span>
+      </div>
+
+      <div className="mt-4 flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={onOpenCanvas}
+          className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-gold-600 transition-colors"
+        >
+          <CanvasIcon />
+          {defined ? "Open visual editor" : "Start designing this format"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Raw JSON view — collapsible. Useful for:
+ *   • Power users who want to author/paste a schema directly
+ *   • Debugging when the canvas editor produces unexpected output
+ *   • Bulk find/replace edits
+ *
+ * Lives in a <details> so it's hidden by default — visual editor is the
+ * primary surface.
+ */
+function RawSchemaPanel({
+  template,
+  format,
+}: {
+  template: TemplateDefinition;
+  format: PostFormat;
+}) {
+  const savedJson = stringifyOrEmpty(template.schema[format]);
+  const [draft, setDraft] = useState(savedJson);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const dirty = draft !== savedJson;
+
+  const parsed = useMemo(() => {
+    if (draft.trim().length === 0) {
+      return { ok: true, value: null as unknown };
+    }
+    try {
+      const v = JSON.parse(draft);
+      if (typeof v !== "object" || v === null || Array.isArray(v)) {
+        return {
+          ok: false,
+          error: "Schema must be a JSON object.",
+        };
+      }
+      return { ok: true, value: v };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Invalid JSON.",
+      };
+    }
+  }, [draft]);
+
+  function onSave(): void {
+    if (!parsed.ok) {
+      setError(parsed.error ?? "Invalid JSON.");
+      return;
+    }
+    setError(null);
+    setSuccess(null);
+    startTransition(async () => {
+      const result = await saveTemplateSchemaForFormatAction(
+        template.id,
+        format,
+        parsed.value,
+      );
+      if (result.ok) {
+        setSuccess("Schema saved.");
+        setTimeout(() => setSuccess(null), 2500);
+      } else {
+        setError(result.error ?? "Failed to save.");
+      }
+    });
+  }
+
+  return (
+    <details className="card p-5 group">
+      <summary className="cursor-pointer text-sm font-semibold text-neutral-700 hover:text-neutral-900 select-none flex items-center gap-2">
+        <span className="text-neutral-400 group-open:rotate-90 transition-transform inline-block">
+          ▸
+        </span>
+        Raw schema (advanced)
+      </summary>
+
+      <div className="mt-4 space-y-3">
+        <div className="text-xs text-neutral-500">
+          Hand-author or paste a CanvasTemplateSchema JSON document. Same save
+          plumbing as the visual editor — handy for debugging, bulk
+          find/replace, or working without the canvas.
+        </div>
+
+        <textarea
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setError(null);
+            setSuccess(null);
+          }}
+          placeholder="(empty — format not defined)"
+          spellCheck={false}
+          className="block w-full rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 font-mono text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+          style={{ minHeight: 220, resize: "vertical" }}
+        />
+
+        {!parsed.ok ? (
+          <div className="text-xs text-rose-700">
+            <span className="font-semibold">JSON error:</span> {parsed.error}
+          </div>
+        ) : draft.trim().length === 0 ? (
+          <div className="text-xs text-neutral-500">
+            Empty — saving will undefine this format.
+          </div>
+        ) : (
+          <div className="text-xs text-emerald-700">Valid JSON.</div>
+        )}
+
+        {error ? (
+          <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+            {error}
+          </div>
+        ) : null}
+        {success ? (
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            {success}
+          </div>
+        ) : null}
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={pending || !parsed.ok || !dirty}
+            className="rounded-md bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          >
+            {pending ? "Saving…" : "Save raw schema"}
+          </button>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -378,10 +405,9 @@ function PlaceholderReference() {
         Placeholders
       </h2>
       <p className="text-xs text-neutral-600 mb-3">
-        Tokens you can reference in text layers. At render time they&apos;re
-        replaced with the live listing&apos;s values. See{" "}
-        <code className="bg-neutral-100 px-1 rounded">bindings.ts</code> for
-        the full contract.
+        Tokens you can use in text layers. At render time they&apos;re replaced
+        with the live listing&apos;s values. (Type the token literally for now;
+        a dropdown picker lands in a follow-up session.)
       </p>
       <div className="space-y-3">
         {groups.map((g) => (
@@ -411,11 +437,26 @@ function PlaceholderReference() {
   );
 }
 
-/**
- * Stringify a schema-for-format into a textarea-ready string. Returns
- * empty string for null/undefined so the textarea reads as "format not
- * defined" rather than literal "null".
- */
+function CanvasIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+      <path d="M2.5 11l3.5-3.5 3 3 4-4" />
+      <circle cx="11" cy="5.5" r="1" />
+    </svg>
+  );
+}
+
 function stringifyOrEmpty(value: unknown): string {
   if (value === null || value === undefined) return "";
   try {
@@ -424,15 +465,3 @@ function stringifyOrEmpty(value: unknown): string {
     return "";
   }
 }
-
-function labelForFormat(f: PostFormat): string {
-  const tab = FORMAT_TABS.find((t) => t.id === f);
-  return tab ? `${tab.label} ${tab.aspect}` : f;
-}
-
-/** Canonical dimensions per format — used by the "Insert starter" button. */
-const STARTER_DIMS: Record<PostFormat, { width: number; height: number }> = {
-  square_1x1: { width: 1080, height: 1080 },
-  portrait_4x5: { width: 1080, height: 1350 },
-  story_9x16: { width: 1080, height: 1920 },
-};
