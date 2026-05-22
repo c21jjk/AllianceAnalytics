@@ -507,12 +507,15 @@ function baseCss(args: {
     font-size: ${density.priceSize}px; font-weight: 800;
     letter-spacing: -0.01em;
   }
-  /* ─── Agent footer ────────────────────────────────────────────── */
+  /* ─── Footer (brand strip) ───────────────────────────────────── */
+  /* The agent-name/phone block was removed 2026-05-21 — per-property
+     hosting attribution lives on each carousel slide. Only the brand
+     strip remains here as the hero's bottom anchor. */
   .agent-block {
     margin-top: 32px;
     padding-top: 28px;
     border-top: 2px solid ${BRAND.ink};
-    /* why: thick rule above the agent block tells the eye "this is the call to action". */
+    /* why: thick rule above the brand strip tells the eye "this is the close". */
     position: relative;
   }
   .agent-block::before {
@@ -521,38 +524,8 @@ function baseCss(args: {
     width: 96px; height: 2px;
     background: linear-gradient(90deg, ${BRAND.gold} 0%, ${BRAND.goldDark} 100%);
   }
-  .agent-name {
-    font-family: "Playfair Display", Georgia, serif;
-    font-weight: 700; line-height: 1.1; letter-spacing: -0.01em;
-    color: ${BRAND.ink};
-    /* Per-format override sets font-size. */
-  }
-  .agent-contact {
-    margin-top: 8px;
-    display: flex; flex-wrap: wrap; gap: 18px 24px;
-    font-family: "Inter", sans-serif;
-    font-weight: 600;
-    color: ${BRAND.inkMuted};
-  }
-  .agent-contact .pair {
-    display: inline-flex; align-items: center; gap: 8px;
-  }
-  .agent-contact .pair-label {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.2em;
-    text-transform: uppercase; color: ${BRAND.goldDark};
-  }
-  .agent-contact .pair-value {
-    color: ${BRAND.ink};
-  }
-  .office {
-    margin-top: 14px;
-    font-family: "Inter", sans-serif;
-    font-size: 14px; font-weight: 600; letter-spacing: 0.22em;
-    text-transform: uppercase; color: ${BRAND.inkMuted};
-  }
   /* ─── Brand mark ─────────────────────────────────────────────── */
   .brand-rule {
-    margin-top: 22px;
     width: 100%; height: 1px;
     background: linear-gradient(90deg, ${BRAND.gold} 0%, transparent 100%);
   }
@@ -641,45 +614,25 @@ function renderPropertyRow(
 }
 
 /**
- * Render the agent footer block — agent name, phone/email pair, office.
- * Same HTML for all three formats; per-format CSS tweaks the agent-name
- * font-size to match the headline scale.
+ * Render the hero card's footer block.
+ *
+ * 2026-05-21 — the previous version of this function rendered an event-level
+ * agent name + Call/Email pairs at the bottom of the hero. We removed those
+ * because each per-property slide already carries its own
+ * `hosting_agent_name`, and a single big "Agent" attribution on the hero
+ * contradicted multi-host events (a Larissa event with PJ hosting one home
+ * was misleadingly stamped "Larissa Johnson" big at the bottom).
+ *
+ * What's left is the brand strip — gold rule + Century 21 mark + "Open
+ * House Event" tag — which still anchors the bottom of the hero card
+ * visually without claiming a single agent.
+ *
+ * `input` is kept in the signature for future use (e.g., a future per-event
+ * co-marketed office stamp could read input.office_name). For now, the
+ * footer is identical across every event.
  */
-function renderAgentBlock(input: MultiOHEventInput): string {
-  const phone = input.agent_phone?.trim() ?? "";
-  const email = input.agent_email?.trim() ?? "";
-  const office = input.office_name.trim();
-
-  const pairs: string[] = [];
-  if (phone) {
-    pairs.push(
-      `<span class="pair"><span class="pair-label">Call</span><span class="pair-value">${escapeHtml(phone)}</span></span>`,
-    );
-  }
-  // why: email row removed from the OH hero on 2026-05-16 per user request —
-  // the wizard always sends agent_email=null now, but we keep the defensive
-  // `if (email)` guard so an older /api/post-builder/multi-oh-generate
-  // caller that still sends an email doesn't crash; it just renders without
-  // the row, matching the new behavior.
-  if (email) {
-    pairs.push(
-      `<span class="pair"><span class="pair-label">Email</span><span class="pair-value">${escapeHtml(email)}</span></span>`,
-    );
-  }
-
-  // why: office line was a duplicate of the brand-text below the gold rule
-  // — both said "Century 21 Alliance" since that's the only office. Only
-  // surface the office line when the input's office_name DIFFERS from the
-  // hardcoded brand, which would only happen on a future co-marketed event.
-  const officeIsRedundant =
-    !office ||
-    office.toLowerCase() === "century 21 alliance" ||
-    office.toLowerCase() === "c21 alliance";
-
+function renderAgentBlock(_input: MultiOHEventInput): string {
   return `<div class="agent-block">
-    <div class="agent-name">${escapeHtml(input.agent_name)}</div>
-    ${pairs.length > 0 ? `<div class="agent-contact">${pairs.join("")}</div>` : ""}
-    ${!officeIsRedundant ? `<div class="office">${escapeHtml(office)}</div>` : ""}
     <div class="brand-rule"></div>
     <div class="brand-row">
       <div class="brand">
@@ -711,7 +664,6 @@ export function emitEventOverviewSquare(input: MultiOHEventInput): string {
   // keep typographic presence.
   const titleSize =
     input.properties.length <= 3 ? 64 : input.properties.length <= 6 ? 54 : 46;
-  const agentNameSize = input.properties.length <= 6 ? 36 : 30;
 
   const rowsHtml = input.properties
     .map((p, i) => renderPropertyRow(p, i + 1, density))
@@ -723,7 +675,6 @@ ${eventOverviewHead(`Open House Event — ${input.event_title}`)}
 <style>
 ${baseCss({ width, height, margin, density })}
 .event-title { font-size: ${titleSize}px; }
-.agent-name { font-size: ${agentNameSize}px; }
 </style>
 <body>
   <div class="frame">
@@ -758,7 +709,6 @@ export function emitEventOverviewPortrait(input: MultiOHEventInput): string {
 
   const titleSize =
     input.properties.length <= 3 ? 72 : input.properties.length <= 6 ? 60 : 52;
-  const agentNameSize = input.properties.length <= 6 ? 40 : 34;
 
   const rowsHtml = input.properties
     .map((p, i) => renderPropertyRow(p, i + 1, density))
@@ -771,7 +721,6 @@ ${eventOverviewHead(`Open House Event — ${input.event_title}`)}
 ${baseCss({ width, height, margin, density })}
 .header { gap: 22px; margin-bottom: 40px; }
 .event-title { font-size: ${titleSize}px; }
-.agent-name { font-size: ${agentNameSize}px; }
 .agent-block { margin-top: 40px; padding-top: 32px; }
 </style>
 <body>
@@ -814,7 +763,6 @@ export function emitEventOverviewStory(input: MultiOHEventInput): string {
 
   const titleSize =
     input.properties.length <= 3 ? 76 : input.properties.length <= 6 ? 64 : 56;
-  const agentNameSize = input.properties.length <= 6 ? 42 : 36;
 
   const rowsHtml = input.properties
     .map((p, i) => renderPropertyRow(p, i + 1, density))
@@ -822,7 +770,7 @@ export function emitEventOverviewStory(input: MultiOHEventInput): string {
 
   // why: story format pads top/bottom heavily to clear IG's UI overlays.
   // The 310px top padding = 250 safe zone + 60 visual breathing room.
-  // The 200px bottom padding tucks the agent footer above the 1720 line.
+  // The 200px bottom padding tucks the brand footer above the 1720 line.
   return `<!doctype html>
 <html lang="en">
 ${eventOverviewHead(`Open House Event — ${input.event_title}`)}
@@ -833,7 +781,6 @@ ${baseCss({ width, height, margin, density })}
 }
 .header { gap: 24px; margin-bottom: 44px; }
 .event-title { font-size: ${titleSize}px; }
-.agent-name { font-size: ${agentNameSize}px; }
 .agent-block { margin-top: 44px; padding-top: 32px; }
 </style>
 <body>

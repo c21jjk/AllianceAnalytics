@@ -67,6 +67,9 @@ export interface PostBuilderListing {
   oh_start_at?: string | null;
   /** Open House end (UTC ISO). May be null even when start is set. */
   oh_end_at?: string | null;
+  /** Open House comments/notes from Paragon — used to parse "Hosted by …"
+   *  patterns that override the listing agent attribution. */
+  oh_comments?: string | null;
 }
 
 /**
@@ -330,10 +333,15 @@ export interface MultiOHEventInput {
    *  Tour — Sunday 11–3". Wizard pre-fills based on the picked
    *  properties' dates; the user can override. */
   event_title: string;
-  /** Primary agent attribution on the event hero (one name shown big).
-   *  When properties have different hosting agents, individual cards still
-   *  show the per-property host; this is the event-level contact. */
-  agent_name: string;
+  /**
+   * DEPRECATED 2026-05-21 — the event hero no longer surfaces a single
+   * event-level agent. Each property card carries its own
+   * `hosting_agent_name`, which is the only attribution shown on the
+   * carousel. Fields are kept on the type for backward compatibility with
+   * any older callers / persisted rows that still send them, but the
+   * renderer ignores them entirely.
+   */
+  agent_name?: string | null;
   agent_phone?: string | null;
   agent_email?: string | null;
   /** Office shown on the footer of the event hero. Mirrors how the

@@ -118,7 +118,7 @@ export async function fetchListingsForPostBuilder(
     const mlsNumbers = listings.map((l) => l.mls_number);
     const { data: ohRows, error: ohError } = await supabase
       .from("open_houses")
-      .select("mls_number, start_at, end_at")
+      .select("mls_number, start_at, end_at, comments")
       .in("mls_number", mlsNumbers)
       .gte("start_at", new Date().toISOString())
       .lte(
@@ -130,10 +130,17 @@ export async function fetchListingsForPostBuilder(
       console.error("[post-builder/listings] open_houses fetch error:", ohError);
       return [];
     }
-    const nextOhByMls = new Map<string, { start_at: string; end_at: string | null }>();
+    const nextOhByMls = new Map<
+      string,
+      { start_at: string; end_at: string | null; comments: string | null }
+    >();
     for (const oh of ohRows ?? []) {
       if (!nextOhByMls.has(oh.mls_number)) {
-        nextOhByMls.set(oh.mls_number, { start_at: oh.start_at, end_at: oh.end_at });
+        nextOhByMls.set(oh.mls_number, {
+          start_at: oh.start_at,
+          end_at: oh.end_at,
+          comments: oh.comments ?? null,
+        });
       }
     }
     listings = listings
@@ -141,7 +148,12 @@ export async function fetchListingsForPostBuilder(
       .map((l) => {
         const oh = nextOhByMls.get(l.mls_number);
         return oh
-          ? { ...l, oh_start_at: oh.start_at, oh_end_at: oh.end_at }
+          ? {
+              ...l,
+              oh_start_at: oh.start_at,
+              oh_end_at: oh.end_at,
+              oh_comments: oh.comments,
+            }
           : l;
       });
   }

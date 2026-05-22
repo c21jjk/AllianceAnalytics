@@ -145,18 +145,19 @@ function parseBody(raw: unknown):
     typeof r.event_title === "string" && r.event_title.trim().length > 0
       ? r.event_title.trim()
       : "Open House This Weekend"; // why: sensible default vs hard failure
+  // 2026-05-21 — agent_name / agent_phone / agent_email are no longer
+  // collected by the wizard (per-property hosts on each carousel slide
+  // are the only attribution shown). We still accept them defensively so
+  // older clients / persisted bodies don't fail; the renderer ignores
+  // them.
   const agent_name =
     typeof r.agent_name === "string" && r.agent_name.trim().length > 0
       ? r.agent_name.trim()
-      : "";
+      : null;
   const office_name =
     typeof r.office_name === "string" && r.office_name.trim().length > 0
       ? r.office_name.trim()
       : "Century 21 Alliance";
-
-  if (agent_name.length === 0) {
-    return { ok: false, error: "agent_name required" };
-  }
 
   const agent_phone =
     typeof r.agent_phone === "string" && r.agent_phone.length > 0

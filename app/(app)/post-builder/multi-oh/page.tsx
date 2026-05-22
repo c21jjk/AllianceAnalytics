@@ -3,6 +3,11 @@ import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
 import PageHeader from "@/components/PageHeader";
 import MultiOHWizardClient from "./MultiOHWizardClient";
 
+// why: requireUser is still called here even though we no longer thread
+// the user's full_name into the wizard (event-level agent attribution was
+// removed 2026-05-21). The auth gate itself is the contract — anonymous
+// users shouldn't be hitting this surface.
+
 export const metadata = { title: "Multi-property Open House — Alliance Social" };
 export const dynamic = "force-dynamic";
 
@@ -21,7 +26,7 @@ export const dynamic = "force-dynamic";
  * standard editor/resume flow takes over.
  */
 export default async function MultiOHPage() {
-  const profile = await requireUser();
+  await requireUser();
 
   // why: same fetcher Post Builder uses for open_house. Returns active
   // listings with the soonest upcoming open_houses row attached as
@@ -40,7 +45,6 @@ export default async function MultiOHPage() {
       <MultiOHWizardClient
         listings={listings}
         defaultOfficeName="Century 21 Alliance"
-        defaultAgentName={profile.full_name ?? ""}
       />
     </div>
   );

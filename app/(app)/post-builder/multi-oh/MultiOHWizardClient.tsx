@@ -28,23 +28,22 @@ interface Props {
   listings: PostBuilderListing[];
   /** Office name pre-fill (defaults to "Century 21 Alliance"). */
   defaultOfficeName: string;
-  /** Profile.full_name from the signed-in user — used as the agent fallback
-   *  if the picked properties don't all share a single listing_agent_name. */
-  defaultAgentName: string;
-}
-
-interface EventDetailsForm {
-  event_title: string;
-  agent_name: string;
-  agent_phone: string;
 }
 
 // Hosting-agent resolution lives in lib/open-houses/host-resolution.ts so
 // the dashboard row (UpcomingOpenHousesRow) and this wizard share one
 // source of truth. Imported above.
 
-/** Wizard step index. 1-based so the stepper UI and the state agree. */
-type StepIndex = 1 | 2 | 3 | 4;
+/**
+ * Wizard step index. 1-based so the stepper UI and the state agree.
+ *
+ * 2026-05-21 — collapsed from 4 steps to 3. The old Step 2 ("Event
+ * details") collected an event-level agent name + phone, but those fields
+ * duplicated the per-property hosting agent that each carousel slide
+ * already carries. The remaining event-level input (event_title) moved up
+ * into Step 1 right above the property picker.
+ */
+type StepIndex = 1 | 2 | 3;
 
 interface FormatCardMeta {
   id: PostFormat;
@@ -102,11 +101,14 @@ const GENERATE_STATUSES: readonly string[] = [
 /**
  * Multi-property Open House wizard.
  *
- * Four steps:
- *   1. Pick 2-9 properties (selection order = carousel order)
- *   2. Event details (auto pre-fill from picked properties)
- *   3. Format + per-property variant
- *   4. Review (re-order via drag) + Generate
+ * Three steps:
+ *   1. Pick 2-9 properties (selection order = carousel order) + name the event
+ *   2. Format + per-property variant
+ *   3. Review (re-order via drag) + Generate
+ *
+ * Each per-property card carries its own hosting agent attribution (set
+ * inline on Step 1), so there is no event-level agent name on the hero —
+ * the previous Step 2 that collected one was retired 2026-05-21.
  *
  * State is entirely client-side; the only network call is the final
  * POST to /api/post-builder/multi-oh-generate. On ok=true we push to
@@ -115,7 +117,6 @@ const GENERATE_STATUSES: readonly string[] = [
 export default function MultiOHWizardClient({
   listings,
   defaultOfficeName,
-  defaultAgentName,
 }: Props) {
   const router = useRouter();
 
@@ -148,27 +149,21 @@ export default function MultiOHWizardClient({
     Record<string, string>
   >({});
 
-  // ---- step 2 — event details ------------------------------------------
-  // why: agent_email and office_name were removed from the form on
-  // 2026-05-16. Agent email isn't useful on an OH event hero (Larissa's
-  // audience either calls or DMs — they don't read the email off a flyer).
-  // Office name is hardcoded to defaultOfficeName at payload time because
-  // there's only one office ("Century 21 Alliance") and it'll never change.
-  const [eventForm, setEventForm] = useState<EventDetailsForm>({
-    event_title: "",
-    agent_name: "",
-    agent_phone: "",
-  });
-  /** Did the user manually edit event_title? If so we stop auto-overwriting
-   *  it when the picked set changes. Same idea for agent_name. */
+  // ---- step 1 (cont.) — event title ------------------------------------
+  // why: event_title used to live on its own "Event details" step alongside
+  // event-level agent fields. 2026-05-21 that step was cut — the only thing
+  // left to ask is the title (one input, one decision), so we moved it up
+  // into Step 1 right above the property list. The auto-derive logic still
+  // applies: titleDirty flips true the moment the user edits, after which
+  // we stop overwriting the field when the picked set changes.
+  const [eventTitle, setEventTitle] = useState<string>("");
   const [titleDirty, setTitleDirty] = useState(false);
-  const [agentDirty, setAgentDirty] = useState(false);
 
-  // ---- step 3 — format + variant ---------------------------------------
+  // ---- step 2 — format + variant ---------------------------------------
   const [format, setFormat] = useState<PostFormat>("portrait_4x5");
   const [perPropertyVariant, setPerPropertyVariant] = useState<PerPropertyVariant>("v1");
 
-  // ---- step 4 — generate state -----------------------------------------
+  // ---- step 3 — generate state -----------------------------------------
   const [generating, setGenerating] = useState(false);
   const [generateStatusIdx, setGenerateStatusIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -200,37 +195,12 @@ export default function MultiOHWizardClient({
     [selectedListings],
   );
 
-  /** If all picked properties share the same agent_name, use that. Otherwise
-   *  fall back to the signed-in user's full_name (passed in as default). */
-  const derivedAgentName = useMemo(() => {
-    if (selectedListings.length === 0) return defaultAgentName;
-    const names = new Set<string>();
-    for (const l of selectedListings) {
-      if (l.agent_name && l.agent_name.trim().length > 0) {
-        names.add(l.agent_name.trim());
-      }
-    }
-    if (names.size === 1) {
-      // Single shared agent — use it.
-      const first = names.values().next().value;
-      return typeof first === "string" ? first : defaultAgentName;
-    }
-    return defaultAgentName;
-  }, [selectedListings, defaultAgentName]);
-
-  // Auto-fill event_title + agent_name when they haven't been manually
-  // edited. We can't put these inside useMemo because they need to write
-  // to state, so an effect it is.
+  // Auto-fill event_title when the user hasn't manually edited it.
   useEffect(() => {
     if (!titleDirty) {
-      setEventForm((prev) => ({ ...prev, event_title: derivedEventTitle }));
+      setEventTitle(derivedEventTitle);
     }
   }, [derivedEventTitle, titleDirty]);
-  useEffect(() => {
-    if (!agentDirty) {
-      setEventForm((prev) => ({ ...prev, agent_name: derivedAgentName }));
-    }
-  }, [derivedAgentName, agentDirty]);
 
   // ---- generate-phase status ticker ------------------------------------
   // why: rotate friendly status text on a 4s interval so the spinner feels
@@ -251,14 +221,18 @@ export default function MultiOHWizardClient({
       // selection branch below can seed the per-property hosting-agent map
       // without re-resolving from the listings array inside the setter.
       //
-      // resolveHostingAgent scans the listing's public_remarks for a
+      // resolveHostingAgent scans the open house's `comments` field for a
       // "Hosted by {Name}" pattern first, falling back to the listing's
       // own agent_name. Larissa often delegates open-house hosting to a
       // different agent and notes it in the OH remarks — this auto-detect
       // saves her from manually re-typing host names per property.
+      //
+      // NOTE: must pass `oh_comments` (open house notes), NOT
+      // `public_remarks` (the property's MLS description) — the hosting
+      // pattern only lives on the open_houses row.
       const listing = listingsByMls.get(mls);
       const defaultAgent = resolveHostingAgent(
-        listing?.public_remarks,
+        listing?.oh_comments,
         listing?.agent_name,
       );
 
@@ -315,10 +289,15 @@ export default function MultiOHWizardClient({
 
   // ---- step navigation --------------------------------------------------
 
-  const canContinueFromStep1 = selectedMls.length >= MULTI_OH_MIN_PROPERTIES;
-  const canContinueFromStep2 =
-    eventForm.event_title.trim().length > 0 &&
-    eventForm.agent_name.trim().length > 0;
+  // Step 1 also gates on a non-empty event title now that the input lives
+  // inline above the property picker. The auto-derive effect keeps the
+  // title populated as soon as a property with an oh_start_at is picked,
+  // so under normal use this is satisfied the moment selectedMls hits 2 —
+  // but the explicit check protects against the edge case where a user
+  // blanks the field manually.
+  const canContinueFromStep1 =
+    selectedMls.length >= MULTI_OH_MIN_PROPERTIES &&
+    eventTitle.trim().length > 0;
 
   const goToStep = useCallback(
     (target: StepIndex): void => {
@@ -404,15 +383,19 @@ export default function MultiOHWizardClient({
       });
 
       const payload: MultiOHEventInput = {
-        event_title: eventForm.event_title.trim(),
-        agent_name: eventForm.agent_name.trim(),
-        agent_phone: eventForm.agent_phone.trim() || null,
-        // why: agent_email + office_name were removed from the wizard form
-        // on 2026-05-16. Email isn't shown on the OH event hero anymore;
-        // office_name is hardcoded since Alliance has one office and it
-        // never changes. The MultiOHEventInput type still accepts both, so
-        // we send null/defaultOfficeName to keep the contract intact.
+        event_title: eventTitle.trim(),
+        // why: event-level agent fields (agent_name / agent_phone /
+        // agent_email) were removed from the wizard on 2026-05-21 — the
+        // event hero no longer attributes a single agent because each
+        // per-property card carries its own hosting agent. We send null
+        // to keep the type contract intact; the renderer + caption
+        // synth both tolerate nulls.
+        agent_name: null,
+        agent_phone: null,
         agent_email: null,
+        // office_name is hardcoded to defaultOfficeName ("Century 21
+        // Alliance") because there's only one office and the renderer's
+        // brand strip says it explicitly already.
         office_name: defaultOfficeName,
         format,
         per_property_variant: perPropertyVariant,
@@ -453,7 +436,7 @@ export default function MultiOHWizardClient({
     }
   }, [
     selectedListings,
-    eventForm,
+    eventTitle,
     format,
     perPropertyVariant,
     defaultOfficeName,
@@ -482,30 +465,24 @@ export default function MultiOHWizardClient({
             onToggle={toggleSelect}
             perPropertyHostingAgent={perPropertyHostingAgent}
             onHostingAgentChange={setHostingAgentForProperty}
+            eventTitle={eventTitle}
+            onEventTitleChange={(next) => {
+              setTitleDirty(true);
+              setEventTitle(next);
+            }}
           />
         ) : null}
         {step === 2 ? (
-          <Step2Details
-            eventForm={eventForm}
-            onChange={(patch) => {
-              if (patch.event_title !== undefined) setTitleDirty(true);
-              if (patch.agent_name !== undefined) setAgentDirty(true);
-              setEventForm((prev) => ({ ...prev, ...patch }));
-            }}
-            propertyCount={selectedListings.length}
-          />
-        ) : null}
-        {step === 3 ? (
-          <Step3FormatVariant
+          <Step2FormatVariant
             format={format}
             onFormatChange={setFormat}
             variant={perPropertyVariant}
             onVariantChange={setPerPropertyVariant}
           />
         ) : null}
-        {step === 4 ? (
-          <Step4Review
-            eventForm={eventForm}
+        {step === 3 ? (
+          <Step3Review
+            eventTitle={eventTitle}
             selectedListings={selectedListings}
             format={format}
             variant={perPropertyVariant}
@@ -520,12 +497,10 @@ export default function MultiOHWizardClient({
         step={step}
         selectedCount={selectedMls.length}
         canContinueFromStep1={canContinueFromStep1}
-        canContinueFromStep2={canContinueFromStep2}
         onBack={() => goToStep((step - 1) as StepIndex)}
         onContinue={() => {
           if (step === 1 && canContinueFromStep1) setStep(2);
-          else if (step === 2 && canContinueFromStep2) setStep(3);
-          else if (step === 3) setStep(4);
+          else if (step === 2) setStep(3);
         }}
         onGenerate={generate}
         generating={generating}
@@ -549,9 +524,8 @@ interface StepperProps {
 
 const STEP_LABELS: readonly { id: StepIndex; label: string }[] = [
   { id: 1, label: "Pick properties" },
-  { id: 2, label: "Event details" },
-  { id: 3, label: "Format + variant" },
-  { id: 4, label: "Review + generate" },
+  { id: 2, label: "Format + variant" },
+  { id: 3, label: "Review + generate" },
 ];
 
 function Stepper({ currentStep, onJump }: StepperProps) {
@@ -622,6 +596,12 @@ interface Step1Props {
   perPropertyHostingAgent: Record<string, string>;
   /** Update one property's hosting agent override. */
   onHostingAgentChange: (mls: string, value: string) => void;
+  /** Event title shown on the hero card. Auto-derives from picked OH dates
+   *  until the user edits the input, at which point the parent freezes the
+   *  derivation (titleDirty). Lives at this step (vs. its own step) because
+   *  it's the only event-level field left after the 2026-05-21 wizard cut. */
+  eventTitle: string;
+  onEventTitleChange: (next: string) => void;
 }
 
 function Step1Pick({
@@ -630,6 +610,8 @@ function Step1Pick({
   onToggle,
   perPropertyHostingAgent,
   onHostingAgentChange,
+  eventTitle,
+  onEventTitleChange,
 }: Step1Props) {
   const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
 
@@ -695,6 +677,32 @@ function Step1Pick({
       <p className="text-sm text-neutral-600 mb-4">
         Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel.
       </p>
+
+      {/* Event title — auto-derives from the picked OH dates (e.g. "Open
+          House — Saturday May 23"). Lives on Step 1 with the property
+          picker because it's the only event-level field left after the
+          2026-05-21 wizard cut. */}
+      <div className="mb-5 rounded-lg border border-neutral-200 bg-neutral-50/60 p-3">
+        <label
+          htmlFor="event_title"
+          className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-700 mb-1"
+        >
+          Event title
+          <span className="text-gold-700 ml-1">*</span>
+        </label>
+        <input
+          id="event_title"
+          type="text"
+          value={eventTitle}
+          onChange={(e) => onEventTitleChange(e.target.value)}
+          placeholder="Open House Weekend"
+          className="block w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+        />
+        <div className="mt-1 text-[11px] text-neutral-500">
+          Shown big at the top of the event hero card. Auto-filled from your picked open-house dates — edit to taste.
+        </div>
+      </div>
+
       <ul className="space-y-2">
         {listings.map((l) => {
           const selectionIndex = selectedMls.indexOf(l.mls_number);
@@ -851,120 +859,28 @@ function HostingAgentRow({ mls, value, onChange }: HostingAgentRowProps) {
 }
 
 // ===========================================================================
-// Step 2 — Event details
+// Step 2 — Format + variant
 // ===========================================================================
+//
+// Step 2 was formerly an "Event details" form that collected an event-level
+// agent name + phone. We dropped that 2026-05-21 — every per-property card
+// already shows the host who'll be at that home, so the event-level
+// attribution was misleading on multi-host events. The remaining
+// event-level field (event_title) moved up into Step 1.
 
 interface Step2Props {
-  eventForm: EventDetailsForm;
-  onChange: (patch: Partial<EventDetailsForm>) => void;
-  propertyCount: number;
-}
-
-function Step2Details({ eventForm, onChange, propertyCount }: Step2Props) {
-  return (
-    <section className="card p-6">
-      <h2 className="text-lg font-semibold text-neutral-900 mb-1">
-        Event details
-      </h2>
-      <p className="text-sm text-neutral-600 mb-5">
-        Pre-filled from your {propertyCount} picked {propertyCount === 1 ? "property" : "properties"}. Tweak anything that doesn&apos;t fit.
-      </p>
-
-      <div className="space-y-4">
-        <Field
-          id="event_title"
-          label="Event title"
-          required
-          hint="Shown big at the top of the event hero card."
-        >
-          <input
-            id="event_title"
-            type="text"
-            className="input"
-            value={eventForm.event_title}
-            onChange={(e) => onChange({ event_title: e.target.value })}
-            placeholder="Open House Weekend"
-          />
-        </Field>
-
-        <Field
-          id="agent_name"
-          label="Agent name"
-          required
-          hint="Primary attribution on the event hero (one name shown big)."
-        >
-          <input
-            id="agent_name"
-            type="text"
-            className="input"
-            value={eventForm.agent_name}
-            onChange={(e) => onChange({ agent_name: e.target.value })}
-            placeholder="Larissa Johnson"
-          />
-        </Field>
-
-        {/* why: phone-only contact row. Email was removed from the OH event
-            details on 2026-05-16 per user — agent email isn't worth the
-            real-estate on the hero card for open house events. Office name
-            was also removed; it's hardcoded to "Century 21 Alliance" in
-            the payload below (defaultOfficeName) since that's the only
-            office and it'll never change. */}
-        <Field id="agent_phone" label="Agent phone" hint="Optional.">
-          <input
-            id="agent_phone"
-            type="tel"
-            className="input"
-            value={eventForm.agent_phone}
-            onChange={(e) => onChange({ agent_phone: e.target.value })}
-            placeholder="(609) 555-0123"
-          />
-        </Field>
-      </div>
-    </section>
-  );
-}
-
-interface FieldProps {
-  id: string;
-  label: string;
-  required?: boolean;
-  hint?: string;
-  children: React.ReactNode;
-}
-
-function Field({ id, label, required, hint, children }: FieldProps) {
-  return (
-    <div>
-      <label
-        htmlFor={id}
-        className="block text-xs font-semibold uppercase tracking-[0.08em] text-neutral-700 mb-1"
-      >
-        {label}
-        {required ? <span className="text-gold-700 ml-1">*</span> : null}
-      </label>
-      {children}
-      {hint ? <div className="mt-1 text-xs text-neutral-500">{hint}</div> : null}
-    </div>
-  );
-}
-
-// ===========================================================================
-// Step 3 — Format + variant
-// ===========================================================================
-
-interface Step3Props {
   format: PostFormat;
   onFormatChange: (f: PostFormat) => void;
   variant: PerPropertyVariant;
   onVariantChange: (v: PerPropertyVariant) => void;
 }
 
-function Step3FormatVariant({
+function Step2FormatVariant({
   format,
   onFormatChange,
   variant,
   onVariantChange,
-}: Step3Props) {
+}: Step2Props) {
   return (
     <section className="space-y-5">
       <div className="card p-6">
@@ -1090,11 +1006,11 @@ function VariantCard({ meta, active, onClick }: VariantCardProps) {
 }
 
 // ===========================================================================
-// Step 4 — Review + generate
+// Step 3 — Review + generate
 // ===========================================================================
 
-interface Step4Props {
-  eventForm: EventDetailsForm;
+interface Step3Props {
+  eventTitle: string;
   selectedListings: readonly PostBuilderListing[];
   format: PostFormat;
   variant: PerPropertyVariant;
@@ -1103,15 +1019,15 @@ interface Step4Props {
   onDrop: (targetMls: string) => void;
 }
 
-function Step4Review({
-  eventForm,
+function Step3Review({
+  eventTitle,
   selectedListings,
   format,
   variant,
   onDragStart,
   onDragOver,
   onDrop,
-}: Step4Props) {
+}: Step3Props) {
   return (
     <section className="space-y-4">
       <div className="card p-5">
@@ -1119,7 +1035,7 @@ function Step4Review({
           Summary
         </div>
         <div className="text-base font-semibold text-neutral-900 leading-snug">
-          {eventForm.event_title || "Untitled event"}{" "}
+          {eventTitle || "Untitled event"}{" "}
           <span className="text-neutral-400 font-normal">·</span>{" "}
           <span className="text-neutral-700">
             {selectedListings.length} {selectedListings.length === 1 ? "property" : "properties"}
@@ -1203,7 +1119,6 @@ interface StickyFooterProps {
   step: StepIndex;
   selectedCount: number;
   canContinueFromStep1: boolean;
-  canContinueFromStep2: boolean;
   onBack: () => void;
   onContinue: () => void;
   onGenerate: () => void;
@@ -1214,15 +1129,14 @@ function StickyFooter({
   step,
   selectedCount,
   canContinueFromStep1,
-  canContinueFromStep2,
   onBack,
   onContinue,
   onGenerate,
   generating,
 }: StickyFooterProps) {
-  const continueDisabled =
-    (step === 1 && !canContinueFromStep1) ||
-    (step === 2 && !canContinueFromStep2);
+  // Only step 1 has a gating condition now — step 2 (format/variant) has
+  // sensible defaults so the user can always continue from it.
+  const continueDisabled = step === 1 && !canContinueFromStep1;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
@@ -1263,7 +1177,7 @@ function StickyFooter({
         ) : null}
 
         <div className="ml-auto">
-          {step < 4 ? (
+          {step < 3 ? (
             <button
               type="button"
               onClick={onContinue}
