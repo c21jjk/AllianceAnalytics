@@ -486,6 +486,8 @@ export default function MultiOHWizardClient({
             onFormatChange={setFormat}
             variant={perPropertyVariant}
             onVariantChange={setPerPropertyVariant}
+            eventTitle={eventTitle}
+            selectedListings={selectedListings}
           />
         ) : null}
         {step === 3 ? (
@@ -884,6 +886,11 @@ interface Step2Props {
   onFormatChange: (f: PostFormat) => void;
   variant: PerPropertyVariant;
   onVariantChange: (v: PerPropertyVariant) => void;
+  /** Event title for the format-card hero mocks. */
+  eventTitle: string;
+  /** Picked listings — first one is used as the sample property data for
+   *  the variant-card mocks. */
+  selectedListings: readonly PostBuilderListing[];
 }
 
 function Step2FormatVariant({
@@ -891,7 +898,14 @@ function Step2FormatVariant({
   onFormatChange,
   variant,
   onVariantChange,
+  eventTitle,
+  selectedListings,
 }: Step2Props) {
+  // First picked listing acts as the sample for variant previews. Falls
+  // back to a synthetic placeholder if (defensively) nothing is selected —
+  // shouldn't happen on Step 2 since Step 1 gates on 2+ picked.
+  const sampleListing = selectedListings[0] ?? null;
+
   return (
     <section className="space-y-5">
       <div className="card p-6">
@@ -899,7 +913,7 @@ function Step2FormatVariant({
           Pick the post format
         </h2>
         <p className="text-sm text-neutral-600 mb-4">
-          All slides in the carousel render at this aspect ratio — IG and FB enforce uniform sizing across carousel slides.
+          All slides in the carousel render at this aspect ratio — IG and FB enforce uniform sizing across carousel slides. Each card shows what the event hero slide will look like in that format.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {FORMAT_CARDS.map((f) => (
@@ -908,6 +922,8 @@ function Step2FormatVariant({
               meta={f}
               active={format === f.id}
               onClick={() => onFormatChange(f.id)}
+              eventTitle={eventTitle}
+              properties={selectedListings}
             />
           ))}
         </div>
@@ -918,15 +934,17 @@ function Step2FormatVariant({
           Pick the per-property card variant
         </h2>
         <p className="text-sm text-neutral-600 mb-4">
-          This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout.
+          This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout. Previews use your first picked listing in the currently selected <strong>{prettyFormat(format)}</strong> format.
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {VARIANT_CARDS.map((v) => (
             <VariantCard
               key={v.id}
               meta={v}
               active={variant === v.id}
               onClick={() => onVariantChange(v.id)}
+              format={format}
+              sampleListing={sampleListing}
             />
           ))}
         </div>
@@ -939,14 +957,32 @@ interface FormatCardProps {
   meta: FormatCardMeta;
   active: boolean;
   onClick: () => void;
+  /** Event title shown in the hero mock. */
+  eventTitle: string;
+  /** Picked properties shown in the hero mock's property list. */
+  properties: readonly PostBuilderListing[];
 }
 
-function FormatCard({ meta, active, onClick }: FormatCardProps) {
-  const [wRatio, hRatio] = meta.ratio;
-  // Mini-glyph max box 56×56. Scale the inner rect to the ratio.
-  const maxBox = 56;
-  const glyphW = wRatio >= hRatio ? maxBox : Math.round((wRatio / hRatio) * maxBox);
-  const glyphH = hRatio >= wRatio ? maxBox : Math.round((hRatio / wRatio) * maxBox);
+/**
+ * 2026-05-21 — FormatCard now renders an actual mini Hero slide mock at
+ * the format's aspect ratio instead of a plain gray block. Lets the user
+ * see "this is what a Square event hero looks like vs. a Portrait one vs.
+ * a Story one" before committing.
+ */
+function FormatCard({
+  meta,
+  active,
+  onClick,
+  eventTitle,
+  properties,
+}: FormatCardProps) {
+  // Story is tall + narrow — give it less horizontal real estate so all
+  // three cards balance visually. Square/portrait can use a wider thumb.
+  const thumbWidthClass: Record<PostFormat, string> = {
+    square_1x1: "w-[96px]",
+    portrait_4x5: "w-[80px]",
+    story_9x16: "w-[58px]",
+  };
   return (
     <button
       type="button"
@@ -958,14 +994,15 @@ function FormatCard({ meta, active, onClick }: FormatCardProps) {
           : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
       ].join(" ")}
     >
-      <div className="w-14 h-14 flex items-center justify-center shrink-0">
-        <div
-          aria-hidden="true"
-          style={{ width: glyphW, height: glyphH }}
-          className={[
-            "rounded-md ring-1",
-            active ? "bg-gold-100 ring-gold-400" : "bg-neutral-100 ring-neutral-300",
-          ].join(" ")}
+      {/* Mini hero mock at the format's aspect ratio. Same HeroSlideBody
+          used by Step 3's ribbon — single source of visual truth. */}
+      <div
+        className={`${thumbWidthClass[meta.id]} ${FORMAT_ASPECT[meta.id]} shrink-0 overflow-hidden rounded-sm ring-1 ring-neutral-200 shadow-sm`}
+      >
+        <HeroSlideBody
+          eventTitle={eventTitle}
+          properties={properties}
+          size="thumb"
         />
       </div>
       <div className="min-w-0">
@@ -987,30 +1024,72 @@ interface VariantCardProps {
   meta: VariantCardMeta;
   active: boolean;
   onClick: () => void;
+  /** Current format choice — drives the aspect ratio of the variant mock so
+   *  picking Story reshapes all three variants to tall thumbnails. */
+  format: PostFormat;
+  /** First picked listing (or null if none picked). Provides real photo +
+   *  address data to the mock so the variant card shows the user's actual
+   *  content, not lorem-ipsum. */
+  sampleListing: PostBuilderListing | null;
 }
 
-function VariantCard({ meta, active, onClick }: VariantCardProps) {
+/**
+ * 2026-05-21 — VariantCard now renders an actual PropertySlideBody mock of
+ * each variant on top of the descriptive text. The mock uses the user's
+ * first picked listing so the preview shows their actual photo + address
+ * in the v1 / v2 / v3 layout. Renders at the currently-selected format's
+ * aspect ratio.
+ */
+function VariantCard({
+  meta,
+  active,
+  onClick,
+  format,
+  sampleListing,
+}: VariantCardProps) {
+  const thumbWidthClass: Record<PostFormat, string> = {
+    square_1x1: "w-[120px]",
+    portrait_4x5: "w-[100px]",
+    story_9x16: "w-[72px]",
+  };
   return (
     <button
       type="button"
       onClick={onClick}
       className={[
-        "rounded-xl border p-4 text-left transition",
+        "rounded-xl border p-4 text-left transition flex flex-col items-start gap-3",
         active
           ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm"
           : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
       ].join(" ")}
     >
-      <div
-        className={[
-          "text-sm font-semibold mb-1",
-          active ? "text-gold-900" : "text-neutral-900",
-        ].join(" ")}
-      >
-        {meta.name}
-      </div>
-      <div className="text-xs text-neutral-600 leading-relaxed">
-        {meta.description}
+      {/* Variant mock — only when we have a sample listing. Defensive null
+          guard so the picker doesn't blow up if (somehow) Step 2 is reached
+          with no listings. */}
+      {sampleListing ? (
+        <div
+          className={`${thumbWidthClass[format]} ${FORMAT_ASPECT[format]} self-center overflow-hidden rounded-sm ring-1 ring-neutral-200 shadow-sm`}
+        >
+          <PropertySlideBody
+            variant={meta.id}
+            listing={sampleListing}
+            hostingAgent=""
+            size="thumb"
+          />
+        </div>
+      ) : null}
+      <div className="min-w-0">
+        <div
+          className={[
+            "text-sm font-semibold mb-1",
+            active ? "text-gold-900" : "text-neutral-900",
+          ].join(" ")}
+        >
+          {meta.name}
+        </div>
+        <div className="text-xs text-neutral-600 leading-relaxed">
+          {meta.description}
+        </div>
       </div>
     </button>
   );
