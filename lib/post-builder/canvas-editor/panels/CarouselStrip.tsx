@@ -466,7 +466,12 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
   // expose the array index (which is `slides[0] === "Slide 2"`) — the off-by-
   // one would confuse Larissa during demos.
   const visibleSlideNumber = index + 2;
-  const ariaLabel = `Slide ${visibleSlideNumber}. Press Delete to remove. Drag to reorder.`;
+  // 2026-05-22 — aria-label gains "Click to edit" copy when the parent
+  // wired up onEdit (multi-OH carousels). Discoverability fix — the
+  // pencil-on-hover affordance was too subtle and Larissa kept missing it.
+  const ariaLabel = onEdit
+    ? `Slide ${visibleSlideNumber}. Click to edit in Studio. Press Delete to remove. Drag to reorder.`
+    : `Slide ${visibleSlideNumber}. Press Delete to remove. Drag to reorder.`;
 
   return (
     <div
@@ -478,13 +483,22 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
       onDragEnd={onDragEnd}
       onDrop={onDrop}
       onKeyDown={onKeyDown}
+      // 2026-05-22 — clicking the thumbnail body now opens per-slide edit
+      // (when the parent supplied onEdit — i.e. multi-OH carousels). The
+      // pencil icon below stays as a visible affordance hint; this just
+      // expands the click target so the whole card is editable.
+      onClick={onEdit ? () => onEdit() : undefined}
       aria-label={ariaLabel}
+      title={onEdit ? `Edit slide ${visibleSlideNumber} in Studio` : undefined}
       className={[
         "group relative flex-shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100 transition-all duration-150",
         "hover:border-gold-400 hover:shadow-sm",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500",
         isDragging ? "opacity-50" : "opacity-100",
-        "cursor-grab active:cursor-grabbing",
+        // Click-to-edit slides use pointer cursor as the primary affordance;
+        // non-editable slides keep the grab cursor since reorder is all
+        // that's available there.
+        onEdit ? "cursor-pointer active:cursor-grabbing" : "cursor-grab active:cursor-grabbing",
       ].join(" ")}
       style={{
         width: widthPx,
@@ -516,10 +530,14 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
             onEdit();
           }}
           // why: positioned to the LEFT of the X — width 5 (20px) + gap 1
-          // (4px) = 24px offset. Same hover-reveal pattern as X for visual
-          // consistency. Uses the gold accent so it reads as "primary"
-          // action ("edit this slide") vs the X's destructive role.
-          className="absolute right-7 top-1 inline-flex h-5 w-5 translate-y-[-2px] items-center justify-center rounded-full bg-gold-500 text-neutral-900 opacity-0 shadow transition-all duration-150 hover:bg-gold-400 group-hover:translate-y-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gold-300"
+          // (4px) = 24px offset. Uses the gold accent so it reads as
+          // "primary" action ("edit this slide") vs the X's destructive
+          // role. 2026-05-22 — pencil is now ALWAYS visible (not just on
+          // hover) when the thumbnail is editable; the prior hover-reveal
+          // pattern was undiscoverable and people thought slides weren't
+          // editable at all. The X stays hover-reveal because removal is
+          // destructive and shouldn't compete for attention.
+          className="absolute right-7 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-gold-500 text-neutral-900 shadow transition-colors duration-150 hover:bg-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-300"
           aria-label={`Edit slide ${visibleSlideNumber} in Studio`}
           title={`Edit slide ${visibleSlideNumber} in Studio`}
         >

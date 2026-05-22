@@ -196,11 +196,16 @@ export async function POST(request: Request) {
   }
 
   // why: Build publish task list. Branching depends on media_type:
-  //   - 'reel' → use publishReelToIG / publishVideoToFB (Day 6 native video)
-  //   - 'image' (default) → use the image/carousel path (unchanged)
-  // TikTok video posting is NOT yet implemented (publishToTikTok above is
-  // PHOTO-mode only). On Reel rows, the TT branch surfaces a clear "coming
-  // soon" result instead of silently dropping the platform.
+  //   - 'reel'  → publishReelToIG / publishVideoToFB / publishVideoToTikTok
+  //               (native short-form video on all three platforms — same
+  //                MP4, each platform's own publish endpoint + caption).
+  //   - 'image' → image/carousel path (unchanged from V1).
+  //
+  // 2026-05-22 — the previous comment claimed TikTok video publishing
+  // wasn't implemented; that's stale. `publishVideoToTikTok` ships the
+  // MP4 to TT's /v2/post/publish/video/init endpoint exactly the way
+  // Meta receives it, so a single Reel render fans out to IG + FB + TT
+  // in parallel.
   //
   // Each platform call is independent; we await all in parallel. The TT
   // call uses its own access token; Meta uses the page token. Calls that

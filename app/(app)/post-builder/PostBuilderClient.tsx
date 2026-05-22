@@ -4085,8 +4085,9 @@ function MakeReelPromptModal(props: MakeReelPromptModalProps) {
               Make a Reel from this post?
             </h3>
             <p className="mt-0.5 text-xs text-neutral-600">
-              Reels get a fraction of the reach static posts do on IG and
-              FB. Same listing, ~7 seconds of motion, ready in a minute.
+              Static posts get a fraction of the reach Reels do on IG, FB,
+              and TikTok. Same listing, ~7 seconds of motion, ready in a
+              minute.
             </p>
           </div>
         </div>

@@ -884,7 +884,7 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
   const ttRemainder = propertyLines.length - ttLineCount;
 
   const igBody = [
-    `${eventTitle} — ${count} open houses this weekend across South Jersey.`,
+    `${eventTitle} — ${count} open houses this weekend.`,
     "",
     ...propertyLines,
     "",
@@ -892,7 +892,7 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
   ].join("\n");
 
   const fbBody = [
-    `${eventTitle}. ${count} open houses this weekend across South Jersey:`,
+    `${eventTitle}. ${count} open houses this weekend:`,
     "",
     ...propertyLines,
     "",
@@ -955,11 +955,18 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
 }
 
 /**
- * "Sat 11–1" / "Sat May 23 · 11 AM" style time label, derived from a
- * property's OH window. Returns empty string when start_at is missing or
- * unparseable so the caller can drop the segment cleanly. Local time —
- * NJ is the project's anchor timezone (matches what the hero card uses).
+ * "Sat · 11 AM–1 PM" style time label for the per-property caption
+ * bullets. Returns empty string when start_at is missing or unparseable
+ * so the caller can drop the segment cleanly.
+ *
+ * 2026-05-22 — dropped the month/day portion (was "Sat May 23 · 11 AM");
+ * the event_title already carries the date, so repeating it on every
+ * row was noisy. Also pinned to America/New_York so timestamps render in
+ * ET regardless of where the server runs (Vercel functions otherwise
+ * format in UTC, which made 11 AM ET look like 3 PM in the caption).
  */
+const CAPTION_TZ = "America/New_York";
+
 function formatCaptionTime(
   startIso: string | null,
   endIso: string | null,
@@ -969,29 +976,43 @@ function formatCaptionTime(
   if (Number.isNaN(start.getTime())) return "";
   const dayName = start.toLocaleDateString("en-US", {
     weekday: "short",
-  });
-  const monthDay = start.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
+    timeZone: CAPTION_TZ,
   });
   const startHour = formatCaptionHour(start);
   if (!endIso) {
-    return `${dayName} ${monthDay} · ${startHour}`;
+    return `${dayName} · ${startHour}`;
   }
   const end = new Date(endIso);
   if (Number.isNaN(end.getTime())) {
-    return `${dayName} ${monthDay} · ${startHour}`;
+    return `${dayName} · ${startHour}`;
   }
   const endHour = formatCaptionHour(end);
-  return `${dayName} ${monthDay} · ${startHour}–${endHour}`;
+  return `${dayName} · ${startHour}–${endHour}`;
 }
 
-/** "11 AM" / "1:30 PM" — minutes only when non-zero. */
+/**
+ * "11 AM" / "1:30 PM" — minutes only when non-zero, rendered in ET.
+ *
+ * why: minute detection uses ET-aware formatting via a probe with
+ * minute:"2-digit" first. Day-level timezones (NJ is straight UTC-4/-5)
+ * don't shift minutes so checking `getUTCMinutes()` would also work,
+ * but using the localized output keeps the logic resilient to future
+ * timezone edge cases.
+ */
 function formatCaptionHour(d: Date): string {
-  const opts: Intl.DateTimeFormatOptions =
-    d.getMinutes() === 0
-      ? { hour: "numeric", hour12: true }
-      : { hour: "numeric", minute: "2-digit", hour12: true };
+  // Probe the minute value through the same timezone the hour will use.
+  const probe = d.toLocaleString("en-US", {
+    timeZone: CAPTION_TZ,
+    hour12: false,
+    minute: "2-digit",
+  });
+  const minutes = parseInt(probe, 10);
+  const opts: Intl.DateTimeFormatOptions = {
+    timeZone: CAPTION_TZ,
+    hour: "numeric",
+    hour12: true,
+    ...(minutes === 0 ? {} : { minute: "2-digit" }),
+  };
   return d.toLocaleTimeString("en-US", opts);
 }
 
