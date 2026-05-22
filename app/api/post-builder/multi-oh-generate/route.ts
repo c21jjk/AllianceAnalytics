@@ -184,12 +184,19 @@ function parseBody(raw: unknown):
     };
   }
 
-  const per_property_variant = r.per_property_variant;
+  // why: stale clients in the wild may still send "v1" (Hero Editorial,
+  // retired from the registry on 2026-05-17). Silently upgrade to v2 —
+  // structurally the closest analog and the wizard's new default — so a
+  // user with a cached bundle doesn't see a hard error. Any value outside
+  // the legacy + active set still fails loud.
+  const rawVariant = r.per_property_variant;
+  const per_property_variant: ValidPerPropertyVariant =
+    rawVariant === "v1"
+      ? "v2"
+      : (rawVariant as ValidPerPropertyVariant);
   if (
-    typeof per_property_variant !== "string" ||
-    !VALID_PER_PROPERTY_VARIANTS.includes(
-      per_property_variant as ValidPerPropertyVariant,
-    )
+    typeof rawVariant !== "string" ||
+    !VALID_PER_PROPERTY_VARIANTS.includes(per_property_variant)
   ) {
     return {
       ok: false,
