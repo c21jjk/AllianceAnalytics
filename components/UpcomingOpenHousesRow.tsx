@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { UpcomingOpenHouse } from "@/lib/data/open-houses";
 import { formatCurrency } from "@/lib/format";
+import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 
 interface UpcomingOpenHousesRowProps {
   openHouses: UpcomingOpenHouse[];
@@ -259,24 +260,35 @@ function OpenHouseRow({
             </>
           ) : null}
         </div>
-        {openHouse.agent_name ? (
-          <div
-            style={{
-              marginTop: 2,
-              fontSize: 11,
-              color: "#737373",
-              fontWeight: 400,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            <span style={{ color: "#a3a3a3" }}>Hosted by </span>
-            <span style={{ color: "#171717", fontWeight: 500 }}>
-              {openHouse.agent_name}
-            </span>
-          </div>
-        ) : null}
+        {(() => {
+          // Comments override listing agent: an OH's "Hosted by …" line in
+          // the Paragon notes (e.g. "Hosted by PJ Dougherty") wins over the
+          // listing agent attribution. Falls back to the listing agent when
+          // the notes don't mention a host explicitly.
+          const displayHost = resolveHostingAgent(
+            openHouse.comments,
+            openHouse.agent_name,
+          );
+          if (!displayHost) return null;
+          return (
+            <div
+              style={{
+                marginTop: 2,
+                fontSize: 11,
+                color: "#737373",
+                fontWeight: 400,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              <span style={{ color: "#a3a3a3" }}>Hosted by </span>
+              <span style={{ color: "#171717", fontWeight: 500 }}>
+                {displayHost}
+              </span>
+            </div>
+          );
+        })()}
       </Link>
 
       {/* Right column — primary "Build OH promo" CTA, with the chevron

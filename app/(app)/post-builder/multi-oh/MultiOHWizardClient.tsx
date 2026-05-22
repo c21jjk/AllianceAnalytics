@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
@@ -38,40 +39,9 @@ interface EventDetailsForm {
   agent_phone: string;
 }
 
-/**
- * Regex that detects a "Hosted by {Name}" / "Open by {Name}" / "Host: {Name}"
- * pattern in an open-house listing's Notes / Remarks field. When the listing
- * agent isn't the actual host of the open house, the host is typically
- * called out in the OH notes — Larissa wants the wizard to auto-detect this
- * so she doesn't have to manually retype the host name for every property.
- *
- * The capture group is intentionally tight (1-3 capitalized word tokens) so
- * that random sentences ("Hosted by appointment only" / "Host the open house
- * yourself") don't accidentally match. False negatives are fine — the user
- * can manually override in the wizard. False positives would corrupt the
- * rendered agent attribution on the hero card.
- */
-const HOSTING_AGENT_NOTES_REGEX =
-  /(?:hosted\s+by|host(?:ed)?\s*:|open(?:ed)?\s+by)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z'-]+){0,2})/i;
-
-/**
- * Pure helper — given a listing's notes/remarks text and the listing's own
- * agent_name as fallback, returns the best-guess hosting agent name. Used
- * in `toggleSelect` to seed the per-property hosting agent input.
- *
- * Returns the listing's own agent_name when the notes don't mention a host
- * explicitly. Returns an empty string when neither is available.
- */
-function resolveHostingAgent(
-  notes: string | null | undefined,
-  listingAgentName: string | null | undefined,
-): string {
-  if (notes) {
-    const m = notes.match(HOSTING_AGENT_NOTES_REGEX);
-    if (m && m[1]) return m[1].trim();
-  }
-  return (listingAgentName ?? "").trim();
-}
+// Hosting-agent resolution lives in lib/open-houses/host-resolution.ts so
+// the dashboard row (UpcomingOpenHousesRow) and this wizard share one
+// source of truth. Imported above.
 
 /** Wizard step index. 1-based so the stepper UI and the state agree. */
 type StepIndex = 1 | 2 | 3 | 4;
