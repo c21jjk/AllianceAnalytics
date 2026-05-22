@@ -97,7 +97,12 @@ const VALID_FORMATS = [
 // today. v6/v7/v8 weren't designed for the dense data plus shared event
 // branding the carousel needs — they read as standalone hero posts. If we
 // add them later, just widen this tuple.
-const VALID_PER_PROPERTY_VARIANTS = ["v1", "v2", "v3"] as const;
+// 2026-05-21 — v1 Hero Editorial was retired from lib/post-builder/templates/
+// registry.ts on 2026-05-17 (active set: v2, v3, v6, v8, v9, v10). The
+// multi-OH wizard offers the four that fit an Open House per-property card.
+// v9/v10 are post-type-specific (just_sold / coming_soon) and don't belong
+// here.
+const VALID_PER_PROPERTY_VARIANTS = ["v2", "v3", "v6", "v8"] as const;
 type ValidPerPropertyVariant = (typeof VALID_PER_PROPERTY_VARIANTS)[number];
 
 /**

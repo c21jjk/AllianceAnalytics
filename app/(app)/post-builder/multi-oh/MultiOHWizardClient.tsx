@@ -18,10 +18,13 @@ import {
 // Local types
 // ---------------------------------------------------------------------------
 
-/** v1/v2/v3 — the per-property variants the multi-OH render endpoint
- *  accepts today. v4-v8 are not yet ported into this flow (mirrors the
- *  same constraint encoded in MultiOHEventInput.per_property_variant). */
-type PerPropertyVariant = "v1" | "v2" | "v3";
+/** Per-property variants the multi-OH render endpoint accepts. Must match
+ *  active templates in lib/post-builder/templates/registry.ts AND the
+ *  MultiOHEventInput.per_property_variant constraint in types.ts.
+ *  Updated 2026-05-21: v1 Hero Editorial was retired from the registry
+ *  on 2026-05-17, so the wizard no longer offers it. v6 (Magazine Cover)
+ *  and v8 (Standard NEW LISTING) added in its place. */
+type PerPropertyVariant = "v2" | "v3" | "v6" | "v8";
 
 interface Props {
   /** All upcoming-OH eligible listings, pre-fetched server-side. */
@@ -65,21 +68,33 @@ const FORMAT_CARDS: readonly FormatCardMeta[] = [
   { id: "story_9x16", name: "Story 9:16", hint: "Stories · TikTok", ratio: [9, 16] },
 ];
 
+// Descriptions mirror the canonical copy in lib/post-builder/templates/
+// registry.ts so the wizard and the standard Post Builder picker stay in
+// sync. If the registry changes, this list should too.
 const VARIANT_CARDS: readonly VariantCardMeta[] = [
-  {
-    id: "v1",
-    name: "v1 · Hero Editorial",
-    description: "Full-bleed photo, gold type along the bottom.",
-  },
   {
     id: "v2",
     name: "v2 · Bold Stats",
-    description: "Photo top, dark data pane below.",
+    description:
+      "Photo plus oversized price + stat row on a dark data surface. Magazine feel.",
   },
   {
     id: "v3",
-    name: "v3 · Side-by-Side",
-    description: "Side-by-side photo + structured stats.",
+    name: "v3 · Excellence Collection",
+    description:
+      "Premium tier — gold-trimmed editorial for properties $949k+. Dominant photo + Playfair price.",
+  },
+  {
+    id: "v6",
+    name: "v6 · Magazine Cover",
+    description:
+      "Editorial magazine-cover layout — hero photo above, large serif headline + price below on a cream surface.",
+  },
+  {
+    id: "v8",
+    name: "v8 · Standard",
+    description:
+      "Cream surface with dark bottom band carrying address, city, and bed/bath/feature row. Everyday tier.",
   },
 ];
 
@@ -161,7 +176,7 @@ export default function MultiOHWizardClient({
 
   // ---- step 2 — format + variant ---------------------------------------
   const [format, setFormat] = useState<PostFormat>("portrait_4x5");
-  const [perPropertyVariant, setPerPropertyVariant] = useState<PerPropertyVariant>("v1");
+  const [perPropertyVariant, setPerPropertyVariant] = useState<PerPropertyVariant>("v2");
 
   // ---- step 3 — carousel preview focus ---------------------------------
   // why: Step 3 shows a featured slide preview at the top + a ribbon of
@@ -1491,12 +1506,14 @@ function PropertySlideBody({
   size,
 }: PropertySlideBodyProps) {
   switch (variant) {
-    case "v1":
-      return <PropertyV1Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
     case "v2":
       return <PropertyV2Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
     case "v3":
       return <PropertyV3Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
+    case "v6":
+      return <PropertyV6Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
+    case "v8":
+      return <PropertyV8Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
   }
 }
 
@@ -1504,74 +1521,6 @@ interface VariantMockProps {
   listing: PostBuilderListing;
   hostingAgent: string;
   size: "featured" | "thumb";
-}
-
-/** v1 — Hero Editorial. Full-bleed photo, gold eyebrow at top, address +
- *  price along the bottom with a dark gradient for legibility. */
-function PropertyV1Mock({ listing, hostingAgent, size }: VariantMockProps) {
-  const isThumb = size === "thumb";
-  const photo = listing.hero_image_url ?? "";
-  return (
-    <div className="w-full h-full relative bg-neutral-300">
-      {photo ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={photo}
-          alt=""
-          className="absolute inset-0 w-full h-full object-cover"
-          loading="lazy"
-        />
-      ) : null}
-      {/* darkening gradient for text legibility */}
-      <div className="absolute inset-x-0 bottom-0 h-[55%] bg-gradient-to-t from-black/85 via-black/55 to-transparent" />
-      {/* eyebrow */}
-      <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
-        <span
-          aria-hidden="true"
-          className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
-          style={{ width: isThumb ? 12 : 32, height: 2 }}
-        />
-        <span
-          className={`font-bold uppercase tracking-[0.2em] text-[#C9A961] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
-        >
-          Open House
-        </span>
-      </div>
-      {/* bottom text block */}
-      <div
-        className={`absolute inset-x-0 bottom-0 text-white ${isThumb ? "p-1.5" : "p-3"}`}
-      >
-        <div
-          className={`font-serif font-bold leading-tight ${isThumb ? "text-[7px]" : "text-base"}`}
-          style={{ fontFamily: "Georgia, serif" }}
-        >
-          {listing.address ?? listing.mls_number}
-        </div>
-        <div
-          className={`opacity-90 ${isThumb ? "text-[5px] mt-0.5" : "text-xs mt-1"}`}
-        >
-          {[listing.city, listing.state].filter(Boolean).join(", ")}
-        </div>
-        {typeof listing.list_price === "number" ? (
-          <div
-            className={`font-bold text-[#C9A961] ${isThumb ? "text-[7px] mt-0.5" : "text-lg mt-1.5"}`}
-          >
-            ${listing.list_price.toLocaleString()}
-          </div>
-        ) : null}
-        {!isThumb && listing.oh_start_at ? (
-          <div className="mt-1.5 text-xs text-[#C9A961]/90 font-medium">
-            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
-          </div>
-        ) : null}
-        {!isThumb && hostingAgent ? (
-          <div className="mt-1 text-[10px] text-white/80">
-            Hosted by {hostingAgent}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
 }
 
 /** v2 — Bold Stats. Photo top ~58%, dark data pane bottom ~42% with
@@ -1667,15 +1616,22 @@ function PropertyV2Mock({ listing, hostingAgent, size }: VariantMockProps) {
   );
 }
 
-/** v3 — Side-by-Side. Photo left ~55%, cream pane right ~45% with stats
- *  stacked vertically. */
+/** v3 — Excellence Collection. Premium tier ($949k+). Gold-trimmed
+ *  editorial frame: dominant photo top ~62%, cream pane below with
+ *  "EXCELLENCE COLLECTION" eyebrow + Playfair price. Subtle gold rule
+ *  along the edges signals luxury. */
 function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
   const isThumb = size === "thumb";
   const photo = listing.hero_image_url ?? "";
   return (
-    <div className="w-full h-full flex">
-      {/* photo half */}
-      <div className="relative bg-neutral-300" style={{ flexBasis: "55%" }}>
+    <div className="w-full h-full flex flex-col relative bg-[#FCFCFB]">
+      {/* Gold trim border — subtle 1px gold rule on all four edges. */}
+      <span
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none ring-1 ring-[#C9A961]/60 z-10"
+      />
+      {/* photo dominant */}
+      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "62%" }}>
         {photo ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -1686,23 +1642,16 @@ function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
           />
         ) : null}
       </div>
-      {/* data pane */}
+      {/* cream data pane below */}
       <div
-        className={`flex flex-col bg-[#FCFCFB] text-[#18181B] ${isThumb ? "p-1.5" : "p-3"}`}
-        style={{ flexBasis: "45%" }}
+        className={`flex flex-col text-[#18181B] ${isThumb ? "p-1.5" : "p-3"}`}
+        style={{ flexBasis: "38%" }}
       >
-        {/* eyebrow */}
-        <div className={`flex items-center ${isThumb ? "gap-1" : "gap-1.5"}`}>
-          <span
-            aria-hidden="true"
-            className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
-            style={{ width: isThumb ? 10 : 24, height: 2 }}
-          />
-          <span
-            className={`font-bold uppercase tracking-[0.2em] text-[#A68A4A] ${isThumb ? "text-[4px]" : "text-[9px]"}`}
-          >
-            Open House
-          </span>
+        {/* eyebrow — gold "Excellence Collection" */}
+        <div
+          className={`font-bold uppercase tracking-[0.22em] text-[#A68A4A] ${isThumb ? "text-[4px]" : "text-[9px]"}`}
+        >
+          Excellence Collection
         </div>
         <div
           className={`mt-1 font-serif font-bold leading-tight ${isThumb ? "text-[6px]" : "text-sm"}`}
@@ -1717,7 +1666,10 @@ function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
         </div>
         <div className="flex-1" />
         {!isThumb && typeof listing.list_price === "number" ? (
-          <div className="text-[#A68A4A] font-bold text-base">
+          <div
+            className="font-serif font-bold text-[#A68A4A] text-xl leading-none"
+            style={{ fontFamily: "Georgia, serif" }}
+          >
             ${listing.list_price.toLocaleString()}
           </div>
         ) : null}
@@ -1732,9 +1684,193 @@ function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
           </div>
         ) : null}
         {isThumb ? (
-          <div className="flex gap-0.5">
+          <div className="flex gap-0.5 mt-auto">
+            <span className="block flex-1 h-0.5 bg-[#C9A961]" />
             <span className="block flex-1 h-0.5 bg-[#A68A4A]" />
-            <span className="block flex-1 h-0.5 bg-[#525250]/40" />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** v6 — Magazine Cover. Hero photo top ~55%, cream surface below with
+ *  large serif headline + price. Editorial / magazine-cover feel. */
+function PropertyV6Mock({ listing, hostingAgent, size }: VariantMockProps) {
+  const isThumb = size === "thumb";
+  const photo = listing.hero_image_url ?? "";
+  return (
+    <div className="w-full h-full flex flex-col bg-[#FCFCFB]">
+      {/* photo top — magazine-cover style */}
+      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "55%" }}>
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : null}
+        {/* Top-left masthead-style eyebrow */}
+        <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
+          <span
+            aria-hidden="true"
+            className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+            style={{ width: isThumb ? 12 : 32, height: 2 }}
+          />
+          <span
+            className={`font-bold uppercase tracking-[0.22em] text-white ${isThumb ? "text-[5px]" : "text-[10px]"}`}
+            style={{ textShadow: "0 1px 3px rgba(0,0,0,0.5)" }}
+          >
+            Open House
+          </span>
+        </div>
+      </div>
+      {/* cream pane with editorial headline + price */}
+      <div
+        className={`flex flex-col text-[#18181B] ${isThumb ? "p-1.5" : "p-3"}`}
+        style={{ flexBasis: "45%" }}
+      >
+        <div
+          className={`font-serif font-bold leading-[1.05] ${isThumb ? "text-[8px]" : "text-lg"}`}
+          style={{ fontFamily: "Georgia, serif" }}
+        >
+          {listing.address ?? listing.mls_number}
+        </div>
+        <div
+          className={`opacity-70 ${isThumb ? "text-[4px] mt-0.5" : "text-[11px] mt-1"}`}
+        >
+          {[listing.city, listing.state].filter(Boolean).join(", ")}
+        </div>
+        <div className="flex-1" />
+        {!isThumb && typeof listing.list_price === "number" ? (
+          <div
+            className="font-serif font-bold text-[#A68A4A] text-2xl leading-none"
+            style={{ fontFamily: "Georgia, serif" }}
+          >
+            ${listing.list_price.toLocaleString()}
+          </div>
+        ) : null}
+        {!isThumb && listing.oh_start_at ? (
+          <div className="mt-1.5 text-[10px] text-[#525250] font-medium">
+            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
+          </div>
+        ) : null}
+        {!isThumb && hostingAgent ? (
+          <div className="mt-0.5 text-[10px] text-[#525250]">
+            Hosted by {hostingAgent}
+          </div>
+        ) : null}
+        {isThumb ? (
+          <div className="mt-auto">
+            <span
+              aria-hidden="true"
+              className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+              style={{ width: 20, height: 1.5 }}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** v8 — Standard NEW LISTING. Cream surface top ~65% with C21 Alliance
+ *  badge top-right, dark bottom band ~35% carrying address + city +
+ *  bed/bath/feature row. Everyday tier. */
+function PropertyV8Mock({ listing, hostingAgent, size }: VariantMockProps) {
+  const isThumb = size === "thumb";
+  const photo = listing.hero_image_url ?? "";
+  return (
+    <div className="w-full h-full flex flex-col bg-[#FCFCFB]">
+      {/* photo cream-framed */}
+      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "65%" }}>
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : null}
+        {/* C21 Alliance badge top-right */}
+        <div className={`absolute top-1 right-1 flex items-center ${isThumb ? "gap-[2px]" : "gap-1"} bg-white/95 rounded ${isThumb ? "px-1 py-0.5" : "px-1.5 py-1"} shadow-sm`}>
+          <span
+            className={`bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-4 h-4 text-[8px]"}`}
+          >
+            21
+          </span>
+          <span
+            className={`font-bold uppercase tracking-wider text-[#18181B] ${isThumb ? "text-[3px]" : "text-[7px]"}`}
+          >
+            Alliance
+          </span>
+        </div>
+      </div>
+      {/* dark bottom band */}
+      <div
+        className={`text-white ${isThumb ? "p-1.5" : "p-3"}`}
+        style={{ flexBasis: "35%", background: "#18181B" }}
+      >
+        <div
+          className={`font-bold leading-tight ${isThumb ? "text-[7px]" : "text-sm"}`}
+        >
+          {listing.address ?? listing.mls_number}
+        </div>
+        <div
+          className={`opacity-80 ${isThumb ? "text-[4px] mt-0.5" : "text-[10px] mt-0.5"}`}
+        >
+          {[listing.city, listing.state].filter(Boolean).join(", ")}
+        </div>
+        {/* bed/bath/feature row */}
+        {!isThumb ? (
+          <div className="mt-1.5 flex items-center gap-2 text-[10px] text-white/85">
+            {typeof listing.bedrooms === "number" ? (
+              <span>
+                <span className="font-bold text-white">{listing.bedrooms}</span> bd
+              </span>
+            ) : null}
+            <span
+              aria-hidden="true"
+              className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A961]"
+            />
+            {typeof listing.bathrooms_full === "number" ? (
+              <span>
+                <span className="font-bold text-white">
+                  {listing.bathrooms_full + (listing.bathrooms_half ?? 0) * 0.5}
+                </span>{" "}
+                ba
+              </span>
+            ) : null}
+            {typeof listing.list_price === "number" ? (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A961]"
+                />
+                <span className="text-[#C9A961] font-bold">
+                  ${listing.list_price.toLocaleString()}
+                </span>
+              </>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-1 flex gap-0.5 opacity-70">
+            <span className="block w-2 h-0.5 bg-white/60" />
+            <span className="block w-2 h-0.5 bg-white/60" />
+            <span className="block w-3 h-0.5 bg-[#C9A961]" />
+          </div>
+        )}
+        {!isThumb && listing.oh_start_at ? (
+          <div className="mt-1 text-[10px] text-[#C9A961] font-medium">
+            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
+          </div>
+        ) : null}
+        {!isThumb && hostingAgent ? (
+          <div className="mt-0.5 text-[10px] text-white/70">
+            Hosted by {hostingAgent}
           </div>
         ) : null}
       </div>
@@ -1902,12 +2038,14 @@ function SlideThumb({
 /** Short display name for the variant in summary copy. */
 function prettyVariant(v: PerPropertyVariant): string {
   switch (v) {
-    case "v1":
-      return "v1 Hero Editorial";
     case "v2":
       return "v2 Bold Stats";
     case "v3":
-      return "v3 Side-by-Side";
+      return "v3 Excellence Collection";
+    case "v6":
+      return "v6 Magazine Cover";
+    case "v8":
+      return "v8 Standard";
   }
 }
 

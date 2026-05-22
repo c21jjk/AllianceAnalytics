@@ -351,9 +351,13 @@ export interface MultiOHEventInput {
    *  render at this format — IG/FB enforce uniform aspect ratios across
    *  carousel slides. */
   format: PostFormat;
-  /** Variant for the PER-PROPERTY cards (the supporting slides). v1/v2/v3
-   *  are supported; v4-v8 not yet ported into the multi-OH flow. */
-  per_property_variant: "v1" | "v2" | "v3";
+  /** Variant for the PER-PROPERTY cards (the supporting slides). The set
+   *  matches the active templates in lib/post-builder/templates/registry.ts.
+   *  Updated 2026-05-21 — v1 Hero Editorial was retired from the registry
+   *  on 2026-05-17; the multi-OH wizard now offers v2, v3, v6, v8. The
+   *  "v1" string survives in the wider PostVariant union (lib/post-builder
+   *  /types.ts) so legacy generated_posts rows can still deserialize. */
+  per_property_variant: "v2" | "v3" | "v6" | "v8";
   /** Properties to feature, in carousel order (slide 1 = properties[0],
    *  slide 2 = properties[1], etc.). Minimum 2 (1 makes a single-listing
    *  post, use the standard Post Builder for that). Maximum 9 — leaves
@@ -411,8 +415,10 @@ export type MultiOHGenerateResult = MultiOHGenerateOk | MultiOHGenerateErr;
 export interface SlideMetadata {
   /** MLS number of the listing this slide was generated from. */
   listing_mls: string;
-  /** The variant that originally produced this slide (v1/v2/v3). */
-  variant: "v1" | "v2" | "v3";
+  /** The variant that originally produced this slide. Includes "v1"
+   *  defensively for legacy rows persisted before 2026-05-21 when v1 was
+   *  the default; current writes only use the active set (v2/v3/v6/v8). */
+  variant: "v1" | "v2" | "v3" | "v6" | "v8";
   /** Format — same as the hero's format; carousel slides share aspect ratio. */
   format: PostFormat;
   /** Optional per-property hosting agent override from the wizard. */
