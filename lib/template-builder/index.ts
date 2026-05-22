@@ -36,6 +36,14 @@ export {
   type BindingContext,
 } from "./bindings";
 
+export {
+  renderDbTemplate,
+  type RenderOutcome,
+  type RenderResult,
+  type RenderError,
+  type RenderInput as RenderDbTemplateInput,
+} from "./renderer";
+
 // Storage CRUD is not re-exported through the public surface — admin
 // write actions import from "./storage" directly. The picker side only
 // needs the read functions exposed via registry.ts.

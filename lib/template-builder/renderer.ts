@@ -1,34 +1,49 @@
 /**
- * Template Builder — render pipeline.
+ * Template Builder — render pipeline (Phase 2C).
  *
- * Phase 1: STUB. The DB schema + storage layer + admin shell + picker
- * integration are all in place, but the actual render-a-DB-template
- * pipeline lands in Phase 2 (alongside the WYSIWYG editor). Until then,
- * any DB-defined template selected in the picker raises a "not yet
- * renderable" error at generate time.
+ * Bridges DB-defined templates (rows in `template_definitions`) into the
+ * same render-to-PNG-on-Supabase-Storage contract the legacy hand-coded
+ * primitives use. From the API route's POV, both render paths look
+ * identical; the differentiator is just which template_id was picked.
  *
- * The legacy hand-coded primitives in lib/post-builder/templates/
- * primitives/ continue to render through their existing pipeline; this
- * stub only affects templates created via the admin builder.
+ * Flow:
+ *   1. Resolve the template + verify the requested format is defined.
+ *   2. Sign a short-lived HMAC token carrying { template_id, listing_id,
+ *      format, hosting_agent_name? }.
+ *   3. Compute the absolute URL for /render/template/<token>.
+ *   4. Hand the URL to `screenshotHtml()` in URL mode — headless Chromium
+ *      navigates, the page mounts a Fabric canvas client-side, and the
+ *      screenshot snaps once the canvas signals ready.
+ *   5. Upload the PNG to the `post-builder-renders` bucket (same bucket
+ *      legacy renders use) and return image_url + image_path.
  *
- * Phase 2 wiring (when this is implemented):
- *   1. Fetch the TemplateDefinition by id.
- *   2. Pick the schema entry for the requested PostFormat.
- *   3. Resolve placeholders against the listing + binding context.
- *   4. Hand off to the canvas-editor's Fabric.js renderer at
- *      lib/post-builder/canvas-editor/renderer.ts (existing).
- *   5. Capture as PNG, upload to Supabase Storage, return image_url +
- *      image_path the same shape lib/post-builder/render.ts uses.
+ * The return shape matches `RenderTemplateResult` from lib/post-builder/
+ * render.ts intentionally — the API route can branch on which renderer to
+ * call without translating shapes.
  */
 
 import "server-only";
-import type { PostFormat, PostBuilderListing } from "@/lib/post-builder/types";
-import type { BindingContext } from "./bindings";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { screenshotHtml } from "@/lib/post-builder/chromium";
+import { getTemplateById } from "./registry";
+import { signRenderToken } from "./render-token";
+import type {
+  PostFormat,
+  PostBuilderListing,
+} from "@/lib/post-builder/types";
+
+const STORAGE_BUCKET = "post-builder-renders";
+
+const FORMAT_DIMS: Record<PostFormat, { width: number; height: number }> = {
+  portrait_4x5: { width: 1080, height: 1350 },
+  story_9x16: { width: 1080, height: 1920 },
+};
 
 export interface RenderResult {
   ok: true;
   image_url: string;
   image_path: string;
+  template_id: string;
   width: number;
   height: number;
   rendered_at: string;
@@ -43,24 +58,131 @@ export type RenderOutcome = RenderResult | RenderError;
 
 export interface RenderInput {
   template_id: string;
+  /** A listing already loaded by the caller. We need .id for the token
+   *  payload + .mls_number for the storage path key. */
   listing: PostBuilderListing;
   format: PostFormat;
-  context?: BindingContext;
+  /** Hosting agent override for Open House posts. Forwarded to the
+   *  render-page route via the token payload. */
+  hosting_agent_name?: string | null;
+  /** Pre-formatted OH window label. Forwarded to the render-page route. */
+  oh_window?: string | null;
 }
 
 /**
- * Phase 1 stub. Phase 2 wires this up to the canvas-editor renderer.
- * Returning an error here means the admin built a template but the
- * generate path can't materialize it yet — keeps the failure mode loud
- * instead of silently using fallback data.
+ * Resolve the absolute base URL the render-page route lives at.
+ *
+ * Priority:
+ *   1. RENDER_BASE_URL — explicit override (set in Vercel if the default
+ *      doesn't work, e.g., custom domain edge cases).
+ *   2. VERCEL_URL — auto-set by Vercel on every deploy. Always the
+ *      deployment's canonical *.vercel.app host (NOT the assigned
+ *      domain). Headless Chromium hits this fine.
+ *   3. http://localhost:3000 — dev fallback.
+ */
+function resolveBaseUrl(): string {
+  if (process.env.RENDER_BASE_URL) {
+    return process.env.RENDER_BASE_URL.replace(/\/$/, "");
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return "http://localhost:3000";
+}
+
+/**
+ * Render a DB-defined template. Called by /api/post-builder/render when
+ * the legacy registry lookup returns null (= template_id is a UUID, not
+ * a legacy variant identifier).
  */
 export async function renderDbTemplate(
-  _input: RenderInput,
+  input: RenderInput,
 ): Promise<RenderOutcome> {
+  const template = await getTemplateById(input.template_id);
+  if (!template) {
+    return { ok: false, error: `Unknown template: ${input.template_id}` };
+  }
+
+  const dims = FORMAT_DIMS[input.format];
+  if (!dims) {
+    return { ok: false, error: `Unsupported format: ${input.format}` };
+  }
+
+  const schema = template.schema[input.format];
+  if (!schema) {
+    return {
+      ok: false,
+      error: `Template "${template.name}" has no schema defined for ${input.format}`,
+    };
+  }
+
+  if (!input.listing.id) {
+    return { ok: false, error: "listing missing id (uuid required for render)" };
+  }
+
+  // Sign the token. Short TTL — render is typically <30s; 5 min is
+  // comfortable headroom for cold Chromium starts.
+  let token: string;
+  try {
+    token = signRenderToken({
+      template_id: input.template_id,
+      listing_id: input.listing.id,
+      format: input.format,
+      hosting_agent_name: input.hosting_agent_name ?? null,
+      oh_window: input.oh_window ?? null,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Failed to sign render token: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  const url = `${resolveBaseUrl()}/render/template/${encodeURIComponent(token)}`;
+
+  // Screenshot the rendered canvas. URL mode polls for
+  // data-render-status="ready" on the canvas element before snapping.
+  let pngBytes: Buffer;
+  try {
+    pngBytes = await screenshotHtml({
+      url,
+      width: dims.width,
+      height: dims.height,
+      log_label: `db-template:${input.template_id.slice(0, 8)}`,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Render failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  // Upload to Storage — same bucket + key shape as the legacy renderer
+  // so downstream code (post creation, owner-story lookups) doesn't have
+  // to branch.
+  const supabase = createAdminClient();
+  const renderedAt = new Date().toISOString();
+  const path = `${input.template_id}/${input.listing.mls_number}/${Date.now()}.png`;
+  const { error: uploadError } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(path, pngBytes, {
+      contentType: "image/png",
+      upsert: false,
+      cacheControl: "31536000",
+    });
+  if (uploadError) {
+    return { ok: false, error: `Upload failed: ${uploadError.message}` };
+  }
+
+  const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+
   return {
-    ok: false,
-    error:
-      "DB-defined template rendering is not yet implemented (Phase 1 stub). " +
-      "The visual editor + renderer ship in Phase 2.",
+    ok: true,
+    image_url: pub.publicUrl,
+    image_path: path,
+    template_id: input.template_id,
+    width: dims.width,
+    height: dims.height,
+    rendered_at: renderedAt,
   };
 }

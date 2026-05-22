@@ -55,6 +55,7 @@ import type {
   MLSListingPayload,
 } from "@/lib/post-builder/canvas-editor/types";
 import type { CreatedPostResumeRow } from "@/lib/data/created-posts-db";
+import type { TemplateMeta } from "@/lib/template-builder";
 
 interface VariantOption {
   template_id: string;
@@ -74,6 +75,18 @@ interface FormatMeta {
 interface Props {
   listingsByPostType: Record<PostType, PostBuilderListing[]>;
   variantsByPostTypeAndFormat: Record<PostType, Record<PostFormat, VariantOption[]>>;
+  /**
+   * Phase 2C (2026-05-22) — admin-authored DB templates surfaced alongside
+   * the legacy variant cards. Each entry is the TemplateMeta slim shape
+   * (schema body excluded); clicking a card POSTs to /api/post-builder/
+   * render with the UUID as template_id + the format, which the route
+   * branches to renderDbTemplate(). Empty array per slot when no DB
+   * templates exist for the (post_type, format) pair — section hides.
+   */
+  dbTemplatesByPostTypeAndFormat: Record<
+    PostType,
+    Record<PostFormat, TemplateMeta[]>
+  >;
   formatMeta: Record<PostFormat, FormatMeta>;
   isAdmin: boolean;
   /**
@@ -215,6 +228,7 @@ function canonicalMlsHashtagForListing(
 export default function PostBuilderClient({
   listingsByPostType,
   variantsByPostTypeAndFormat,
+  dbTemplatesByPostTypeAndFormat,
   formatMeta,
   isAdmin,
   initialResume,
@@ -397,6 +411,14 @@ export default function PostBuilderClient({
   const [magicDesignPhotosLoading, setMagicDesignPhotosLoading] = useState(false);
   // Render + caption state
   const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
+  // Phase 2C — tracks which admin (DB) template is currently active so the
+  // card highlights. Independent from variantId/customTemplate selection
+  // because the legacy variant grid still owns the main pick. When a DB
+  // template renders, this gets set; switching back to a legacy variant
+  // clears it.
+  const [activeDbTemplateId, setActiveDbTemplateId] = useState<string | null>(
+    null,
+  );
   const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
   // Phase D — per-platform caption editor state. Each value is the user's
   // edited "caption\n\nhashtags" string for that platform. Always carries
@@ -598,6 +620,10 @@ export default function PostBuilderClient({
 
   const listings = listingsByPostType[postType] ?? [];
   const variants = variantsByPostTypeAndFormat[postType]?.[format] ?? [];
+  // Phase 2C — admin-authored templates for the current (postType, format).
+  // Empty array hides the picker section entirely.
+  const dbTemplates =
+    dbTemplatesByPostTypeAndFormat[postType]?.[format] ?? [];
 
   /**
    * Merge factory variants with custom templates for the variant grid.
@@ -2052,6 +2078,71 @@ export default function PostBuilderClient({
     pickPhoto((selectedPhotoIndex + 1) % availablePhotos.length);
   }
 
+  /**
+   * Phase 2C — render an admin-authored DB template against the selected
+   * listing. Mirrors the shape of `generate()` for the render half, but
+   * sends `format` so the API can pick schema[format] and bypasses the
+   * legacy hero-photo requirement (DB templates may not have a bound
+   * hero_photo layer — the renderer handles that internally via the
+   * canvas's image-load path). Caption + post creation still flow through
+   * the same downstream paths once renderResult is set.
+   */
+  async function generateFromDbTemplate(template: TemplateMeta): Promise<void> {
+    if (!selectedListing) return;
+    setGenerating(true);
+    setError(null);
+    setRenderResult(null);
+    setCaptionResult(null);
+    setEditedCaption("");
+    setActiveDbTemplateId(template.id);
+
+    try {
+      const heroUrls = currentHeroUrls;
+      const [renderRes, captionRes] = await Promise.allSettled([
+        fetch("/api/post-builder/render", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            template_id: template.id,
+            listing: selectedListing,
+            // Hero URL still included as a courtesy — legacy validators in
+            // the route may still gate on it; harmless if the DB renderer
+            // ignores it (it resolves photos via the schema's bound
+            // layers, not from this field).
+            hero_image_urls: heroUrls.length > 0 ? heroUrls : undefined,
+            format,
+          }),
+        }),
+        fetch("/api/post-builder/caption", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            listing: selectedListing,
+            post_type: postType,
+          }),
+        }),
+      ]);
+
+      const renderError = await safelyHandleRender(
+        renderRes,
+        heroUrls,
+        setRenderResult,
+      );
+      if (renderError) setError(renderError);
+
+      const captionError = await safelyHandleCaption(
+        captionRes,
+        setCaptionResult,
+        setEditedCaptions,
+      );
+      if (captionError && !renderError) setError(captionError);
+    } catch (e) {
+      setError(`Generate (admin template) threw: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   async function generate() {
     if (!selectedListing) return;
     if (currentHeroUrls.length === 0) {
@@ -2542,6 +2633,63 @@ export default function PostBuilderClient({
                     UX value. Underlying `format` state still exists +
                     initializes to portrait_4x5 — keeps the render pipeline
                     + downstream code untouched. */}
+
+                {/* Phase 2C (2026-05-22) — admin-authored DB templates.
+                    Section hides when the current (postType, format) has
+                    no published templates. Clicking a card fires
+                    /api/post-builder/render with the UUID as template_id;
+                    the API branches into renderDbTemplate(). */}
+                {!isMultiOHPost && dbTemplates.length > 0 ? (
+                  <div>
+                    <div className="eyebrow mb-2">
+                      Admin templates{" "}
+                      <span className="text-neutral-400 font-normal normal-case tracking-normal">
+                        · authored in /admin/templates
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {dbTemplates.map((t) => {
+                        const active = activeDbTemplateId === t.id;
+                        const disabled = generating || !selectedListing;
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => {
+                              if (disabled) return;
+                              void generateFromDbTemplate(t);
+                            }}
+                            disabled={disabled}
+                            title={t.description ?? t.name}
+                            aria-label={`Render with admin template ${t.name}`}
+                            className={[
+                              "text-left rounded-xl border p-2.5 transition flex flex-col",
+                              disabled
+                                ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
+                                : active
+                                  ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm cursor-pointer"
+                                  : "border-neutral-200 bg-white cursor-pointer hover:border-gold-300 hover:ring-2 hover:ring-gold-300/40 hover:shadow-sm",
+                            ].join(" ")}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-sm font-semibold text-neutral-900 line-clamp-1">
+                                {t.name}
+                              </span>
+                              <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-gold-500/95 px-2 py-0.5 text-neutral-900">
+                                Admin
+                              </span>
+                            </div>
+                            {t.description ? (
+                              <div className="text-xs text-neutral-600 line-clamp-2">
+                                {t.description}
+                              </div>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
 
                 {/* Step 3 · Variant — hidden in multi-OH mode (per-property
                     card variant was chosen in the wizard). */}

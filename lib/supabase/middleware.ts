@@ -20,8 +20,13 @@ const PUBLIC_PATHS = new Set<string>([
 // owner-facing story view. Both are bearer-auth via long random tokens in
 // the URL — anyone with the link can read, by design.
 //
+// `/render/template/` is the Template Builder's server-render landing page;
+// headless Chromium hits this URL with an HMAC-signed token that the route
+// verifies. There's no session cookie inside Chromium so the route MUST be
+// auth-free (the token is the auth). See lib/template-builder/render-token.ts.
+//
 // (Note: `/outbox` is intentionally NOT here — it's an admin-only surface.)
-const PUBLIC_PATH_PREFIXES = ["/r/", "/home/"];
+const PUBLIC_PATH_PREFIXES = ["/r/", "/home/", "/render/"];
 
 function isPublicPath(pathname: string) {
   if (PUBLIC_PATHS.has(pathname)) return true;

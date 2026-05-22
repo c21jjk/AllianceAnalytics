@@ -146,9 +146,10 @@ export default async function PostBuilderPage({
     }
     dbTemplatesByPostTypeAndFormat[pt] = byFormat;
   }
-  // Phase 1: pass-through is logged but not rendered. Phase 2 will wire
-  // this into PostBuilderClient's variant card list.
-  void dbTemplatesByPostTypeAndFormat;
+  // Phase 2C (2026-05-22): the picker now surfaces DB templates alongside
+  // legacy variants. The prop carries a `TemplateMeta[]` per (post_type,
+  // format) bucket; PostBuilderClient renders them in the same grid as
+  // legacy variant cards. See PostBuilderClient's "DB templates" branch.
 
   const totalEligible = POST_TYPES.reduce(
     (sum, t) => sum + listingsByPostType[t].length,
@@ -182,9 +183,9 @@ export default async function PostBuilderPage({
   return (
     <div>
       <PageHeader
-        eyebrow={`${totalEligible} eligible listings · 36 templates · 3 formats`}
+        eyebrow={`${totalEligible} eligible listings · 60 legacy templates · 2 formats`}
         title="Post Builder"
-        description="Pick a post type, listing, format, and variant. Square for IG / FB feed, Portrait for IG feed preferred, Story 9:16 for IG/FB Stories — each format renders brand-perfect with the MLS hashtag baked in for auto-attribution."
+        description="Pick a post type, listing, and variant. Every post auto-renders in both formats — Portrait 4:5 for IG/FB feed, Story 9:16 for Stories/Reels/TikTok — with the MLS hashtag baked in for auto-attribution."
         phaseTag="Phase 3"
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -226,6 +227,7 @@ export default async function PostBuilderPage({
       <PostBuilderClient
         listingsByPostType={listingsByPostType}
         variantsByPostTypeAndFormat={variantsByPostTypeAndFormat}
+        dbTemplatesByPostTypeAndFormat={dbTemplatesByPostTypeAndFormat}
         formatMeta={formatMeta}
         isAdmin={isAdmin}
         initialResume={resume}
