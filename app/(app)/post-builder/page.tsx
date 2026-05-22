@@ -5,6 +5,8 @@ import {
   listSupportedFormats,
   listVariantsForPostType,
 } from "@/lib/post-builder/templates/registry";
+import { listTemplatesForPostType } from "@/lib/template-builder";
+import type { TemplateMeta } from "@/lib/template-builder";
 import { fetchCreatedPostResume } from "@/lib/data/created-posts-db";
 import { loadSystemConfig } from "@/lib/data/system-config";
 import Link from "next/link";
@@ -120,6 +122,33 @@ export default async function PostBuilderPage({
     portrait_4x5: formatDisplayMeta("portrait_4x5"),
     story_9x16: formatDisplayMeta("story_9x16"),
   };
+
+  // 2026-05-22 — Template Builder seam (Phase 1). Fetch DB-defined
+  // templates per (post_type × format) alongside the legacy variant
+  // fetch above. In Phase 1 this returns an empty array for every slot
+  // (no DB templates have been authored yet), so picker behavior is
+  // unchanged. Phase 2 lights up the picker UI to render these
+  // alongside legacy variants once the visual editor + renderer ship.
+  // See docs/adr/0001-template-builder.md.
+  const dbTemplatesByPostTypeAndFormat: Record<
+    PostType,
+    Record<PostFormat, TemplateMeta[]>
+  > = {} as Record<PostType, Record<PostFormat, TemplateMeta[]>>;
+  for (const pt of POST_TYPES) {
+    const byFormat: Record<PostFormat, TemplateMeta[]> = {} as Record<
+      PostFormat,
+      TemplateMeta[]
+    >;
+    for (const fmt of formats) {
+      // why: caught at the registry level — if the lookup fails (DB
+      // hiccup, no rows), we get an empty array, not an exception.
+      byFormat[fmt] = await listTemplatesForPostType(pt, fmt);
+    }
+    dbTemplatesByPostTypeAndFormat[pt] = byFormat;
+  }
+  // Phase 1: pass-through is logged but not rendered. Phase 2 will wire
+  // this into PostBuilderClient's variant card list.
+  void dbTemplatesByPostTypeAndFormat;
 
   const totalEligible = POST_TYPES.reduce(
     (sum, t) => sum + listingsByPostType[t].length,

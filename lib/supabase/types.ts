@@ -1033,6 +1033,50 @@ export type Database = {
           },
         ]
       }
+      // 2026-05-22 — Template Builder storage. See
+      // docs/adr/0001-template-builder.md.
+      template_definitions: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          post_types: string[]
+          schema: Json
+          display_order: number
+          publish_state: string
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          post_types: string[]
+          schema?: Json
+          display_order?: number
+          publish_state?: string
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
+          post_types?: string[]
+          schema?: Json
+          display_order?: number
+          publish_state?: string
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       // 2026-05-21 — many-to-many join between posts and properties.
       // Lets multi-property Open House carousel posts surface in every
       // featured listing's Owner Story. See migration

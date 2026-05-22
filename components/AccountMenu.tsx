@@ -132,11 +132,18 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
                 sub="Invite, roles, activity"
               />
               <MenuItem
+                href="/admin/templates"
+                onSelect={() => setOpen(false)}
+                icon={<LayersIcon />}
+                label="Template Builder"
+                sub="Design + manage the global template library"
+              />
+              <MenuItem
                 href="/templates"
                 onSelect={() => setOpen(false)}
                 icon={<LayersIcon />}
-                label="Templates"
-                sub="Custom Studio templates"
+                label="Custom Templates"
+                sub="User-saved Studio designs"
               />
               <MenuItem
                 href="/maintenance"

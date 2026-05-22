@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
+import { listTemplatesForPostType } from "@/lib/template-builder";
 import PageHeader from "@/components/PageHeader";
 import MultiOHWizardClient from "./MultiOHWizardClient";
 
@@ -33,6 +34,21 @@ export default async function MultiOHPage() {
   // oh_start_at / oh_end_at. Empty array is a valid state — the wizard
   // handles the zero/one cases inline.
   const listings = await fetchListingsForPostBuilder({ post_type: "open_house" });
+
+  // 2026-05-22 — Template Builder seam (Phase 1). DB-defined templates
+  // tagged for Open House surface here so the wizard's variant card list
+  // can render them alongside the legacy v2/v3/v6/v8 variants once
+  // Phase 2 wires the renderer. Empty list in Phase 1 (no DB templates
+  // exist yet); behavior is unchanged. See
+  // docs/adr/0001-template-builder.md.
+  const [squareTemplates, portraitTemplates, storyTemplates] = await Promise.all([
+    listTemplatesForPostType("open_house", "square_1x1"),
+    listTemplatesForPostType("open_house", "portrait_4x5"),
+    listTemplatesForPostType("open_house", "story_9x16"),
+  ]);
+  void squareTemplates;
+  void portraitTemplates;
+  void storyTemplates;
 
   return (
     <div>
