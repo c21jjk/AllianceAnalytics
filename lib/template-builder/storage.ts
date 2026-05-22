@@ -248,6 +248,104 @@ export async function cloneTemplate(
 }
 
 /**
+ * Phase 2H/2I (2026-05-22) — unified usage counts.
+ *
+ * Returns a map of `template_id → COUNT(distinct generated_posts.id)` for
+ * every template_id that has at least one referencing post. A given post
+ * counts ONCE per template even if it references the template across
+ * multiple slides — the metric is "how many posts use this template,"
+ * not "how many slide-references exist."
+ *
+ * Two sources are summed:
+ *   1. Direct picks — `generated_posts.template_id = <uuid>`. This is the
+ *      regular Post Builder flow when an admin template is selected.
+ *   2. Multi-OH per-slide — every entry in
+ *      `generated_posts.slide_metadata[]` whose `db_template_id` matches.
+ *      A 9-slide carousel all using the same DB template counts as ONE
+ *      use of that template (deduped by post id).
+ *
+ * Implementation: parallel fetches into JS for both surfaces, group +
+ * dedupe by post id, then aggregate counts. Both queries select only the
+ * columns we need so the payload stays compact. The post-id dedupe
+ * happens in a `Set<post_id>` per template — that's the bookkeeping
+ * required to give the metric a stable meaning across surfaces.
+ */
+export async function getTemplateUseCounts(): Promise<Record<string, number>> {
+  const supabase = createAdminClient();
+  const [directRes, multiRes] = await Promise.all([
+    supabase
+      .from("generated_posts")
+      .select("id, template_id")
+      .not("template_id", "is", null),
+    supabase
+      .from("generated_posts")
+      .select("id, slide_metadata")
+      .not("slide_metadata", "is", null),
+  ]);
+
+  if (directRes.error) {
+    console.error(
+      "[template-builder/storage] getTemplateUseCounts direct:",
+      directRes.error,
+    );
+  }
+  if (multiRes.error) {
+    console.error(
+      "[template-builder/storage] getTemplateUseCounts multi-oh:",
+      multiRes.error,
+    );
+  }
+
+  // template_id → Set<post_id>. The set guarantees a post is only counted
+  // once per template even when both surfaces (direct + slide) reference
+  // the same template from the same post.
+  const usage = new Map<string, Set<string>>();
+
+  const bump = (templateId: string, postId: string): void => {
+    if (!templateId || !postId) return;
+    let set = usage.get(templateId);
+    if (!set) {
+      set = new Set();
+      usage.set(templateId, set);
+    }
+    set.add(postId);
+  };
+
+  for (const row of directRes.data ?? []) {
+    const id = row.template_id;
+    const postId = row.id;
+    if (typeof id !== "string" || typeof postId !== "string") continue;
+    bump(id, postId);
+  }
+
+  // Multi-OH path: slide_metadata is a JSONB array. Each entry can carry
+  // `db_template_id` (set by Phase 2E's wizard pick). We tolerate every
+  // misshape — null entries, malformed objects, missing field — by
+  // skipping silently. The data layer is defensive against any historical
+  // row written before the field existed or by a buggy producer.
+  for (const row of multiRes.data ?? []) {
+    const postId = row.id;
+    if (typeof postId !== "string") continue;
+    const meta = row.slide_metadata;
+    if (!Array.isArray(meta)) continue;
+    for (const entry of meta) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const e = entry as Record<string, unknown>;
+      const tid = e.db_template_id;
+      if (typeof tid === "string" && tid.length > 0) {
+        bump(tid, postId);
+      }
+    }
+  }
+
+  const counts: Record<string, number> = {};
+  for (const [tid, ids] of usage) {
+    counts[tid] = ids.size;
+  }
+  return counts;
+}
+
+/**
  * Hard delete. Use sparingly — archiving (publish_state='archived') is
  * almost always the right choice because it preserves historical posts'
  * lineage. Deletion is here for cleaning up drafts that were created in

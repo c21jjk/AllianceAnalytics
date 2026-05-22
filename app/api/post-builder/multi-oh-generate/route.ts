@@ -49,6 +49,7 @@ import {
   type MultiOHRenderResult,
 } from "@/lib/post-builder/multi-oh-render";
 import { renderTemplate } from "@/lib/post-builder/render";
+import { renderDbTemplate } from "@/lib/template-builder";
 import { formatShortName } from "@/lib/post-builder/templates/registry";
 import {
   MULTI_OH_MAX_PROPERTIES,
@@ -264,6 +265,16 @@ function parseBody(raw: unknown):
     });
   }
 
+  // Phase 2E (2026-05-22) — optional db_template_id. When set, every
+  // per-property slide renders via the admin-authored DB template at
+  // this UUID instead of the legacy per_property_variant. Validated as
+  // a non-empty string; if absent or empty we treat it as not-set.
+  const rawDbTemplateId = r.db_template_id;
+  const db_template_id =
+    typeof rawDbTemplateId === "string" && rawDbTemplateId.trim().length > 0
+      ? rawDbTemplateId.trim()
+      : null;
+
   return {
     ok: true,
     value: {
@@ -274,6 +285,7 @@ function parseBody(raw: unknown):
       office_name,
       format: format as PostFormat,
       per_property_variant: per_property_variant as ValidPerPropertyVariant,
+      db_template_id,
       properties,
     },
   };
@@ -470,8 +482,13 @@ async function renderPerPropertyCards(
 }> {
   const successes: PerPropertyRenderResult[] = [];
   const failures: PerPropertyRenderFailure[] = [];
+  // Phase 2E (2026-05-22) — the wizard's DB-template pick (one per event)
+  // wins over the legacy variant for every per-property slide. The
+  // template_id below is the legacy fallback; the per-slide dispatch
+  // chooses the right pipeline.
   const formatShort = formatShortName(input.format);
-  const template_id = `open_house_${formatShort}_${input.per_property_variant}`;
+  const legacyTemplateId = `open_house_${formatShort}_${input.per_property_variant}`;
+  const dbTemplateId = input.db_template_id ?? null;
 
   // why: simple windowed parallelism — process the properties in chunks of
   // RENDER_CONCURRENCY. Promise.all on chunks is good enough for ≤9 inputs;
@@ -493,8 +510,42 @@ async function renderPerPropertyCards(
             },
           };
         }
+        // Phase 2E — DB-template branch. renderDbTemplate signs a render
+        // token + screenshots the /render/template/<token> page. Format,
+        // hosting agent, and OH window are passed through so the DB
+        // template's binding context receives them.
+        if (dbTemplateId) {
+          const ohWindow = formatOhWindowLabel(prop);
+          const dbResult = await renderDbTemplate({
+            template_id: dbTemplateId,
+            listing,
+            format: input.format,
+            hosting_agent_name: prop.hosting_agent_name ?? null,
+            oh_window: ohWindow,
+          });
+          if (!dbResult.ok) {
+            return {
+              kind: "err" as const,
+              failure: {
+                index: idx,
+                mls_number: prop.mls_number,
+                error: `db_template render failed: ${dbResult.error}`,
+              },
+            };
+          }
+          return {
+            kind: "ok" as const,
+            success: {
+              index: idx,
+              mls_number: prop.mls_number,
+              image_url: dbResult.image_url,
+              image_path: dbResult.image_path,
+            },
+          };
+        }
+        // Legacy variant path — unchanged.
         const result = await renderTemplate({
-          template_id,
+          template_id: legacyTemplateId,
           listing,
           hero_image_url: listing.hero_image_url,
         });
@@ -531,6 +582,51 @@ async function renderPerPropertyCards(
   successes.sort((a, b) => a.index - b.index);
   failures.sort((a, b) => a.index - b.index);
   return { successes, failures };
+}
+
+/**
+ * Build the "Sat 11 AM–1 PM" style label the DB template renderer expects
+ * via the BindingContext.oh_window placeholder. Walks the property's
+ * oh_sessions (the consolidated session list) and joins them with " · "
+ * when there are multiple — same shape the caption synth uses.
+ */
+function formatOhWindowLabel(prop: MultiOHEventProperty): string | null {
+  const sessions =
+    prop.oh_sessions && prop.oh_sessions.length > 0
+      ? prop.oh_sessions
+      : [{ start_at: prop.oh_start_at, end_at: prop.oh_end_at }];
+  const parts = sessions
+    .map((s) => formatSingleSession(s.start_at, s.end_at))
+    .filter((p): p is string => p !== null);
+  if (parts.length === 0) return null;
+  return parts.join(" · ");
+}
+
+function formatSingleSession(
+  startIso: string | null,
+  endIso: string | null,
+): string | null {
+  if (!startIso) return null;
+  const start = new Date(startIso);
+  if (Number.isNaN(start.getTime())) return null;
+  const day = start.toLocaleDateString("en-US", {
+    weekday: "short",
+    timeZone: "America/New_York",
+  });
+  const startStr = start.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  });
+  if (!endIso) return `${day} ${startStr}`;
+  const end = new Date(endIso);
+  if (Number.isNaN(end.getTime())) return `${day} ${startStr}`;
+  const endStr = end.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  });
+  return `${day} ${startStr}–${endStr}`;
 }
 
 /**
@@ -576,7 +672,11 @@ function buildSlideMetadata(
     const prop = input.properties[s.index];
     return {
       listing_mls: prop.mls_number,
+      // Phase 2E — variant remains for legacy rehydration paths. When a
+      // db_template_id is set on the event, the field below is
+      // authoritative; variant is informational only.
       variant: input.per_property_variant,
+      db_template_id: input.db_template_id ?? null,
       format: input.format,
       hosting_agent_name: prop.hosting_agent_name ?? null,
       layer_tree: null,

@@ -377,8 +377,18 @@ export interface MultiOHEventInput {
    *  Updated 2026-05-21 — v1 Hero Editorial was retired from the registry
    *  on 2026-05-17; the multi-OH wizard now offers v2, v3, v6, v8. The
    *  "v1" string survives in the wider PostVariant union (lib/post-builder
-   *  /types.ts) so legacy generated_posts rows can still deserialize. */
+   *  /types.ts) so legacy generated_posts rows can still deserialize.
+   *
+   *  Ignored when `db_template_id` is set — DB templates supersede the
+   *  legacy variant choice for every per-property slide in the event. */
   per_property_variant: "v2" | "v3" | "v6" | "v8";
+  /** Phase 2E (2026-05-22) — when set, every per-property card in the
+   *  carousel renders via the admin-authored DB template at this UUID
+   *  instead of the legacy `per_property_variant` registry entry. The
+   *  event hero card always uses its dedicated multi-OH layout regardless
+   *  of this field (the DB template applies to per-property slides only).
+   *  Optional / nullable so legacy clients continue to work unchanged. */
+  db_template_id?: string | null;
   /** Properties to feature, in carousel order (slide 1 = properties[0],
    *  slide 2 = properties[1], etc.). Minimum 2 (1 makes a single-listing
    *  post, use the standard Post Builder for that). Maximum 9 — leaves
@@ -438,8 +448,15 @@ export interface SlideMetadata {
   listing_mls: string;
   /** The variant that originally produced this slide. Includes "v1"
    *  defensively for legacy rows persisted before 2026-05-21 when v1 was
-   *  the default; current writes only use the active set (v2/v3/v6/v8). */
+   *  the default; current writes only use the active set (v2/v3/v6/v8).
+   *  When `db_template_id` is set, `variant` is informational only —
+   *  rehydration uses the DB template id. */
   variant: "v1" | "v2" | "v3" | "v6" | "v8";
+  /** Phase 2E (2026-05-22) — when present, the slide was rendered via an
+   *  admin-authored DB template. Supersedes `variant` for the rehydration
+   *  path (Studio's "Edit slide" opens the DB template's schema for the
+   *  active format, not a registry entry). Null/absent on legacy slides. */
+  db_template_id?: string | null;
   /** Format — same as the hero's format; carousel slides share aspect ratio. */
   format: PostFormat;
   /** Optional per-property hosting agent override from the wizard. */

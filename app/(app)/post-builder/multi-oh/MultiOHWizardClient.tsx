@@ -13,6 +13,7 @@ import {
   type PostBuilderListing,
   type PostFormat,
 } from "@/lib/post-builder/types";
+import type { TemplateMeta } from "@/lib/template-builder";
 
 // ---------------------------------------------------------------------------
 // Local types
@@ -31,6 +32,13 @@ interface Props {
   listings: PostBuilderListing[];
   /** Office name pre-fill (defaults to "Century 21 Alliance"). */
   defaultOfficeName: string;
+  /**
+   * Phase 2E (2026-05-22) — admin-authored DB templates tagged for
+   * open_house, keyed by format. The wizard surfaces these as additional
+   * cards in Step 2's variant grid. Empty arrays per format when no DB
+   * templates exist for OH (the section hides until one is published).
+   */
+  dbTemplatesByFormat: Record<PostFormat, TemplateMeta[]>;
 }
 
 // Hosting-agent resolution lives in lib/open-houses/host-resolution.ts so
@@ -124,6 +132,7 @@ const GENERATE_STATUSES: readonly string[] = [
 export default function MultiOHWizardClient({
   listings,
   defaultOfficeName,
+  dbTemplatesByFormat,
 }: Props) {
   const router = useRouter();
 
@@ -169,6 +178,14 @@ export default function MultiOHWizardClient({
   // ---- step 2 — format + variant ---------------------------------------
   const [format, setFormat] = useState<PostFormat>("portrait_4x5");
   const [perPropertyVariant, setPerPropertyVariant] = useState<PerPropertyVariant>("v2");
+  /**
+   * Phase 2E — when set, every per-property card in the carousel renders
+   * via the admin-authored DB template at this UUID instead of the
+   * legacy `perPropertyVariant` registry entry. Mutually exclusive with
+   * the variant choice in the UI (picking a DB card clears the legacy
+   * variant from the active state; picking a legacy card clears this).
+   */
+  const [dbTemplateId, setDbTemplateId] = useState<string | null>(null);
 
   // ---- step 3 — carousel preview focus ---------------------------------
   // why: Step 3 shows a featured slide preview at the top + a ribbon of
@@ -415,6 +432,9 @@ export default function MultiOHWizardClient({
         office_name: defaultOfficeName,
         format,
         per_property_variant: perPropertyVariant,
+        // Phase 2E — when a DB template was picked, send its UUID; the
+        // route uses it instead of per_property_variant for every slide.
+        db_template_id: dbTemplateId,
         properties,
       };
 
@@ -455,6 +475,7 @@ export default function MultiOHWizardClient({
     eventTitle,
     format,
     perPropertyVariant,
+    dbTemplateId,
     defaultOfficeName,
     perPropertyHostingAgent,
     router,
@@ -493,7 +514,20 @@ export default function MultiOHWizardClient({
             format={format}
             onFormatChange={setFormat}
             variant={perPropertyVariant}
-            onVariantChange={setPerPropertyVariant}
+            onVariantChange={(v) => {
+              setPerPropertyVariant(v);
+              // Phase 2E — picking a legacy variant clears the DB pick.
+              setDbTemplateId(null);
+            }}
+            dbTemplates={dbTemplatesByFormat[format] ?? []}
+            dbTemplateId={dbTemplateId}
+            onDbTemplateChange={(id) => {
+              setDbTemplateId(id);
+              // Picking a DB template doesn't change perPropertyVariant —
+              // we keep it as the implicit fallback so deselecting the DB
+              // card via the "Use a legacy variant" affordance restores
+              // the user's prior choice without a re-pick.
+            }}
             eventTitle={eventTitle}
             selectedListings={selectedListings}
           />
@@ -894,6 +928,13 @@ interface Step2Props {
   onFormatChange: (f: PostFormat) => void;
   variant: PerPropertyVariant;
   onVariantChange: (v: PerPropertyVariant) => void;
+  /** Phase 2E — DB templates available for the active format. */
+  dbTemplates: readonly TemplateMeta[];
+  /** Phase 2E — currently-selected DB template, or null when a legacy
+   *  variant is selected instead. */
+  dbTemplateId: string | null;
+  /** Phase 2E — fires with the new id (or null when deselecting). */
+  onDbTemplateChange: (id: string | null) => void;
   /** Event title for the format-card hero mocks. */
   eventTitle: string;
   /** Picked listings — first one is used as the sample property data for
@@ -906,6 +947,9 @@ function Step2FormatVariant({
   onFormatChange,
   variant,
   onVariantChange,
+  dbTemplates,
+  dbTemplateId,
+  onDbTemplateChange,
   eventTitle,
   selectedListings,
 }: Step2Props) {
@@ -928,17 +972,89 @@ function Step2FormatVariant({
         <p className="text-sm text-neutral-600 mb-4">
           This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout. Previews use your first picked listing.
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {VARIANT_CARDS.map((v) => (
-            <VariantCard
-              key={v.id}
-              meta={v}
-              active={variant === v.id}
-              onClick={() => onVariantChange(v.id)}
-              format={format}
-              sampleListing={sampleListing}
-            />
-          ))}
+        {/* Phase 2E (2026-05-22) — admin-authored DB templates for OH.
+            Section hides when no DB templates exist for the active
+            format. Clicking a card sets `dbTemplateId` and visually
+            outranks the legacy variant grid below. Same gold "Admin"
+            badge as PostBuilderClient for consistency. */}
+        {dbTemplates.length > 0 ? (
+          <div className="mb-4">
+            <div className="eyebrow mb-2">
+              Admin templates{" "}
+              <span className="text-neutral-400 font-normal normal-case tracking-normal">
+                · authored in /admin/templates
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {dbTemplates.map((t) => {
+                const active = dbTemplateId === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => onDbTemplateChange(active ? null : t.id)}
+                    title={t.description ?? t.name}
+                    aria-label={
+                      active
+                        ? `Deselect admin template ${t.name}`
+                        : `Use admin template ${t.name}`
+                    }
+                    className={[
+                      "text-left rounded-xl border p-3 transition flex flex-col",
+                      active
+                        ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm cursor-pointer"
+                        : "border-neutral-200 bg-white cursor-pointer hover:border-gold-300 hover:ring-2 hover:ring-gold-300/40 hover:shadow-sm",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-semibold text-neutral-900 line-clamp-1">
+                        {t.name}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-gold-500/95 px-2 py-0.5 text-neutral-900">
+                        Admin
+                      </span>
+                    </div>
+                    {t.description ? (
+                      <div className="text-xs text-neutral-600 line-clamp-2">
+                        {t.description}
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+        {/* Legacy variant cards. Greyed when a DB template is active so
+            the user sees the choice is mutually exclusive (clicking
+            here clears the DB pick — same handler the parent wired). */}
+        <div
+          className={[
+            dbTemplateId ? "opacity-50" : "",
+            "transition",
+          ].join(" ")}
+          aria-hidden={dbTemplateId !== null ? "false" : undefined}
+        >
+          {dbTemplateId ? (
+            <div className="eyebrow mb-2 text-neutral-500">
+              Or pick a legacy variant{" "}
+              <span className="text-neutral-400 font-normal normal-case tracking-normal">
+                · clears the admin template above
+              </span>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {VARIANT_CARDS.map((v) => (
+              <VariantCard
+                key={v.id}
+                meta={v}
+                active={!dbTemplateId && variant === v.id}
+                onClick={() => onVariantChange(v.id)}
+                format={format}
+                sampleListing={sampleListing}
+              />
+            ))}
+          </div>
         </div>
       </div>
     </section>

@@ -5,7 +5,11 @@ import {
   listSupportedFormats,
   listVariantsForPostType,
 } from "@/lib/post-builder/templates/registry";
-import { listTemplatesForPostType } from "@/lib/template-builder";
+import {
+  getTemplateById,
+  listTemplatesForPostType,
+  type TemplateDefinition,
+} from "@/lib/template-builder";
 import type { TemplateMeta } from "@/lib/template-builder";
 import { fetchCreatedPostResume } from "@/lib/data/created-posts-db";
 import { loadSystemConfig } from "@/lib/data/system-config";
@@ -72,6 +76,14 @@ export default async function PostBuilderPage({
   const resume = gpParam
     ? await fetchCreatedPostResume(gpParam, profile.id)
     : null;
+
+  // Phase 2F (2026-05-22) — when the resuming row's slide_metadata
+  // references admin-authored DB templates, batch-fetch them here so
+  // Studio's "Edit slide" path can mount the correct schema instead of
+  // falling back to a legacy registry lookup. Distinct ids only (a
+  // Multi-OH event renders every slide with the SAME db_template_id by
+  // design today, so this is usually 0-1 fetch).
+  const dbTemplatesForSlides = await fetchDbTemplatesForSlides(resume);
 
   const [justListed, justSold, underContract, openHouse, priceReduction] = await Promise.all([
     fetchListingsForPostBuilder({ post_type: "just_listed" }),
@@ -228,6 +240,7 @@ export default async function PostBuilderPage({
         listingsByPostType={listingsByPostType}
         variantsByPostTypeAndFormat={variantsByPostTypeAndFormat}
         dbTemplatesByPostTypeAndFormat={dbTemplatesByPostTypeAndFormat}
+        dbTemplatesForSlides={dbTemplatesForSlides}
         formatMeta={formatMeta}
         isAdmin={isAdmin}
         initialResume={resume}
@@ -237,4 +250,38 @@ export default async function PostBuilderPage({
       />
     </div>
   );
+}
+
+/**
+ * Phase 2F — collect every distinct `db_template_id` referenced by the
+ * resuming row's slide_metadata and batch-fetch the corresponding
+ * `template_definitions` rows. Returns a map keyed by template id so
+ * Studio's Edit-slide handler can resolve schemas in O(1).
+ *
+ * Returns an empty map when there's no resume context, the slide_metadata
+ * is missing/malformed, or none of the slides carry a db_template_id (the
+ * common case — legacy slides + Multi-OH events authored before Phase 2E
+ * shipped). Bad ids that fail the DB lookup get silently dropped from the
+ * map; the client-side handler falls back to findCanvasTemplate.
+ */
+async function fetchDbTemplatesForSlides(
+  resume: Awaited<ReturnType<typeof fetchCreatedPostResume>> | null,
+): Promise<Record<string, TemplateDefinition>> {
+  if (!resume || !Array.isArray(resume.slide_metadata)) return {};
+  const ids = new Set<string>();
+  for (const raw of resume.slide_metadata) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.db_template_id === "string" && r.db_template_id.length > 0) {
+      ids.add(r.db_template_id);
+    }
+  }
+  if (ids.size === 0) return {};
+  const idList = [...ids];
+  const results = await Promise.all(idList.map((id) => getTemplateById(id)));
+  const out: Record<string, TemplateDefinition> = {};
+  results.forEach((tpl, i) => {
+    if (tpl) out[idList[i]] = tpl;
+  });
+  return out;
 }

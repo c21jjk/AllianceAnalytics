@@ -35,18 +35,20 @@ export default async function MultiOHPage() {
   // handles the zero/one cases inline.
   const listings = await fetchListingsForPostBuilder({ post_type: "open_house" });
 
-  // 2026-05-22 — Template Builder seam (Phase 1). DB-defined templates
-  // tagged for Open House surface here so the wizard's variant card list
-  // can render them alongside the legacy v2/v3/v6/v8 variants once
-  // Phase 2 wires the renderer. Empty list in Phase 1 (no DB templates
-  // exist yet); behavior is unchanged. See
+  // Phase 2E (2026-05-22) — DB-defined templates tagged for Open House
+  // surface in the wizard's Step 2 variant grid alongside the legacy
+  // v2/v3/v6/v8 cards. When the user picks a DB card, the multi-OH
+  // generate route renders every per-property slide via the DB template
+  // (the event hero keeps its dedicated multi-property layout). See
   // docs/adr/0001-template-builder.md.
   const [portraitTemplates, storyTemplates] = await Promise.all([
     listTemplatesForPostType("open_house", "portrait_4x5"),
     listTemplatesForPostType("open_house", "story_9x16"),
   ]);
-  void portraitTemplates;
-  void storyTemplates;
+  const dbTemplatesByFormat = {
+    portrait_4x5: portraitTemplates,
+    story_9x16: storyTemplates,
+  };
 
   return (
     <div>
@@ -59,6 +61,7 @@ export default async function MultiOHPage() {
       <MultiOHWizardClient
         listings={listings}
         defaultOfficeName="Century 21 Alliance"
+        dbTemplatesByFormat={dbTemplatesByFormat}
       />
     </div>
   );

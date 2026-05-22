@@ -55,7 +55,8 @@ import type {
   MLSListingPayload,
 } from "@/lib/post-builder/canvas-editor/types";
 import type { CreatedPostResumeRow } from "@/lib/data/created-posts-db";
-import type { TemplateMeta } from "@/lib/template-builder";
+import type { TemplateDefinition, TemplateMeta } from "@/lib/template-builder";
+import { normalizeOrBuildStarter } from "@/lib/post-builder/canvas-editor/schema-normalize";
 
 interface VariantOption {
   template_id: string;
@@ -87,6 +88,17 @@ interface Props {
     PostType,
     Record<PostFormat, TemplateMeta[]>
   >;
+  /**
+   * Phase 2F (2026-05-22) — DB templates referenced by the resuming row's
+   * slide_metadata, keyed by template id. Studio's "Edit slide" handler
+   * looks here when a slide carries `db_template_id` so it mounts the
+   * authored schema instead of falling through to findCanvasTemplate.
+   *
+   * Empty when there's no resume context or no slides reference DB
+   * templates (most legacy posts). Server pre-fetches in page.tsx so the
+   * client doesn't need a runtime API call.
+   */
+  dbTemplatesForSlides: Record<string, TemplateDefinition>;
   formatMeta: Record<PostFormat, FormatMeta>;
   isAdmin: boolean;
   /**
@@ -229,6 +241,7 @@ export default function PostBuilderClient({
   listingsByPostType,
   variantsByPostTypeAndFormat,
   dbTemplatesByPostTypeAndFormat,
+  dbTemplatesForSlides,
   formatMeta,
   isAdmin,
   initialResume,
@@ -526,6 +539,13 @@ export default function PostBuilderClient({
                   ? r.listing_mls
                   : initialResume.mls_number,
               variant,
+              // Phase 2F (2026-05-22) — DB template marker. When set the
+              // Edit-slide handler resolves the schema from the
+              // dbTemplatesForSlides sidecar instead of findCanvasTemplate.
+              db_template_id:
+                typeof r.db_template_id === "string" && r.db_template_id.length > 0
+                  ? r.db_template_id
+                  : null,
               format,
               hosting_agent_name:
                 typeof r.hosting_agent_name === "string"
@@ -542,6 +562,7 @@ export default function PostBuilderClient({
             parsedMeta.push({
               listing_mls: initialResume.mls_number,
               variant: initialResume.variant as SlideMetadata["variant"],
+              db_template_id: null,
               format: initialResume.format,
               hosting_agent_name: null,
               layer_tree: null,
@@ -1415,13 +1436,43 @@ export default function PostBuilderClient({
       // ---- Resolve the slide's template ----
       // why: prior edits win. If the user has previously saved this slide
       // in Studio, `meta.layer_tree` is the post-hydration schema —
-      // re-use it directly so their edits stick. Otherwise fall through
-      // to the factory template that originally produced the slide
-      // (open_house + variant + format from slide_metadata, NOT from
-      // the parent's currently-selected variant).
+      // re-use it directly so their edits stick. Otherwise:
+      //   • Phase 2F (2026-05-22) — when the slide was rendered via an
+      //     admin-authored DB template (db_template_id set on the meta),
+      //     resolve the schema from the dbTemplatesForSlides sidecar map.
+      //     Falls through to legacy lookup if the template can't be found
+      //     in the sidecar (e.g., the row was archived between render +
+      //     edit) so the user still gets SOMETHING to edit rather than a
+      //     hard failure.
+      //   • Legacy — fall through to the factory template that originally
+      //     produced the slide (open_house + variant + format from
+      //     slide_metadata, NOT from the parent's currently-selected
+      //     variant).
       let template: CanvasTemplateSchema | null = null;
       if (meta.layer_tree && typeof meta.layer_tree === "object") {
         template = meta.layer_tree as CanvasTemplateSchema;
+      } else if (meta.db_template_id) {
+        const dbTpl = dbTemplatesForSlides[meta.db_template_id];
+        if (dbTpl) {
+          // Phase 2G — apply the same defensive normalization the admin
+          // editor uses, so a partially-populated DB row (missing
+          // category / variant / schemaVersion / etc.) still mounts
+          // cleanly with sensible defaults. Idempotent on complete
+          // schemas. Shared helper guarantees admin + Studio render
+          // identical visuals for the same row.
+          template = normalizeOrBuildStarter(dbTpl, meta.format);
+        }
+        if (!template) {
+          // why: admin template went missing (archive / delete / DB hiccup).
+          // Fall through to the legacy lookup so the user can still edit
+          // SOMETHING — losing the original schema is bad but a blank
+          // canvas is worse. The Studio mount handles undefined fields
+          // defensively via normalizeOrBuildStarter equivalents.
+          console.warn(
+            `[edit-slide] db_template_id ${meta.db_template_id} not in sidecar; falling back to legacy registry`,
+          );
+          template = findCanvasTemplate("open_house", meta.variant, meta.format);
+        }
       } else {
         // why: multi-OH slides are always open_house variants today. If
         // a future producer creates non-open_house slides, widen this by

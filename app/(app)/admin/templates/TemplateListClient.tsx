@@ -17,7 +17,17 @@ import type { TemplateMeta } from "@/lib/template-builder";
  * once we have enough templates that the affordance matters.
  */
 
-type StateFilter = "all" | "draft" | "published" | "archived";
+// Phase 2K (2026-05-22) — added "unused" as a non-state filter. Admins
+// want a one-click way to find templates that have never been picked
+// (publish_state-agnostic; a never-used published template is shelfware,
+// a never-used draft is in-progress, both are interesting answers to
+// "what's earning its keep?"). The pill UX is the same as state filters.
+type StateFilter =
+  | "all"
+  | "draft"
+  | "published"
+  | "archived"
+  | "unused";
 
 interface Props {
   templates: readonly TemplateMeta[];
@@ -30,18 +40,27 @@ export default function TemplateListClient({ templates }: Props) {
 
   // Counts per state for the filter pills.
   const counts = useMemo(() => {
-    const c = { all: 0, draft: 0, published: 0, archived: 0 };
+    const c = { all: 0, draft: 0, published: 0, archived: 0, unused: 0 };
     for (const t of templates) {
       c.all += 1;
       if (t.publish_state === "draft") c.draft += 1;
       else if (t.publish_state === "published") c.published += 1;
       else if (t.publish_state === "archived") c.archived += 1;
+      if ((t.use_count ?? 0) === 0) c.unused += 1;
     }
     return c;
   }, [templates]);
 
   const visible = useMemo(() => {
     if (filter === "all") return templates;
+    if (filter === "unused") {
+      // why: orthogonal to publish_state — "unused" surfaces every
+      // template that hasn't generated a post, regardless of whether it's
+      // a draft, published, or archived row. Catches both "shelfware
+      // shipped but nobody picks it" and "draft never published" in one
+      // view.
+      return templates.filter((t) => (t.use_count ?? 0) === 0);
+    }
     return templates.filter((t) => t.publish_state === filter);
   }, [templates, filter]);
 
@@ -94,6 +113,7 @@ export default function TemplateListClient({ templates }: Props) {
                 </th>
                 <th className="px-4 py-2.5 text-left font-semibold">Formats</th>
                 <th className="px-4 py-2.5 text-left font-semibold">State</th>
+                <th className="px-4 py-2.5 text-left font-semibold">Uses</th>
                 <th className="px-4 py-2.5 text-left font-semibold">Updated</th>
                 <th className="px-4 py-2.5 text-right font-semibold">
                   Actions
@@ -123,7 +143,13 @@ function FilterPills({
   onChange,
 }: {
   filter: StateFilter;
-  counts: { all: number; draft: number; published: number; archived: number };
+  counts: {
+    all: number;
+    draft: number;
+    published: number;
+    archived: number;
+    unused: number;
+  };
   onChange: (f: StateFilter) => void;
 }) {
   const options: Array<{ id: StateFilter; label: string; count: number }> = [
@@ -131,6 +157,9 @@ function FilterPills({
     { id: "published", label: "Published", count: counts.published },
     { id: "draft", label: "Drafts", count: counts.draft },
     { id: "archived", label: "Archived", count: counts.archived },
+    // Phase 2K — orthogonal "never used" filter. Sits at the end of the
+    // group so the publish-state pills cluster naturally to the left.
+    { id: "unused", label: "Never used", count: counts.unused },
   ];
   return (
     <div className="inline-flex flex-wrap gap-1 rounded-lg bg-neutral-100 p-1">
@@ -236,6 +265,9 @@ function TemplateRow({
       <td className="px-4 py-3">
         <PublishStateBadge state={template.publish_state} />
       </td>
+      <td className="px-4 py-3">
+        <UseCountBadge count={template.use_count} />
+      </td>
       <td className="px-4 py-3 text-neutral-600 text-xs">
         {new Date(template.updated_at).toLocaleDateString("en-US", {
           month: "short",
@@ -256,17 +288,22 @@ function TemplateRow({
 }
 
 function EmptyState({ filter }: { filter: StateFilter }) {
+  // Phase 2K — friendlier copy for the "never used" filter; "no never used
+  // templates" reads as a double negative + minor celebration ("everything
+  // is earning its keep") so we write it out explicitly.
+  const headline =
+    filter === "all"
+      ? "No templates created yet."
+      : filter === "unused"
+        ? "Every template has at least one use. Nice."
+        : `No ${filter} templates.`;
   return (
     <div className="rounded-xl border border-dashed border-neutral-300 bg-neutral-50/60 px-6 py-12 text-center">
-      <div className="text-base font-semibold text-neutral-900">
-        {filter === "all"
-          ? "No templates created yet."
-          : `No ${filter} templates.`}
-      </div>
+      <div className="text-base font-semibold text-neutral-900">{headline}</div>
       <div className="mt-1 text-sm text-neutral-600 max-w-md mx-auto">
         Click <span className="font-medium">New template</span> above to create
         a draft. You can edit metadata + lifecycle now; the visual canvas
-        editor lands in Phase 2B.
+        editor opens from each row's detail page.
       </div>
     </div>
   );
@@ -281,6 +318,32 @@ function FormatChip({ format }: { format: string }) {
         : format;
   return (
     <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-mono font-medium text-neutral-700">
+      {label}
+    </span>
+  );
+}
+
+/**
+ * Phase 2H/2I (2026-05-22) — adoption metric. Renders "Never used" for 0,
+ * "1 use" for singular, "N uses" otherwise. Counts BOTH direct picks
+ * (`generated_posts.template_id`) AND Multi-OH per-slide references
+ * (`slide_metadata[].db_template_id`), deduped by post id.
+ */
+function UseCountBadge({ count }: { count: number | undefined }) {
+  const n = count ?? 0;
+  if (n === 0) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-500 ring-1 ring-neutral-200">
+        Never used
+      </span>
+    );
+  }
+  const label = n === 1 ? "1 use" : `${n} uses`;
+  return (
+    <span
+      className="inline-flex items-center rounded-full bg-gold-50 px-2 py-0.5 text-[11px] font-medium text-gold-900 ring-1 ring-gold-200 tabular-nums"
+      title="Posts generated using this template — direct picks + Multi-OH carousel slides"
+    >
       {label}
     </span>
   );

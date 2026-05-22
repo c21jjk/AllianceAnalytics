@@ -50,10 +50,23 @@ export async function listTemplatesForPostType(
 /**
  * Admin list view query. Returns EVERY template regardless of state.
  * Use this from /admin/templates/page.tsx.
+ *
+ * Phase 2H/2I — also fetches unified usage counts in parallel and stamps
+ * each meta's `use_count`. The count covers BOTH the direct
+ * `generated_posts.template_id = <uuid>` path (regular Post Builder)
+ * AND the Multi-OH per-slide path (`slide_metadata[].db_template_id`).
+ * Deduped by post id so a multi-slide carousel using the same template
+ * counts as one use, not nine.
  */
 export async function listAllTemplates(): Promise<TemplateMeta[]> {
-  const rows = await storage.listAllTemplates();
-  return rows.map(templateMetaFromDefinition);
+  const [rows, useCounts] = await Promise.all([
+    storage.listAllTemplates(),
+    storage.getTemplateUseCounts(),
+  ]);
+  return rows.map((row) => ({
+    ...templateMetaFromDefinition(row),
+    use_count: useCounts[row.id] ?? 0,
+  }));
 }
 
 /**

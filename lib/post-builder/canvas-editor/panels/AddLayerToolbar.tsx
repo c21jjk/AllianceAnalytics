@@ -37,36 +37,16 @@ import {
   type AddLayerKind,
   type AddLayerToolbarProps,
 } from "../contracts";
+// Phase 2J (2026-05-22): switched from local copies of setLayerData +
+// FabricLayerData to the shared fabric-factory module. Eliminates the
+// "kept in sync by hand" caveat that was here before — both the editor's
+// hydration path and this toolbar's new-layer creation now write through
+// the same helper, so layer metadata is shaped identically across surfaces.
+import {
+  setLayerData,
+  type FabricLayerData,
+} from "../fabric-factory";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "../templates/tokens";
-import type { CanvasLayer } from "../types";
-
-// ---------------------------------------------------------------------------
-// Layer-data shape (mirrored from CanvasEditor.tsx — kept in sync by hand)
-// ---------------------------------------------------------------------------
-
-/**
- * Custom metadata we attach to every Fabric object so the layer panel and
- * the undo/redo serializer can correlate Fabric instances back to schema-
- * shaped concepts.
- *
- * Why duplicate the shape rather than import: CanvasEditor.tsx keeps this
- * interface file-private (it's an implementation detail of the orchestrator).
- * Duplicating it here is intentional — the contracts.ts file pins the
- * displayName/layerId/layerKind contract via prose. If CanvasEditor changes
- * the shape, both sides need to update — that's by design so it doesn't
- * accidentally bleed across the parallel-agent boundary.
- */
-interface FabricLayerData {
-  layerId: string;
-  layerKind: CanvasLayer["kind"];
-  displayName: string;
-}
-
-function setLayerData(obj: FabricObject, data: FabricLayerData): void {
-  // why: Fabric's typings declare `data` loosely; cast through unknown so we
-  // can attach our metadata without polluting the global Fabric type.
-  (obj as unknown as { data: FabricLayerData }).data = data;
-}
 
 // ---------------------------------------------------------------------------
 // ID generator

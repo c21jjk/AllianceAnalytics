@@ -79,6 +79,21 @@ export interface TemplateMeta {
   display_order: number;
   publish_state: TemplatePublishState;
   updated_at: string;
+  /**
+   * Phase 2H/2I (2026-05-22) — adoption metric. Distinct
+   * `generated_posts` rows that reference this template, across BOTH
+   * surfaces:
+   *   • Direct picks — `generated_posts.template_id = <uuid>`
+   *   • Multi-OH per-slide — `slide_metadata[].db_template_id = <uuid>`
+   * Deduped by post id, so a 9-slide carousel using one DB template
+   * counts as one use (not nine). Templates only used by legacy
+   * primitives (variant strings, not UUIDs) show 0 — their counts would
+   * be meaningless since the template_id pattern is deterministic.
+   *
+   * Populated only by list/picker queries — getTemplateById doesn't fill
+   * this field (its callers don't need it).
+   */
+  use_count?: number;
 }
 
 /**

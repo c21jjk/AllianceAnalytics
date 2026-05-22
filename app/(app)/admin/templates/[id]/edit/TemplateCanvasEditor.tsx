@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import CanvasEditorOverlay from "@/lib/post-builder/canvas-editor/CanvasEditorOverlay";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
+import { normalizeOrBuildStarter } from "@/lib/post-builder/canvas-editor/schema-normalize";
 import type {
   CanvasTemplateSchema,
   CanvasExportResult,
@@ -61,11 +62,6 @@ interface Props {
   onClose: () => void;
 }
 
-/** Per-format canonical dimensions — matches the renderer's expectations. */
-const FORMAT_DIMS: Record<PostFormat, { width: number; height: number }> = {
-  portrait_4x5: { width: 1080, height: 1350 },
-  story_9x16: { width: 1080, height: 1920 },
-};
 
 export default function TemplateCanvasEditor({
   template,
@@ -168,110 +164,3 @@ export default function TemplateCanvasEditor({
   );
 }
 
-/**
- * Construct a minimal CanvasTemplateSchema for an undefined format.
- *
- * The canvas-editor requires a fully-shaped schema object to mount. We
- * stamp the template's metadata + correct dimensions + an empty layer
- * list. Authors then add their own layers from the editor's UI.
- *
- * The `variant` and `category` fields are placeholders — the canvas
- * editor uses them for some internal routing, but for admin-authored
- * templates the picker keys off `template_definitions.id` (uuid) not
- * variant. Setting them to safe defaults keeps the editor happy without
- * misrepresenting the template's intent.
- */
-function buildStarterSchema(
-  template: TemplateDefinition,
-  format: PostFormat,
-): CanvasTemplateSchema {
-  const dims = FORMAT_DIMS[format];
-  return {
-    id: template.id,
-    name: template.name,
-    description: template.description ?? "",
-    // why: 'just_listed' is the most generic category in the canvas-editor
-    // enum. Admin-authored templates aren't pegged to a single category —
-    // they're tagged via template_definitions.post_types (multi-select)
-    // and the picker queries that array, not this field.
-    category: "just_listed",
-    // why: 'v8' Standard is the canvas-editor's most layout-agnostic
-    // variant. Used as a placeholder so the type-check passes; the
-    // Post Builder picker (Phase 2C) routes DB templates by template
-    // id, not variant.
-    variant: "v8",
-    format,
-    width: dims.width,
-    height: dims.height,
-    // Brand cream — matches Alliance's existing design tokens.
-    backgroundColor: "#FCFCFB",
-    layers: [],
-    updatedAt: new Date().toISOString(),
-    schemaVersion: 1,
-  };
-}
-
-/**
- * Merge whatever's stored in `template_definitions.schema[format]` with
- * a fresh starter so every required CanvasTemplateSchema field has a
- * value. Stored fields win over starter defaults; missing fields fall
- * through cleanly to the starter.
- *
- * Forces structural fields (format, width, height, schemaVersion) to
- * known-good values because those are tied to the format choice and
- * shouldn't be overridable by stored data — keeps the editor mount
- * predictable even if a legacy seed has e.g. width: 0.
- *
- * Why "normalize" not "validate-and-reject": the editor is the user's
- * primary tool; if the stored schema is partially broken we'd rather
- * present a working canvas (with sensible defaults) than crash. The
- * author's next save overwrites the row with a clean schema.
- */
-function normalizeOrBuildStarter(
-  template: TemplateDefinition,
-  format: PostFormat,
-): CanvasTemplateSchema {
-  const starter = buildStarterSchema(template, format);
-  const stored = template.schema[format];
-  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
-    return starter;
-  }
-  const s = stored as Record<string, unknown>;
-  const dims = FORMAT_DIMS[format];
-  return {
-    ...starter,
-    // Stored fields override starter defaults for the soft fields.
-    ...(typeof s.id === "string" && s.id.length > 0 ? { id: s.id } : {}),
-    ...(typeof s.name === "string" && s.name.length > 0 ? { name: s.name } : {}),
-    ...(typeof s.description === "string" ? { description: s.description } : {}),
-    ...(typeof s.backgroundColor === "string"
-      ? { backgroundColor: s.backgroundColor }
-      : {}),
-    ...(typeof s.backgroundImage === "string" || s.backgroundImage === null
-      ? { backgroundImage: s.backgroundImage as string | null | undefined }
-      : {}),
-    ...(typeof s.updatedAt === "string" ? { updatedAt: s.updatedAt } : {}),
-    // Layers must always be an array — coerce defensively.
-    layers: Array.isArray(s.layers)
-      ? (s.layers as CanvasTemplateSchema["layers"])
-      : [],
-    // Hard-force structural fields tied to the format choice. These can't
-    // be overridden by stored data because they'd violate canvas-editor
-    // invariants (width matching PLATFORM_DIMENSIONS, schemaVersion=1).
-    format,
-    width: dims.width,
-    height: dims.height,
-    schemaVersion: 1,
-    // category + variant: use stored if they look like valid enum members,
-    // otherwise fall back to starter defaults. The canvas editor validates
-    // these internally, so a clearly-bad value would crash anyway.
-    category:
-      typeof s.category === "string"
-        ? (s.category as CanvasTemplateSchema["category"])
-        : starter.category,
-    variant:
-      typeof s.variant === "string"
-        ? (s.variant as CanvasTemplateSchema["variant"])
-        : starter.variant,
-  };
-}
