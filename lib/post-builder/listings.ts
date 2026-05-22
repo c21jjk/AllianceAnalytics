@@ -47,6 +47,7 @@ interface PropertyRow {
   agent_name: string | null;
   listing_date: string | null;
   close_date: string | null;
+  unit_number: string | null;
 }
 
 export async function fetchListingsForPostBuilder(
@@ -60,7 +61,7 @@ export async function fetchListingsForPostBuilder(
   let q = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date",
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
     )
     .not("hero_image_url", "is", null)
     .limit(limit);
@@ -182,5 +183,6 @@ function toListing(r: PropertyRow): PostBuilderListingWithOH {
     agent_name: r.agent_name,
     listing_date: r.listing_date,
     status: r.status,
+    unit_number: r.unit_number,
   };
 }

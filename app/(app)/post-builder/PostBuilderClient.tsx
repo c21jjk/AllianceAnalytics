@@ -478,10 +478,21 @@ export default function PostBuilderClient({
         for (const raw of initialResume.slide_metadata) {
           if (raw && typeof raw === "object" && !Array.isArray(raw)) {
             const r = raw as Record<string, unknown>;
-            const variant =
-              r.variant === "v1" || r.variant === "v2" || r.variant === "v3"
-                ? r.variant
-                : "v1";
+            // why: accept every variant the SlideMetadata type permits.
+            // Includes "v1" defensively for legacy rows persisted before
+            // 2026-05-21 (when the multi-OH route hardcoded v1). New
+            // writes use only the active set (v2/v3/v6/v8). Unknown
+            // values fall through to the resume row's own variant rather
+            // than blindly stamping v1.
+            const validVariant =
+              r.variant === "v1" ||
+              r.variant === "v2" ||
+              r.variant === "v3" ||
+              r.variant === "v6" ||
+              r.variant === "v8";
+            const variant = validVariant
+              ? (r.variant as SlideMetadata["variant"])
+              : (initialResume.variant as SlideMetadata["variant"]);
             const format =
               r.format === "square_1x1" ||
               r.format === "portrait_4x5" ||
@@ -504,9 +515,12 @@ export default function PostBuilderClient({
           } else {
             // why: pad with a sensible default so indexes still line up
             // with carouselSlides even if one metadata entry is malformed.
+            // Defaults follow the resume row's own variant/format so the
+            // entry is at least template-resolvable instead of stamping
+            // v1 (retired) like the prior version did.
             parsedMeta.push({
               listing_mls: initialResume.mls_number,
-              variant: "v1",
+              variant: initialResume.variant as SlideMetadata["variant"],
               format: initialResume.format,
               hosting_agent_name: null,
               layer_tree: null,
@@ -733,6 +747,30 @@ export default function PostBuilderClient({
   const studioTemplate = useMemo<CanvasTemplateSchema | null>(
     () => findCanvasTemplate(postType, variantId, format),
     [postType, variantId, format],
+  );
+
+  /**
+   * Multi-property Open House mode.
+   *
+   * Set when a `?gp=<id>` resume loads a row whose template_id begins
+   * with `multi_oh_event_` (the synthetic prefix the wizard's render
+   * route stamps on the row). When true, the listing-picker column +
+   * format-picker + variant-picker are hidden — those choices were
+   * already made in the multi-OH wizard and can't be changed here
+   * without re-rendering the entire carousel through the wizard's
+   * pipeline. The preview pane, caption tabs, slide ribbon, Edit in
+   * Studio, Download, and Post Now stay visible.
+   *
+   * 2026-05-21 — added to fix the duplicated picker UX after a multi-OH
+   * carousel generates. The same row keys off `template_id` rather than
+   * `slideMetadata.length > 0` because the latter is briefly empty
+   * during the resume effect's hydration race.
+   */
+  const isMultiOHPost = useMemo<boolean>(
+    () =>
+      typeof renderResult?.template_id === "string" &&
+      renderResult.template_id.startsWith("multi_oh_event_"),
+    [renderResult?.template_id],
   );
 
   const openStudio = useCallback((): void => {
@@ -1446,6 +1484,18 @@ export default function PostBuilderClient({
     if (resumeAutoOpenedRef.current) return;
     if (!selectedListing) return;
     if (photosLoading) return;
+    // 2026-05-21 — multi-OH carousels have a pre-rendered hero image and
+    // no factory template for the EVENT card (`multi_oh_event_*` isn't a
+    // canvas-editor template). Auto-opening Studio for the hero would
+    // either crash (no template) or open the wrong template (one of the
+    // per-property variants). The user can click Edit in Studio
+    // explicitly to open a per-property SLIDE for fine-tuning; the hero
+    // itself stays as the rendered PNG until we ship a hero canvas
+    // template.
+    if (isMultiOHPost) {
+      resumeAutoOpenedRef.current = true;
+      return;
+    }
 
     // Resolve the template: saved layer_tree wins; factory template is the
     // fallback so older rows still open in a usable state.
@@ -2252,7 +2302,44 @@ export default function PostBuilderClient({
 
   return (
     <div className="space-y-5">
-      {/* Post type segmented picker */}
+      {/* 2026-05-21 — Multi-OH header banner. Replaces the post-type
+          segmented picker + listing picker for rows resumed from the
+          multi-OH wizard: those choices were already made in the wizard
+          and can't be changed here without re-rendering the entire
+          carousel. The banner orients Larissa to what she's editing. */}
+      {isMultiOHPost ? (
+        <div className="card p-4 bg-gold-50/40 ring-1 ring-gold-200">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold uppercase tracking-[0.1em] text-gold-700 mb-0.5">
+                Multi-property Open House
+              </div>
+              <div className="text-sm text-neutral-900">
+                Carousel post —{" "}
+                <span className="font-semibold">
+                  {carouselSlides.length + 1} slides
+                </span>{" "}
+                · {formatMeta[format]?.display_name ?? format}
+              </div>
+              <div className="text-xs text-neutral-600 mt-0.5">
+                Format and per-property card style were chosen in the wizard. Edit captions below, or click Edit in Studio to fine-tune a slide.
+              </div>
+            </div>
+            <Link
+              href="/post-builder/multi-oh"
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-white px-3 py-1.5 text-xs font-medium text-gold-800 hover:bg-gold-100/50 transition"
+            >
+              <span aria-hidden="true">↻</span>
+              Start a new Multi-OH
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Post type segmented picker — hidden in multi-OH mode (the
+          carousel is locked to "open_house" and the picker tabs would
+          let Larissa wander out of the multi-OH context confusingly). */}
+      {!isMultiOHPost ? (
       <div className="card p-2 flex flex-wrap gap-1">
         {POST_TYPES.map((pt) => {
           const active = pt.id === postType;
@@ -2294,9 +2381,19 @@ export default function PostBuilderClient({
           );
         })}
       </div>
+      ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
-        {/* Left: Listing picker */}
+      {/* Main grid. Multi-OH mode collapses to a single column (no
+          listing picker on the left); single-listing mode keeps the
+          two-column [300px | rest] layout. */}
+      <div
+        className={[
+          "grid grid-cols-1 gap-6",
+          isMultiOHPost ? "" : "lg:grid-cols-[300px_1fr]",
+        ].join(" ")}
+      >
+        {/* Left: Listing picker — hidden in multi-OH mode. */}
+        {!isMultiOHPost ? (
         <section className="card p-4">
           {/* 2026-05-21 — the Multi-property Open House entry point that
               used to live here was relocated to the dashboard's Open
@@ -2431,6 +2528,7 @@ export default function PostBuilderClient({
             </div>
           )}
         </section>
+        ) : null}
 
         {/* Right: Format + Variant + Photo picker + Generate + Preview */}
         <section className="card p-5 min-h-[640px]">
@@ -2439,7 +2537,9 @@ export default function PostBuilderClient({
           ) : (
             <div className="flex flex-col h-full">
               <div className="mb-4 space-y-4">
-                {/* Step 2 · Format — full-width row */}
+                {/* Step 2 · Format — hidden in multi-OH mode (format was
+                    chosen in the wizard and can't be changed here). */}
+                {!isMultiOHPost ? (
                 <div>
                   <div className="eyebrow mb-2">Step 2 · Format</div>
                   <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
@@ -2468,8 +2568,11 @@ export default function PostBuilderClient({
                     })}
                   </div>
                 </div>
+                ) : null}
 
-                {/* Step 3 · Variant — full-width row, large previews on top */}
+                {/* Step 3 · Variant — hidden in multi-OH mode (per-property
+                    card variant was chosen in the wizard). */}
+                {!isMultiOHPost ? (
                 <div>
                   <div className="eyebrow mb-2">
                     Step 3 · Variant{" "}
@@ -2701,10 +2804,14 @@ export default function PostBuilderClient({
                     })}
                   </div>
                 </div>
+                ) : null}
               </div>
 
-              {/* Photo picker — single-select */}
-              {availablePhotos.length > 1 ? (
+              {/* Photo picker — single-select. Hidden in multi-OH mode
+                  (the hero render uses a designed graphic, not a chosen
+                  hero photo; per-property slides each carry their own
+                  photo already selected by the wizard). */}
+              {!isMultiOHPost && availablePhotos.length > 1 ? (
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="eyebrow">
@@ -2776,6 +2883,13 @@ export default function PostBuilderClient({
                 </div>
               ) : null}
 
+              {/* Generate header + button — hidden in multi-OH mode.
+                  Re-rendering a multi-OH carousel has to go through the
+                  wizard pipeline (event hero render + per-property render
+                  per slide), not the single-listing factory pipeline this
+                  button drives. The multi-OH banner up top offers
+                  "Start a new Multi-OH" instead. */}
+              {!isMultiOHPost ? (
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
                   <div className="eyebrow mb-1">
@@ -2799,6 +2913,7 @@ export default function PostBuilderClient({
                   {generating ? "Generating…" : renderResult ? "Regenerate" : "Generate"}
                 </button>
               </div>
+              ) : null}
 
               {error ? (
                 <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
@@ -2832,8 +2947,11 @@ export default function PostBuilderClient({
                         Click Generate Post to render.
                       </div>
                     )}
-                    {/* Cycle hero button — overlay on the preview when there's something to cycle */}
-                    {availablePhotos.length > 1 ? (
+                    {/* Cycle hero button — overlay on the preview when
+                        there's something to cycle. Hidden in multi-OH
+                        mode (the hero is a designed graphic, not a
+                        listing photo — cycling makes no sense). */}
+                    {!isMultiOHPost && availablePhotos.length > 1 ? (
                       <button
                         type="button"
                         onClick={cyclePhoto}

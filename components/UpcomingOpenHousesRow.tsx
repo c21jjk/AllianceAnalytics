@@ -259,6 +259,15 @@ function OpenHouseRow({
           }}
         >
           {openHouse.address ?? "Unknown address"}
+          {/* 2026-05-22 — condo/townhouse unit identifier so consumers
+              know which unit to visit when multiple units at the same
+              building show separate OHs. */}
+          {openHouse.unit_number ? (
+            <span style={{ color: "#525250", fontWeight: 500 }}>
+              {" · "}
+              {openHouse.unit_number}
+            </span>
+          ) : null}
           {cityState ? (
             <span style={{ color: "#737373", fontWeight: 400 }}>
               , {cityState}

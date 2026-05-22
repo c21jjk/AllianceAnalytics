@@ -63,6 +63,9 @@ export interface PostBuilderListing {
   agent_name: string | null;
   listing_date: string | null;
   status: "active" | "pending" | "sold" | "expired";
+  /** Condo/townhouse/lot identifier from Paragon's L_Address2 — e.g.
+   *  "Unit 207", "#9", "Lot #MJ-01". NULL for single-family homes. */
+  unit_number?: string | null;
   /** Open House start (UTC ISO). Set by the listings fetcher when post_type='open_house'. */
   oh_start_at?: string | null;
   /** Open House end (UTC ISO). May be null even when start is set. */
@@ -314,13 +317,25 @@ export interface MultiOHEventProperty {
   bathrooms_half: number | null;
   property_type: string | null;
   hero_image_url: string | null;
-  /** ISO 8601 UTC timestamps for the OH window. The hero formats these
-   *  per-property as "Sat · 11:00 AM – 1:00 PM"-style strings. */
+  /** ISO 8601 UTC timestamps for the PRIMARY OH window. Kept for
+   *  backward compat (single-session events). When a property is hosting
+   *  multiple OHs that same weekend, `oh_sessions` holds the full list
+   *  including this one. */
   oh_start_at: string | null;
   oh_end_at: string | null;
+  /** Every OH window for this property in the event — Sat + Sun if the
+   *  user picked both. Newer field (2026-05-22). Empty/undefined falls
+   *  back to the single oh_start_at / oh_end_at pair. */
+  oh_sessions?: ReadonlyArray<{
+    start_at: string | null;
+    end_at: string | null;
+  }>;
   /** Optional per-property hosting agent override. Useful when a single
    *  event spans homes hosted by different agents. */
   hosting_agent_name?: string | null;
+  /** Condo/townhouse/lot identifier — shown right after the address on
+   *  hero rows and per-property cards so consumers know which unit. */
+  unit_number?: string | null;
 }
 
 /**

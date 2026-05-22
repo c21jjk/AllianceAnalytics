@@ -1317,6 +1317,7 @@ export type Database = {
           state: string | null
           status: Database["public"]["Enums"]["property_status"]
           status_changed_at: string
+          unit_number: string | null
           updated_at: string
           zip: string | null
         }
@@ -1356,6 +1357,7 @@ export type Database = {
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           status_changed_at?: string
+          unit_number?: string | null
           updated_at?: string
           zip?: string | null
         }
@@ -1395,6 +1397,7 @@ export type Database = {
           state?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           status_changed_at?: string
+          unit_number?: string | null
           updated_at?: string
           zip?: string | null
         }

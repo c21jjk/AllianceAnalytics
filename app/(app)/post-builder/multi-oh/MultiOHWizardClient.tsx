@@ -402,6 +402,7 @@ export default function MultiOHWizardClient({
           oh_start_at: l.oh_start_at ?? null,
           oh_end_at: l.oh_end_at ?? null,
           hosting_agent_name: trimmedHost.length > 0 ? trimmedHost : null,
+          unit_number: l.unit_number ?? null,
         };
       });
 
@@ -1341,12 +1342,39 @@ function HeroSlideBody({
   hostingAgents,
 }: HeroSlideBodyProps) {
   const isThumb = size === "thumb";
+  // 2026-05-22 — consolidate same-mls picks so a condo unit with Sat + Sun
+  // open houses renders as ONE row with both windows on the sub-line,
+  // mirroring what the real render does via consolidatePropertiesByMls
+  // in the route. Wizard mocks were showing duplicate rows before.
+  const consolidated: Array<{
+    listing: PostBuilderListing;
+    sessions: Array<{ start_at: string | null; end_at: string | null }>;
+  }> = [];
+  const indexByMls = new Map<string, number>();
+  for (const p of properties) {
+    const existing = indexByMls.get(p.mls_number);
+    const session = { start_at: p.oh_start_at ?? null, end_at: p.oh_end_at ?? null };
+    if (existing === undefined) {
+      indexByMls.set(p.mls_number, consolidated.length);
+      consolidated.push({ listing: p, sessions: [session] });
+    } else {
+      consolidated[existing].sessions.push(session);
+    }
+  }
+  // Sort each property's sessions chronologically so Sat reads before Sun.
+  for (const entry of consolidated) {
+    entry.sessions.sort((a, b) => {
+      const ta = a.start_at ? new Date(a.start_at).getTime() : 0;
+      const tb = b.start_at ? new Date(b.start_at).getTime() : 0;
+      return ta - tb;
+    });
+  }
   // Cap the rendered rows so a 9-property event doesn't blow out the layout
   // — the real render uses computeRowDensity to shrink, but for the mock
   // we just truncate with a "+N more" line.
   const maxRows = isThumb ? 3 : 6;
-  const visible = properties.slice(0, maxRows);
-  const overflow = properties.length - visible.length;
+  const visible = consolidated.slice(0, maxRows);
+  const overflow = consolidated.length - visible.length;
 
   // Resolve a row's hosting agent: explicit override first, listing's own
   // agent_name second, empty third (suppresses the "Hosted by" line). The
@@ -1382,11 +1410,26 @@ function HeroSlideBody({
       </div>
       {/* property list */}
       <div className={`mt-[4%] flex-1 flex flex-col ${isThumb ? "gap-[2px]" : "gap-2.5"} overflow-hidden`}>
-        {visible.map((p, i) => {
+        {visible.map((entry, i) => {
+          const p = entry.listing;
+          const baseAddress = (p.address ?? p.mls_number ?? "").trim();
+          const unit = (p.unit_number ?? "").trim();
+          // 2026-05-22 — append unit suffix so condo / townhouse rows
+          // show "511 E 11th Avenue · Unit 207" rather than orphaning
+          // the unit ID where the consumer can't see it.
+          const addressLine = unit
+            ? baseAddress
+              ? `${baseAddress} · ${unit}`
+              : unit
+            : baseAddress;
           const cityState = [p.city, p.state].filter(Boolean).join(", ");
-          const timeLabel = p.oh_start_at
-            ? formatOhBadge(p.oh_start_at, p.oh_end_at ?? null)
-            : "";
+          // Every session window for this consolidated entry. Empty array
+          // when none have a valid timestamp.
+          const sessionLabels = entry.sessions
+            .map((s) =>
+              s.start_at ? formatOhBadge(s.start_at, s.end_at ?? null) : "",
+            )
+            .filter((s) => s.length > 0);
           const host = hostFor(p);
 
           if (isThumb) {
@@ -1404,13 +1447,13 @@ function HeroSlideBody({
                   {i + 1}
                 </span>
                 <span className="truncate text-[#525250] text-[4px]">
-                  {p.address ?? p.mls_number}
+                  {addressLine}
                 </span>
               </div>
             );
           }
 
-          // Featured row — multi-line: address + city/time + hosted-by.
+          // Featured row — multi-line: address + city · session1 · session2 + hosted-by.
           // Mirrors the real renderer's renderPropertyRow output.
           return (
             <div
@@ -1425,18 +1468,22 @@ function HeroSlideBody({
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[11px] font-semibold text-[#18181B] leading-tight">
-                  {p.address ?? p.mls_number}
+                  {addressLine}
                 </div>
-                {(cityState || timeLabel) ? (
-                  <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#525250] leading-tight">
+                {(cityState || sessionLabels.length > 0) ? (
+                  <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#525250] leading-tight flex-wrap">
                     {cityState ? <span className="truncate">{cityState}</span> : null}
-                    {cityState && timeLabel ? (
-                      <span
-                        aria-hidden="true"
-                        className="inline-block w-1 h-1 rounded-full bg-[#C9A961] shrink-0"
-                      />
-                    ) : null}
-                    {timeLabel ? <span className="truncate">{timeLabel}</span> : null}
+                    {sessionLabels.map((label, idx) => (
+                      <span key={idx} className="inline-flex items-center gap-1">
+                        {(cityState || idx > 0) ? (
+                          <span
+                            aria-hidden="true"
+                            className="inline-block w-1 h-1 rounded-full bg-[#C9A961] shrink-0"
+                          />
+                        ) : null}
+                        <span className="truncate">{label}</span>
+                      </span>
+                    ))}
                   </div>
                 ) : null}
                 {host ? (
@@ -1565,7 +1612,7 @@ function PropertyV2Mock({ listing, hostingAgent, size }: VariantMockProps) {
           className={`font-serif font-bold leading-tight ${isThumb ? "text-[7px]" : "text-base"}`}
           style={{ fontFamily: "Georgia, serif" }}
         >
-          {listing.address ?? listing.mls_number}
+          {displayAddressWithUnit(listing)}
         </div>
         <div
           className={`opacity-80 ${isThumb ? "text-[5px] mt-0.5" : "text-xs mt-1"}`}
@@ -1657,7 +1704,7 @@ function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
           className={`mt-1 font-serif font-bold leading-tight ${isThumb ? "text-[6px]" : "text-sm"}`}
           style={{ fontFamily: "Georgia, serif" }}
         >
-          {listing.address ?? listing.mls_number}
+          {displayAddressWithUnit(listing)}
         </div>
         <div
           className={`opacity-70 ${isThumb ? "text-[4px] mt-0.5" : "text-[10px] mt-0.5"}`}
@@ -1736,7 +1783,7 @@ function PropertyV6Mock({ listing, hostingAgent, size }: VariantMockProps) {
           className={`font-serif font-bold leading-[1.05] ${isThumb ? "text-[8px]" : "text-lg"}`}
           style={{ fontFamily: "Georgia, serif" }}
         >
-          {listing.address ?? listing.mls_number}
+          {displayAddressWithUnit(listing)}
         </div>
         <div
           className={`opacity-70 ${isThumb ? "text-[4px] mt-0.5" : "text-[11px] mt-1"}`}
@@ -1817,7 +1864,7 @@ function PropertyV8Mock({ listing, hostingAgent, size }: VariantMockProps) {
         <div
           className={`font-bold leading-tight ${isThumb ? "text-[7px]" : "text-sm"}`}
         >
-          {listing.address ?? listing.mls_number}
+          {displayAddressWithUnit(listing)}
         </div>
         <div
           className={`opacity-80 ${isThumb ? "text-[4px] mt-0.5" : "text-[10px] mt-0.5"}`}
@@ -2034,6 +2081,24 @@ function SlideThumb({
 // ---------------------------------------------------------------------------
 // Step 3 helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Compose the address line shown on a property mock, suffixing the
+ * unit identifier when present (e.g. "511 E 11th Avenue · Unit 207").
+ * Falls back to the MLS number when there's no address at all.
+ *
+ * 2026-05-22 — added so condo/townhouse units are visible in the
+ * wizard preview. The real renderer applies the same suffix via
+ * route.ts's toRenderListing.
+ */
+function displayAddressWithUnit(listing: PostBuilderListing): string {
+  const base = (listing.address ?? "").trim();
+  const unit = (listing.unit_number ?? "").trim();
+  if (base && unit) return `${base} · ${unit}`;
+  if (base) return base;
+  if (unit) return unit;
+  return listing.mls_number;
+}
 
 /** Short display name for the variant in summary copy. */
 function prettyVariant(v: PerPropertyVariant): string {

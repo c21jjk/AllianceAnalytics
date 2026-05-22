@@ -20,6 +20,10 @@ export interface UpcomingOpenHouse {
   /** Joined from properties — null when the OH arrived before the property
    *  replicated (rare; resolves on next sync). */
   address: string | null;
+  /** Condo/townhouse/lot identifier (e.g. "Unit 207"). Joined from
+   *  properties; null for single-family homes. Surfaced on the dashboard
+   *  OH list so consumers can tell which unit to visit. */
+  unit_number: string | null;
   city: string | null;
   state: string | null;
   hero_image_url: string | null;
@@ -46,6 +50,7 @@ interface DbPropertyRow {
   id: string;
   mls_number: string;
   address: string | null;
+  unit_number: string | null;
   city: string | null;
   state: string | null;
   hero_image_url: string | null;
@@ -117,7 +122,7 @@ export async function getUpcomingOpenHouses(
     const { data: byId } = await supabase
       .from("properties")
       .select(
-        "id, mls_number, address, city, state, hero_image_url, agent_name, list_price, office_id",
+        "id, mls_number, address, unit_number, city, state, hero_image_url, agent_name, list_price, office_id",
       )
       .in("id", propertyIds);
     for (const p of (byId ?? []) as DbPropertyRow[]) {
@@ -133,7 +138,7 @@ export async function getUpcomingOpenHouses(
     const { data: byMls } = await supabase
       .from("properties")
       .select(
-        "id, mls_number, address, city, state, hero_image_url, agent_name, list_price, office_id",
+        "id, mls_number, address, unit_number, city, state, hero_image_url, agent_name, list_price, office_id",
       )
       .in("mls_number", Array.from(new Set(missingMls)));
     for (const p of (byMls ?? []) as DbPropertyRow[]) {
@@ -188,6 +193,7 @@ export async function getUpcomingOpenHouses(
       end_at: oh.end_at,
       comments: oh.comments,
       address: property?.address ?? null,
+      unit_number: property?.unit_number ?? null,
       city: property?.city ?? null,
       state: property?.state ?? null,
       hero_image_url: property?.hero_image_url ?? null,
@@ -261,6 +267,7 @@ export async function getOpenHousesForProperty(
     end_at: oh.end_at,
     comments: oh.comments,
     address: property?.address ?? null,
+    unit_number: property?.unit_number ?? null,
     city: property?.city ?? null,
     state: property?.state ?? null,
     hero_image_url: property?.hero_image_url ?? null,

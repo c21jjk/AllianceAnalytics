@@ -127,6 +127,7 @@ interface PropertyRow {
   bathrooms_full: number | null;
   bathrooms_half: number | null;
   property_type: string | null;
+  unit_number: string | null;
   public_remarks: string | null;
   hero_image_url: string | null;
   listing_office_name: string | null;
@@ -257,6 +258,10 @@ function parseBody(raw: unknown):
         typeof p.hosting_agent_name === "string"
           ? p.hosting_agent_name
           : null,
+      unit_number:
+        typeof p.unit_number === "string" && p.unit_number.length > 0
+          ? p.unit_number
+          : null,
     });
   }
 
@@ -300,7 +305,7 @@ async function fetchListingRows(
   const { data, error } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date",
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, unit_number",
     )
     .in("mls_number", [...mlsNumbers]);
   if (error) {
@@ -328,11 +333,23 @@ function toRenderListing(
   prop: MultiOHEventProperty,
   row: PropertyRow | undefined,
 ): PostBuilderListing {
+  // 2026-05-22 — suffix unit_number onto the displayed address so the
+  // per-property card variants (v2/v3/v6/v8) show "511 E 11th Avenue ·
+  // Unit 207" without having to edit each template primitive. The
+  // unit also stays available on `unit_number` for any future template
+  // that wants to render it as a separate element.
+  const baseAddress = prop.address ?? row?.address ?? null;
+  const unit = (prop.unit_number ?? row?.unit_number ?? "").trim();
+  const displayAddress = unit
+    ? baseAddress
+      ? `${baseAddress} · ${unit}`
+      : unit
+    : baseAddress;
   return {
     id: row?.id ?? prop.listing_id ?? prop.mls_number,
     mls_number: prop.mls_number,
     source_mls: prop.source_mls,
-    address: prop.address ?? row?.address ?? null,
+    address: displayAddress,
     city: prop.city ?? row?.city ?? null,
     state: prop.state ?? row?.state ?? null,
     zip: prop.zip ?? row?.zip ?? null,
@@ -353,7 +370,74 @@ function toRenderListing(
     status: row?.status ?? "active",
     oh_start_at: prop.oh_start_at,
     oh_end_at: prop.oh_end_at,
+    // 2026-05-22 — unit_number surfaces on the per-property card by
+    // being suffixed into the rendered address. The DB row is the
+    // canonical source; the wizard's property summary forwards it.
+    unit_number: prop.unit_number ?? row?.unit_number ?? null,
   };
+}
+
+/**
+ * Consolidate same-property entries into one per-property record, with
+ * every session window collected into `oh_sessions`. Used by the renderer
+ * so that picking BOTH Sat and Sun open houses for the same condo unit
+ * shows ONE row on the hero card listing both days/times — and ONE
+ * carousel slide rather than two duplicate slides.
+ *
+ * Preserves the order of FIRST appearance of each mls_number, so the
+ * wizard's drag-reorder still controls carousel slide order. Within a
+ * property, sessions are sorted chronologically.
+ *
+ * 2026-05-22 — added when John pointed out that 511 E 11th Unit 207 with
+ * a Sat + Sun open house was showing as two separate rows on the hero
+ * (and two duplicate slides in the carousel).
+ */
+function consolidatePropertiesByMls(
+  properties: readonly MultiOHEventProperty[],
+): MultiOHEventProperty[] {
+  const seen = new Map<string, MultiOHEventProperty>();
+  const order: string[] = [];
+  for (const p of properties) {
+    const key = p.mls_number;
+    const session = { start_at: p.oh_start_at, end_at: p.oh_end_at };
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, {
+        ...p,
+        oh_sessions: [session],
+      });
+      order.push(key);
+      continue;
+    }
+    // why: subsequent picks of the same property append a session window.
+    // The first pick's other fields (hero image, hosting agent, etc.) stay
+    // authoritative — the user picked them first so they're the intent.
+    seen.set(key, {
+      ...existing,
+      oh_sessions: [...(existing.oh_sessions ?? []), session],
+    });
+  }
+  // Sort each property's sessions chronologically by start_at so the
+  // hero card reads Sat → Sun naturally rather than in pick order.
+  for (const key of order) {
+    const p = seen.get(key);
+    if (!p?.oh_sessions) continue;
+    const sorted = [...p.oh_sessions].sort((a, b) => {
+      const ta = a.start_at ? new Date(a.start_at).getTime() : 0;
+      const tb = b.start_at ? new Date(b.start_at).getTime() : 0;
+      return ta - tb;
+    });
+    seen.set(key, {
+      ...p,
+      oh_sessions: sorted,
+      // Keep oh_start_at / oh_end_at as the FIRST chronological session
+      // so any consumer that still reads the singular fields gets a
+      // sensible default.
+      oh_start_at: sorted[0]?.start_at ?? p.oh_start_at,
+      oh_end_at: sorted[0]?.end_at ?? p.oh_end_at,
+    });
+  }
+  return order.map((k) => seen.get(k)!).filter((p): p is MultiOHEventProperty => p !== undefined);
 }
 
 /**
@@ -539,7 +623,15 @@ export async function POST(request: Request): Promise<Response> {
         { status: 400 },
       );
     }
-    const input = parsed.value;
+    // 2026-05-22 — consolidate same-mls picks into one record carrying
+    // all session windows in oh_sessions. The wizard's pick list is
+    // OH-instance-flat (Sat + Sun for the same condo come in as two
+    // entries); the renderer + per-property carousel slides + caption
+    // synth all want one entry per unique property.
+    const input: MultiOHEventInput = {
+      ...parsed.value,
+      properties: consolidatePropertiesByMls(parsed.value.properties),
+    };
 
     // ---- Render the event-overview hero ----
     // why: `renderMultiOHEventOverview` throws on failure (Chromium / Storage)
@@ -611,13 +703,17 @@ export async function POST(request: Request): Promise<Response> {
         source_mls: firstProp.source_mls,
         property_id: firstProp.listing_id,
         post_type: "open_house",
-        // why: persist as v1 for now. The existing PostVariant union doesn't
-        // have a multi-OH-specific code, and we deliberately aren't widening
-        // it tonight to keep scope tight. The synthetic `template_id` below
-        // (`multi_oh_event_*`) is the marker future code uses to detect
-        // "this row is a multi-OH event" — variant + post_type alone aren't
-        // enough.
-        variant: "v1",
+        // why: persist the wizard's chosen per-property variant (v2/v3/v6/v8).
+        // 2026-05-21 — used to hardcode "v1" here back when v1 was the
+        // active default, but v1 was retired from the canvas-editor
+        // template registry on 2026-05-17, leaving downstream lookups
+        // (findCanvasTemplate, Edit in Studio, the resume-auto-open
+        // effect) failing for every multi-OH row. The synthetic
+        // `template_id` below (`multi_oh_event_*`) remains the canonical
+        // "this row is a multi-OH event" marker; variant just needs to
+        // match an ACTIVE registered template so Studio can resolve the
+        // per-property card schema when Larissa edits a slide.
+        variant: input.per_property_variant,
         format: input.format,
         // why: synthetic template id that won't collide with the V1 registry.
         // Future "edit in Studio" code reads this prefix to decide whether
@@ -749,21 +845,34 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
       .filter((t) => t.length > 1),
   );
 
-  // Per-property bullet lines. Mirrors what the rendered hero card
-  // shows: "1) 220 Village Road, Villas · Sat 11–1 · Hosted by Larissa".
-  // "Hosted by …" suffix only when the property carries an explicit
-  // hosting_agent_name (the wizard seeds this from the listing agent
-  // + the OH "Hosted by …" override resolver, so missing means we
-  // genuinely don't have a host name).
+  // Per-property bullet lines. Mirrors the rendered hero card:
+  //   "1) 220 Village Road · Unit 207, Villas · Sat 11–1 PM · Hosted by Larissa"
+  //
+  // 2026-05-22 — also surfaces unit_number and iterates oh_sessions so a
+  // condo unit with Sat + Sun open houses lists both windows on one
+  // bullet rather than appearing as two duplicate bullets.
   const propertyLines = input.properties.map((p, i) => {
-    const address = p.address?.trim() ?? "";
+    const baseAddress = p.address?.trim() ?? "";
+    const unit = p.unit_number?.trim() ?? "";
+    const addressWithUnit = unit
+      ? baseAddress
+        ? `${baseAddress} · ${unit}`
+        : unit
+      : baseAddress;
     const city = p.city?.trim() ?? "";
     const addressFull =
-      address && city ? `${address}, ${city}` : address || city || `Property ${i + 1}`;
-    const time = formatCaptionTime(p.oh_start_at, p.oh_end_at);
+      addressWithUnit && city
+        ? `${addressWithUnit}, ${city}`
+        : addressWithUnit || city || `Property ${i + 1}`;
+    const sessions =
+      p.oh_sessions && p.oh_sessions.length > 0
+        ? p.oh_sessions
+        : [{ start_at: p.oh_start_at, end_at: p.oh_end_at }];
+    const timeLabels = sessions
+      .map((s) => formatCaptionTime(s.start_at, s.end_at))
+      .filter((t) => t.length > 0);
     const host = p.hosting_agent_name?.trim() ?? "";
-    const parts: string[] = [addressFull];
-    if (time) parts.push(time);
+    const parts: string[] = [addressFull, ...timeLabels];
     if (host) parts.push(`Hosted by ${host}`);
     return `${i + 1}) ${parts.join(" · ")}`;
   });

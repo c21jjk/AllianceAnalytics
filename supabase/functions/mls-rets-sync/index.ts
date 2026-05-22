@@ -483,6 +483,37 @@ function readInt(raw: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Sanitize Paragon's L_Address2 field into a publishable unit identifier.
+ *
+ * 2026-05-22 — L_Address2 carries condo/townhouse unit numbers and lot
+ * identifiers ("Unit 207", "#9", "Lot #MJ-01", "Unit B", "Shannon Oaks").
+ * Most rows are clean, but a small fraction stash marketing copy in this
+ * column ("On the Intracoastal WATERWAY"). This sanitizer keeps the unit-
+ * like values and drops the prose.
+ *
+ * Accepts a value when ALL of the following hold:
+ *   - non-empty after trim
+ *   - length 1..24
+ * AND ONE of:
+ *   - contains a digit (catches "Unit 207", "#9", "604179", "A21")
+ *   - matches a known unit prefix (Unit, Apt, Suite, Ste, Lot, #)
+ *   - is short enough to be a building/sub name (<= 12 chars — catches
+ *     "Shannon Oaks", "Unit B", "Ocean World")
+ *
+ * Returns null for everything else.
+ */
+function sanitizeUnitNumber(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > 24) return null;
+  const hasDigit = /\d/.test(trimmed);
+  const hasUnitPrefix = /^(Unit|Apt|Apartment|Suite|Ste|Lot|#)\b/i.test(trimmed);
+  const isShort = trimmed.length <= 12;
+  if (hasDigit || hasUnitPrefix || isShort) return trimmed;
+  return null;
+}
+
 /** Strict positive int — used for L_KeywordN slots that share columns with text. */
 function readPositiveInt(raw: string | undefined): number | null {
   if (!raw) return null;
@@ -779,6 +810,9 @@ interface MappedListing {
   list_office_id: string | null;
   list_office_name: string | null;
   property_type: string | null;
+  /** Condo / townhouse / lot identifier from Paragon's L_Address2 field.
+   *  Sanitized — see sanitizeUnitNumber. NULL for single-family homes. */
+  unit_number: string | null;
   dom_days: number | null;
   bedrooms: number | null;
   bathrooms_full: number | null;
@@ -887,6 +921,7 @@ function mapRow(
     list_office_id: (row["LO1_HiddenOrgID"] ?? row["L_ListOffice1"] ?? "").trim() || null,
     list_office_name: listOfficeName,
     property_type: (row["L_Type_"] ?? "").trim() || null,
+    unit_number: sanitizeUnitNumber(row["L_Address2"]),
     dom_days: readInt(row["L_DOM"]),
     bedrooms: beds.bedrooms,
     bathrooms_full: beds.bathrooms_full,
@@ -1038,6 +1073,7 @@ async function replicateToProperties(client: SupabaseClient, rows: MappedListing
     agent_email: r.list_agent_email,
     listing_office_name: r.list_office_name,
     property_type: r.property_type,
+    unit_number: r.unit_number,
     dom_days: r.dom_days,
     bedrooms: r.bedrooms,
     bathrooms_full: r.bathrooms_full,

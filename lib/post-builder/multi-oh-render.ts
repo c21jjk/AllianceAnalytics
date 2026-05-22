@@ -574,9 +574,28 @@ function renderPropertyRow(
   index: number,
   density: RowDensity,
 ): string {
-  const address = (p.address ?? "").trim();
+  const baseAddress = (p.address ?? "").trim();
+  // 2026-05-22 — suffix the unit identifier onto the displayed address so
+  // condo / townhouse / lot consumers know which unit to visit. Skipped
+  // for single-family homes (unit_number stays null after the sanitizer).
+  const unit = (p.unit_number ?? "").trim();
+  const address = unit
+    ? baseAddress
+      ? `${baseAddress} · ${unit}`
+      : unit
+    : baseAddress;
   const cityStateZip = composeCityStateZip(p);
-  const time = formatPropertyOH(p.oh_start_at, p.oh_end_at);
+  // 2026-05-22 — when the user picks multiple OHs for the same property
+  // (e.g. Sat + Sun for one condo unit), `oh_sessions` holds the full
+  // list. Format each as "Sat · 11–1 PM" and join with a separator so
+  // the row's sub-line reads "Villas, NJ · Sat 11–1 PM · Sun 10–12 PM".
+  const sessions =
+    p.oh_sessions && p.oh_sessions.length > 0
+      ? p.oh_sessions
+      : [{ start_at: p.oh_start_at, end_at: p.oh_end_at }];
+  const sessionLabels = sessions
+    .map((s) => formatPropertyOH(s.start_at, s.end_at))
+    .filter((s): s is string => typeof s === "string" && s.length > 0);
   const price = formatPriceChip(p.list_price);
   const hostedBy =
     density.showHostedBy &&
@@ -595,11 +614,11 @@ function renderPropertyRow(
       `<span class="row-citystate">${escapeHtml(cityStateZip)}</span>`,
     );
   }
-  if (time) {
+  for (const label of sessionLabels) {
     if (subParts.length > 0) {
       subParts.push(`<span class="row-dot"></span>`);
     }
-    subParts.push(`<span class="row-time">${escapeHtml(time)}</span>`);
+    subParts.push(`<span class="row-time">${escapeHtml(label)}</span>`);
   }
 
   return `<div class="row">
