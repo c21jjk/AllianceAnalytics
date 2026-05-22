@@ -7,7 +7,7 @@
 
 ## Context
 
-Templates are how every Post Builder post gets its visual identity. Today they are hand-coded HTML/CSS primitives in `lib/post-builder/templates/primitives/` — 12+ files, one per (variant × format) combination. Editing a template means editing TypeScript, pushing to GitHub, and deploying. Adding a new template requires three new primitive files (one per format) plus registry wiring.
+Templates are how every Post Builder post gets its visual identity. Today they are hand-coded HTML/CSS primitives in `lib/post-builder/templates/primitives/` — 12 files (6 active variants × 2 formats), one per (variant × format) combination. Editing a template means editing TypeScript, pushing to GitHub, and deploying. Adding a new template requires two new primitive files (one per format) plus registry wiring.
 
 This works but constrains the system:
 
@@ -61,17 +61,18 @@ CREATE INDEX idx_template_definitions_state      ON public.template_definitions 
 
 ### 3. Template = format family
 
-Each template row is a **family** that defines all three formats (Square, Portrait, Story) inside one `schema` JSON document, keyed by format:
+Each template row is a **family** that defines both supported formats (Portrait 4:5 + Story 9:16) inside one `schema` JSON document, keyed by format:
 
 ```json
 {
-  "square_1x1":   { ...CanvasTemplateSchema },
   "portrait_4x5": { ...CanvasTemplateSchema },
   "story_9x16":   { ...CanvasTemplateSchema }
 }
 ```
 
-A template doesn't have to define all three. Partial families are valid (an OH-specific template might launch Portrait-only). Templates that don't define the user's selected format are filtered out of the picker.
+Square 1:1 was retired 2026-05-22 — see `lib/post-builder/types.ts`.
+
+A template doesn't have to define both formats. Partial families are valid (an OH-specific template might launch Portrait-only). Templates that don't define the user's selected format are filtered out of the picker.
 
 ### 4. Post-type tagging — multi-select
 
@@ -155,7 +156,7 @@ Phase 1: admin-only. `/admin/templates/*` routes are gated to `profiles.role = '
 
 ### 13. Migration path — coexistence, not big-bang
 
-The 12-18 hand-coded primitives in `lib/post-builder/templates/primitives/` are NOT migrated automatically. They keep working through the legacy registry, coexisting with DB-defined templates during the build.
+The 12 hand-coded primitives in `lib/post-builder/templates/primitives/` (6 active variants × 2 formats — portrait_4x5 + story_9x16) are NOT migrated automatically. They keep working through the legacy registry, coexisting with DB-defined templates during the build.
 
 The picker queries BOTH sources and merges. Legacy primitives surface with their existing variant IDs (v2, v3, v6, v8, v9, v10); DB templates surface by UUID with their authored name.
 

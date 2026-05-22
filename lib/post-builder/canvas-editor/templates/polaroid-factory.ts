@@ -10,18 +10,17 @@
  * SOLD / NEW PRICE stamp lands on top of the photo at a different tilt for
  * stamped-souvenir feel.
  *
- * Generates 15 templates: 5 post types × 3 formats.
+ * Generates 10 templates: 5 post types × 2 formats.
  *
  * Design parity with the V1 HTML primitives (`primitives/v7-polaroid*.ts`):
  *   • Same kraft-paper background `#F5EBCF` (matches `ALLIANCE_COLORS.gold100`).
  *   • Same polaroid tilt direction (~ -2° in V1; we go a touch further to
- *     -4° on square + portrait and -3° on story — more obviously "polaroid"
+ *     -4° on portrait and -3° on story — more obviously "polaroid"
  *     at thumbnail size, where the V1's 2° read as accidental misalignment).
  *   • Same Pacifico script caption — `ALLIANCE_FONTS.pacifico`, all-caps off
  *     so the script glyphs work properly. V1 used uppercase Inter for the
  *     caption; we move that to the script font to match the brief.
  *   • Same per-format dimensions:
- *       square_1x1   polaroid roughly y=56 → 720, type stack 740 → 1040
  *       portrait_4x5 polaroid roughly y=70 → 880,  type stack 950 → 1310
  *       story_9x16   polaroid roughly y=310 → 1240, type stack 1330 → 1700
  *
@@ -140,10 +139,6 @@ interface FormatLayout {
 }
 
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  // why: square keeps the polaroid centered horizontally and reserves the
-  // bottom ~38% of the canvas for the type stack. Photo area is 740x540 — a
-  // soft 4:3-ish crop that flatters most listing exteriors. The card itself
-  // is 804x660 (32px side padding, 88px bottom caption strip per V1).
   // why: portrait gives the polaroid a more vertical photo (760x680) so the
   // print reads as a true photo-album page. Type stack starts at y=950 to
   // leave room for the larger polaroid card.
@@ -773,7 +768,7 @@ export function createPolaroidTemplate(
 }
 
 /**
- * Convenience: all 5 post types × 3 formats = 15 polaroid templates.
+ * Convenience: all 5 post types × 2 formats = 10 polaroid templates.
  * The registry (`templates/index.ts`) calls this once at module-load time
  * alongside the v1 Hero Editorial + v2 Bold Stats + v3 Side-by-Side outputs.
  */

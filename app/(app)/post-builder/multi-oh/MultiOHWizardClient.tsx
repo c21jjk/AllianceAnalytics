@@ -48,24 +48,17 @@ interface Props {
  */
 type StepIndex = 1 | 2 | 3;
 
-interface FormatCardMeta {
-  id: PostFormat;
-  name: string;
-  hint: string;
-  /** Aspect ratio for the mini-glyph (w / h). */
-  ratio: [number, number];
-}
-
 interface VariantCardMeta {
   id: PerPropertyVariant;
   name: string;
   description: string;
 }
 
-const FORMAT_CARDS: readonly FormatCardMeta[] = [
-  { id: "portrait_4x5", name: "Portrait 4:5", hint: "IG feed preferred", ratio: [4, 5] },
-  { id: "story_9x16", name: "Story 9:16", hint: "Stories · TikTok", ratio: [9, 16] },
-];
+// 2026-05-22 — FormatCardMeta / FORMAT_CARDS / FormatCard removed. The
+// format-picker step was retired earlier (we ship Portrait + Story for
+// every post automatically), so the card-grid UI and its supporting types
+// were dead code. Variant picker below stays — variant is still a user
+// choice per property.
 
 // Descriptions mirror the canonical copy in lib/post-builder/templates/
 // registry.ts so the wizard and the standard Post Builder picker stay in
@@ -952,72 +945,6 @@ function Step2FormatVariant({
   );
 }
 
-interface FormatCardProps {
-  meta: FormatCardMeta;
-  active: boolean;
-  onClick: () => void;
-  /** Event title shown in the hero mock. */
-  eventTitle: string;
-  /** Picked properties shown in the hero mock's property list. */
-  properties: readonly PostBuilderListing[];
-}
-
-/**
- * 2026-05-21 — FormatCard now renders an actual mini Hero slide mock at
- * the format's aspect ratio instead of a plain gray block. Lets the user
- * see "this is what a Square event hero looks like vs. a Portrait one vs.
- * a Story one" before committing.
- */
-function FormatCard({
-  meta,
-  active,
-  onClick,
-  eventTitle,
-  properties,
-}: FormatCardProps) {
-  // Story is tall + narrow — give it less horizontal real estate so all
-  // three cards balance visually. Square/portrait can use a wider thumb.
-  const thumbWidthClass: Record<PostFormat, string> = {
-    portrait_4x5: "w-[80px]",
-    story_9x16: "w-[58px]",
-  };
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        "rounded-xl border p-4 text-left transition flex items-center gap-3",
-        active
-          ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm"
-          : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
-      ].join(" ")}
-    >
-      {/* Mini hero mock at the format's aspect ratio. Same HeroSlideBody
-          used by Step 3's ribbon — single source of visual truth. */}
-      <div
-        className={`${thumbWidthClass[meta.id]} ${FORMAT_ASPECT[meta.id]} shrink-0 overflow-hidden rounded-sm ring-1 ring-neutral-200 shadow-sm`}
-      >
-        <HeroSlideBody
-          eventTitle={eventTitle}
-          properties={properties}
-          size="thumb"
-        />
-      </div>
-      <div className="min-w-0">
-        <div
-          className={[
-            "text-sm font-semibold",
-            active ? "text-gold-900" : "text-neutral-900",
-          ].join(" ")}
-        >
-          {meta.name}
-        </div>
-        <div className="text-xs text-neutral-500 mt-0.5">{meta.hint}</div>
-      </div>
-    </button>
-  );
-}
-
 interface VariantCardProps {
   meta: VariantCardMeta;
   active: boolean;
@@ -1308,10 +1235,10 @@ interface HeroSlideBodyProps {
   properties: readonly PostBuilderListing[];
   size: "featured" | "thumb";
   /** Per-property hosting agent overrides (mls_number → name). Optional —
-   *  ribbon thumbs and FormatCard mocks pass undefined since the thumb is
-   *  too small to legibly show hosted-by anyway. When present and the
-   *  featured size is used, each row renders a "Hosted by …" line below
-   *  the address/city/time strip. */
+   *  ribbon thumbs pass undefined since the thumb is too small to legibly
+   *  show hosted-by anyway. When present and the featured size is used,
+   *  each row renders a "Hosted by …" line below the address/city/time
+   *  strip. */
   hostingAgents?: Record<string, string>;
 }
 
@@ -1413,8 +1340,8 @@ function HeroSlideBody({
           const host = hostFor(p);
 
           if (isThumb) {
-            // Tight one-line row for ribbon / FormatCard thumbs — address
-            // truncates, no city/time/host (too small to be legible).
+            // Tight one-line row for ribbon thumbs — address truncates,
+            // no city/time/host (too small to be legible).
             return (
               <div
                 key={p.mls_number}

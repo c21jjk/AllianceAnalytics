@@ -89,7 +89,7 @@ export function findCanvasTemplate(
 
 /**
  * Slim listing of available templates for diagnostic / future templates-panel
- * use. Format: "Just Listed · Hero Editorial · Square 1:1".
+ * use. Format: "Just Listed · Hero Editorial · Portrait 4:5".
  */
 export function listAvailableTemplateNames(): string[] {
   return CANVAS_TEMPLATES.map((t) => t.name);

@@ -12,10 +12,9 @@
  *   • v8 Minimal Frame  — light surface, framed photo island, type centered
  *                          below. Maximum breathing room.
  *
- * Generates 15 templates: 5 post types × 3 formats.
+ * Generates 10 templates: 5 post types × 2 formats.
  *
  * Design parity with the V1 HTML primitives:
- *   `lib/post-builder/templates/primitives/v8-minimal-frame.ts`         (square)
  *   `lib/post-builder/templates/primitives/v8-minimal-frame-portrait.ts`
  *   `lib/post-builder/templates/primitives/v8-minimal-frame-story.ts`
  *
@@ -153,10 +152,6 @@ interface FormatLayout {
 // has no flex/gap primitives, so we precompute the left edges by symmetry:
 // for a centered element of width W on a 1080-wide canvas, left = (1080 - W) / 2.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-  // V1 reference: photo 760×500 centered at top=240; type stack at y=800;
-  // eyebrow at y=110; footer at bottom: 36 → ~1010 baseline.
-
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   // V1 reference: photo 820×600 centered at top=320; type stack at y=990;
   // eyebrow at y=130; footer at bottom: 44 → ~1260 baseline.
@@ -348,7 +343,7 @@ const POST_TYPE_CONFIGS: Record<PostType, PostTypeConfig> = {
  * compared for schema drift.
  *
  * @param postType — which of the five post categories
- * @param format   — which aspect ratio (square / portrait / story)
+ * @param format   — which aspect ratio (portrait / story)
  * @returns a CanvasTemplateSchema ready to register in index.ts
  */
 export function createMinimalFrameTemplate(

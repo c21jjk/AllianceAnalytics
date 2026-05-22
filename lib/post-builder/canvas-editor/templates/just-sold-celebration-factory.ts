@@ -157,12 +157,10 @@ interface FormatLayout {
 }
 
 // why: layouts are tuned per format so the sash + price + address block read
-// at roughly the same visual proportions across square / portrait / story.
+// at roughly the same visual proportions across portrait / story.
 // The price always sits in the LOWER HALF of the canvas where the scrim
 // guarantees legibility against bright hero photos.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
     width: 1080,
@@ -418,7 +416,7 @@ const POST_TYPE_CONFIGS: Record<PostType, PostTypeConfig> = {
  * layer tree.
  *
  * @param postType — which of the five post categories
- * @param format   — which aspect ratio (square / portrait / story)
+ * @param format   — which aspect ratio (portrait / story)
  * @returns a CanvasTemplateSchema ready to register in index.ts
  */
 export function createJustSoldCelebrationTemplate(

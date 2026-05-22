@@ -94,7 +94,7 @@ function makeLayerId(prefix: string): string {
  * Falls back to (0,0) when the canvas reports null dimensions during init.
  *
  * Why centered defaults: a layer dropped at (0,0) sits in the top-left and
- * is easy to miss on a 1080×1080 canvas. Centering puts the new object on
+ * is easy to miss on a 1080×1350 canvas. Centering puts the new object on
  * the user's first eye-line.
  */
 function getCanvasCenter(canvas: NonNullable<AddLayerToolbarProps["canvas"]>): {

@@ -662,58 +662,6 @@ function renderAgentBlock(_input: MultiOHEventInput): string {
 }
 
 // ---------------------------------------------------------------------------
-// Emitter — Square 1:1 · 1080×1080
-// ---------------------------------------------------------------------------
-
-/**
- * Square 1080×1080 — IG/FB feed dominant. Margins 52px (sits between the
- * 48-56 spec range). Property list dominates the middle ~70%. Event title
- * sized 56-64px depending on length.
- */
-export function emitEventOverviewSquare(input: MultiOHEventInput): string {
-  // why: PostFormat no longer includes "square_1x1"; the cast keeps this
-  // dead function compiling until the user removes it. PLATFORM_DIMENSIONS
-  // also lost its square entry, so we hardcode the 1080×1080 fallback.
-  const fmt = "square_1x1" as unknown as PostFormat;
-  const width = 1080;
-  const height = 1080;
-  const margin = 52;
-  const density = computeRowDensity(input.properties.length, fmt);
-
-  // why: title size shrinks as the property count grows — more rows means
-  // less vertical room for the headline. Caps at ~64 / floors at ~46 to
-  // keep typographic presence.
-  const titleSize =
-    input.properties.length <= 3 ? 64 : input.properties.length <= 6 ? 54 : 46;
-
-  const rowsHtml = input.properties
-    .map((p, i) => renderPropertyRow(p, i + 1, density))
-    .join("");
-
-  return `<!doctype html>
-<html lang="en">
-${eventOverviewHead(`Open House Event — ${input.event_title}`)}
-<style>
-${baseCss({ width, height, margin, density })}
-.event-title { font-size: ${titleSize}px; }
-</style>
-<body>
-  <div class="frame">
-    <div class="header">
-      <div class="eyebrow">
-        <span class="eyebrow-rule"></span>
-        <span class="eyebrow-text">Open House Event</span>
-      </div>
-      <div class="event-title">${escapeHtml(input.event_title)}</div>
-    </div>
-    <div class="properties">${rowsHtml}</div>
-    ${renderAgentBlock(input)}
-  </div>
-</body>
-</html>`;
-}
-
-// ---------------------------------------------------------------------------
 // Emitter — Portrait 4:5 · 1080×1350
 // ---------------------------------------------------------------------------
 

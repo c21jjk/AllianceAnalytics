@@ -352,9 +352,9 @@ export default function TemplateDetailClient({ template }: Props) {
               : Object.keys(template.schema).join(", ")}
           </span>
         </div>
-        <div className="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
-          The visual canvas editor opens at{" "}
-          <code className="bg-amber-100 px-1 rounded">/edit</code> (Phase 2B). For now, schema edits happen via direct SQL through the Supabase MCP.
+        <div className="rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-900">
+          Edit the per-format schema in the visual canvas editor at{" "}
+          <code className="bg-emerald-100 px-1 rounded">/edit</code>. The raw-JSON fallback lives on the same page under the &ldquo;Raw schema (advanced)&rdquo; disclosure.
         </div>
       </div>
     </div>

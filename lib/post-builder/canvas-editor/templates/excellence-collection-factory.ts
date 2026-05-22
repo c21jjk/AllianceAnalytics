@@ -202,12 +202,10 @@ interface FormatLayout {
 }
 
 // why: layout numbers below are tuned to the reference sample. Photo dimensions
-// give it room to breathe — at square_1x1 the photo is ~70% of the canvas
-// width with ~150px above (logo + eyebrow) and ~280px below (divider through
-// address). Portrait + story scale proportionally.
+// give it room to breathe — at portrait_4x5 the photo is ~76% of the canvas
+// width with ~190px above (logo + eyebrow) and ~360px below (divider through
+// address). Story scales proportionally.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
     width: 1080,
@@ -420,7 +418,7 @@ const POST_TYPE_CONFIGS: Record<PostType, PostTypeConfig> = {
  * stability when templates are persisted to Supabase.
  *
  * @param postType — which of the five post categories
- * @param format   — which aspect ratio (square / portrait / story)
+ * @param format   — which aspect ratio (portrait / story)
  * @returns a CanvasTemplateSchema ready to register in index.ts
  */
 export function createExcellenceCollectionTemplate(

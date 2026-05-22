@@ -45,10 +45,11 @@ function asStringParam(value: string | string[] | undefined): string | undefined
 /**
  * Post Builder — Phase 3.
  *
- * Pick post type → pick a listing → pick a format → pick a variant →
- * render. Just Listed, Just Sold, Under Contract, and Open House each
- * have three variants × three formats = 9 templates per post type
- * (36 total). Square 1:1, Portrait 4:5, and Story 9:16 all ship.
+ * Pick post type → pick a listing → pick a variant → render. Every post
+ * is generated in both formats (Portrait 4:5 for feed, Story 9:16 for
+ * Stories/Reels/TikTok) so Larissa never has to choose between them.
+ * Five post types × six active variants × two formats = 60 templates
+ * lit up via the registry.
  *
  * Caption + hashtags + canonical MLS hashtag bake in so the existing
  * /posts auto-linker ties posts back to the listing once Larissa

@@ -149,14 +149,12 @@ interface FormatLayout {
   };
 }
 
-// why: the layout numbers below are sized so that — across all three formats —
+// why: the layout numbers below are sized so that — across both formats —
 // the C21 ALLIANCE badge in the top-right has ≥40px of margin from the canvas
 // edge and never overlaps the top text stack. The hero photo is edge-to-edge
 // horizontally (left=0, width=full canvas) since the bottom band gives the
 // composition its frame; left-edge padding would compete with the band.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
     width: 1080,
@@ -213,8 +211,8 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
       eyebrow: { top: 290, fontSize: 76 },
       price: { top: 386, fontSize: 28 },
       openHouse: { top: 424, fontSize: 28 },
-      // why: design review 2026-05-17 — story extends the square (26/24) +
-      // portrait (28/26) progression to 32/30 so the address dominates the
+      // why: design review 2026-05-17 — story extends the portrait
+      // (28/26) progression to 32/30 so the address dominates the
       // city at story scale (post viewed at full-screen on phone).
       address: { top: 468, fontSize: 32 },
       city: { top: 514, fontSize: 30 },
@@ -360,7 +358,7 @@ const POST_TYPE_CONFIGS: Record<PostType, PostTypeConfig> = {
  * for snapshot diffing and Supabase persistence.
  *
  * @param postType — which of the five post categories
- * @param format   — which aspect ratio (square / portrait / story)
+ * @param format   — which aspect ratio (portrait / story)
  * @returns a CanvasTemplateSchema ready to register in index.ts
  */
 export function createStandardListingTemplate(

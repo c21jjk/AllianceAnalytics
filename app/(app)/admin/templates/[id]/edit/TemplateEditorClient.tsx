@@ -15,8 +15,8 @@ import type {
  *
  * The page is now organized as:
  *   1. Header strip: template name + back link
- *   2. Format-switcher tabs (Square / Portrait / Story) with
- *      "defined" indicator dots
+ *   2. Format-switcher tabs (Portrait / Story) with "defined" indicator
+ *      dots — Square 1:1 was retired 2026-05-22
  *   3. Per-format card showing the current state + "Open visual editor"
  *      CTA that pops up the canvas overlay
  *   4. Collapsible "Raw schema (advanced)" panel — the JSON textarea

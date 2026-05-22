@@ -121,7 +121,7 @@ const C21_BADGE_URL = C21_ALLIANCE_WHITE_LOGO;
  * unmultiplied canvas resolution from PLATFORM_DIMENSIONS.
  *
  * The composition anchors on the canvas's VERTICAL CENTER — the headline
- * lands at ~52% of canvas height for square/portrait and ~50% for story.
+ * lands at ~52% of canvas height for portrait and ~50% for story.
  * Above the headline: just the photo + a brand badge in the top-right.
  * Below the headline: scrim, subhead, address/city/price block.
  */
@@ -187,8 +187,6 @@ interface FormatLayout {
 // to near-black behind the address/price block. Negative space (empty scrim)
 // surrounds the lower text block to reinforce the "whispered" feel.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
     width: 1080,
@@ -455,7 +453,7 @@ const POST_TYPE_CONFIGS: Record<PostType, PostTypeConfig> = {
  * Deterministic — same inputs always produce the same layer tree.
  *
  * @param postType — which of the five post categories
- * @param format   — which aspect ratio (square / portrait / story)
+ * @param format   — which aspect ratio (portrait / story)
  * @returns a CanvasTemplateSchema ready to register in index.ts
  */
 export function createComingSoonTeaserTemplate(

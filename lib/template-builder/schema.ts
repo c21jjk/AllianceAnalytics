@@ -3,9 +3,10 @@
  *
  * Mirrors the `template_definitions` table in Supabase. The format-keyed
  * `schema` field on a TemplateDefinition is a JSON document that wraps the
- * existing canvas-editor CanvasTemplateSchema once per format (Square,
- * Portrait, Story). A template can define any subset of the three formats;
- * the picker filters templates by which formats they support.
+ * existing canvas-editor CanvasTemplateSchema once per format (Portrait,
+ * Story). A template can define one or both formats; the picker filters
+ * templates by which formats they support. Square 1:1 was retired
+ * 2026-05-22.
  *
  * See `docs/adr/0001-template-builder.md` for the full design.
  */
@@ -37,10 +38,9 @@ export type TemplatePublishState = "draft" | "published" | "archived";
 export type FormatSchema = unknown;
 
 /**
- * A template's schemas, keyed by format. All three keys are optional —
- * a template might launch with only Portrait + Story (skip Square), or
- * any other subset. Picker filters templates by which formats they
- * actually define.
+ * A template's schemas, keyed by format. Both keys are optional — a
+ * template might launch with only Portrait, only Story, or both. Picker
+ * filters templates by which formats they actually define.
  */
 export interface TemplateSchemaFamily {
   portrait_4x5?: FormatSchema | null;
@@ -118,7 +118,7 @@ export function templateSupportsFormat(
 
 /**
  * Helper — list every format a template defines a schema for, in
- * canonical picker order (square, portrait, story).
+ * canonical picker order (portrait, story).
  */
 export function listSupportedFormats(
   schema: TemplateSchemaFamily,

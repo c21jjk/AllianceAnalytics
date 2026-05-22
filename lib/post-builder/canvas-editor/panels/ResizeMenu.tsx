@@ -4,8 +4,8 @@
  * ResizeMenu — Smart Resize affordance inside Studio
  * --------------------------------------------------------------------------
  *
- * A small dropdown that opens to the two formats Larissa ISN'T currently
- * editing. Clicking one of them resizes the active design to that format
+ * A small dropdown that opens to the other format Larissa ISN'T currently
+ * editing. Clicking it resizes the active design to that format
  * (regenerated from the same factory at the new aspect ratio) — see the
  * editor's `handleResizePicked` for the swap mechanics and parent state
  * sync.
@@ -15,15 +15,15 @@
  *   • Button labeled "Resize" with a small chevron, sits next to Save in
  *     the editor header.
  *   • Click opens a popover anchored under the button.
- *   • Two rows (current format is omitted). Each row shows:
- *       - aspect-ratio mini-glyph on the left (square / portrait / story
+ *   • One row (current format is omitted). Each row shows:
+ *       - aspect-ratio mini-glyph on the left (portrait / story
  *         outline, sized to read at a glance)
- *       - format label ("Square 1:1" / "Portrait 4:5" / "Story 9:16")
- *       - platform hint ("IG/FB feed", "IG feed preferred", "Stories +
- *         TikTok") so the choice surfaces context, not just dimensions
+ *       - format label ("Portrait 4:5" / "Story 9:16")
+ *       - platform hint ("IG feed preferred", "Stories + TikTok") so the
+ *         choice surfaces context, not just dimensions
  *   • A row is DISABLED with a soft tooltip when the target template
- *     doesn't exist (e.g., user is on v6 Magazine Cover and that
- *     factory only ships 2 of 3 formats today).
+ *     doesn't exist (e.g., a variant whose factory only ships one of
+ *     the two formats today).
  *   • Clicking outside the popover closes it. ESC closes it. Both
  *     standard popover affordances.
  *
@@ -73,7 +73,7 @@ export interface ResizeMenuOption {
   /**
    * When false, the row renders disabled. This is how the editor signals
    * "no canvas template exists for this (category, variant, target format)
-   * tuple" — typically because the variant only ships at 2 of 3 formats
+   * tuple" — typically because the variant only ships at 1 of 2 formats
    * (an in-progress factory port).
    */
   available: boolean;

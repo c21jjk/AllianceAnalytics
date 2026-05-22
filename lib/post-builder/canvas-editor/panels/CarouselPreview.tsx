@@ -44,7 +44,7 @@ import type { PostFormat } from "../types";
  *
  * Why a constant in this file rather than reading from PLATFORM_DIMENSIONS:
  *   PLATFORM_DIMENSIONS encodes pixel sizes for the canvas export pipeline
- *   (1080×1080, 1080×1350, 1080×1920). At the preview surface we only care
+ *   (1080×1350, 1080×1920). At the preview surface we only care
  *   about the ratio — keeping it as a plain CSS string avoids a divide-and-
  *   format step at render time and is trivially diffable against the spec.
  */

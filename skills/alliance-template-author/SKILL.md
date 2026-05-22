@@ -1,6 +1,6 @@
 ---
 name: alliance-template-author
-description: Author or modify a CanvasTemplateSchema for the AllianceSocialAnalytics Post Builder canvas editor (Path C, Fabric.js). Use whenever the request involves creating a new social-post template, porting an existing V1 template into the canvas editor, adding a category (Just Listed / Just Sold / Open House / Under Contract / Price Reduced), authoring a variant in a new aspect ratio (square 1:1, portrait 4:5, story 9:16), or fixing a template that fails the editor's dimension invariant. Also use when reviewing template code for brand/MLS-binding correctness. Even when the user says only "make a new post layout" or "I need a sold template", treat this as a template-authoring task — the canvas editor is the system of record for AllianceAnalytics post templates going forward.
+description: Author or modify a CanvasTemplateSchema for the AllianceSocialAnalytics Post Builder canvas editor (Path C, Fabric.js). Use whenever the request involves creating a new social-post template, porting an existing V1 template into the canvas editor, adding a category (Just Listed / Just Sold / Open House / Under Contract / Price Reduced), authoring a variant in a new aspect ratio (portrait 4:5 or story 9:16 — Square 1:1 was retired 2026-05-22), or fixing a template that fails the editor's dimension invariant. Also use when reviewing template code for brand/MLS-binding correctness. Even when the user says only "make a new post layout" or "I need a sold template", treat this as a template-authoring task — the canvas editor is the system of record for AllianceAnalytics post templates going forward.
 ---
 
 # Alliance Template Author
@@ -27,8 +27,8 @@ Always start by reading the schema source-of-truth so you reference real type na
 
 1. `lib/post-builder/canvas-editor/types.ts` — `CanvasTemplateSchema`, `CanvasLayer`, `TextLayer`, `ImageLayer`, `ShapeLayer`, `BoundField`, `PLATFORM_DIMENSIONS`
 2. `lib/post-builder/canvas-editor/templates/tokens.ts` — `ALLIANCE_COLORS`, `ALLIANCE_FONTS`
-3. The hero-editorial template factory — the canonical reference for v1 layouts across all 5 post types × 3 formats:
-   - `lib/post-builder/canvas-editor/templates/hero-editorial-factory.ts` — single source of truth for the v1 schema, parameterized by `(postType, format)`. Contains the per-format layout numbers (1080×1080 / 1080×1350 / 1080×1920) AND the per-post-type theming config (eyebrow text, price mode, optional badge stamp, optional open-house line).
+3. The hero-editorial template factory — the canonical reference for v1 layouts across all 5 post types × 2 formats:
+   - `lib/post-builder/canvas-editor/templates/hero-editorial-factory.ts` — single source of truth for the v1 schema, parameterized by `(postType, format)`. Contains the per-format layout numbers (1080×1350 portrait / 1080×1920 story) AND the per-post-type theming config (eyebrow text, price mode, optional badge stamp, optional open-house line).
 
 Skip this step at your peril — type names, exact enum values, and tokens change as the project evolves, and templates that reference stale names won't compile.
 
@@ -48,7 +48,7 @@ Before writing anything, confirm:
 
 - **Category** — one of `just_listed | just_sold | under_contract | open_house | price_reduction` (these are V1 `PostType` values, re-exported from canvas-editor types)
 - **Variant** — `v1 | v2 | v3 | v4 | v5`. v1–v3 are single-photo designs; v4 takes 2 photos; v5 takes 3
-- **Format** — `square_1x1 | portrait_4x5 | story_9x16`
+- **Format** — `portrait_4x5 | story_9x16` (Square 1:1 was retired 2026-05-22)
 
 If the user describes the intent in words ("a sold post with the stats prominent on Instagram feed"), translate to the tuple and confirm before authoring.
 
@@ -61,7 +61,6 @@ Check `lib/post-builder/canvas-editor/templates/index.ts` and `findCanvasTemplat
 The editor enforces this invariant on load and refuses to export malformed templates:
 
 ```
-square_1x1   → 1080 × 1080
 portrait_4x5 → 1080 × 1350
 story_9x16   → 1080 × 1920
 ```
@@ -89,11 +88,9 @@ Adjust for the design's intent. Keep z monotonically increasing — gaps are fin
 
 ### 5. Respect aspect-ratio safe zones
 
-The bottom-band-of-type pattern works at all three formats, but the **safe zones** differ:
+The bottom-band-of-type pattern works at both formats, but the **safe zones** differ:
 
-**Square 1:1 (1080 × 1080)** — minimal safe zone. Avoid the corners (~40px margins) and keep critical text within the central 95%. The IG/FB feed crops nothing.
-
-**Portrait 4:5 (1080 × 1350)** — more vertical room. Photo can dominate the top ~65%; text band at the bottom ~35% (≈470px tall). Keep the gold accent and status label in the top 200px so they're visible even when the feed shows a 1:1 crop preview.
+**Portrait 4:5 (1080 × 1350)** — generous vertical room. Photo can dominate the top ~65%; text band at the bottom ~35% (≈470px tall). Keep the gold accent and status label in the top 200px so they're visible even when the feed shows a smaller crop preview.
 
 **Story 9:16 (1080 × 1920)** — has hard safe zones because IG/FB/TikTok overlay their own UI:
 
@@ -157,9 +154,9 @@ If a future image source doesn't send `Access-Control-Allow-Origin` headers, the
 
 Save to `lib/post-builder/canvas-editor/templates/<category>-<variant-name>-<format-short>.ts`. Conventions:
 
-- File name uses kebab-case and includes the format suffix (`-square`, `-portrait`, `-story`)
-- Export a single named const, camelCase: `justListedHeroSquare`, `openHouseStatsPortrait`, etc.
-- The exported `id` is snake_case prefixed with `canvas_`: `canvas_just_listed_v1_square`
+- File name uses kebab-case and includes the format suffix (`-portrait`, `-story`)
+- Export a single named const, camelCase: `justListedHeroPortrait`, `openHouseStatsStory`, etc.
+- The exported `id` is snake_case prefixed with `canvas_`: `canvas_just_listed_v1_portrait`
 
 ### 11. Register in the index
 
@@ -204,25 +201,7 @@ A list of mistakes I've seen or made. Read this before writing code.
 
 A starting grid for each aspect ratio. These are reference points, not rules — break them when the design wants it, but explain why in a comment.
 
-### Square 1:1 (1080 × 1080) — "hero + bottom band"
-
-```
-y=0     ┌────────────────────┐
-        │                    │
-        │   hero photo       │  (covers 0–1080)
-        │   (cover-fit)      │
-        │                    │
-y=700   ├────────────────────┤  ← dark overlay starts (h=380, opacity 0.65)
-        │  STATUS LABEL      │  y≈60 (eyebrow up top, NOT in band)
-        │                    │
-        │  Address Line      │  y≈760, fontSize 48-56
-        │  City, ST 00000    │  y≈830, fontSize 22-26
-        │  $XXX,000          │  y≈900, fontSize 64-80 (gold)
-        │  4 BR / 3 BA       │  y≈1010, fontSize 18-22
-y=1080  └────────────────────┘
-```
-
-### Portrait 4:5 (1080 × 1350) — "hero + bottom band, more breathing room"
+### Portrait 4:5 (1080 × 1350) — "hero + bottom band"
 
 ```
 y=0     ┌────────────────────┐

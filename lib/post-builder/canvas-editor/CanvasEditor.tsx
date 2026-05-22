@@ -2525,7 +2525,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // open, where the user might still be editing).
   //
   // The multiplier of 0.5 keeps the preview data URI to ~150-250KB for a
-  // 1080×1080 canvas — small enough to round-trip through a Server Action
+  // 1080×1350 canvas — small enough to round-trip through a Server Action
   // body without hitting Vercel's ~4.5MB ceiling. PNG (not JPEG) because
   // the preview is small and the variant grid card benefits from the
   // sharper edges on text overlays.
@@ -2594,7 +2594,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   );
   const FORMAT_DISPLAY_NAMES: Record<string, string> = useMemo(
     () => ({
-      square_1x1: "Square (1:1)",
       portrait_4x5: "Portrait (4:5)",
       story_9x16: "Story (9:16)",
     }),
@@ -2604,7 +2603,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // -------------------------------------------------------------------------
   // Display-scale calculation for the canvas viewport
   // -------------------------------------------------------------------------
-  // why: the canvas is 1080×1080 (or larger) logical pixels — way too big for
+  // why: the canvas is 1080×1350 (or larger) logical pixels — way too big for
   // a typical viewport. We scale the WRAPPER via CSS transform, not Fabric's
   // internal zoom, so toDataURL still emits at full logical resolution.
   // Computed from the canvas's intrinsic dimensions vs an assumed available

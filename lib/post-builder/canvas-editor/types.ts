@@ -57,9 +57,10 @@ export type { PostFormat, PostType, PostVariant };
  *   predictable, and the platform-publish flow can hard-assume these sizes.
  *
  * Reference sizes (Meta + TikTok official guidance, May 2026):
- *   square_1x1   → 1080×1080  (IG feed, FB feed)
- *   portrait_4x5 → 1080×1350  (IG feed preferred — fills more of mobile viewport)
+ *   portrait_4x5 → 1080×1350  (IG/FB feed — fills more of the mobile viewport)
  *   story_9x16   → 1080×1920  (IG/FB Stories, TikTok)
+ *
+ * Square 1:1 (1080×1080) was retired on 2026-05-22 — see lib/post-builder/types.ts.
  *
  * If a different platform shows up (LinkedIn 1200×627, Pinterest 1000×1500),
  * add the format to PostFormat in the V1 types.ts first, then add the
