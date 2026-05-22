@@ -48,6 +48,15 @@ const CMC_REGEX = /(?:^|[^A-Za-z0-9_])#?CMC(\d{4,8})\b/i;
 /** Matches "#SJSR######" or "SJSR######" (4-8 digits). */
 const SJSR_REGEX = /(?:^|[^A-Za-z0-9_])#?SJSR(\d{4,8})\b/i;
 
+// Global flag versions for multi-extract — used by `findAllMlsTokens`
+// (multi-OH caption support, 2026-05-21). Each pattern is intentionally
+// re-declared here rather than reusing the single-match constants above
+// with `.flags + "g"` because cloning a regex preserves its lastIndex
+// state across calls — easier to keep two clean copies than to reset it.
+const BRIGHT_REGEX_G = /\bNJ[A-Z]{2}\d{5,8}\b/gi;
+const CMC_REGEX_G = /(?:^|[^A-Za-z0-9_])#?CMC(\d{4,8})\b/gi;
+const SJSR_REGEX_G = /(?:^|[^A-Za-z0-9_])#?SJSR(\d{4,8})\b/gi;
+
 /**
  * Extract a canonical MLS-number token from caption text. Returns the form
  * suitable for storing in `posts.mls_number_parsed` and displaying as a chip:
@@ -179,4 +188,94 @@ export function findLinkMatch(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-match helpers — 2026-05-21
+// ---------------------------------------------------------------------------
+//
+// Multi-property Open House posts include MLS hashtags for every featured
+// listing in the carousel. The original `findLinkMatch` short-circuits on
+// the first hit, which used to be fine because `posts.property_id` is a
+// single FK. With the new `post_listings` join table, callers need every
+// MLS-tier hit so each featured listing's Owner Story gets the post.
+//
+// We only fan out the MLS tier — address-tier matches stay single-match
+// because address strings are messy enough that returning multiple would
+// cause false-positive cross-linking. MLS numbers are precise tokens.
+
+/**
+ * Extract EVERY canonical MLS-number token in a caption, deduplicated and
+ * in order of first appearance. Returns canonical forms ready to feed to
+ * `parseCanonicalMls`. Empty array when nothing matches.
+ */
+export function findAllMlsTokens(caption: string): string[] {
+  if (!caption) return [];
+  const tokens: string[] = [];
+  const seen = new Set<string>();
+  const push = (token: string): void => {
+    const canonical = token.toUpperCase();
+    if (seen.has(canonical)) return;
+    seen.add(canonical);
+    tokens.push(canonical);
+  };
+
+  // why: iterate all three patterns. The global-flag regex variants walk
+  // the string from start to end and yield every match. Bright is parsed
+  // first because its shape is distinctive enough not to collide with
+  // CMC/SJSR (NJxx prefix vs CMC/SJSR prefix).
+  for (const match of caption.matchAll(BRIGHT_REGEX_G)) {
+    push(match[0]);
+  }
+  for (const match of caption.matchAll(CMC_REGEX_G)) {
+    push(`CMC${match[1]}`);
+  }
+  for (const match of caption.matchAll(SJSR_REGEX_G)) {
+    push(`SJSR${match[1]}`);
+  }
+  return tokens;
+}
+
+/**
+ * Multi-match counterpart to `findLinkMatch` — returns every MLS-tier hit
+ * in the caption against the candidate set. Use this when persisting to
+ * `post_listings` (the many-to-many join table) where one post can carry
+ * multiple property links (e.g. multi-property Open House carousels).
+ *
+ * Does NOT fall through to address-tier matching — that's intentionally
+ * single-match because address strings collide too easily. If you need
+ * the address-tier fallback for a single post, call `findLinkMatch` after
+ * checking this returns empty.
+ *
+ * Ordering follows the order MLS hashtags appear in the caption — the
+ * FIRST is the natural "anchor" (matches multi-OH wizard's convention
+ * that carousel slide 1's listing is the anchor).
+ */
+export function findAllMlsMatches(
+  caption: string,
+  candidates: LinkCandidate[],
+): LinkMatch[] {
+  if (!caption || candidates.length === 0) return [];
+  const out: LinkMatch[] = [];
+  for (const canonical of findAllMlsTokens(caption)) {
+    const parsed = parseCanonicalMls(canonical);
+    if (!parsed) continue;
+    const hit = candidates.find((c) => {
+      if (parsed.source_mls === "bright") {
+        return c.mls_number.toUpperCase() === parsed.mls_number;
+      }
+      return (
+        c.source_mls === parsed.source_mls &&
+        c.mls_number.toUpperCase() === parsed.mls_number
+      );
+    });
+    if (!hit) continue;
+    out.push({
+      property_id: hit.property_id,
+      mls_number: hit.mls_number,
+      method: "auto_mls",
+      matched_on: canonical,
+    });
+  }
+  return out;
 }

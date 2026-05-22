@@ -1187,6 +1187,7 @@ function Step3Review({
             kind={isHeroFocused ? "hero" : "property"}
             eventTitle={eventTitle}
             properties={selectedListings}
+            hostingAgents={perPropertyHostingAgent}
             listing={focusedListing}
             hostingAgent={
               focusedListing
@@ -1258,6 +1259,9 @@ interface FeaturedSlideMockProps {
   kind: "hero" | "property";
   eventTitle: string;
   properties: readonly PostBuilderListing[];
+  /** Per-property hosting agent map — forwarded to HeroSlideBody so the
+   *  featured hero shows "Hosted by …" per row. */
+  hostingAgents: Record<string, string>;
   listing: PostBuilderListing | null;
   hostingAgent: string;
 }
@@ -1268,6 +1272,7 @@ function FeaturedSlideMock({
   kind,
   eventTitle,
   properties,
+  hostingAgents,
   listing,
   hostingAgent,
 }: FeaturedSlideMockProps) {
@@ -1283,6 +1288,7 @@ function FeaturedSlideMock({
         <HeroSlideBody
           eventTitle={eventTitle}
           properties={properties}
+          hostingAgents={hostingAgents}
           size="featured"
         />
       ) : listing ? (
@@ -1305,9 +1311,20 @@ interface HeroSlideBodyProps {
   eventTitle: string;
   properties: readonly PostBuilderListing[];
   size: "featured" | "thumb";
+  /** Per-property hosting agent overrides (mls_number → name). Optional —
+   *  ribbon thumbs and FormatCard mocks pass undefined since the thumb is
+   *  too small to legibly show hosted-by anyway. When present and the
+   *  featured size is used, each row renders a "Hosted by …" line below
+   *  the address/city/time strip. */
+  hostingAgents?: Record<string, string>;
 }
 
-function HeroSlideBody({ eventTitle, properties, size }: HeroSlideBodyProps) {
+function HeroSlideBody({
+  eventTitle,
+  properties,
+  size,
+  hostingAgents,
+}: HeroSlideBodyProps) {
   const isThumb = size === "thumb";
   // Cap the rendered rows so a 9-property event doesn't blow out the layout
   // — the real render uses computeRowDensity to shrink, but for the mock
@@ -1315,6 +1332,16 @@ function HeroSlideBody({ eventTitle, properties, size }: HeroSlideBodyProps) {
   const maxRows = isThumb ? 3 : 6;
   const visible = properties.slice(0, maxRows);
   const overflow = properties.length - visible.length;
+
+  // Resolve a row's hosting agent: explicit override first, listing's own
+  // agent_name second, empty third (suppresses the "Hosted by" line). The
+  // explicit map mirrors the per-property override the wizard collects on
+  // Step 1.
+  const hostFor = (p: PostBuilderListing): string => {
+    const override = hostingAgents?.[p.mls_number]?.trim() ?? "";
+    if (override.length > 0) return override;
+    return (p.agent_name ?? "").trim();
+  };
 
   return (
     <div className="w-full h-full bg-[#FCFCFB] flex flex-col p-[6%]">
@@ -1339,25 +1366,73 @@ function HeroSlideBody({ eventTitle, properties, size }: HeroSlideBodyProps) {
         {eventTitle || "Untitled event"}
       </div>
       {/* property list */}
-      <div className={`mt-[4%] flex-1 flex flex-col ${isThumb ? "gap-[2px]" : "gap-1.5"} overflow-hidden`}>
-        {visible.map((p, i) => (
-          <div
-            key={p.mls_number}
-            className={`flex items-center ${isThumb ? "gap-1" : "gap-2"}`}
-          >
-            <span
-              aria-hidden="true"
-              className={`shrink-0 rounded-full bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center ${isThumb ? "w-[7px] h-[7px] text-[4px]" : "w-4 h-4 text-[9px]"}`}
+      <div className={`mt-[4%] flex-1 flex flex-col ${isThumb ? "gap-[2px]" : "gap-2.5"} overflow-hidden`}>
+        {visible.map((p, i) => {
+          const cityState = [p.city, p.state].filter(Boolean).join(", ");
+          const timeLabel = p.oh_start_at
+            ? formatOhBadge(p.oh_start_at, p.oh_end_at ?? null)
+            : "";
+          const host = hostFor(p);
+
+          if (isThumb) {
+            // Tight one-line row for ribbon / FormatCard thumbs — address
+            // truncates, no city/time/host (too small to be legible).
+            return (
+              <div
+                key={p.mls_number}
+                className="flex items-center gap-1"
+              >
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 rounded-full bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center w-[7px] h-[7px] text-[4px]"
+                >
+                  {i + 1}
+                </span>
+                <span className="truncate text-[#525250] text-[4px]">
+                  {p.address ?? p.mls_number}
+                </span>
+              </div>
+            );
+          }
+
+          // Featured row — multi-line: address + city/time + hosted-by.
+          // Mirrors the real renderer's renderPropertyRow output.
+          return (
+            <div
+              key={p.mls_number}
+              className="flex items-start gap-2"
             >
-              {i + 1}
-            </span>
-            <span
-              className={`truncate text-[#525250] ${isThumb ? "text-[4px]" : "text-[10px]"}`}
-            >
-              {p.address ?? p.mls_number}
-            </span>
-          </div>
-        ))}
+              <span
+                aria-hidden="true"
+                className="shrink-0 mt-0.5 rounded-full bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center w-4 h-4 text-[9px]"
+              >
+                {i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[11px] font-semibold text-[#18181B] leading-tight">
+                  {p.address ?? p.mls_number}
+                </div>
+                {(cityState || timeLabel) ? (
+                  <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#525250] leading-tight">
+                    {cityState ? <span className="truncate">{cityState}</span> : null}
+                    {cityState && timeLabel ? (
+                      <span
+                        aria-hidden="true"
+                        className="inline-block w-1 h-1 rounded-full bg-[#C9A961] shrink-0"
+                      />
+                    ) : null}
+                    {timeLabel ? <span className="truncate">{timeLabel}</span> : null}
+                  </div>
+                ) : null}
+                {host ? (
+                  <div className="mt-0.5 text-[9px] italic text-[#525250] truncate">
+                    Hosted by {host}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
         {overflow > 0 ? (
           <div
             className={`text-[#A68A4A] font-semibold ${isThumb ? "text-[4px]" : "text-[9px]"}`}

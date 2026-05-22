@@ -1033,6 +1033,49 @@ export type Database = {
           },
         ]
       }
+      // 2026-05-21 — many-to-many join between posts and properties.
+      // Lets multi-property Open House carousel posts surface in every
+      // featured listing's Owner Story. See migration
+      // create_post_listings_join_table.
+      post_listings: {
+        Row: {
+          post_id: string
+          property_id: string
+          link_method: Database["public"]["Enums"]["post_link_method"]
+          is_primary: boolean
+          created_at: string
+        }
+        Insert: {
+          post_id: string
+          property_id: string
+          link_method: Database["public"]["Enums"]["post_link_method"]
+          is_primary?: boolean
+          created_at?: string
+        }
+        Update: {
+          post_id?: string
+          property_id?: string
+          link_method?: Database["public"]["Enums"]["post_link_method"]
+          is_primary?: boolean
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_listings_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_listings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       post_metrics_daily: {
         Row: {
           avg_watch_time_sec: number | null

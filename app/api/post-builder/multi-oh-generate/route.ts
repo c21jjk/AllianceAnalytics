@@ -711,47 +711,106 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
 } {
   const count = input.properties.length;
   const eventTitle = input.event_title?.trim() || "Open Houses This Weekend";
-  const agentName = input.agent_name?.trim() || "our team";
 
-  // Anchor the auto-linker on the first property's MLS. Multi-OH posts
-  // can only deep-link to one listing, so we pick the first by wizard
-  // order (which Larissa controls). The per-property cards in the
-  // carousel slides carry the other listings' MLS hashtags inside
-  // their image text — separate path.
+  // 2026-05-21 — rewrite. Captions used to be a generic blurb plus the
+  // FIRST property's MLS hashtag. Now they include a per-property
+  // bullet line (address · city · time · host) and ALL property MLS
+  // hashtags so every featured listing's Owner Story can be linked to
+  // the same post.
+  //
+  // The first property's MLS is still treated as the "anchor" — it's
+  // listed first in the tag set and returned as `legacy.mls_hashtag` so
+  // backward-compat callers that only look at one MLS still get the
+  // primary listing.
   const firstProp = input.properties[0];
-  const mlsHashtag = canonicalMlsHashtag(
+  const anchorMls = canonicalMlsHashtag(
     firstProp?.mls_number ?? "",
     firstProp?.source_mls ?? null,
   );
 
-  // Per-platform caption bodies — lightly tuned for each platform's
-  // voice (matches the AI-prompt style guidance in captions.ts).
-  const igBody =
-    `${eventTitle}. ${count} homes open this weekend with ${agentName}. ` +
-    `Each slide has the address, time, and a quick look — swipe through and ` +
-    `DM if any of them are right for you.`;
-  const fbBody =
-    `${eventTitle}. ${count} open houses with ${agentName} this weekend — ` +
-    `addresses and times in the slides. Reach out if you want to see one.`;
-  const ttBody = `${count} open houses. One weekend. ${agentName} hosting.`;
+  // Canonical MLS hashtags for every property, in carousel order. We
+  // dedupe defensively — if a wizard ever submitted the same listing
+  // twice we don't want a duplicate hashtag.
+  const allMlsTags = uniqueStrings(
+    input.properties
+      .map((p) => canonicalMlsHashtag(p.mls_number, p.source_mls))
+      .filter((t) => t.length > 1),
+  );
 
-  // Brand + post-type tags. Per-platform caps mirror captions.ts.
+  // Per-property bullet lines. Mirrors what the rendered hero card
+  // shows: "1) 220 Village Road, Villas · Sat 11–1 · Hosted by Larissa".
+  // "Hosted by …" suffix only when the property carries an explicit
+  // hosting_agent_name (the wizard seeds this from the listing agent
+  // + the OH "Hosted by …" override resolver, so missing means we
+  // genuinely don't have a host name).
+  const propertyLines = input.properties.map((p, i) => {
+    const address = p.address?.trim() ?? "";
+    const city = p.city?.trim() ?? "";
+    const addressFull =
+      address && city ? `${address}, ${city}` : address || city || `Property ${i + 1}`;
+    const time = formatCaptionTime(p.oh_start_at, p.oh_end_at);
+    const host = p.hosting_agent_name?.trim() ?? "";
+    const parts: string[] = [addressFull];
+    if (time) parts.push(time);
+    if (host) parts.push(`Hosted by ${host}`);
+    return `${i + 1}) ${parts.join(" · ")}`;
+  });
+
+  // Per-platform caption bodies. IG/FB get full per-property lines (room
+  // to spare on both); TikTok caps at the top 3 lines so the caption
+  // doesn't dominate the video card (TikTok shows captions truncated).
+  const ttLineCount = Math.min(propertyLines.length, 3);
+  const ttRemainder = propertyLines.length - ttLineCount;
+
+  const igBody = [
+    `${eventTitle} — ${count} open houses this weekend across South Jersey.`,
+    "",
+    ...propertyLines,
+    "",
+    "DM for showings, or just stop by — each home's host can answer questions on the spot.",
+  ].join("\n");
+
+  const fbBody = [
+    `${eventTitle}. ${count} open houses this weekend across South Jersey:`,
+    "",
+    ...propertyLines,
+    "",
+    "Send a message if you'd like a private tour of any of these — otherwise we'll see you on the doorstep.",
+  ].join("\n");
+
+  const ttBody = [
+    `${count} open houses this weekend 🏡`,
+    ...propertyLines.slice(0, ttLineCount),
+    ttRemainder > 0 ? `+ ${ttRemainder} more — see the carousel` : "",
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+
+  // Tag set: post-type + brand + every property's MLS hashtag. Order
+  // matters — `cap()` below preserves the anchor MLS but trims later
+  // tags to fit per-platform limits, so we put the anchor first.
   const brand = ["#Century21Alliance", "#C21Alliance", "#SouthJerseyRealEstate"];
   const postType = ["#OpenHouse", "#OpenHouseWeekend"];
-  const baseTags = [...postType, ...brand, mlsHashtag].filter(
+  // Anchor MLS goes first within the MLS sub-list so the cap() helper
+  // can guarantee it survives even on TikTok's tight 5-tag limit.
+  const orderedMls = anchorMls
+    ? [anchorMls, ...allMlsTags.filter((t) => t !== anchorMls)]
+    : allMlsTags;
+  const baseTags = [...postType, ...brand, ...orderedMls].filter(
     (t) => t.length > 1,
   );
 
-  // Per-platform cap with the canonical MLS hashtag preserved (matches
-  // ensuredMls logic in captions.ts).
+  // Per-platform cap that always preserves the anchor MLS hashtag, and
+  // packs as many additional property MLS hashtags as the platform's
+  // tag budget allows. IG fits all 9 comfortably; FB sees the anchor +
+  // up to 2 more; TT sees the anchor + maybe 1 more.
   const cap = (
     tags: readonly string[],
     limit: number,
   ): string[] => {
     const slice = tags.slice(0, limit);
-    return slice.includes(mlsHashtag)
-      ? slice
-      : [mlsHashtag, ...slice.slice(0, limit - 1)];
+    if (!anchorMls || slice.includes(anchorMls)) return slice;
+    return [anchorMls, ...slice.slice(0, limit - 1)];
   };
 
   const igTags = cap(baseTags, 30);
@@ -764,7 +823,7 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
       // platform the auto-linker and OG-tag preview both key on.
       caption: igBody,
       hashtags: igTags,
-      mls_hashtag: mlsHashtag,
+      mls_hashtag: anchorMls,
     },
     captions: {
       instagram: { caption: igBody, hashtags: igTags },
@@ -772,6 +831,63 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
       tiktok: { caption: ttBody, hashtags: ttTags },
     },
   };
+}
+
+/**
+ * "Sat 11–1" / "Sat May 23 · 11 AM" style time label, derived from a
+ * property's OH window. Returns empty string when start_at is missing or
+ * unparseable so the caller can drop the segment cleanly. Local time —
+ * NJ is the project's anchor timezone (matches what the hero card uses).
+ */
+function formatCaptionTime(
+  startIso: string | null,
+  endIso: string | null,
+): string {
+  if (!startIso) return "";
+  const start = new Date(startIso);
+  if (Number.isNaN(start.getTime())) return "";
+  const dayName = start.toLocaleDateString("en-US", {
+    weekday: "short",
+  });
+  const monthDay = start.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const startHour = formatCaptionHour(start);
+  if (!endIso) {
+    return `${dayName} ${monthDay} · ${startHour}`;
+  }
+  const end = new Date(endIso);
+  if (Number.isNaN(end.getTime())) {
+    return `${dayName} ${monthDay} · ${startHour}`;
+  }
+  const endHour = formatCaptionHour(end);
+  return `${dayName} ${monthDay} · ${startHour}–${endHour}`;
+}
+
+/** "11 AM" / "1:30 PM" — minutes only when non-zero. */
+function formatCaptionHour(d: Date): string {
+  const opts: Intl.DateTimeFormatOptions =
+    d.getMinutes() === 0
+      ? { hour: "numeric", hour12: true }
+      : { hour: "numeric", minute: "2-digit", hour12: true };
+  return d.toLocaleTimeString("en-US", opts);
+}
+
+/**
+ * De-dupes a string array while preserving the FIRST occurrence's order.
+ * Used to keep canonical MLS hashtags unique even if the wizard ever
+ * submits the same listing twice (defensive — shouldn't happen).
+ */
+function uniqueStrings(items: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    if (seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
 }
 
 /**

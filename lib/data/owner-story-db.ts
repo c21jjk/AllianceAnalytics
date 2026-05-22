@@ -450,10 +450,19 @@ export async function fetchOwnerStoryByToken(
 
   if (propErr || !propRow) return null;
 
-  // 3) Posts — direct link plus group-fallback, mirroring properties-db.
-  //    Newest-first; the timeline chapter renders the raw order, highlights
-  //    derive top-3 by reach.
-  const [postDirect, groupFallback] = await Promise.all([
+  // 3) Posts — three sources merged, newest-first:
+  //   (a) Direct link via posts.property_id (the legacy anchor FK)
+  //   (b) Join-table link via post_listings.property_id (lets multi-
+  //       property carousel posts surface here even when this property
+  //       isn't the anchor)
+  //   (c) Group-fallback via post_groups.property_ids[] (campaigns whose
+  //       member posts may have lost the FK during early ingest)
+  //
+  // Merged + deduped by post.id. (a) and (b) overlap by design — every
+  // primary post_listings row has a matching posts.property_id — but the
+  // dedupe makes that harmless. (c) provides resilience for pre-join-
+  // table groups.
+  const [postDirect, postListings, groupFallback] = await Promise.all([
     supabase
       .from("posts")
       .select(
@@ -461,6 +470,14 @@ export async function fetchOwnerStoryByToken(
       )
       .eq("property_id", propRow.id)
       .order("posted_at", { ascending: false }),
+    // 2026-05-21 — join-table fan-out. Pulls post IDs for every post
+    // linked to this property (primary AND non-primary) so multi-OH
+    // carousels with this property anywhere in the slide list surface
+    // in the Owner Story.
+    supabase
+      .from("post_listings")
+      .select("post_id")
+      .eq("property_id", propRow.id),
     supabase
       .from("post_groups")
       .select("id")
@@ -483,6 +500,27 @@ export async function fetchOwnerStoryByToken(
     group_id: string | null;
   };
 
+  // post_listings IDs we haven't already covered via the direct
+  // property_id query — hydrate these from posts.
+  const directIds = new Set(
+    (postDirect.data ?? []).map((p) => (p as { id: string }).id),
+  );
+  const joinIds = (postListings.data ?? [])
+    .map((r: { post_id: string }) => r.post_id)
+    .filter((id) => !directIds.has(id));
+
+  let joinRows: RawPost[] = [];
+  if (joinIds.length > 0) {
+    const { data: joinPostRows } = await supabase
+      .from("posts")
+      .select(
+        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type, group_id",
+      )
+      .in("id", joinIds)
+      .order("posted_at", { ascending: false });
+    joinRows = (joinPostRows ?? []) as RawPost[];
+  }
+
   let fallbackRows: RawPost[] = [];
   if (groupIds.length > 0) {
     const { data: groupPostRows } = await supabase
@@ -497,6 +535,7 @@ export async function fetchOwnerStoryByToken(
 
   const byId = new Map<string, RawPost>();
   for (const r of (postDirect.data ?? []) as RawPost[]) byId.set(r.id, r);
+  for (const r of joinRows) if (!byId.has(r.id)) byId.set(r.id, r);
   for (const r of fallbackRows) if (!byId.has(r.id)) byId.set(r.id, r);
 
   const merged = Array.from(byId.values()).sort((a, b) => {

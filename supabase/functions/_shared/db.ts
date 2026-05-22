@@ -51,37 +51,179 @@ export async function loadCredentials(
 }
 
 /**
- * Match a post caption to a property by parsing for an MLS number, then by
- * matching against known property addresses. Returns the property uuid or null.
+ * Match a post caption to one or more properties by parsing for MLS-hashtag
+ * tokens. Supports the three MLS feed conventions Alliance ingests today:
  *
- * Default regex: NJ MLS numbers in the form NJBL2078123 / NJCD2089034.
- * Falls back to a fuzzy address contains-check.
+ *   - Bright:  raw NJxx####### token (matches properties.mls_number directly)
+ *   - CMC:     #?CMC###### → properties.source_mls='cmc' + mls_number=digits
+ *   - SJSR:    #?SJSR###### → properties.source_mls='sjsr' + mls_number=digits
+ *
+ * Returns an array of (property_id, match) tuples in order of first appearance
+ * in the caption. The FIRST entry is the natural "anchor" — that property
+ * goes on `posts.property_id` for backward compat. Every match goes into
+ * `post_listings` so multi-property carousels (e.g. multi-OH events) appear
+ * in every featured listing's Owner Story.
+ *
+ * 2026-05-21 — extended from single-Bright matching to multi-feed
+ * multi-match. Mirrors the TS auto-linker library (lib/linker/auto-linker.ts)
+ * and the SQL run_auto_linker() function, but lives here so the per-post
+ * ingest path can populate post_listings inline (the SQL function only
+ * runs after RETS sync, every ~4h).
  */
-const NJ_MLS_REGEX = /\b(NJ[A-Z]{2}\d{5,8})\b/i;
+const BRIGHT_RE_G = /\bNJ[A-Z]{2}\d{5,8}\b/gi;
+const CMC_RE_G = /(?:^|[^A-Za-z0-9_])#?CMC(\d{4,8})\b/gi;
+const SJSR_RE_G = /(?:^|[^A-Za-z0-9_])#?SJSR(\d{4,8})\b/gi;
 
+interface PropertyMatch {
+  property_id: string;
+  mls_number: string;
+  source_mls: "bright" | "cmc" | "sjsr";
+}
+
+export async function autoLinkAllProperties(
+  client: SupabaseClient,
+  caption: string | null,
+): Promise<PropertyMatch[]> {
+  if (!caption) return [];
+
+  // Extract every canonical MLS token from the caption, dedup, preserve
+  // first-appearance order.
+  const tokens: Array<{ key: string; source: "bright" | "cmc" | "sjsr"; mls: string }> = [];
+  const seen = new Set<string>();
+  const add = (key: string, source: "bright" | "cmc" | "sjsr", mls: string): void => {
+    const canonical = key.toUpperCase();
+    if (seen.has(canonical)) return;
+    seen.add(canonical);
+    tokens.push({ key: canonical, source, mls });
+  };
+
+  for (const match of caption.matchAll(BRIGHT_RE_G)) {
+    add(match[0], "bright", match[0].toUpperCase());
+  }
+  for (const match of caption.matchAll(CMC_RE_G)) {
+    add(`CMC${match[1]}`, "cmc", match[1]);
+  }
+  for (const match of caption.matchAll(SJSR_RE_G)) {
+    add(`SJSR${match[1]}`, "sjsr", match[1]);
+  }
+
+  if (tokens.length === 0) return [];
+
+  // Resolve each token to a properties row. Single query batched per feed —
+  // Postgres can handle 9+ ids per .in() comfortably.
+  const out: PropertyMatch[] = [];
+
+  const brightMlsList = tokens.filter((t) => t.source === "bright").map((t) => t.mls);
+  if (brightMlsList.length > 0) {
+    const { data } = await client
+      .from("properties")
+      .select("id, mls_number")
+      .in("mls_number", brightMlsList);
+    if (data) {
+      // why: preserve token order in the output. Lookup map then iterate
+      // tokens so the anchor (token[0]) lands at out[0].
+      const byMls = new Map(data.map((r) => [r.mls_number.toUpperCase(), r.id]));
+      for (const t of tokens) {
+        if (t.source !== "bright") continue;
+        const pid = byMls.get(t.mls.toUpperCase());
+        if (pid) out.push({ property_id: pid, mls_number: t.mls, source_mls: "bright" });
+      }
+    }
+  }
+
+  const cmcMlsList = tokens.filter((t) => t.source === "cmc").map((t) => t.mls);
+  if (cmcMlsList.length > 0) {
+    const { data } = await client
+      .from("properties")
+      .select("id, mls_number")
+      .eq("source_mls", "cmc")
+      .in("mls_number", cmcMlsList);
+    if (data) {
+      const byMls = new Map(data.map((r) => [r.mls_number, r.id]));
+      for (const t of tokens) {
+        if (t.source !== "cmc") continue;
+        const pid = byMls.get(t.mls);
+        if (pid) out.push({ property_id: pid, mls_number: t.mls, source_mls: "cmc" });
+      }
+    }
+  }
+
+  const sjsrMlsList = tokens.filter((t) => t.source === "sjsr").map((t) => t.mls);
+  if (sjsrMlsList.length > 0) {
+    const { data } = await client
+      .from("properties")
+      .select("id, mls_number")
+      .eq("source_mls", "sjsr")
+      .in("mls_number", sjsrMlsList);
+    if (data) {
+      const byMls = new Map(data.map((r) => [r.mls_number, r.id]));
+      for (const t of tokens) {
+        if (t.source !== "sjsr") continue;
+        const pid = byMls.get(t.mls);
+        if (pid) out.push({ property_id: pid, mls_number: t.mls, source_mls: "sjsr" });
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Backward-compat shim — returns just the FIRST match's property_id. Used
+ * by callers that only need the primary anchor (e.g. for posts.property_id
+ * which is still single-FK). For the full multi-match list, call
+ * `autoLinkAllProperties` directly.
+ */
 export async function autoLinkProperty(
   client: SupabaseClient,
   caption: string | null,
 ): Promise<string | null> {
-  if (!caption) return null;
+  const matches = await autoLinkAllProperties(client, caption);
+  return matches[0]?.property_id ?? null;
+}
 
-  // 1) Direct MLS number match
-  const m = caption.match(NJ_MLS_REGEX);
-  if (m) {
-    const mls = m[1].toUpperCase();
-    const { data } = await client
-      .from("properties")
-      .select("id")
-      .eq("mls_number", mls)
-      .maybeSingle();
-    if (data?.id) return data.id;
+/**
+ * After a post is upserted, sync the post_listings join table to reflect
+ * the post's current set of MLS matches. Idempotent:
+ *
+ *   - The PRIMARY row (matches posts.property_id) is upserted with
+ *     is_primary=true via a two-step write (try insert, then update on
+ *     conflict). The post_listings PK is (post_id, property_id) so the
+ *     existing migration backfill + previous runs are correctly merged.
+ *   - All ADDITIONAL MLS matches get inserted with is_primary=false,
+ *     ON CONFLICT DO NOTHING.
+ *
+ * Defensive — failures here are logged but don't throw, so a post_listings
+ * write hiccup never blocks the parent post upsert.
+ */
+async function syncPostListings(
+  client: SupabaseClient,
+  postId: string,
+  matches: PropertyMatch[],
+  primaryPropertyId: string | null,
+): Promise<void> {
+  if (matches.length === 0) return;
+
+  // Build the rows. The match whose property_id matches primaryPropertyId
+  // gets is_primary=true. If primaryPropertyId is null (shouldn't happen
+  // when matches.length > 0, since we set posts.property_id = matches[0])
+  // we still mark matches[0] as primary defensively.
+  const primaryId = primaryPropertyId ?? matches[0].property_id;
+  const rows = matches.map((m) => ({
+    post_id: postId,
+    property_id: m.property_id,
+    link_method: "auto_mls" as const,
+    is_primary: m.property_id === primaryId,
+  }));
+
+  // Insert with ON CONFLICT DO NOTHING — first time a (post_id, property_id)
+  // pair is inserted, it sticks. Re-syncs are no-ops.
+  const { error } = await client
+    .from("post_listings")
+    .upsert(rows, { onConflict: "post_id,property_id", ignoreDuplicates: true });
+  if (error) {
+    console.warn("[_shared/db] syncPostListings upsert failed:", error.message);
   }
-
-  // 2) Fuzzy address match — caption mentions a known property address
-  // Disabled by default for now (false positive risk on common street names).
-  // Will be re-enabled with stricter matching after first real-data review.
-
-  return null;
 }
 
 /**
@@ -92,7 +234,11 @@ export async function upsertPost(
   client: SupabaseClient,
   post: NormalizedPost,
 ): Promise<{ inserted: boolean; updated: boolean; post_id: string | null }> {
-  const propertyId = await autoLinkProperty(client, post.caption);
+  // why: multi-match — autoLinkAllProperties returns every MLS hit in
+  // caption order; matches[0] is the anchor that lands on posts.property_id
+  // for backward compat, every match feeds the post_listings join table.
+  const matches = await autoLinkAllProperties(client, post.caption);
+  const propertyId = matches[0]?.property_id ?? null;
 
   // Check existence by (platform, platform_post_id)
   const { data: existing } = await client
@@ -164,6 +310,14 @@ export async function upsertPost(
     if (error) {
       throw new Error(`post_metrics_daily upsert failed: ${error.message}`);
     }
+  }
+
+  // 2026-05-21 — sync the post_listings join table so multi-property
+  // carousel posts (e.g. multi-OH events) appear in every featured
+  // listing's Owner Story. Defensive — failures here are logged but
+  // don't throw, so post_listings hiccups don't block ingest.
+  if (postId && matches.length > 0) {
+    await syncPostListings(client, postId, matches, propertyId);
   }
 
   return { inserted, updated, post_id: postId };

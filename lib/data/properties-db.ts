@@ -359,17 +359,23 @@ export async function fetchPropertyByMls(
 
   const row = propRow as DbPropertyRow;
 
-  // Pull posts via TWO routes so a stray cascade miss can't hide content:
-  //   1. posts.property_id = row.id           (post-level link, authoritative)
-  //   2. post_groups.property_ids @> [row.id]  (group-level fallback)
-  // Then de-dup by post id. Belt-and-suspenders against the legacy ordering bug
-  // that left some posts orphaned even when their group was linked.
-  const [postDirect, groupFallback] = await Promise.all([
+  // Pull posts via THREE routes so a stray cascade miss can't hide content:
+  //   1. posts.property_id = row.id              (legacy anchor FK)
+  //   2. post_listings.property_id = row.id      (join-table fan-out)
+  //   3. post_groups.property_ids @> [row.id]    (group-level fallback)
+  // Then de-dup by post id. Route 2 (added 2026-05-21) is what lets a
+  // multi-property OH carousel surface on this listing's detail page even
+  // when this listing isn't the carousel's anchor.
+  const [postDirect, postListings, groupFallback] = await Promise.all([
     supabase
       .from("posts")
       .select("id, platform, posted_at, caption, thumbnail_url, permalink, metrics")
       .eq("property_id", row.id)
       .order("posted_at", { ascending: false }),
+    supabase
+      .from("post_listings")
+      .select("post_id")
+      .eq("property_id", row.id),
     supabase
       .from("post_groups")
       .select("id")
@@ -380,7 +386,7 @@ export async function fetchPropertyByMls(
     .map((g: { id: string }) => g.id)
     .filter(Boolean);
 
-  let fallbackRows: Array<{
+  type PostRow = {
     id: string;
     platform: "facebook" | "instagram" | "tiktok";
     posted_at: string | null;
@@ -388,7 +394,28 @@ export async function fetchPropertyByMls(
     thumbnail_url: string | null;
     permalink: string | null;
     metrics: Record<string, unknown> | null;
-  }> = [];
+  };
+
+  const directIds = new Set(
+    (postDirect.data ?? []).map((p) => (p as { id: string }).id),
+  );
+  const joinIds = (postListings.data ?? [])
+    .map((r: { post_id: string }) => r.post_id)
+    .filter((id) => !directIds.has(id));
+
+  let joinRows: PostRow[] = [];
+  if (joinIds.length > 0) {
+    const { data: joinPostRows } = await supabase
+      .from("posts")
+      .select(
+        "id, platform, posted_at, caption, thumbnail_url, permalink, metrics",
+      )
+      .in("id", joinIds)
+      .order("posted_at", { ascending: false });
+    joinRows = (joinPostRows ?? []) as PostRow[];
+  }
+
+  let fallbackRows: PostRow[] = [];
 
   if (groupIds.length > 0) {
     const { data: groupPostRows } = await supabase
@@ -398,13 +425,16 @@ export async function fetchPropertyByMls(
       )
       .in("group_id", groupIds)
       .order("posted_at", { ascending: false });
-    fallbackRows = (groupPostRows ?? []) as typeof fallbackRows;
+    fallbackRows = (groupPostRows ?? []) as PostRow[];
   }
 
   // Merge + de-dup by post id, preserving newest-first order.
-  const byId = new Map<string, (typeof fallbackRows)[number]>();
-  for (const r of (postDirect.data ?? []) as typeof fallbackRows) {
+  const byId = new Map<string, PostRow>();
+  for (const r of (postDirect.data ?? []) as PostRow[]) {
     byId.set(r.id, r);
+  }
+  for (const r of joinRows) {
+    if (!byId.has(r.id)) byId.set(r.id, r);
   }
   for (const r of fallbackRows) {
     if (!byId.has(r.id)) byId.set(r.id, r);

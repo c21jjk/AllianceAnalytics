@@ -178,14 +178,53 @@ async function loadLiveData(token: string): Promise<LiveData | null> {
     return null;
   }
 
-  // Chronological flat post feed for the activity log
-  const { data: postRows } = await supabase
-    .from("posts")
-    .select(
-      "id, platform, caption, thumbnail_url, media_url, permalink, posted_at, metrics",
-    )
-    .eq("property_id", lookup.property_id)
-    .order("posted_at", { ascending: false });
+  // Chronological flat post feed for the activity log. Two routes merged:
+  //   1. posts.property_id = lookup.property_id  (legacy anchor FK)
+  //   2. post_listings.property_id = lookup.property_id (multi-link fan-out)
+  // Route 2 was added 2026-05-21 so multi-property OH carousels surface in
+  // every featured listing's live owner-story view, not just the anchor.
+  const [postDirect, postListings] = await Promise.all([
+    supabase
+      .from("posts")
+      .select(
+        "id, platform, caption, thumbnail_url, media_url, permalink, posted_at, metrics",
+      )
+      .eq("property_id", lookup.property_id)
+      .order("posted_at", { ascending: false }),
+    supabase
+      .from("post_listings")
+      .select("post_id")
+      .eq("property_id", lookup.property_id),
+  ]);
+
+  const directIds = new Set(
+    (postDirect.data ?? []).map((p) => (p as { id: string }).id),
+  );
+  const joinIds = (postListings.data ?? [])
+    .map((r: { post_id: string }) => r.post_id)
+    .filter((id) => !directIds.has(id));
+
+  let joinRows: NonNullable<typeof postDirect.data> = [];
+  if (joinIds.length > 0) {
+    const { data: joinPostRows } = await supabase
+      .from("posts")
+      .select(
+        "id, platform, caption, thumbnail_url, media_url, permalink, posted_at, metrics",
+      )
+      .in("id", joinIds)
+      .order("posted_at", { ascending: false });
+    joinRows = (joinPostRows ?? []) as NonNullable<typeof postDirect.data>;
+  }
+
+  // Merge + dedupe by id, preserving newest-first order.
+  const byId = new Map<string, NonNullable<typeof postDirect.data>[number]>();
+  for (const r of postDirect.data ?? []) byId.set(r.id, r);
+  for (const r of joinRows) if (!byId.has(r.id)) byId.set(r.id, r);
+  const postRows = Array.from(byId.values()).sort((a, b) => {
+    const ta = a.posted_at ? new Date(a.posted_at).getTime() : 0;
+    const tb = b.posted_at ? new Date(b.posted_at).getTime() : 0;
+    return tb - ta;
+  });
 
   const posts: LivePost[] = (postRows ?? []).map((row) => {
     const m = (row.metrics ?? {}) as Record<string, unknown>;
