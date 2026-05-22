@@ -31,7 +31,6 @@ import type {
  */
 
 const FORMAT_TABS: Array<{ id: PostFormat; label: string; aspect: string }> = [
-  { id: "square_1x1", label: "Square", aspect: "1:1" },
   { id: "portrait_4x5", label: "Portrait", aspect: "4:5" },
   { id: "story_9x16", label: "Story", aspect: "9:16" },
 ];

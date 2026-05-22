@@ -233,7 +233,6 @@ export async function cloneTemplateAction(
 }
 
 const VALID_FORMATS = new Set<PostFormat>([
-  "square_1x1",
   "portrait_4x5",
   "story_9x16",
 ]);

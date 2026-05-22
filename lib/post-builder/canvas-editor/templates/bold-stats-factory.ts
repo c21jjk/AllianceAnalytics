@@ -106,41 +106,6 @@ interface FormatLayout {
 }
 
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    photoBottom: 648,
-    // why: design review 2026-05-17 — scrim 0.35 was too thin under bright
-    // beach photos; eyebrow text washed out. 0.50 keeps the photo legible
-    // while guaranteeing the eyebrow + badge stay readable.
-    topScrim: { top: 0, height: 180, opacity: 0.50 },
-    eyebrow: {
-      left: 56,
-      ruleTop: 64,
-      ruleWidth: 56,
-      labelTop: 80,
-      labelFontSize: 22,
-    },
-    body: {
-      paddingLeft: 56,
-      paddingRight: 56,
-      openHouseChip: { top: 692, height: 44, fontSize: 20, width: 340 },
-      address: { top: 752, fontSize: 44 },
-      cityStateZip: { top: 818, fontSize: 20 },
-      goldRule: { top: 868, width: 72 },
-      price: { top: 894, fontSize: 88 },
-      bedsBaths: { top: 962, fontSize: 19 },
-    },
-    footer: {
-      top: 1018,
-      brandWidth: 540,
-      brandFontSize: 18,
-      mlsFontSize: 16,
-      mlsRight: 56,
-      mlsWidth: 360,
-    },
-    badge: { left: 760, top: 88, width: 240, height: 100, angle: -8, fontSize: 48 },
-  },
   portrait_4x5: {
     width: 1080,
     height: 1350,
@@ -240,8 +205,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -314,7 +277,6 @@ export function createBoldStatsTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -802,7 +764,7 @@ export function buildAllBoldStatsTemplates(): CanvasTemplateSchema[] {
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

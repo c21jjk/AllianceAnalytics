@@ -63,7 +63,6 @@ interface VariantCardMeta {
 }
 
 const FORMAT_CARDS: readonly FormatCardMeta[] = [
-  { id: "square_1x1", name: "Square 1:1", hint: "IG · FB feed", ratio: [1, 1] },
   { id: "portrait_4x5", name: "Portrait 4:5", hint: "IG feed preferred", ratio: [4, 5] },
   { id: "story_9x16", name: "Story 9:16", hint: "Stories · TikTok", ratio: [9, 16] },
 ];
@@ -924,33 +923,17 @@ function Step2FormatVariant({
 
   return (
     <section className="space-y-5">
-      <div className="card p-6">
-        <h2 className="text-lg font-semibold text-neutral-900 mb-1">
-          Pick the post format
-        </h2>
-        <p className="text-sm text-neutral-600 mb-4">
-          All slides in the carousel render at this aspect ratio — IG and FB enforce uniform sizing across carousel slides. Each card shows what the event hero slide will look like in that format.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {FORMAT_CARDS.map((f) => (
-            <FormatCard
-              key={f.id}
-              meta={f}
-              active={format === f.id}
-              onClick={() => onFormatChange(f.id)}
-              eventTitle={eventTitle}
-              properties={selectedListings}
-            />
-          ))}
-        </div>
-      </div>
-
+      {/* 2026-05-22 — Format-picker card removed. Multi-OH carousels
+          always render as Portrait 4:5 (IG-preferred feed shape; FB feed
+          also handles 4:5 fine). 9:16 Story is reserved for the
+          "Make a Reel?" flow that fires after save. One less decision
+          for Larissa to make. */}
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-neutral-900 mb-1">
           Pick the per-property card variant
         </h2>
         <p className="text-sm text-neutral-600 mb-4">
-          This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout. Previews use your first picked listing in the currently selected <strong>{prettyFormat(format)}</strong> format.
+          This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout. Previews use your first picked listing.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {VARIANT_CARDS.map((v) => (
@@ -995,7 +978,6 @@ function FormatCard({
   // Story is tall + narrow — give it less horizontal real estate so all
   // three cards balance visually. Square/portrait can use a wider thumb.
   const thumbWidthClass: Record<PostFormat, string> = {
-    square_1x1: "w-[96px]",
     portrait_4x5: "w-[80px]",
     story_9x16: "w-[58px]",
   };
@@ -1064,7 +1046,6 @@ function VariantCard({
   sampleListing,
 }: VariantCardProps) {
   const thumbWidthClass: Record<PostFormat, string> = {
-    square_1x1: "w-[120px]",
     portrait_4x5: "w-[100px]",
     story_9x16: "w-[72px]",
   };
@@ -1264,7 +1245,6 @@ function Step3Review({
  * shows square mocks everywhere, etc.
  */
 const FORMAT_ASPECT: Record<PostFormat, string> = {
-  square_1x1: "aspect-square",
   portrait_4x5: "aspect-[4/5]",
   story_9x16: "aspect-[9/16]",
 };
@@ -1959,7 +1939,6 @@ function SlideRibbon({
   // when total width exceeds the container.
   const thumbHeight = 110;
   const thumbWidthClass: Record<PostFormat, string> = {
-    square_1x1: "w-[110px]",
     portrait_4x5: "w-[88px]",
     story_9x16: "w-[62px]",
   };
@@ -2340,8 +2319,6 @@ function deriveEventTitle(selected: readonly PostBuilderListing[]): string {
 /** Map a PostFormat enum to a short display string. */
 function prettyFormat(f: PostFormat): string {
   switch (f) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":

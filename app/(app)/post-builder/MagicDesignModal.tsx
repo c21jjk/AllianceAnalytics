@@ -86,7 +86,6 @@ const VARIANT_LABEL: Record<PostVariant, string> = {
 };
 
 const FORMAT_LABEL: Record<PostFormat, string> = {
-  square_1x1: "Square 1:1",
   portrait_4x5: "Portrait 4:5",
   story_9x16: "Story 9:16",
 };

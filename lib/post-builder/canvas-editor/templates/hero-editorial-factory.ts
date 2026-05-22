@@ -68,31 +68,6 @@ interface FormatLayout {
 }
 
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    scrim: { top: 700, height: 380 },
-    eyebrow: { left: 60, ruleTop: 60, ruleWidth: 56, labelTop: 78, labelFontSize: 24 },
-    body: {
-      paddingLeft: 60,
-      paddingRight: 60,
-      address: { top: 760, fontSize: 56 },
-      cityStateZip: { top: 840, fontSize: 24 },
-      price: { top: 900, fontSize: 72 },
-      bedsBaths: { top: 1010, fontSize: 20 },
-    },
-    footer: {
-      officeTop: 1010,
-      mlsTop: 1042,
-      officeFontSize: 14,
-      mlsFontSize: 11,
-      officeAlign: "right",
-      officeLeft: 760,
-      officeWidth: 260,
-    },
-    openHouse: { top: 880, fontSize: 22 },
-    badge: { left: 760, top: 80, width: 240, height: 100, angle: -8, fontSize: 48 },
-  },
   portrait_4x5: {
     width: 1080,
     height: 1350,
@@ -183,8 +158,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -276,7 +249,6 @@ export function createHeroEditorialTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -670,7 +642,7 @@ export function buildAllHeroEditorialTemplates(): CanvasTemplateSchema[] {
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

@@ -144,49 +144,6 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
   // bottom ~38% of the canvas for the type stack. Photo area is 740x540 — a
   // soft 4:3-ish crop that flatters most listing exteriors. The card itself
   // is 804x660 (32px side padding, 88px bottom caption strip per V1).
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    polaroid: {
-      angle: -4,
-      cardLeft: 138, // (1080 - 804) / 2
-      cardTop: 56,
-      cardWidth: 804,
-      cardHeight: 660,
-      photoInsetLeft: 32,
-      photoInsetTop: 32,
-      photoWidth: 740,
-      photoHeight: 540,
-      captionTop: 572, // photoInsetTop + photoHeight = 32 + 540
-      captionHeight: 88,
-      captionFontSize: 56,
-      shadowOffsetX: 14,
-      shadowOffsetY: 18,
-    },
-    stack: {
-      paddingLeft: 56,
-      paddingRight: 56,
-      address: { top: 768, fontSize: 48 },
-      cityStateZip: { top: 832, fontSize: 18 },
-      openHouse: { top: 866, fontSize: 28 },
-      price: { top: 894, fontSize: 64 },
-      bedsBaths: { top: 974, fontSize: 16 },
-    },
-    footer: {
-      top: 1014,
-      brandFontSize: 13,
-      mlsTop: 1034,
-      mlsFontSize: 12,
-    },
-    badge: {
-      left: 720,
-      top: 168,
-      width: 220,
-      height: 96,
-      angle: 12,
-      fontSize: 44,
-    },
-  },
   // why: portrait gives the polaroid a more vertical photo (760x680) so the
   // print reads as a true photo-album page. Type stack starts at y=950 to
   // leave room for the larger polaroid card.
@@ -314,8 +271,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -396,7 +351,6 @@ export function createPolaroidTemplate(
   const p = layout.polaroid;
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -831,7 +785,7 @@ export function buildAllPolaroidTemplates(): CanvasTemplateSchema[] {
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

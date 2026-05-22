@@ -52,11 +52,6 @@ interface FormatMeta {
 }
 
 const FORMAT_META: Record<PostFormat, FormatMeta> = {
-  square_1x1: {
-    label: "Square 1:1",
-    aspectStyle: { width: 18, height: 18 },
-    platformHint: "IG · FB feed",
-  },
   portrait_4x5: {
     label: "Portrait 4:5",
     aspectStyle: { width: 16, height: 20 },

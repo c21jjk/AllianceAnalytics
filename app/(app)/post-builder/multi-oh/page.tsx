@@ -41,12 +41,10 @@ export default async function MultiOHPage() {
   // Phase 2 wires the renderer. Empty list in Phase 1 (no DB templates
   // exist yet); behavior is unchanged. See
   // docs/adr/0001-template-builder.md.
-  const [squareTemplates, portraitTemplates, storyTemplates] = await Promise.all([
-    listTemplatesForPostType("open_house", "square_1x1"),
+  const [portraitTemplates, storyTemplates] = await Promise.all([
     listTemplatesForPostType("open_house", "portrait_4x5"),
     listTemplatesForPostType("open_house", "story_9x16"),
   ]);
-  void squareTemplates;
   void portraitTemplates;
   void storyTemplates;
 

@@ -68,7 +68,6 @@ export type { PostFormat, PostType, PostVariant };
 export const PLATFORM_DIMENSIONS: Readonly<
   Record<PostFormat, Readonly<{ width: number; height: number }>>
 > = {
-  square_1x1: { width: 1080, height: 1080 },
   portrait_4x5: { width: 1080, height: 1350 },
   story_9x16: { width: 1080, height: 1920 },
 } as const;

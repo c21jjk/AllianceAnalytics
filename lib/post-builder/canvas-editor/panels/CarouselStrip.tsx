@@ -66,7 +66,6 @@ const THUMB_HEIGHT_PX = 70 as const;
  * skinny thumbs mean I'm editing a Story".
  */
 const FORMAT_ASPECT: Readonly<Record<PostFormat, number>> = {
-  square_1x1: 1, // 1:1
   portrait_4x5: 4 / 5, // 0.8
   story_9x16: 9 / 16, // 0.5625
 } as const;

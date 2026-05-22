@@ -88,7 +88,6 @@ const RENDER_CONCURRENCY = 5;
 // why: the three valid PostFormat literals. Pulled into a tuple so we can do
 // a typed runtime check without importing the type-only PostFormat alias.
 const VALID_FORMATS = [
-  "square_1x1",
   "portrait_4x5",
   "story_9x16",
 ] as const satisfies readonly PostFormat[];

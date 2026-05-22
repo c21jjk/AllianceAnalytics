@@ -3985,7 +3985,6 @@ function buildResizeMenuOptions(
   currentFormat: PostFormat,
 ): readonly ResizeMenuOption[] {
   const allFormats: readonly PostFormat[] = [
-    "square_1x1",
     "portrait_4x5",
     "story_9x16",
   ];

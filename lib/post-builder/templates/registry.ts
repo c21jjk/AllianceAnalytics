@@ -13,22 +13,22 @@ import {
   buildCustomizationCSS,
   injectCustomizationCSS,
 } from "./primitives/_shared";
-import { renderV2BoldStats } from "./primitives/v2-bold-stats";
+// 2026-05-22 — Square 1:1 retired. Each variant now ships two primitives:
+// portrait_4x5 (feed) and story_9x16 (Stories / Reels / TikTok). The
+// `*-square` files (renderV2BoldStats, etc., without -portrait or -story
+// suffix) were deleted alongside the Square format. Legacy posts that
+// rendered as square keep their already-stored PNGs; no re-render path
+// produces square output anymore.
 import { renderV2BoldStatsPortrait } from "./primitives/v2-bold-stats-portrait";
 import { renderV2BoldStatsStory } from "./primitives/v2-bold-stats-story";
-import { renderV3ExcellenceCollection } from "./primitives/v3-excellence-collection";
 import { renderV3ExcellenceCollectionPortrait } from "./primitives/v3-excellence-collection-portrait";
 import { renderV3ExcellenceCollectionStory } from "./primitives/v3-excellence-collection-story";
-import { renderV6MagazineCover } from "./primitives/v6-magazine-cover";
 import { renderV6MagazineCoverPortrait } from "./primitives/v6-magazine-cover-portrait";
 import { renderV6MagazineCoverStory } from "./primitives/v6-magazine-cover-story";
-import { renderV8StandardListing } from "./primitives/v8-standard-listing";
 import { renderV8StandardListingPortrait } from "./primitives/v8-standard-listing-portrait";
 import { renderV8StandardListingStory } from "./primitives/v8-standard-listing-story";
-import { renderV9JustSoldCelebration } from "./primitives/v9-just-sold-celebration";
 import { renderV9JustSoldCelebrationPortrait } from "./primitives/v9-just-sold-celebration-portrait";
 import { renderV9JustSoldCelebrationStory } from "./primitives/v9-just-sold-celebration-story";
-import { renderV10ComingSoonTeaser } from "./primitives/v10-coming-soon-teaser";
 import { renderV10ComingSoonTeaserPortrait } from "./primitives/v10-coming-soon-teaser-portrait";
 import { renderV10ComingSoonTeaserStory } from "./primitives/v10-coming-soon-teaser-story";
 import { POST_TYPE_THEMES, getTheme } from "./themes";
@@ -113,32 +113,26 @@ type ActiveVariant = (typeof ACTIVE_VARIANTS)[number];
 
 const PRIMITIVE_RENDERERS: Record<ActiveVariant, Record<PostFormat, PrimitiveRenderer>> = {
   v2: {
-    square_1x1: renderV2BoldStats,
     portrait_4x5: renderV2BoldStatsPortrait,
     story_9x16: renderV2BoldStatsStory,
   },
   v3: {
-    square_1x1: renderV3ExcellenceCollection,
     portrait_4x5: renderV3ExcellenceCollectionPortrait,
     story_9x16: renderV3ExcellenceCollectionStory,
   },
   v6: {
-    square_1x1: renderV6MagazineCover,
     portrait_4x5: renderV6MagazineCoverPortrait,
     story_9x16: renderV6MagazineCoverStory,
   },
   v8: {
-    square_1x1: renderV8StandardListing,
     portrait_4x5: renderV8StandardListingPortrait,
     story_9x16: renderV8StandardListingStory,
   },
   v9: {
-    square_1x1: renderV9JustSoldCelebration,
     portrait_4x5: renderV9JustSoldCelebrationPortrait,
     story_9x16: renderV9JustSoldCelebrationStory,
   },
   v10: {
-    square_1x1: renderV10ComingSoonTeaser,
     portrait_4x5: renderV10ComingSoonTeaserPortrait,
     story_9x16: renderV10ComingSoonTeaserStory,
   },
@@ -198,11 +192,6 @@ const FORMAT_META: Record<
   PostFormat,
   { display_name: string; description: string; aspect: string }
 > = {
-  square_1x1: {
-    display_name: "Square",
-    description: "Instagram feed + Facebook feed",
-    aspect: "1:1",
-  },
   portrait_4x5: {
     display_name: "Portrait",
     description: "Instagram feed preferred",
@@ -215,10 +204,9 @@ const FORMAT_META: Record<
   },
 };
 
-const SUPPORTED_FORMATS: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+const SUPPORTED_FORMATS: PostFormat[] = ["portrait_4x5", "story_9x16"];
 
 const FORMAT_DIMENSIONS: Record<PostFormat, { width: number; height: number }> = {
-  square_1x1: { width: 1080, height: 1080 },
   portrait_4x5: { width: 1080, height: 1350 },
   story_9x16: { width: 1080, height: 1920 },
 };
@@ -270,8 +258,6 @@ function buildTemplateMap(): Record<string, TemplateEntry> {
 
 export function formatShortName(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "square";
     case "portrait_4x5":
       return "portrait";
     case "story_9x16":

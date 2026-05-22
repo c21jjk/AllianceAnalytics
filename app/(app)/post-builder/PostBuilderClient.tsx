@@ -187,7 +187,7 @@ const POST_TYPES: { id: PostType; label: string; helper: string }[] = [
   { id: "price_reduction", label: "Price Reduced", helper: "Active · pick" },
 ];
 
-const FORMATS: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+const FORMATS: PostFormat[] = ["portrait_4x5", "story_9x16"];
 
 const STORAGE_KEY_POST_TYPE = "post-builder.post_type";
 const STORAGE_KEY_VARIANT = "post-builder.variant";
@@ -223,7 +223,7 @@ export default function PostBuilderClient({
   globalTestModeOn = false,
 }: Props) {
   const [postType, setPostType] = useState<PostType>("just_listed");
-  const [format, setFormat] = useState<PostFormat>("square_1x1");
+  const [format, setFormat] = useState<PostFormat>("portrait_4x5");
   const [variantId, setVariantId] = useState<PostVariant>("v1");
   const [search, setSearch] = useState("");
   const [selectedMls, setSelectedMls] = useState<string | null>(null);
@@ -494,7 +494,6 @@ export default function PostBuilderClient({
               ? (r.variant as SlideMetadata["variant"])
               : (initialResume.variant as SlideMetadata["variant"]);
             const format =
-              r.format === "square_1x1" ||
               r.format === "portrait_4x5" ||
               r.format === "story_9x16"
                 ? r.format
@@ -1458,8 +1457,6 @@ export default function PostBuilderClient({
 
   const previewAspectClass = useMemo(() => {
     switch (format) {
-      case "square_1x1":
-        return "aspect-square";
       case "portrait_4x5":
         return "aspect-[4/5]";
       case "story_9x16":
@@ -2537,38 +2534,14 @@ export default function PostBuilderClient({
           ) : (
             <div className="flex flex-col h-full">
               <div className="mb-4 space-y-4">
-                {/* Step 2 · Format — hidden in multi-OH mode (format was
-                    chosen in the wizard and can't be changed here). */}
-                {!isMultiOHPost ? (
-                <div>
-                  <div className="eyebrow mb-2">Step 2 · Format</div>
-                  <div className="inline-flex rounded-lg ring-1 ring-neutral-200 bg-white overflow-hidden">
-                    {FORMATS.map((fmt) => {
-                      const active = fmt === format;
-                      const meta = formatMeta[fmt];
-                      return (
-                        <button
-                          key={fmt}
-                          type="button"
-                          onClick={() => changeFormat(fmt)}
-                          className={[
-                            "px-3.5 py-2 text-sm font-medium transition border-r border-neutral-200 last:border-r-0",
-                            active
-                              ? "bg-gold-100 text-gold-900"
-                              : "text-neutral-700 hover:bg-neutral-50",
-                          ].join(" ")}
-                          title={meta.description}
-                        >
-                          {meta.display_name}
-                          <span className="ml-1.5 text-[10px] opacity-60 font-mono">
-                            {meta.aspect}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                ) : null}
+                {/* 2026-05-22 — Format picker removed from the user-facing
+                    flow. Every post defaults to portrait_4x5 (IG-preferred
+                    feed, also good on FB feed). 9:16 Story output is
+                    reserved for Reels (handled separately via "Make a Reel"
+                    after save). The picker added cognitive load without
+                    UX value. Underlying `format` state still exists +
+                    initializes to portrait_4x5 — keeps the render pipeline
+                    + downstream code untouched. */}
 
                 {/* Step 3 · Variant — hidden in multi-OH mode (per-property
                     card variant was chosen in the wizard). */}
@@ -4415,8 +4388,6 @@ function formatTimeRangeET(start: Date, end: Date): string {
 
 function formatShortName(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "square";
     case "portrait_4x5":
       return "portrait";
     case "story_9x16":
@@ -4426,8 +4397,6 @@ function formatShortName(format: PostFormat): string {
 
 function dimensionsLabel(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "1080×1080";
     case "portrait_4x5":
       return "1080×1350";
     case "story_9x16":
@@ -4489,21 +4458,17 @@ function VariantPreviewThumb({
 
   // Native template dimensions per format.
   const nativeDims =
-    format === "square_1x1"
-      ? { w: 1080, h: 1080 }
-      : format === "portrait_4x5"
-        ? { w: 1080, h: 1350 }
-        : { w: 1080, h: 1920 };
+    format === "portrait_4x5"
+      ? { w: 1080, h: 1350 }
+      : { w: 1080, h: 1920 };
 
   // Display dimensions. Large mode: container is 100% width, height
   // derived from the aspect ratio. Small mode: fixed pixel box (legacy
   // callers — currently unused after the layout refactor, kept for the API).
   const longSide = size === "large" ? measuredW : 84;
-  const dims = format === "square_1x1"
-    ? { w: nativeDims.w, h: nativeDims.h, displayW: longSide, displayH: longSide }
-    : format === "portrait_4x5"
-      ? { w: nativeDims.w, h: nativeDims.h, displayW: longSide, displayH: Math.round(longSide * 1350 / 1080) }
-      : { w: nativeDims.w, h: nativeDims.h, displayW: Math.round(longSide * 1080 / 1920), displayH: longSide };
+  const dims = format === "portrait_4x5"
+    ? { w: nativeDims.w, h: nativeDims.h, displayW: longSide, displayH: Math.round(longSide * 1350 / 1080) }
+    : { w: nativeDims.w, h: nativeDims.h, displayW: Math.round(longSide * 1080 / 1920), displayH: longSide };
   const scaleX = dims.displayW / dims.w;
   const scaleY = dims.displayH / dims.h;
 

@@ -43,7 +43,6 @@ export type FormatSchema = unknown;
  * actually define.
  */
 export interface TemplateSchemaFamily {
-  square_1x1?: FormatSchema | null;
   portrait_4x5?: FormatSchema | null;
   story_9x16?: FormatSchema | null;
 }
@@ -125,7 +124,6 @@ export function listSupportedFormats(
   schema: TemplateSchemaFamily,
 ): PostFormat[] {
   const out: PostFormat[] = [];
-  if (templateSupportsFormat(schema, "square_1x1")) out.push("square_1x1");
   if (templateSupportsFormat(schema, "portrait_4x5")) out.push("portrait_4x5");
   if (templateSupportsFormat(schema, "story_9x16")) out.push("story_9x16");
   return out;

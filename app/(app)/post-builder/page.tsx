@@ -118,7 +118,6 @@ export default async function PostBuilderPage({
     PostFormat,
     { display_name: string; description: string; aspect: string }
   > = {
-    square_1x1: formatDisplayMeta("square_1x1"),
     portrait_4x5: formatDisplayMeta("portrait_4x5"),
     story_9x16: formatDisplayMeta("story_9x16"),
   };

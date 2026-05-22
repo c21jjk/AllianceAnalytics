@@ -49,7 +49,6 @@ import type { PostFormat } from "../types";
  *   format step at render time and is trivially diffable against the spec.
  */
 const ASPECT_RATIO_BY_FORMAT: Readonly<Record<PostFormat, string>> = {
-  square_1x1: "1 / 1",
   portrait_4x5: "4 / 5",
   story_9x16: "9 / 16",
 } as const;

@@ -165,42 +165,6 @@ interface FormatLayout {
  *     This matches the V1 story primitive's `top: 1180px` panel start.
  */
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    photoTop: 0,
-    photoBottom: 670,
-    eyebrow: {
-      left: 56,
-      ruleTop: 718,
-      ruleWidth: 60,
-      labelLeft: 132, // 56 + 60 + 16 gap
-      labelTop: 712,
-      labelFontSize: 18,
-    },
-    seamRule: { top: 670, height: 1 },
-    // why: design review 2026-05-17 — hierarchy flipped. The street ADDRESS
-    // is the buyer's mental anchor ("117 E Maple Ave" is searchable + memorable
-    // in a way "Wildwood" isn't), so we promote it to the big Playfair anchor
-    // and demote city to a small uppercase subhead below. The LAYOUTS keys
-    // keep their names (`address`/`city`) and the values describe their NEW
-    // visual roles: address = big headline, city = small subhead.
-    address: { top: 748, fontSize: 96 },
-    city: { top: 862, fontSize: 28 },
-    openHouseChip: { top: 902, height: 40, width: 360, fontSize: 18 },
-    price: { top: 952, fontSize: 60, labelFontSize: 36 },
-    bedsBaths: { top: 1000, fontSize: 14 },
-    footer: {
-      top: 1024,
-      brandWidth: 540,
-      brandFontSize: 11,
-      mlsFontSize: 11,
-      mlsRight: 56,
-      mlsWidth: 320,
-    },
-    padding: { left: 56, right: 56 },
-    badge: { left: 776, top: 88, width: 240, height: 100, angle: -8, fontSize: 48 },
-  },
   portrait_4x5: {
     width: 1080,
     height: 1350,
@@ -307,8 +271,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -395,7 +357,6 @@ export function createMagazineCoverTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -916,7 +877,7 @@ export function buildAllMagazineCoverTemplates(): CanvasTemplateSchema[] {
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

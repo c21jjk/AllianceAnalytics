@@ -162,69 +162,6 @@ interface FormatLayout {
 // guarantees legibility against bright hero photos.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
   // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    scrim: {
-      // why: scrim covers the lower 60% — top stays clear for the angled
-      // sash + the home photo's exterior detail; bottom darkens for type.
-      top: 432,
-      height: 648,
-    },
-    sash: {
-      // why: full-width sash extends past both canvas edges so the angle
-      // crops nicely against the canvas border, like a real awning banner.
-      fullWidthLeft: -80,
-      fullWidthWidth: 1240,
-      shortLeft: 200,
-      shortWidth: 680,
-      height: 120,
-      // why: sash top ~ 200; visually crosses upper third of the canvas.
-      top: 200,
-      fullFontSize: 84,
-      shortFontSize: 52,
-      angle: -7,
-    },
-    eyebrow: {
-      // why: small-caps eyebrow sits just above the price block at y=620.
-      top: 632,
-      fontSize: 26,
-    },
-    price: {
-      // why: 124pt close_price sits centered in the lower half. Vertical
-      // center ≈ 720 (top 670 + half of height).
-      top: 670,
-      fullFontSize: 132,
-      labelFontSize: 76,
-    },
-    priceRule: {
-      top: 826,
-      width: 220,
-      height: 3,
-    },
-    addressBlock: {
-      addressTop: 856,
-      cityTop: 902,
-      fontSize: 26,
-    },
-    openHouse: {
-      top: 670,
-      fontSize: 28,
-    },
-    sparkle: {
-      leftX: 60,
-      rightX: 940,
-      y: 230,
-      size: 60,
-    },
-    badge: {
-      // why: top-right with ≥40px from canvas edge.
-      left: 824,
-      top: 56,
-      width: 200,
-      height: 80,
-    },
-  },
 
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
@@ -380,8 +317,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -494,7 +429,6 @@ export function createJustSoldCelebrationTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -966,7 +900,7 @@ export function buildAllJustSoldCelebrationTemplates(): readonly CanvasTemplateS
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

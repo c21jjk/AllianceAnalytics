@@ -146,41 +146,6 @@ interface FormatLayout {
 }
 
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    split: { mode: "horizontal", splitX: 594, dataWidth: 486 },
-    dataPad: { left: 48, right: 48, top: 96, bottom: 56 },
-    photoEyebrow: {
-      left: 48,
-      ruleTop: 64,
-      ruleWidth: 50,
-      labelTop: 80,
-      labelFontSize: 20,
-    },
-    photoTint: { top: 0, height: 220, opacity: 0.35 },
-    dataEyebrow: { top: 132, fontSize: 14 },
-    openHouseChip: { top: 100, height: 40, fontSize: 18, width: 280 },
-    address: { top: 178, fontSize: 40 },
-    cityStateZip: { top: 252, fontSize: 16 },
-    goldRule: { top: 296, width: 60 },
-    price: { top: 320, fontSize: 52 },
-    stats: {
-      top: 420,
-      rowHeight: 56,
-      labelFontSize: 12,
-      valueFontSize: 22,
-      includeTypeRow: true,
-    },
-    footer: {
-      top: 982,
-      brandFontSize: 15,
-      mlsFontSize: 13,
-    },
-    // why: badge straddles the photo column / data column boundary so it
-    // reads as a magazine "stamp." Matches V1 v3's `.badge-stamp` override.
-    badge: { left: 414, top: 96, width: 240, height: 100, angle: -8, fontSize: 48 },
-  },
   portrait_4x5: {
     width: 1080,
     height: 1350,
@@ -284,8 +249,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -478,7 +441,6 @@ export function createSideBySideTemplate(
   const split = layout.split;
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -1052,7 +1014,7 @@ export function buildAllSideBySideTemplates(): CanvasTemplateSchema[] {
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

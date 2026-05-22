@@ -156,42 +156,6 @@ const LAYOUTS: Record<PostFormat, FormatLayout> = {
   // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
   // V1 reference: photo 760×500 centered at top=240; type stack at y=800;
   // eyebrow at y=110; footer at bottom: 36 → ~1010 baseline.
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    eyebrow: {
-      top: 100,
-      ruleWidth: 70,
-      gap: 18,
-      labelWidth: 360,
-      labelFontSize: 22,
-    },
-    frame: {
-      // why: V1 has photo 760×500 at top=240 with 12px internal padding,
-      // making the OUTER frame 784×524 centered. Left = (1080-784)/2 = 148.
-      left: 148,
-      top: 228,
-      width: 784,
-      height: 524,
-      padding: 12,
-      strokeWidth: 3,
-    },
-    body: {
-      horizontalMargin: 80,
-      address: { top: 800, fontSize: 60 },
-      cityStateZip: { top: 880, fontSize: 22 },
-      openHouse: { top: 916, fontSize: 22 },
-      price: { top: 944, fontSize: 60 },
-      bedsBaths: { top: 1014, fontSize: 18 },
-    },
-    footer: {
-      brandTop: 1018,
-      brandFontSize: 14,
-      mlsTop: 1042,
-      mlsFontSize: 14,
-    },
-    badge: { left: 800, top: 60, width: 220, height: 90, angle: -8, fontSize: 42 },
-  },
 
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   // V1 reference: photo 820×600 centered at top=320; type stack at y=990;
@@ -308,8 +272,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -397,7 +359,6 @@ export function createMinimalFrameTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -878,7 +839,7 @@ export function buildAllMinimalFrameTemplates(): CanvasTemplateSchema[] {
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

@@ -207,62 +207,6 @@ interface FormatLayout {
 // address). Portrait + story scale proportionally.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
   // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    logo: {
-      // why: top=40 with width=280 puts the logo's bottom edge at ~198
-      // (280 / 1.7778 = ~157 height), leaving comfortable space before the
-      // eyebrow at y=230.
-      top: 40,
-      width: 280,
-    },
-    eyebrow: {
-      top: 220,
-      fontSize: 72,
-      gap: 24,
-      perCharWidthEstimate: 42,
-    },
-    photo: {
-      // why: 820×510 centered (was 760×420 — design review 2026-05-17).
-      // Earlier sizing was ~27% of canvas area; new ~36%. The reviewer's
-      // ideal (50%+) doesn't fit at 1080×1080 once you account for the
-      // logo + eyebrow above and divider + price + address below — those
-      // four bands need ~360px of vertical space. We pick the largest
-      // photo that still gives the price 80-86pt headroom and breathing
-      // room above + below the divider.
-      left: 130,
-      top: 300,
-      width: 820,
-      height: 510,
-    },
-    divider: {
-      // photo bottom at 810 → divider at y=850 (40px gap — magazine breathe).
-      top: 850,
-      width: 480,
-      height: 2,
-    },
-    price: {
-      // why: 84pt (was 74pt). Compromise between reviewer's 88-92pt ask
-      // and the geometric constraint of fitting under the larger photo.
-      // Still a clear step up from the original.
-      top: 884,
-      fontSize: 84,
-    },
-    openHouse: {
-      top: 1000,
-      fontSize: 22,
-    },
-    addressRow: {
-      // why: y=1028 leaves ~30px bottom margin after the bigger price.
-      top: 1028,
-      fontSize: 22,
-      streetWidth: 480,
-      cityWidth: 480,
-      pipeGap: 14,
-      pipeWidth: 20,
-    },
-  },
 
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
@@ -393,8 +337,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -489,7 +431,6 @@ export function createExcellenceCollectionTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -930,7 +871,7 @@ export function buildAllExcellenceCollectionTemplates(): readonly CanvasTemplate
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

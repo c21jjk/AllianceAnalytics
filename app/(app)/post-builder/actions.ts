@@ -2554,7 +2554,6 @@ const ALLOWED_CUSTOM_TEMPLATE_POST_TYPES = new Set<PostType>([
   "price_reduction",
 ]);
 const ALLOWED_CUSTOM_TEMPLATE_FORMATS = new Set<PostFormat>([
-  "square_1x1",
   "portrait_4x5",
   "story_9x16",
 ]);

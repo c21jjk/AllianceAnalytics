@@ -156,53 +156,6 @@ interface FormatLayout {
 // composition its frame; left-edge padding would compete with the band.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
   // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    topStack: {
-      left: 56,
-      width: 720,
-      eyebrow: { top: 56, fontSize: 56 },
-      price: { top: 126, fontSize: 22 },
-      openHouse: { top: 156, fontSize: 22 },
-      // why: design review 2026-05-17 — address bumped 22 → 26, city
-      // → 24. Previously address+city+price were all 22pt 700-weight,
-      // distinguishable only by color. New sizes establish a clear
-      // hierarchy step (eyebrow > address > city > price).
-      address: { top: 186, fontSize: 26 },
-      city: { top: 224, fontSize: 24 },
-    },
-    hero: {
-      left: 0,
-      top: 280,
-      width: 1080,
-      height: 660,
-    },
-    bottomBand: {
-      top: 940,
-      height: 140,
-      // why: textTop = band.top + (band.height - fontSize) / 2 to vertically
-      // center the row. For fontSize=22, that's 940 + (140-22)/2 = 999.
-      textTop: 999,
-      fontSize: 22,
-    },
-    badgeImage: {
-      // why: 200×80 sized so the C21 + ALLIANCE wordmark stays legible at
-      // thumbnail size; right edge at 1080 − 56 = 1024, top at 56.
-      left: 824,
-      top: 56,
-      width: 200,
-      height: 80,
-    },
-    sideBadge: {
-      left: 36,
-      top: 320,
-      width: 200,
-      height: 84,
-      angle: -8,
-      fontSize: 38,
-    },
-  },
 
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
@@ -326,8 +279,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -420,7 +371,6 @@ export function createStandardListingTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -799,7 +749,7 @@ export function buildAllStandardListingTemplates(): readonly CanvasTemplateSchem
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {

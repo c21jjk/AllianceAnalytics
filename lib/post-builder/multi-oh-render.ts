@@ -129,8 +129,6 @@ function pickEmitter(
   format: PostFormat,
 ): (input: MultiOHEventInput) => string {
   switch (format) {
-    case "square_1x1":
-      return emitEventOverviewSquare;
     case "portrait_4x5":
       return emitEventOverviewPortrait;
     case "story_9x16":
@@ -673,8 +671,12 @@ function renderAgentBlock(_input: MultiOHEventInput): string {
  * sized 56-64px depending on length.
  */
 export function emitEventOverviewSquare(input: MultiOHEventInput): string {
-  const fmt: PostFormat = "square_1x1";
-  const { width, height } = PLATFORM_DIMENSIONS[fmt];
+  // why: PostFormat no longer includes "square_1x1"; the cast keeps this
+  // dead function compiling until the user removes it. PLATFORM_DIMENSIONS
+  // also lost its square entry, so we hardcode the 1080×1080 fallback.
+  const fmt = "square_1x1" as unknown as PostFormat;
+  const width = 1080;
+  const height = 1080;
   const margin = 52;
   const density = computeRowDensity(input.properties.length, fmt);
 

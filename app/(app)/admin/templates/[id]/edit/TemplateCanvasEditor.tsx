@@ -63,7 +63,6 @@ interface Props {
 
 /** Per-format canonical dimensions — matches the renderer's expectations. */
 const FORMAT_DIMS: Record<PostFormat, { width: number; height: number }> = {
-  square_1x1: { width: 1080, height: 1080 },
   portrait_4x5: { width: 1080, height: 1350 },
   story_9x16: { width: 1080, height: 1920 },
 };
@@ -79,9 +78,17 @@ export default function TemplateCanvasEditor({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // Resolve the schema to mount in the editor. If the template already
-  // defines this format, mount the saved schema. Otherwise, build a
-  // minimal starter so the canvas has something to render against.
+  // Resolve the schema to mount in the editor. We MERGE the stored data
+  // (whatever shape it's in) with a fresh starter to guarantee every
+  // required CanvasTemplateSchema field has a sensible value. This
+  // handles three scenarios:
+  //   1. Format undefined → use starter wholesale.
+  //   2. Format defined with complete schema → use as-is (starter
+  //      provides backup for any newly-added required fields).
+  //   3. Format defined with incomplete/legacy schema (e.g. seeded by
+  //      SQL with just {width, height, layers}) → fill in id, name,
+  //      category, variant, backgroundColor, updatedAt, schemaVersion
+  //      from the starter so the editor mounts without crashing.
   //
   // The starter is INTENTIONALLY almost-empty — we don't pre-populate
   // address/price layers because admins should design from scratch and
@@ -89,14 +96,7 @@ export default function TemplateCanvasEditor({
   // right dimensions is the cleanest starting point.
   const schemaForEditor: CanvasTemplateSchema | null = useMemo(() => {
     if (!open) return null;
-    const existing = template.schema[format];
-    if (existing && typeof existing === "object" && !Array.isArray(existing)) {
-      // why: cast at the boundary. We trust the stored schema is shaped
-      // correctly (it was authored via this same editor or via the JSON
-      // textarea fallback, both of which validate before persisting).
-      return existing as unknown as CanvasTemplateSchema;
-    }
-    return buildStarterSchema(template, format);
+    return normalizeOrBuildStarter(template, format);
   }, [template, format, open]);
 
   // The editor needs an MLSListingPayload; map our sample row through.
@@ -208,5 +208,70 @@ function buildStarterSchema(
     layers: [],
     updatedAt: new Date().toISOString(),
     schemaVersion: 1,
+  };
+}
+
+/**
+ * Merge whatever's stored in `template_definitions.schema[format]` with
+ * a fresh starter so every required CanvasTemplateSchema field has a
+ * value. Stored fields win over starter defaults; missing fields fall
+ * through cleanly to the starter.
+ *
+ * Forces structural fields (format, width, height, schemaVersion) to
+ * known-good values because those are tied to the format choice and
+ * shouldn't be overridable by stored data — keeps the editor mount
+ * predictable even if a legacy seed has e.g. width: 0.
+ *
+ * Why "normalize" not "validate-and-reject": the editor is the user's
+ * primary tool; if the stored schema is partially broken we'd rather
+ * present a working canvas (with sensible defaults) than crash. The
+ * author's next save overwrites the row with a clean schema.
+ */
+function normalizeOrBuildStarter(
+  template: TemplateDefinition,
+  format: PostFormat,
+): CanvasTemplateSchema {
+  const starter = buildStarterSchema(template, format);
+  const stored = template.schema[format];
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return starter;
+  }
+  const s = stored as Record<string, unknown>;
+  const dims = FORMAT_DIMS[format];
+  return {
+    ...starter,
+    // Stored fields override starter defaults for the soft fields.
+    ...(typeof s.id === "string" && s.id.length > 0 ? { id: s.id } : {}),
+    ...(typeof s.name === "string" && s.name.length > 0 ? { name: s.name } : {}),
+    ...(typeof s.description === "string" ? { description: s.description } : {}),
+    ...(typeof s.backgroundColor === "string"
+      ? { backgroundColor: s.backgroundColor }
+      : {}),
+    ...(typeof s.backgroundImage === "string" || s.backgroundImage === null
+      ? { backgroundImage: s.backgroundImage as string | null | undefined }
+      : {}),
+    ...(typeof s.updatedAt === "string" ? { updatedAt: s.updatedAt } : {}),
+    // Layers must always be an array — coerce defensively.
+    layers: Array.isArray(s.layers)
+      ? (s.layers as CanvasTemplateSchema["layers"])
+      : [],
+    // Hard-force structural fields tied to the format choice. These can't
+    // be overridden by stored data because they'd violate canvas-editor
+    // invariants (width matching PLATFORM_DIMENSIONS, schemaVersion=1).
+    format,
+    width: dims.width,
+    height: dims.height,
+    schemaVersion: 1,
+    // category + variant: use stored if they look like valid enum members,
+    // otherwise fall back to starter defaults. The canvas editor validates
+    // these internally, so a clearly-bad value would crash anyway.
+    category:
+      typeof s.category === "string"
+        ? (s.category as CanvasTemplateSchema["category"])
+        : starter.category,
+    variant:
+      typeof s.variant === "string"
+        ? (s.variant as CanvasTemplateSchema["variant"])
+        : starter.variant,
   };
 }

@@ -118,7 +118,6 @@ const POST_TYPES: readonly PostType[] = [
 ];
 
 const POST_FORMATS: readonly PostFormat[] = [
-  "square_1x1",
   "portrait_4x5",
   "story_9x16",
 ];
@@ -149,11 +148,10 @@ POST TYPES YOU CAN PICK FROM
 Pick the post_type that ACTUALLY APPLIES based on the listing's status and metadata. Don't recommend just_sold for an active listing.
 
 FORMATS YOU CAN PICK FROM
-- square_1x1 (1080×1080) — IG feed + FB feed. Universal fallback.
 - portrait_4x5 (1080×1350) — IG feed PREFERRED — fills more of mobile viewport, gets more reach. Default for IG-primary posts.
 - story_9x16 (1080×1920) — IG / FB Stories + TikTok. Pick when the intent is short-lived buzz or vertical-first audience.
 
-DEFAULT TO portrait_4x5 unless something in the listing context suggests otherwise (e.g., a vertical architectural photo would benefit from story_9x16; a wide angle exterior plays better at square_1x1).
+DEFAULT TO portrait_4x5 unless something in the listing context suggests otherwise (e.g., a vertical architectural photo would benefit from story_9x16).
 
 CAPTION RULES
 - 80-150 chars max. IG/FB cut at ~125; the hook must land in the first 30 chars.
@@ -181,7 +179,7 @@ Return strict JSON only — NO prose, NO markdown:
 {
   "post_type": "just_listed" | "just_sold" | "under_contract" | "open_house" | "price_reduction",
   "variant": "v1" | "v2" | "v3" | "v6" | "v7" | "v8",
-  "format": "square_1x1" | "portrait_4x5" | "story_9x16",
+  "format": "portrait_4x5" | "story_9x16",
   "hero_photo_index": number,
   "caption": string,
   "hashtags": string[],

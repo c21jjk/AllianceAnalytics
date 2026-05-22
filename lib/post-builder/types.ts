@@ -13,7 +13,13 @@ export type PostType =
   | "under_contract"
   | "open_house"
   | "price_reduction";
-export type PostFormat = "square_1x1" | "portrait_4x5" | "story_9x16";
+// 2026-05-22 — Square 1:1 retired. IG distribution now strongly favors
+// Portrait 4:5 for feed; Square added no value, only confused the picker.
+// All NEW posts render as 4:5 (feed) or 9:16 (Stories / Reels / TikTok).
+// Legacy generated_posts rows with format='square_1x1' keep their column
+// value (it's just text in the DB) and their already-rendered PNG, but no
+// new code path can produce square output.
+export type PostFormat = "portrait_4x5" | "story_9x16";
 
 /**
  * Variant identifier. Active single-photo variants: v1 (Hero Editorial),

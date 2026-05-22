@@ -188,58 +188,6 @@ interface FormatLayout {
 // surrounds the lower text block to reinforce the "whispered" feel.
 const LAYOUTS: Record<PostFormat, FormatLayout> = {
   // ── Square 1:1 (1080×1080) ────────────────────────────────────────────────
-  square_1x1: {
-    width: 1080,
-    height: 1080,
-    scrim: {
-      // why: scrim starts at y=480 (just below the visual midline) and runs
-      // to the bottom — covers ~55% of the canvas. Stops below the headline
-      // so the photo reads behind the headline without the scrim's dark edge
-      // cutting through the type.
-      top: 480,
-      height: 600,
-    },
-    headline: {
-      // why: y=440 puts the headline visual center near canvas y=540 — the
-      // golden-ratio sweet spot (just above the true midline so the eye
-      // settles on it as the primary element).
-      top: 440,
-      fontSize: 116,
-      gap: 36,
-      perCharWidthEstimate: 68,
-    },
-    hairline: {
-      // why: hairline centerY = headline top + fontSize/2 ≈ 498.
-      centerY: 498,
-      width: 80,
-      height: 1,
-      gapFromHeadline: 36,
-    },
-    subhead: {
-      // why: subhead just below the headline, with breathing room.
-      top: 600,
-      fontSize: 22,
-    },
-    textBlock: {
-      addressTop: 856,
-      cityTop: 896,
-      priceTop: 950,
-      fontSize: 22,
-      priceFontSizeNormal: 60,
-      priceFontSizeDimmed: 22,
-    },
-    openHouse: {
-      top: 816,
-      fontSize: 22,
-    },
-    badge: {
-      // why: top-right with ≥40px margin from the canvas edge.
-      left: 824,
-      top: 56,
-      width: 200,
-      height: 80,
-    },
-  },
 
   // ── Portrait 4:5 (1080×1350) ──────────────────────────────────────────────
   portrait_4x5: {
@@ -385,8 +333,6 @@ interface PostTypeConfig {
 
 function describeFormat(format: PostFormat): string {
   switch (format) {
-    case "square_1x1":
-      return "Square 1:1";
     case "portrait_4x5":
       return "Portrait 4:5";
     case "story_9x16":
@@ -520,7 +466,6 @@ export function createComingSoonTeaserTemplate(
   const cfg = POST_TYPE_CONFIGS[postType];
 
   const formatShort: Record<PostFormat, string> = {
-    square_1x1: "square",
     portrait_4x5: "portrait",
     story_9x16: "story",
   };
@@ -1017,7 +962,7 @@ export function buildAllComingSoonTeaserTemplates(): readonly CanvasTemplateSche
     "open_house",
     "price_reduction",
   ];
-  const formats: PostFormat[] = ["square_1x1", "portrait_4x5", "story_9x16"];
+  const formats: PostFormat[] = ["portrait_4x5", "story_9x16"];
   const out: CanvasTemplateSchema[] = [];
   for (const pt of postTypes) {
     for (const f of formats) {
