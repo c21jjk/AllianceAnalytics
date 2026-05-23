@@ -22,7 +22,6 @@ import {
   type SearchPostResult,
 } from "@/lib/data/search-posts";
 import type { Platform, Post } from "@/lib/types/post";
-import AccountSyncBar from "@/components/AccountSyncBar";
 import CompanyAnalyticsStrip from "@/components/CompanyAnalyticsStrip";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
 import GlobalSearch from "@/components/GlobalSearch";
@@ -36,8 +35,9 @@ import MorningBriefingCard from "@/components/MorningBriefingCard";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
+import SocialSyncCluster from "@/components/SocialSyncCluster";
+import MlsSyncCluster from "@/components/MlsSyncCluster";
 import SortToggle from "@/components/SortToggle";
-import SyncNowButton from "@/components/SyncNowButton";
 import TimeRangeToggle from "@/components/TimeRangeToggle";
 
 export const metadata = {
@@ -248,14 +248,29 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         officeShortCode={officeFilter}
       />
 
-      {/* why: top bar carries MLS feeds only (CMC / SJSR / Bright). The
-          social platform pills (FB / IG / TT) moved down to the post-stream
-          header on 2026-05-15 — they're the freshness signal that matters
-          when scanning posts, and they were taking up valuable real estate
-          alongside the metrics row up here. */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <AccountSyncBar mlsHealth={mlsHealth} className="flex-1 min-w-0" />
-        {profile.role === "admin" ? <SyncNowButton /> : null}
+      {/* why (Phase 2M, 2026-05-23): top bar carries MLS feeds only (CMC /
+          SJSR / Bright). The social platform pills (FB / IG / TT) moved
+          down to the post-stream header on 2026-05-15 — they're the
+          freshness signal that matters when scanning posts.
+
+          MlsSyncCluster bundles the "Sync MLS" trigger button INLINE with
+          the feed pills, replacing the separate stacked SyncNowButton
+          block that used to live on the right. The button is admin-gated
+          via `canSync`; pills still render for everyone. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-medium text-neutral-500 uppercase tracking-wide">
+          Sync
+        </span>
+        <MlsSyncCluster
+          mlsHealth={mlsHealth}
+          canSync={profile.role === "admin"}
+        />
+        <span
+          className="text-[11px] text-neutral-400 ml-1"
+          title="Auto-sync runs every 4 hours via pg_cron — IG :05, FB :15, TT :25, MLS-CMC :35, MLS-SJSR :45 (UTC). Hover a pill to see when each feed last completed."
+        >
+          · auto every 4h
+        </span>
       </div>
 
       {/* Wins to celebrate — Phase 6. Renders only when there's actually
@@ -344,28 +359,24 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       {/* Section break + sort tabs — visually separates the "Recent listings
           to action" zone above from the "Posts to review" zone below.
 
-          Row layout (2026-05-15): social sync chips + a dedicated "Sync all
-          platforms" button on the LEFT, sort toggle on the RIGHT. Putting
-          the sync controls next to the post stream gives Larissa a one-
-          click refresh when she's scanning posts and notices the
-          timestamps are stale — without forcing a scroll back up to the
-          top of the page where the original sync button lives.
+          Phase 2M (2026-05-23): the FB/IG/TT social pills + their "Sync
+          Social" trigger now ride together as a single SocialSyncCluster
+          on the LEFT. Sort tabs sit on the RIGHT.
 
-          `hideAutoCaption` is set on the AccountSyncBar so the "auto every
-          4h" caption doesn't render twice (it's still on the MLS bar up
-          top). The new SyncNowButton is admin-gated identically to the top
-          one — both call the same idempotent `syncAll` server action, each
-          maintains its own local UI state (spinner + per-platform results)
-          so they don't interfere with one another. */}
+          "auto every 4h" is omitted here — it already lives next to the
+          MLS cluster up top, so duplicating it adds noise. The trigger
+          button is admin-gated via `canSync`; pills still render for
+          everyone. */}
       <div className="pt-2 border-t-2 border-neutral-200">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <AccountSyncBar
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-neutral-500 uppercase tracking-wide">
+              Sync
+            </span>
+            <SocialSyncCluster
               health={accountHealth}
-              hideAutoCaption
-              className="flex-shrink-0"
+              canSync={profile.role === "admin"}
             />
-            {profile.role === "admin" ? <SyncNowButton /> : null}
           </div>
           <SortToggle value={currentSort} />
         </div>

@@ -4,6 +4,18 @@ import { formatRelativeTime } from "@/lib/format";
 
 interface MlsHealthPillProps {
   health: MlsFeedHealth;
+  /**
+   * Phase 2M — when true, the pill renders an inline spinner in place of
+   * the status dot. Driven by MlsSyncCluster while a manual sync is in
+   * flight for this feed.
+   */
+  syncing?: boolean;
+  /**
+   * Phase 2M — most-recent error message from a manual sync attempt. When
+   * set, the status dot turns rose and the message is appended to the
+   * hover tooltip.
+   */
+  syncError?: string | null;
   className?: string;
 }
 
@@ -27,6 +39,8 @@ const STATUS_LABEL: Record<MlsFeedHealth["status"], string> = {
  */
 export default function MlsHealthPill({
   health,
+  syncing = false,
+  syncError = null,
   className,
 }: MlsHealthPillProps) {
   const synced = health.last_synced_at
@@ -38,7 +52,11 @@ export default function MlsHealthPill({
     `${health.active_listings} active listing${
       health.active_listings === 1 ? "" : "s"
     } tracked`,
-  ].join(" · ");
+    syncing ? "syncing now…" : null,
+    syncError ? `last manual sync failed: ${syncError}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <span
@@ -56,14 +74,46 @@ export default function MlsHealthPill({
       >
         {health.short_label.slice(0, 2).toUpperCase()}
       </span>
-      <span
-        className={clsx(
-          "w-1.5 h-1.5 rounded-full",
-          STATUS_DOT[health.status],
-        )}
-        aria-hidden="true"
-      />
-      <span className="text-neutral-500">{synced}</span>
+      {syncing ? (
+        <PillSpinner />
+      ) : (
+        <span
+          className={clsx(
+            "w-1.5 h-1.5 rounded-full",
+            syncError ? "bg-rose-500" : STATUS_DOT[health.status],
+          )}
+          aria-hidden="true"
+        />
+      )}
+      <span className={clsx(syncError ? "text-rose-600" : "text-neutral-500")}>
+        {syncing ? "syncing…" : synced}
+      </span>
     </span>
+  );
+}
+
+function PillSpinner() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-2.5 h-2.5 animate-spin text-neutral-500"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        stroke="currentColor"
+        strokeWidth={3}
+        strokeOpacity={0.25}
+      />
+      <path
+        d="M21 12a9 9 0 00-9-9"
+        stroke="currentColor"
+        strokeWidth={3}
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
