@@ -463,6 +463,22 @@ export default function PostBuilderClient({
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
+  // Phase 2L (2026-05-22) — auto-scroll the error banner into view when an
+  // error gets set. The banner lives below Step 5 (Generate), well below
+  // the picker grid. Without this scroll, clicking an Admin template card
+  // (or any other action that fails) silently set error state but the
+  // banner appeared off-screen, leaving the user staring at an unresponsive
+  // UI. block:"nearest" makes the scroll a no-op when the banner is already
+  // visible, so this doesn't disrupt users who can already see it.
+  const errorBannerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!error || !errorBannerRef.current) return;
+    errorBannerRef.current.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
+  }, [error]);
+
   // Restore last-used preferences on mount.
   // why: priority order is resume → fresh-build pick → localStorage. Both
   // resume and fresh-build pick are explicit user intents (clicked a saved
@@ -3088,7 +3104,11 @@ export default function PostBuilderClient({
               ) : null}
 
               {error ? (
-                <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                <div
+                  ref={errorBannerRef}
+                  role="alert"
+                  className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
+                >
                   {error}
                 </div>
               ) : null}
@@ -4002,7 +4022,15 @@ function PostNowModal(props: PostNowModalProps) {
                       {r.error}
                       {r.scope_error ? (
                         <div className="mt-1 font-medium">
-                          → Re-authorize the Meta app in /settings.
+                          {/* Phase 2L (2026-05-22) — branch the re-auth
+                              hint by platform. FB/IG belong to the Meta
+                              app; TikTok is a separate developer app
+                              with its own auth flow. Pre-fix this said
+                              "Meta app" for every scope error, which
+                              misled the user when TT was the failure. */}
+                          {r.platform === "tiktok"
+                            ? "→ Re-authorize the TikTok app in /settings."
+                            : "→ Re-authorize the Meta app in /settings."}
                         </div>
                       ) : null}
                     </div>
