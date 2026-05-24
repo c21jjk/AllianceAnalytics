@@ -1270,10 +1270,19 @@ export default function PostBuilderClient({
 
       try {
         // ---- 1. Upload edited image (JPEG q92 from Studio) ----
+        // why: pin the upload mls_number to studioContext.listing too
+        // (same drift-prevention rationale as the row save below). The
+        // Storage path embeds this value: post-builder-renders/<template_id>/<mls>/<file>.
+        // Sourcing from selectedListing here would put the file under
+        // the wrong mls directory while the row gets the right one
+        // (or vice versa) — a partial-corruption that's worse than
+        // either fully-wrong outcome.
+        const uploadMls =
+          studioContext?.listing.mlsNumber ?? selectedListing.mls_number;
         const form = new FormData();
         form.append("file", result.file);
         form.append("template_id", result.schema.id);
-        form.append("mls_number", selectedListing.mls_number);
+        form.append("mls_number", uploadMls);
         const uploadRes = await fetch("/api/post-builder/canvas-save", {
           method: "POST",
           body: form,
@@ -1326,11 +1335,50 @@ export default function PostBuilderClient({
         // reading from the schema is defense-in-depth: it guarantees the
         // saved row's metadata never disagrees with the template_id, even
         // if some future consumer wires the editor without that callback.
+        // why (2026-05-24 — post↔listing linkage bugfix #2): pin save
+        // identity (mls_number / source_mls / property_id) to the
+        // studioContext.listing snapshot, NOT selectedListing.
+        //
+        // selectedListing is a memoized derivation of `selectedMls`
+        // state. `selectedMls` can drift while Studio is open: the
+        // user can click another listing card behind the overlay, an
+        // auto-effect can update it, etc. studioContext.listing is
+        // frozen at the moment Studio opened and stays put for the
+        // duration of the session — exactly the snapshot we need.
+        //
+        // The bug this caught (audit 2026-05-24): user ran AI Design
+        // for 308 Osprey, edited in Studio, clicked Save. At save time
+        // selectedListing had drifted back to 1934 West Ave. Row was
+        // INSERTed with mls=608118 (1934 West Ave) but the layer_tree
+        // + image were all 308 Osprey — permanently mismatched.
+        //
+        // Defensive fallback: if studioContext is somehow missing,
+        // fall back to selectedListing. Shouldn't fire (Studio can't
+        // open without a context) but logged for visibility.
+        const saveListing = studioContext?.listing ?? null;
+        if (!saveListing) {
+          console.warn(
+            "[handleStudioSave] studioContext.listing missing — falling back to selectedListing. Investigate if this fires.",
+          );
+        }
+        const saveMlsNumber = saveListing
+          ? saveListing.mlsNumber
+          : selectedListing.mls_number;
+        const saveSourceMls = saveListing
+          ? saveListing.sourceMls
+          : selectedListing.source_mls;
+        const savePropertyId = saveListing
+          ? saveListing.id
+          : (selectedListing.id ?? null);
+        const saveHeroSourceUrl = saveListing
+          ? (saveListing.photos[0] ?? null)
+          : (selectedListing.hero_image_url ?? null);
+
         const upsertRes = await upsertGeneratedPostFromStudioAction({
           id: generatedPostId,
-          mls_number: selectedListing.mls_number,
-          source_mls: selectedListing.source_mls,
-          property_id: selectedListing.id ?? null,
+          mls_number: saveMlsNumber,
+          source_mls: saveSourceMls,
+          property_id: savePropertyId,
           post_type: result.schema.category,
           // 2026-05-24 — fallback to "v1" when the canvas schema is
           // missing a variant. AI Design rewrites of the template
@@ -1342,7 +1390,10 @@ export default function PostBuilderClient({
           template_id: result.schema.id,
           image_url: uploadJson.image_url,
           image_path: uploadJson.image_path,
-          hero_image_source_url: selectedListing.hero_image_url ?? null,
+          // why: same studioContext-pin rationale as mls_number above —
+          // the hero source belongs to whichever listing was actually
+          // being designed, not whichever listing the picker drifted to.
+          hero_image_source_url: saveHeroSourceUrl,
           // why: persisting the post-hydration schema enables "resume in
           // Studio" later from the Created Posts strip / library.
           layer_tree: result.schema as unknown as Parameters<
@@ -1441,6 +1492,12 @@ export default function PostBuilderClient({
     },
     [
       selectedListing,
+      // why: studioContext supplies the frozen mls/source/property snapshot
+      // the save action uses. Including it in the dep list ensures the
+      // memoized callback re-binds whenever the user enters a new Studio
+      // session (e.g., reopens for a different listing) — without this,
+      // the first Studio session's listing would leak into later saves.
+      studioContext,
       generatedPostId,
       postType,
       variantId,
@@ -1872,6 +1929,28 @@ export default function PostBuilderClient({
   const handleMagicDesignApply = useCallback(
     (payload: MagicDesignAppliedPayload): void => {
       if (!magicDesignListing) return;
+
+      // why (2026-05-24 — post↔listing linkage bugfix): Magic Design is a
+      // listing-switching action. If a prior generatedPostId is lingering
+      // from a resumed saved post, and we don't clear it here, the next
+      // Save will UPDATE the OLD row with the NEW listing's data —
+      // permanently corrupting the post↔listing linkage.
+      //
+      // Repro before fix: user opens 1934 West Ave via "Edit in Studio"
+      // (generatedPostId = 1934_row_id), then clicks Magic Design on
+      // 308 Osprey, applies it, saves. The 1934 row gets overwritten
+      // with Osprey's mls_number + layer_tree + image. Later, clicking
+      // "Edit in Studio" on the 1934 thumbnail opens what looks like
+      // an Osprey design.
+      //
+      // Defense-in-depth also lives server-side in
+      // upsertGeneratedPostFromStudioAction (asserts mls match before
+      // UPDATE), but clearing here is the cleaner client-side semantic:
+      // a Magic Design apply means "I want a fresh post for THIS
+      // listing", never "patch over my last post".
+      setGeneratedPostId(null);
+      setAiDesign(null);
+      setRenderResult(null);
 
       // 1-3 — pre-apply all the recommendation state
       setPostType(payload.post_type);
@@ -2446,6 +2525,25 @@ export default function PostBuilderClient({
     if (currentHeroUrls.length === 0) {
       setAiError("This listing has no hero photo. Pick another.");
       return;
+    }
+    // why (2026-05-24 — post↔listing linkage defense): if the resumed-row
+    // mls_number drifted away from the current selectedListing — meaning
+    // the user navigated to a different listing in this session — drop
+    // the stale generatedPostId so the upcoming Save inserts a fresh row
+    // instead of overwriting the original. Without this, a user who
+    // arrived via "Edit in Studio" on listing A and then re-selected
+    // listing B would silently corrupt A's row on save.
+    //
+    // handleMagicDesignApply + pickListing + changePostType already clear
+    // generatedPostId in their own paths. This is the catch-all backstop
+    // for any future code path that swaps selectedMls without going
+    // through one of those helpers.
+    if (
+      generatedPostId &&
+      initialResume &&
+      selectedListing.mls_number !== initialResume.mls_number
+    ) {
+      setGeneratedPostId(null);
     }
     setGenerating(true);
     setError(null);

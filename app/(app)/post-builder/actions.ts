@@ -351,7 +351,7 @@ export async function upsertGeneratedPostFromStudioAction(
     // mutation runs.
     const { data: existing, error: fetchError } = await supabase
       .from("generated_posts")
-      .select("id, image_path, created_by")
+      .select("id, image_path, created_by, mls_number")
       .eq("id", input.id)
       .maybeSingle();
 
@@ -366,6 +366,26 @@ export async function upsertGeneratedPostFromStudioAction(
     // delete John's drafts and vice versa.
     if (existing.created_by !== profile.id) {
       return { ok: false, error: "not owner" };
+    }
+
+    // why (2026-05-24 — post↔listing linkage backstop): refuse to UPDATE a
+    // row whose stored mls_number doesn't match the incoming
+    // input.mls_number. Without this guard, a client-side state desync
+    // (stale generatedPostId carrying over after a listing switch) could
+    // overwrite an existing post with an entirely different listing's
+    // data — silently corrupting the post↔listing linkage. We caught
+    // this in production on 2026-05-24 when "Edit in Studio" started
+    // opening the wrong listing's design.
+    //
+    // The client-side clears (handleMagicDesignApply, runAiDesign,
+    // pickListing, changePostType) prevent the desync from happening,
+    // but this server-side assert ensures any future regression fails
+    // loudly instead of corrupting the DB.
+    if (existing.mls_number !== input.mls_number) {
+      return {
+        ok: false,
+        error: `refusing_cross_listing_overwrite: row ${input.id} belongs to MLS ${existing.mls_number}, but save targeted MLS ${input.mls_number}. The client likely held a stale post id — please refresh and retry.`,
+      };
     }
 
     const priorImagePath = existing.image_path;
