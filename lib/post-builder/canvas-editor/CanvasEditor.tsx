@@ -119,6 +119,7 @@ import ContextualTopToolbar from "./panels/ContextualTopToolbar";
 import LayerListPanel from "./panels/LayerListPanel";
 import PhotosPanel from "./panels/PhotosPanel";
 import ToolsPanel, { type ToolMode } from "./panels/ToolsPanel";
+import Tooltip from "./primitives/Tooltip";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
 import CarouselPreview from "./panels/CarouselPreview";
 import CarouselSlidePicker from "./panels/CarouselSlidePicker";
@@ -3157,20 +3158,25 @@ interface IconButtonProps {
 
 function IconButton(props: IconButtonProps): JSX.Element {
   const danger = props.variant === "danger";
+  // why: SelectionToolbar floats just above the canvas (top toolbar) but
+  // also appears at the top of the canvas area — pill below the trigger
+  // works in both cases.
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      aria-label={props.label}
-      title={props.label}
-      className={`rounded-md p-1.5 transition-colors ${
-        danger
-          ? "text-red-500 hover:bg-red-50"
-          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-      }`}
-    >
-      {props.children}
-    </button>
+    <Tooltip label={props.label}>
+      <button
+        type="button"
+        onClick={props.onClick}
+        aria-label={props.label}
+        title={props.label}
+        className={`rounded-md p-1.5 transition-colors ${
+          danger
+            ? "text-red-500 hover:bg-red-50"
+            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+        }`}
+      >
+        {props.children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -3850,14 +3856,16 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
           {zoomPct}%
         </span>
         <span className="mx-0.5 h-4 w-px bg-neutral-200" />
-        <button
-          type="button"
-          onClick={props.onZoomFit}
-          title="Fit to viewport"
-          className="flex h-7 items-center rounded-md px-2 text-[11px] font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-        >
-          Fit
-        </button>
+        <Tooltip label="Fit to viewport" placement="top">
+          <button
+            type="button"
+            onClick={props.onZoomFit}
+            title="Fit to viewport"
+            className="flex h-7 items-center rounded-md px-2 text-[11px] font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            Fit
+          </button>
+        </Tooltip>
       </div>
 
       {/* === Right cluster — undo / redo === */}
@@ -3894,17 +3902,21 @@ interface FooterIconButtonProps {
  * brand-accent moments" rule.
  */
 function FooterIconButton(props: FooterIconButtonProps): JSX.Element {
+  // why: footer sits at the BOTTOM of the canvas area — pill pops UP
+  // so it doesn't get clipped by the bottom of the editor chrome.
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      disabled={props.disabled}
-      aria-label={props.label}
-      title={props.label}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
-    >
-      {props.children}
-    </button>
+    <Tooltip label={props.label} placement="top">
+      <button
+        type="button"
+        onClick={props.onClick}
+        disabled={props.disabled}
+        aria-label={props.label}
+        title={props.label}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+      >
+        {props.children}
+      </button>
+    </Tooltip>
   );
 }
 

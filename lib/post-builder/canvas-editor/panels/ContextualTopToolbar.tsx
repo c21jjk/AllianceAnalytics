@@ -45,6 +45,7 @@ import ColorPicker from "../primitives/ColorPicker";
 import FontPicker, {
   type FontPickerOption,
 } from "../primitives/FontPicker";
+import Tooltip from "../primitives/Tooltip";
 import { ALLIANCE_FONTS } from "../templates/tokens";
 import {
   TEXT_EFFECT_PRESETS,
@@ -840,20 +841,22 @@ function ToggleIconButton(props: {
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      aria-label={props.label}
-      title={props.label}
-      aria-pressed={props.active}
-      className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-        props.active
-          ? "bg-neutral-900 text-white"
-          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-      }`}
-    >
-      {props.children}
-    </button>
+    <Tooltip label={props.label}>
+      <button
+        type="button"
+        onClick={props.onClick}
+        aria-label={props.label}
+        title={props.label}
+        aria-pressed={props.active}
+        className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+          props.active
+            ? "bg-neutral-900 text-white"
+            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+        }`}
+      >
+        {props.children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -864,16 +867,18 @@ function IconBtn(props: {
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      disabled={props.disabled}
-      aria-label={props.label}
-      title={props.label}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
-    >
-      {props.children}
-    </button>
+    <Tooltip label={props.label}>
+      <button
+        type="button"
+        onClick={props.onClick}
+        disabled={props.disabled}
+        aria-label={props.label}
+        title={props.label}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+      >
+        {props.children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -1042,15 +1047,17 @@ function StepperButton(props: {
   children: ReactNode;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      aria-label={props.label}
-      title={props.label}
-      className="flex h-6 w-5 items-center justify-center rounded text-[14px] font-medium leading-none text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-    >
-      {props.children}
-    </button>
+    <Tooltip label={props.label}>
+      <button
+        type="button"
+        onClick={props.onClick}
+        aria-label={props.label}
+        title={props.label}
+        className="flex h-6 w-5 items-center justify-center rounded text-[14px] font-medium leading-none text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+      >
+        {props.children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -1093,20 +1100,22 @@ function Popover(props: {
 
   return (
     <div ref={wrapRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={props.label}
-        aria-expanded={open}
-        title={props.label}
-        className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-          open
-            ? "bg-neutral-900 text-white"
-            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-        }`}
-      >
-        {props.trigger}
-      </button>
+      <Tooltip label={props.label}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={props.label}
+          aria-expanded={open}
+          title={props.label}
+          className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+            open
+              ? "bg-neutral-900 text-white"
+              : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+          }`}
+        >
+          {props.trigger}
+        </button>
+      </Tooltip>
       {open ? (
         <div
           // why: pop UPWARD because the floating toolbar lives above the
@@ -1129,20 +1138,22 @@ function PopoverIconButton(props: {
   children: ReactNode;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      aria-label={props.label}
-      title={props.label}
-      aria-pressed={props.active}
-      className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-        props.active
-          ? "bg-neutral-900 text-white"
-          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-      }`}
-    >
-      {props.children}
-    </button>
+    <Tooltip label={props.label}>
+      <button
+        type="button"
+        onClick={props.onClick}
+        aria-label={props.label}
+        title={props.label}
+        aria-pressed={props.active}
+        className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+          props.active
+            ? "bg-neutral-900 text-white"
+            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+        }`}
+      >
+        {props.children}
+      </button>
+    </Tooltip>
   );
 }
 

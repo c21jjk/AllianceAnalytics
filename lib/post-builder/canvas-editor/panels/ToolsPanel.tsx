@@ -51,6 +51,7 @@ import {
 import { type JSX, useCallback, useEffect, useState } from "react";
 
 import { setLayerData } from "../fabric-factory";
+import Tooltip from "../primitives/Tooltip";
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "../templates/tokens";
 import { ADD_LAYER_DEFAULTS } from "../contracts";
 
@@ -875,6 +876,10 @@ function BrushButton(props: {
         : props.brush === "highlighter"
           ? HighlighterGlyph
           : EraserGlyph;
+  // why: don't wrap brush buttons in Tooltip — they already render the
+  // tool name as a label INSIDE the tile (under the icon). A pill
+  // hovering on top of an already-labeled button is redundant and
+  // visually noisy.
   return (
     <button
       type="button"
@@ -899,16 +904,22 @@ function ShapeButton(props: {
   icon: JSX.Element;
   onClick: () => void;
 }): JSX.Element {
+  // why: shape buttons ARE icon-only — wrap in Tooltip so the user
+  // knows "is this the diamond or the pentagon?" without clicking.
+  // wrapperClassName="w-full" so the button's aspect-square sees its
+  // grid cell's full width (default inline-flex would collapse it).
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      title={props.label}
-      aria-label={props.label}
-      className="flex aspect-square items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-gold-500 hover:bg-gold-50 hover:text-gold-700"
-    >
-      {props.icon}
-    </button>
+    <Tooltip label={props.label} wrapperClassName="w-full">
+      <button
+        type="button"
+        onClick={props.onClick}
+        title={props.label}
+        aria-label={props.label}
+        className="flex aspect-square w-full items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-gold-500 hover:bg-gold-50 hover:text-gold-700"
+      >
+        {props.icon}
+      </button>
+    </Tooltip>
   );
 }
 
