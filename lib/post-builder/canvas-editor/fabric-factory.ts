@@ -291,6 +291,25 @@ export interface FabricLayerData {
   layerKind: CanvasLayer["kind"];
   /** Display name for the layer panel. May diverge from layer.name once the user renames. */
   displayName: string;
+  /**
+   * Image-only: the layer's BOX dimensions in canvas px. Stored separately
+   * from the Fabric image's natural × scale display dims so Cover/Contain/
+   * Stretch can compute against a stable target instead of a circular
+   * "fit to current display" reference (the bug that made those buttons
+   * appear to do nothing). Updated on user resize so the box follows the
+   * image when handles are dragged.
+   *
+   * Other layer kinds ignore this field.
+   */
+  targetBoxWidth?: number;
+  targetBoxHeight?: number;
+  /**
+   * Image-only: the user's chosen object-fit. Mirrors the field we
+   * already write via writeObjectFit() in ImagePropertiesControls, but
+   * lifted into the canonical FabricLayerData shape so all data-bag
+   * fields live in one place.
+   */
+  objectFit?: "cover" | "contain" | "stretch";
 }
 
 /**
@@ -456,28 +475,39 @@ export async function createFabricImage(
       cornerColor: "#C9A961",
     });
 
-    // why: cornerRadius via clipPath. Fabric doesn't have native rounded-image
-    // support, so we attach a Rect clipPath with rx/ry. The clipPath is
-    // positioned in the image's local coordinate space (centered at origin
-    // when `absolutePositioned: false`), so we use the natural image size
-    // for the clip rect dimensions.
-    if (layer.cornerRadius > 0) {
-      const clip = new Rect({
-        width: naturalWidth,
-        height: naturalHeight,
-        rx: layer.cornerRadius / scaleX,
-        ry: layer.cornerRadius / scaleY,
-        originX: "center",
-        originY: "center",
-        absolutePositioned: false,
-      });
-      img.clipPath = clip;
-    }
+    // why (2026-05-23 — Cover/Contain/Stretch bug fix): ALWAYS attach a
+    // clipPath at the BOX dimensions (layer.width × layer.height),
+    // independent of corner radius. The clipPath uses
+    // `absolutePositioned: true` so it stays at the layer's intended
+    // canvas position regardless of how the image's scaleX/scaleY drift
+    // after Cover/Contain/Stretch. Without this clip, Cover overflow
+    // bleeds onto neighboring layers and the user can't tell the fit
+    // even changed. cornerRadius (if any) is baked into the same clip
+    // rect so we only ever have ONE clipPath per image.
+    const clip = new Rect({
+      left: layer.left,
+      top: layer.top,
+      width: layer.width,
+      height: layer.height,
+      rx: layer.cornerRadius,
+      ry: layer.cornerRadius,
+      originX: "left",
+      originY: "top",
+      absolutePositioned: true,
+    });
+    img.clipPath = clip;
 
     setLayerData(img, {
       layerId: layer.id,
       layerKind: "image",
       displayName: layer.name,
+      // why: stamp the box dims at creation so Cover/Contain/Stretch in
+      // ImagePropertiesControls.handleFitChange can read a stable target
+      // box. Without these, the controls fall back to the displayed
+      // dimensions — which is the bug.
+      targetBoxWidth: layer.width,
+      targetBoxHeight: layer.height,
+      objectFit: layer.objectFit,
     });
     return { ok: true, image: img };
   } catch (err) {

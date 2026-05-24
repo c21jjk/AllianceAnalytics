@@ -52,9 +52,27 @@ interface ImageState {
   cornerRadius: number;
   /** 0..1 opacity from Fabric. */
   opacity: number;
-  /** The image's logical width × height inside the canvas (target box). */
+  /**
+   * The image's CURRENT displayed dimensions (= naturalDim * scale). These
+   * are what the user sees on screen RIGHT NOW. Distinct from box dims
+   * (below) because the displayed image may overflow / be letterboxed
+   * inside the box depending on object-fit.
+   */
   targetWidth: number;
   targetHeight: number;
+  /**
+   * The image layer's BOX dimensions — what the template author specified
+   * (or what the user has resized to). Object-fit math runs against THIS,
+   * not the displayed dims. Read from the Fabric object's data bag and
+   * falls back to displayed dims for pre-fix images.
+   *
+   * Why this exists: prior to 2026-05-23, the code derived "target" dims
+   * from naturalDim × scale, which meant Cover/Contain/Stretch always
+   * computed scale = currentScale (no-op). Tracking the box separately
+   * breaks the circular reference.
+   */
+  boxWidth: number;
+  boxHeight: number;
   /** Natural image dimensions — used when computing the new scale on fit change. */
   naturalWidth: number;
   naturalHeight: number;
@@ -115,17 +133,74 @@ function writeObjectFit(img: FabricImage, fit: ImageState["objectFit"]): void {
 }
 
 /**
+ * Read the layer's BOX dimensions (independent of current scale).
+ *
+ * Returns the values stamped by `createFabricImage`'s data bag. Falls back
+ * to the image's CURRENT displayed dimensions for pre-2026-05-23 images
+ * (autosave snapshots etc. that don't carry targetBoxWidth/Height). The
+ * fallback is intentionally lossy — old images won't see Cover/Contain/
+ * Stretch do anything until the user re-creates them — but it's better
+ * than crashing the panel.
+ */
+function readBoxDims(img: FabricImage): {
+  boxWidth: number;
+  boxHeight: number;
+} {
+  const data = (
+    img as unknown as {
+      data?: { targetBoxWidth?: number; targetBoxHeight?: number };
+    }
+  ).data;
+  const bw = typeof data?.targetBoxWidth === "number" ? data.targetBoxWidth : null;
+  const bh = typeof data?.targetBoxHeight === "number" ? data.targetBoxHeight : null;
+  if (bw && bh && bw > 0 && bh > 0) {
+    return { boxWidth: bw, boxHeight: bh };
+  }
+  // Fallback: derive from current displayed dims. Lossy but safe.
+  const { naturalWidth, naturalHeight } = readNaturalSize(img);
+  const scaleX = img.scaleX ?? 1;
+  const scaleY = img.scaleY ?? 1;
+  return {
+    boxWidth: naturalWidth * scaleX,
+    boxHeight: naturalHeight * scaleY,
+  };
+}
+
+/**
+ * Write box dims back to the data bag — preserves all other data-bag
+ * fields. Called when the user resizes via Fabric handles (orchestrator
+ * picks up the change via object:modified) so the box follows the image.
+ */
+export function writeBoxDims(img: FabricImage, w: number, h: number): void {
+  const obj = img as unknown as { data?: Record<string, unknown> };
+  obj.data = {
+    ...(obj.data ?? {}),
+    targetBoxWidth: Math.max(1, w),
+    targetBoxHeight: Math.max(1, h),
+  };
+}
+
+/**
  * Read the corner radius back from the image's clipPath, if one exists.
  * Returns 0 when the image has no clipPath (i.e., square corners).
+ *
+ * As of 2026-05-23 the clipPath is absolutePositioned (canvas px) so rx
+ * is already in display px — no scale math needed. We still divide by
+ * scaleX as a fallback for legacy images created with the old
+ * image-local clip pattern, so the slider position doesn't lie on
+ * historic content.
  */
 function readCornerRadius(img: FabricImage): number {
   const clip = img.clipPath;
   if (!clip || !(clip instanceof Rect)) return 0;
-  // why: the clipPath rx is stored in the image's local space, then divided
-  // by scaleX when first applied. Multiply back by current scaleX to get the
-  // display px value the user originally requested.
+  const rx = clip.rx ?? 0;
+  const absolute =
+    (clip as unknown as { absolutePositioned?: boolean }).absolutePositioned ??
+    false;
+  if (absolute) return Math.round(rx);
+  // Legacy fallback — clip is image-local, scale back to display px.
   const scaleX = img.scaleX ?? 1;
-  return Math.round((clip.rx ?? 0) * scaleX);
+  return Math.round(rx * scaleX);
 }
 
 /**
@@ -139,6 +214,7 @@ function readImageState(canvas: Canvas | null): ImageState | null {
   const { naturalWidth, naturalHeight } = readNaturalSize(active);
   const scaleX = active.scaleX ?? 1;
   const scaleY = active.scaleY ?? 1;
+  const { boxWidth, boxHeight } = readBoxDims(active);
   return {
     src: active.getSrc?.() ?? "",
     objectFit: readObjectFit(active),
@@ -146,6 +222,8 @@ function readImageState(canvas: Canvas | null): ImageState | null {
     opacity: typeof active.opacity === "number" ? active.opacity : 1,
     targetWidth: naturalWidth * scaleX,
     targetHeight: naturalHeight * scaleY,
+    boxWidth,
+    boxHeight,
     naturalWidth,
     naturalHeight,
   };
@@ -184,27 +262,45 @@ function computeFitScale(
 }
 
 /**
- * Apply (or remove) a rounded-corner clipPath on the image. Pass radius=0 to
- * clear the clipPath entirely (square corners).
+ * Apply (or remove) a rounded-corner radius on the image's BOX clipPath.
+ *
+ * As of 2026-05-23 the image ALWAYS has a clipPath at its box dimensions
+ * (added by `createFabricImage`). We never delete that clipPath — even at
+ * radius=0 we keep the rect clip so Cover overflow continues to be clipped
+ * to the layer's box. Setting radius=0 just gives square corners.
+ *
+ * Why we rebuild the Rect rather than mutating in place: Fabric's clipPath
+ * rendering caches geometry; reassigning `img.clipPath` invalidates the
+ * cache reliably across all Fabric v6 versions. Mutating rx/ry on the
+ * existing Rect sometimes leaves a stale-render until the next redraw.
  */
 function applyCornerRadius(img: FabricImage, radius: number): void {
-  if (radius <= 0) {
-    img.clipPath = undefined;
-    return;
-  }
-  const { naturalWidth, naturalHeight } = readNaturalSize(img);
-  const scaleX = img.scaleX ?? 1;
-  const scaleY = img.scaleY ?? 1;
-  // why: clip is in image-local space, so divide by scale so a 30px radius
-  // looks 30px in display units regardless of the image's scale factor.
+  const { boxWidth, boxHeight } = readBoxDims(img);
+  // Read the image's current canvas-space top-left so the clip stays in
+  // place across re-applications. The clipPath is absolutePositioned, so
+  // its left/top are in CANVAS pixels (NOT image-local).
+  const existing =
+    img.clipPath instanceof Rect ? img.clipPath : null;
+  const clipLeft =
+    existing && typeof existing.left === "number"
+      ? existing.left
+      : img.left ?? 0;
+  const clipTop =
+    existing && typeof existing.top === "number"
+      ? existing.top
+      : img.top ?? 0;
+
   img.clipPath = new Rect({
-    width: naturalWidth,
-    height: naturalHeight,
-    rx: radius / scaleX,
-    ry: radius / scaleY,
-    originX: "center",
-    originY: "center",
-    absolutePositioned: false,
+    left: clipLeft,
+    top: clipTop,
+    width: boxWidth,
+    height: boxHeight,
+    // why: absolutePositioned means rx/ry are in canvas px — no scale math.
+    rx: Math.max(0, radius),
+    ry: Math.max(0, radius),
+    originX: "left",
+    originY: "top",
+    absolutePositioned: true,
   });
 }
 
@@ -217,11 +313,11 @@ function applyCornerRadius(img: FabricImage, radius: number): void {
  */
 function resizeToSquare(img: FabricImage, fit: ImageState["objectFit"]): number {
   const { naturalWidth, naturalHeight } = readNaturalSize(img);
-  const scaleX = img.scaleX ?? 1;
-  const scaleY = img.scaleY ?? 1;
-  const currentW = naturalWidth * scaleX;
-  const currentH = naturalHeight * scaleY;
-  const side = Math.min(currentW, currentH);
+  // why: use the BOX dims (not the displayed dims) so circle-ifying
+  // an image whose displayed bounds overflowed the box (Cover) still
+  // produces a circle inside the box.
+  const { boxWidth, boxHeight } = readBoxDims(img);
+  const side = Math.min(boxWidth, boxHeight);
   const { scaleX: nextScaleX, scaleY: nextScaleY } = computeFitScale(
     fit,
     side,
@@ -230,6 +326,8 @@ function resizeToSquare(img: FabricImage, fit: ImageState["objectFit"]): number 
     naturalHeight,
   );
   img.set({ scaleX: nextScaleX, scaleY: nextScaleY });
+  // The box is now square — persist so future Cover/Contain/Stretch use it.
+  writeBoxDims(img, side, side);
   return side;
 }
 
@@ -298,26 +396,25 @@ export default function ImagePropertiesControls(
 
         // why: setSrc gives us a new underlying element with new natural
         // dimensions — re-apply object-fit so the visual size doesn't
-        // suddenly jump.
+        // suddenly jump. Compute against the BOX dims (stable target)
+        // so the new photo lands at the same on-screen size, regardless
+        // of how it differs in natural aspect from the previous photo.
         const currentFit = readObjectFit(active);
-        const targetWidth = state?.targetWidth ?? active.width ?? 1;
-        const targetHeight = state?.targetHeight ?? active.height ?? 1;
+        const { boxWidth, boxHeight } = readBoxDims(active);
         const { naturalWidth, naturalHeight } = readNaturalSize(active);
         const { scaleX, scaleY } = computeFitScale(
           currentFit,
-          targetWidth,
-          targetHeight,
+          boxWidth,
+          boxHeight,
           naturalWidth,
           naturalHeight,
         );
         active.set({ scaleX, scaleY });
 
-        // why: corner radius is naturalDim-relative, so re-apply with the new
-        // natural dimensions. Keep the same display-radius the user already
-        // chose.
-        if (state?.cornerRadius && state.cornerRadius > 0) {
-          applyCornerRadius(active, state.cornerRadius);
-        }
+        // why: always re-apply the clipPath after swap — the new image's
+        // displayed dims may differ, but the box is unchanged. Pass the
+        // current corner radius so rounded photos stay rounded.
+        applyCornerRadius(active, state?.cornerRadius ?? 0);
 
         canvas.requestRenderAll();
         onCanvasMutated?.();
@@ -344,24 +441,31 @@ export default function ImagePropertiesControls(
       if (!canvas || !state) return;
       const active = canvas.getActiveObject();
       if (!active || !(active instanceof FabricImage)) return;
+      // why (2026-05-23 fix): compute the new scale against the BOX dims
+      // (stable target) rather than the displayed dims (= naturalDim *
+      // currentScale, which is a circular reference that always returns
+      // the current scale = no-op). This is the root fix for the
+      // "Cover/Contain/Stretch don't change anything" bug.
       const { scaleX, scaleY } = computeFitScale(
         next,
-        state.targetWidth,
-        state.targetHeight,
+        state.boxWidth,
+        state.boxHeight,
         state.naturalWidth,
         state.naturalHeight,
       );
       active.set({ scaleX, scaleY });
       writeObjectFit(active, next);
-      // why: corner radius depends on scale — re-apply so the visual radius
-      // stays the same in display px.
-      if (state.cornerRadius > 0) {
-        applyCornerRadius(active, state.cornerRadius);
-      }
+      // why: the clipPath stays at the box position — re-applying corner
+      // radius preserves it. With the new absolutePositioned clip, the
+      // radius value is in canvas px directly, no scale math.
+      applyCornerRadius(active, state.cornerRadius);
       canvas.requestRenderAll();
       onCanvasMutated?.();
       recordHistory?.();
-      setState({ ...state, objectFit: next });
+      // why: re-read from canvas so targetWidth/Height reflect the new
+      // scaled dimensions in the local mirror. boxWidth/Height stay the
+      // same; this just refreshes the displayed-dims half.
+      setState(readImageState(canvas));
     },
     [canvas, onCanvasMutated, recordHistory, state],
   );

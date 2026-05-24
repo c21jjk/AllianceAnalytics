@@ -807,6 +807,61 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     fabricCanvas.on("object:removed", bumpVersion);
     fabricCanvas.on("object:modified", bumpVersion);
 
+    // why (2026-05-23 — Cover/Contain/Stretch fix): when the user
+    // resizes or moves a FabricImage via Fabric handles, sync the
+    // image's BOX dims and clipPath to match the new displayed bounds.
+    //
+    // This is what makes the user-resize feel natural (the box follows
+    // the image, Canva-style). Without this, the box stays fixed and
+    // the image would slide/scale inside it — surprising on resize.
+    //
+    // Pairs with the new always-on clipPath in fabric-factory.ts:
+    // because the clipPath is absolutePositioned, it does NOT follow
+    // the image's transform automatically — we have to write the new
+    // canvas-space rect on every modify event.
+    fabricCanvas.on("object:modified", (e) => {
+      if (cancelled) return;
+      const obj = e.target;
+      if (!(obj instanceof FabricImage)) return;
+      // Current displayed bounds in canvas px.
+      const naturalW = obj.width ?? 1;
+      const naturalH = obj.height ?? 1;
+      const scaleX = obj.scaleX ?? 1;
+      const scaleY = obj.scaleY ?? 1;
+      const dispW = naturalW * scaleX;
+      const dispH = naturalH * scaleY;
+      const left = obj.left ?? 0;
+      const top = obj.top ?? 0;
+      // Write new box dims into the data bag. Preserve all other
+      // data-bag fields (layerId etc.) by spreading what's there.
+      const bag = (obj as unknown as { data?: Record<string, unknown> })
+        .data ?? {};
+      (obj as unknown as { data: Record<string, unknown> }).data = {
+        ...bag,
+        targetBoxWidth: dispW,
+        targetBoxHeight: dispH,
+      };
+      // Rebuild the clipPath at the new canvas position + dims.
+      // Preserve the user's corner radius if one was set.
+      const existing = obj.clipPath instanceof Rect ? obj.clipPath : null;
+      const rx =
+        existing && typeof existing.rx === "number" ? existing.rx : 0;
+      const ry =
+        existing && typeof existing.ry === "number" ? existing.ry : 0;
+      obj.clipPath = new Rect({
+        left,
+        top,
+        width: dispW,
+        height: dispH,
+        rx,
+        ry,
+        originX: "left",
+        originY: "top",
+        absolutePositioned: true,
+      });
+      fabricCanvas.requestRenderAll();
+    });
+
     // why: optional background image. Drawn UNDERNEATH all layers, not in the
     // layer panel (the user can't move/delete the bg from the editor). Loaded
     // with crossOrigin: "anonymous" same as any other image.
