@@ -24,7 +24,7 @@
  *   means the same editor component renders identically in either context.
  */
 
-import { type JSX, useEffect, useRef } from "react";
+import { type JSX, useEffect, useRef, useState } from "react";
 
 import CanvasEditor from "./CanvasEditor";
 import type {
@@ -87,6 +87,31 @@ export interface CanvasEditorOverlayProps {
    */
   onSaveAsTemplate?: CanvasEditorProps["onSaveAsTemplate"];
   customTemplate?: CanvasEditorProps["customTemplate"];
+  /**
+   * Phase 2 AI Design provenance. When non-null, the overlay renders a
+   * floating "✨ Designed by Claude" badge in the top-left + a small
+   * "Revert to template default" link. Clicking Revert pops a
+   * one-decision confirmation modal; on confirm, `onRevert` runs.
+   *
+   * The badge is rendered by the overlay shell rather than threaded
+   * into <CanvasEditor> to avoid expanding CanvasEditor's prop surface
+   * for a single Phase 2 affordance.
+   */
+  aiDesignBadge?: AiDesignBadgeProps | null;
+}
+
+export interface AiDesignBadgeProps {
+  /** Closed-enum DesignMood — surfaces as a tooltip on the badge. */
+  mood: string;
+  /** When false, the badge gets a small "(revised)" tag so the user
+   *  knows Pass 4 critique modified the layout. Informational only. */
+  critiquePassed: boolean;
+  /**
+   * Fires AFTER the user confirms the revert modal. Caller is
+   * responsible for the actual server call + closing/re-opening Studio.
+   * Returns a promise so the modal's button can show a loading state.
+   */
+  onRevert: () => Promise<void>;
 }
 
 export default function CanvasEditorOverlay(
@@ -96,6 +121,12 @@ export default function CanvasEditorOverlay(
   // backdrop (close) from a click that bubbled up from inside the editor
   // (don't close). Without this, clicking inside the canvas would close.
   const backdropRef = useRef<HTMLDivElement | null>(null);
+
+  // Phase 2 AI Design — local state for the Revert confirmation modal.
+  // Kept inside the overlay (not lifted to the parent) because the modal
+  // is purely UI scaffolding around the parent's `onRevert` callback.
+  const [revertConfirmOpen, setRevertConfirmOpen] = useState(false);
+  const [reverting, setReverting] = useState(false);
 
   // -------------------------------------------------------------------------
   // Body scroll lock — restore on close/unmount
@@ -215,6 +246,92 @@ export default function CanvasEditorOverlay(
           customTemplate={props.customTemplate}
         />
       </div>
+
+      {/* Phase 2 AI Design — floating badge in the top-left. Sits above
+          the editor in z-order so the canvas chrome doesn't cover it,
+          but pointer-events on the children only so the rest of the
+          modal stays clickable. */}
+      {props.aiDesignBadge ? (
+        <div className="pointer-events-none fixed left-4 top-4 z-[60] flex items-center gap-2">
+          <div
+            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-gold-500 bg-white/95 px-3 py-1.5 text-xs font-semibold text-gold-900 shadow-elevated"
+            title={`Mood: ${props.aiDesignBadge.mood.replace(/_/g, " ")}${
+              props.aiDesignBadge.critiquePassed ? "" : " · critique revised the layout"
+            }`}
+          >
+            <span aria-hidden>✨</span>
+            <span>Designed by Claude</span>
+            {!props.aiDesignBadge.critiquePassed ? (
+              <span className="ml-1 rounded bg-gold-100 px-1.5 py-0.5 text-[10px] font-medium text-gold-800">
+                revised
+              </span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setRevertConfirmOpen(true)}
+            className="pointer-events-auto rounded-full border border-neutral-300 bg-white/95 px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm hover:bg-neutral-50"
+          >
+            Revert to template default
+          </button>
+        </div>
+      ) : null}
+
+      {/* Phase 2 AI Design — Revert confirmation modal. One-decision
+          screen per ADHD design memory. Lives inside the overlay so its
+          stacking context inherits the existing z-[50] backdrop. */}
+      {revertConfirmOpen && props.aiDesignBadge ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-neutral-900/60"
+          onMouseDown={(e) => {
+            // Backdrop click closes the confirm only if not in-flight.
+            if (e.target === e.currentTarget && !reverting) {
+              setRevertConfirmOpen(false);
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 shadow-elevated">
+            <h2 className="text-base font-semibold text-neutral-900">
+              Revert to template default?
+            </h2>
+            <p className="mt-2 text-sm text-neutral-600">
+              This drops the Claude design and reloads the factory template the
+              next time you open Studio for this post. The current AI-designed
+              image stays in your library until you save a fresh render.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRevertConfirmOpen(false)}
+                disabled={reverting}
+                className="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!props.aiDesignBadge) return;
+                  setReverting(true);
+                  try {
+                    await props.aiDesignBadge.onRevert();
+                    // why: parent's onRevert is expected to close Studio
+                    // and clear aiDesign. We close the confirm regardless
+                    // so a no-op parent doesn't strand the modal open.
+                    setRevertConfirmOpen(false);
+                  } finally {
+                    setReverting(false);
+                  }
+                }}
+                disabled={reverting}
+                className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
+              >
+                {reverting ? "Reverting…" : "Revert"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

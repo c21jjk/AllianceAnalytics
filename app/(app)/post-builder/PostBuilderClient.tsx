@@ -22,6 +22,7 @@ import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
 import {
   archiveBrandAssetAction,
   listCustomTemplatesAction,
+  revertAiDesignAction,
   saveCustomTemplateAction,
   saveGeneratedPostAction,
   schedulePostAction,
@@ -3663,6 +3664,39 @@ export default function PostBuilderClient({
         onResize={handleStudioResize}
         onMakeReel={handleMakeReelFromStudio}
         isAdmin={isAdmin}
+        // Phase 2 AI Design — surface the badge + Revert link in the
+        // overlay shell whenever the current session's AI design is
+        // loaded. Resume of a previously-saved AI-designed post will
+        // wire badge state through aiDesign hydration in a follow-up
+        // (Phase 2.1) — first cut only badges the live session.
+        aiDesignBadge={
+          aiDesign
+            ? {
+                mood: aiDesign.provenance.mood,
+                critiquePassed: aiDesign.provenance.critique_passed,
+                onRevert: async () => {
+                  // why: the row may not exist yet if the user opened
+                  // Studio directly from a fresh AI Design click without
+                  // a prior save. In that case there's nothing on disk
+                  // to revert — just clear local state.
+                  if (generatedPostId) {
+                    const res = await revertAiDesignAction({
+                      generated_post_id: generatedPostId,
+                    });
+                    if (!res.ok) {
+                      setError(`Revert failed: ${res.error}`);
+                      return;
+                    }
+                  }
+                  // Local cleanup — drop the AI schema + provenance and
+                  // close Studio. The next "Edit in Studio" click will
+                  // open against the factory template via studioTemplate.
+                  setAiDesign(null);
+                  setStudioOpen(false);
+                },
+              }
+            : null
+        }
         onUploadBrandAsset={uploadBrandAssetAction}
         onArchiveBrandAsset={async (id) =>
           archiveBrandAssetAction({ id })
