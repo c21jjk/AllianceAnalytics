@@ -183,6 +183,28 @@ export interface CreatedPostResumeRow {
    * resume. Publishers read row.test_mode at publish time.
    */
   test_mode: boolean;
+  /**
+   * Phase 2 AI Design provenance, sourced from the generated_posts
+   * ai_design_* columns. All six fields are nullable — they're populated
+   * together when a row was produced by /api/post-builder/design-and-render,
+   * and stay NULL on factory renders.
+   *
+   * The client uses these to re-hydrate the live `aiDesign` state on
+   * resume (so the "✨ Designed by Claude" badge appears in Studio + the
+   * Revert link works) and to skip showing the badge entirely when the
+   * row pre-dates Phase 2 or was a factory render.
+   */
+  ai_design_mood: string | null;
+  ai_design_critique_passed: boolean | null;
+  ai_design_token_input: number | null;
+  ai_design_token_output: number | null;
+  ai_design_duration_ms: number | null;
+  /**
+   * Factory template_id captured before the AI redesign. Used by the
+   * Studio Revert action to re-render the original factory template
+   * after the AI fields are cleared.
+   */
+  original_template_id: string | null;
 }
 
 export async function fetchCreatedPostResume(
@@ -197,7 +219,10 @@ export async function fetchCreatedPostResume(
       // Phase D — caption / hashtags / captions_by_platform added so the
       // client can re-seed the three caption tabs on resume.
       // 2026-05-16 — test_mode added so the Test/Live toggle re-seeds on resume.
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, caption, hashtags, captions_by_platform, test_mode, created_by",
+      // 2026-05-23 Phase 2.1 — ai_design_* + original_template_id added so
+      // the Studio "Designed by Claude" badge re-appears on resume + the
+      // Revert action knows what factory template to re-render against.
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, caption, hashtags, captions_by_platform, test_mode, created_by, ai_design_mood, ai_design_critique_passed, ai_design_token_input, ai_design_token_output, ai_design_duration_ms, original_template_id",
     )
     .eq("id", id)
     .maybeSingle();
@@ -228,6 +253,12 @@ export async function fetchCreatedPostResume(
     hashtags: data.hashtags,
     captions_by_platform: data.captions_by_platform,
     test_mode: data.test_mode === true,
+    ai_design_mood: data.ai_design_mood ?? null,
+    ai_design_critique_passed: data.ai_design_critique_passed ?? null,
+    ai_design_token_input: data.ai_design_token_input ?? null,
+    ai_design_token_output: data.ai_design_token_output ?? null,
+    ai_design_duration_ms: data.ai_design_duration_ms ?? null,
+    original_template_id: data.original_template_id ?? null,
   };
 }
 

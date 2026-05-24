@@ -57,7 +57,7 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
   // always the render pipeline; a real user shouldn't ever see this URL.
   let payload;
   try {
-    payload = verifyRenderToken(token);
+    payload = await verifyRenderToken(token);
   } catch {
     notFound();
   }

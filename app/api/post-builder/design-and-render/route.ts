@@ -304,7 +304,7 @@ export async function POST(request: Request): Promise<Response> {
       // ---- Sign a render token + hit Chromium ----
       let token: string;
       try {
-        token = signRenderToken({
+        token = await signRenderToken({
           // Synthetic template_id — the render page ignores this field
           // when ai_schema_cache_id is set, but the payload shape requires
           // a non-empty string here for back-compat with DB-template tokens.

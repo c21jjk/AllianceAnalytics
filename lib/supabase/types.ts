@@ -1773,6 +1773,7 @@ export type Database = {
         | "paragon_mls"
         | "bright_mls"
         | "google_drive"
+        | "render_token"
       delivery_channel: "email" | "link"
       delivery_status: "pending" | "sent" | "viewed"
       media_type: "image" | "video" | "carousel" | "reel"
@@ -1932,6 +1933,7 @@ export const Constants = {
         "paragon_mls",
         "bright_mls",
         "google_drive",
+        "render_token",
       ],
       delivery_channel: ["email", "link"],
       delivery_status: ["pending", "sent", "viewed"],

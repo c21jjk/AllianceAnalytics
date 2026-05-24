@@ -32,6 +32,7 @@
 
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { PostFormat } from "@/lib/post-builder/types";
 
 /** Inside-the-system token payload. Serialized to JSON, base64url-encoded,
@@ -70,15 +71,88 @@ export interface RenderTokenPayload {
  *  10-30s; 5 minutes is comfortable headroom. */
 const DEFAULT_TTL_SECONDS = 300;
 
-function getSecret(): Buffer {
-  const secret = process.env.RENDER_TOKEN_SECRET;
-  if (!secret || secret.length < 32) {
+// ---------------------------------------------------------------------------
+// Secret resolution — DB first, env var fallback. Mirrors lib/ai/anthropic.ts
+// ---------------------------------------------------------------------------
+//
+// Why DB first: the project's standing rule is "env vars set via Vercel MCP,
+// never the dashboard." The Vercel MCP doesn't currently expose env-var
+// write tools, so we store the signing secret in `api_credentials`
+// (platform='render_token') instead. Supabase MCP can read/write that row
+// without any dashboard touch.
+//
+// Env-var fallback (`RENDER_TOKEN_SECRET`) is kept for local dev and for
+// scripts / one-off jobs that run outside the Next.js context where DB
+// access is available but inconvenient. Production reads the DB row.
+//
+// Cache: 60s TTL — same as the Anthropic key. Long enough that a single
+// render burst doesn't hammer the DB, short enough that rotating the
+// secret via Supabase shows up within a minute.
+interface RenderTokenCredentialPayload {
+  secret?: unknown;
+}
+
+let cachedSecret: Buffer | null | undefined;
+let cacheStamp = 0;
+const SECRET_CACHE_TTL_MS = 60_000;
+
+async function readSecretFromDb(): Promise<string | null> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("api_credentials")
+      .select("credentials, is_active")
+      .eq("platform", "render_token")
+      .eq("is_active", true)
+      .maybeSingle();
+    if (error) {
+      console.error("[render-token] readSecretFromDb error:", error);
+      return null;
+    }
+    if (!data) return null;
+    const creds = (data.credentials ?? {}) as RenderTokenCredentialPayload;
+    const raw = typeof creds.secret === "string" ? creds.secret.trim() : "";
+    return raw.length > 0 ? raw : null;
+  } catch (e) {
+    console.error("[render-token] readSecretFromDb threw:", e);
+    return null;
+  }
+}
+
+/**
+ * Resolve the HMAC signing secret. Returns a Buffer ready for crypto APIs.
+ * Throws when neither source has a usable secret — callers (sign/verify)
+ * surface that as "render token system not configured."
+ *
+ * Cache invariant: a single secret value lives for up to 60s. A rotation
+ * via Supabase shows up on the next request after the TTL expires.
+ */
+async function getSecret(): Promise<Buffer> {
+  const now = Date.now();
+  if (cachedSecret !== undefined && now - cacheStamp < SECRET_CACHE_TTL_MS) {
+    if (cachedSecret === null) {
+      throw new Error(
+        "render-token secret not configured — set api_credentials platform='render_token' or RENDER_TOKEN_SECRET env var (need >= 32 chars).",
+      );
+    }
+    return cachedSecret;
+  }
+
+  const dbSecret = await readSecretFromDb();
+  const envSecret = process.env.RENDER_TOKEN_SECRET?.trim() || null;
+  const raw = dbSecret || envSecret;
+
+  if (!raw || raw.length < 32) {
+    cachedSecret = null;
+    cacheStamp = now;
     throw new Error(
-      "RENDER_TOKEN_SECRET env var missing or too short (need >= 32 chars). " +
-        "Set it via the Vercel MCP — see lib/template-builder/render-token.ts.",
+      "render-token secret not configured — set api_credentials platform='render_token' or RENDER_TOKEN_SECRET env var (need >= 32 chars).",
     );
   }
-  return Buffer.from(secret, "utf8");
+
+  cachedSecret = Buffer.from(raw, "utf8");
+  cacheStamp = now;
+  return cachedSecret;
 }
 
 /** Base64URL (RFC 4648 §5) — like base64 but with - and _ instead of + and
@@ -101,18 +175,23 @@ function base64UrlDecode(input: string): Buffer {
  * Sign a payload. Returns the opaque token string suitable for a URL path
  * segment. The `exp` field is filled in here (caller passes everything
  * else); pass `ttl_seconds` to override the default 5-minute window.
+ *
+ * Async because the secret comes from Supabase. The DB lookup is memoized
+ * for 60s so the per-call cost is sub-ms in steady state — the first call
+ * after a cold start (or a 60s gap) does a single DB roundtrip.
  */
-export function signRenderToken(
+export async function signRenderToken(
   payload: Omit<RenderTokenPayload, "exp">,
   ttl_seconds: number = DEFAULT_TTL_SECONDS,
-): string {
+): Promise<string> {
   const full: RenderTokenPayload = {
     ...payload,
     exp: Math.floor(Date.now() / 1000) + ttl_seconds,
   };
   const payloadJson = JSON.stringify(full);
   const payloadBuf = Buffer.from(payloadJson, "utf8");
-  const sig = createHmac("sha256", getSecret()).update(payloadBuf).digest();
+  const secret = await getSecret();
+  const sig = createHmac("sha256", secret).update(payloadBuf).digest();
   return `${base64UrlEncode(payloadBuf)}.${base64UrlEncode(sig)}`;
 }
 
@@ -120,8 +199,13 @@ export function signRenderToken(
  * Verify + decode a token. Throws on any tampering, expiry, or shape
  * violation. Callers catch the error and 404 (don't surface the reason —
  * it's a service-to-service contract).
+ *
+ * Async because the secret comes from Supabase — see signRenderToken
+ * for the cache rationale.
  */
-export function verifyRenderToken(token: string): RenderTokenPayload {
+export async function verifyRenderToken(
+  token: string,
+): Promise<RenderTokenPayload> {
   const parts = token.split(".");
   if (parts.length !== 2) {
     throw new Error("malformed token (expected payload.signature)");
@@ -137,7 +221,8 @@ export function verifyRenderToken(token: string): RenderTokenPayload {
   }
 
   // Recompute the expected signature and constant-time compare.
-  const expected = createHmac("sha256", getSecret()).update(payloadBuf).digest();
+  const secret = await getSecret();
+  const expected = createHmac("sha256", secret).update(payloadBuf).digest();
   // timingSafeEqual requires equal lengths; differing length is "wrong sig"
   // regardless of content, so reject without comparing.
   if (expected.length !== sigBuf.length) {

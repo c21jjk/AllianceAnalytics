@@ -124,7 +124,7 @@ export async function renderDbTemplate(
   // comfortable headroom for cold Chromium starts.
   let token: string;
   try {
-    token = signRenderToken({
+    token = await signRenderToken({
       template_id: input.template_id,
       listing_id: input.listing.id,
       format: input.format,

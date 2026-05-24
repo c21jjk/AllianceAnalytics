@@ -652,6 +652,49 @@ export default function PostBuilderClient({
         setCaptionResult,
         setEditedCaptions,
       );
+
+      // Phase 2.1 — rehydrate AI Design provenance so the Studio
+      // "Designed by Claude" badge re-appears + the Revert link knows
+      // what factory template to fall back to. Requires both ai_design_mood
+      // (proves the row was AI-designed) AND a layer_tree (the actual
+      // schema to reload Studio against). Without layer_tree the badge
+      // would lie — the row would say "AI-designed" but Studio would
+      // re-derive from the factory template.
+      const resumeMood = initialResume.ai_design_mood;
+      const resumeLayerTree = initialResume.layer_tree;
+      if (
+        resumeMood &&
+        resumeLayerTree &&
+        typeof resumeLayerTree === "object"
+      ) {
+        // Snapshot resume's trigger values so the reset-on-intent-change
+        // useEffect doesn't immediately wipe aiDesign after the resume
+        // setStates above flush. See resumeIntentSnapshotRef declaration
+        // for the full carve-out rationale.
+        resumeIntentSnapshotRef.current = {
+          postType: initialResume.post_type,
+          variant: initialResume.variant,
+          format: initialResume.format,
+          mls: initialResume.mls_number,
+        };
+        setAiDesign({
+          schema: resumeLayerTree as CanvasTemplateSchema,
+          provenance: {
+            mood: resumeMood,
+            critique_passed: initialResume.ai_design_critique_passed ?? true,
+            token_input: initialResume.ai_design_token_input ?? 0,
+            token_output: initialResume.ai_design_token_output ?? 0,
+            duration_ms: initialResume.ai_design_duration_ms ?? 0,
+            // why: fall back to the row's CURRENT template_id when the
+            // dedicated original_template_id column is null (very old rows
+            // or hand-edits). Worst case the Revert re-renders the same
+            // template the row already points at — still correct.
+            original_template_id:
+              initialResume.original_template_id ?? initialResume.template_id,
+          },
+        });
+      }
+
       return;
     }
     if (initialPick) {
@@ -862,7 +905,36 @@ export default function PostBuilderClient({
   // previous tuple. Wipe aiDesign + clear the progress/error indicators so
   // the next AI Design click starts fresh. Doing this in an effect (rather
   // than scattered into every setter) keeps the invariant in ONE place.
+  //
+  // Resume-hydration carve-out: when the user lands here via `?gp=<id>`,
+  // the resume effect sets postType/variant/format/mls from the saved row
+  // AND sets aiDesign from the row's ai_design_* columns. The reset effect
+  // would then immediately clobber the hydrated state. We avoid that by
+  // taking a snapshot of the resume's intent values into a ref; the reset
+  // effect compares current values against that snapshot and skips when
+  // they match. As soon as the user changes ANY of the four (clicks a
+  // different variant, etc.), the snapshot clears and reset behaves
+  // normally for the rest of the session.
+  const resumeIntentSnapshotRef = useRef<{
+    postType: PostType;
+    variant: PostVariant;
+    format: PostFormat;
+    mls: string | null;
+  } | null>(null);
   useEffect(() => {
+    if (resumeIntentSnapshotRef.current) {
+      const s = resumeIntentSnapshotRef.current;
+      if (
+        s.postType === postType &&
+        s.variant === variantId &&
+        s.format === format &&
+        s.mls === selectedMls
+      ) {
+        return;
+      }
+      // User changed something — drop the snapshot AND fall through to reset.
+      resumeIntentSnapshotRef.current = null;
+    }
     setAiDesign(null);
     setAiProgress("");
     setAiError(null);
@@ -3665,21 +3737,34 @@ export default function PostBuilderClient({
         onMakeReel={handleMakeReelFromStudio}
         isAdmin={isAdmin}
         // Phase 2 AI Design — surface the badge + Revert link in the
-        // overlay shell whenever the current session's AI design is
-        // loaded. Resume of a previously-saved AI-designed post will
-        // wire badge state through aiDesign hydration in a follow-up
-        // (Phase 2.1) — first cut only badges the live session.
+        // overlay shell whenever a session is on an AI design. Hydrated
+        // on resume from the row's ai_design_* columns (Phase 2.1) AND
+        // on a fresh AI Design click (Phase 2). Badge appears in both.
         aiDesignBadge={
           aiDesign
             ? {
                 mood: aiDesign.provenance.mood,
                 critiquePassed: aiDesign.provenance.critique_passed,
                 onRevert: async () => {
-                  // why: the row may not exist yet if the user opened
-                  // Studio directly from a fresh AI Design click without
-                  // a prior save. In that case there's nothing on disk
-                  // to revert — just clear local state.
-                  if (generatedPostId) {
+                  // PHASE 2.1 — three-step revert flow:
+                  //   1. Clear ai_design_* + layer_tree in DB (server)
+                  //   2. Re-render the factory template via Chromium
+                  //   3. Swap image_url + image_path on the row
+                  // Step 2/3 only run when we have a persisted row AND
+                  // the factory template_id is known. If the user
+                  // ran AI Design but hasn't saved yet, there's no row
+                  // to update — just clear local state.
+                  const factoryTemplateId =
+                    aiDesign.provenance.original_template_id;
+                  const hasRow = Boolean(generatedPostId);
+                  const canReRender =
+                    hasRow &&
+                    Boolean(factoryTemplateId) &&
+                    Boolean(selectedListing) &&
+                    currentHeroUrls.length > 0;
+
+                  // Step 1 — server-side clear of AI fields
+                  if (hasRow && generatedPostId) {
                     const res = await revertAiDesignAction({
                       generated_post_id: generatedPostId,
                     });
@@ -3688,6 +3773,81 @@ export default function PostBuilderClient({
                       return;
                     }
                   }
+
+                  // Step 2 + 3 — re-render factory + swap image. Best
+                  // effort: if the render fails we leave the row with
+                  // the old AI image_url (Phase 2 default behavior) +
+                  // warn the user, but the DB fields are already cleared
+                  // so the badge won't reappear. User can hit Generate
+                  // manually to get a fresh PNG.
+                  if (canReRender && generatedPostId && factoryTemplateId && selectedListing) {
+                    try {
+                      const renderRes = await fetch(
+                        "/api/post-builder/render",
+                        {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({
+                            template_id: factoryTemplateId,
+                            listing: selectedListing,
+                            hero_image_urls: currentHeroUrls,
+                          }),
+                        },
+                      );
+                      const renderJson = (await renderRes
+                        .json()
+                        .catch(() => null)) as
+                        | RenderResponse
+                        | RenderErrorResponse
+                        | null;
+                      if (
+                        renderRes.ok &&
+                        renderJson &&
+                        renderJson.ok &&
+                        renderJson.image_url &&
+                        renderJson.image_path
+                      ) {
+                        // Swap the row's image pointer + update local
+                        // renderResult so the next preview / library
+                        // refresh sees the factory render.
+                        const swapRes = await updateGeneratedPostImageAction({
+                          id: generatedPostId,
+                          image_url: renderJson.image_url,
+                          image_path: renderJson.image_path,
+                        });
+                        if (swapRes.ok) {
+                          setRenderResult({
+                            image_url: renderJson.image_url,
+                            image_path: renderJson.image_path,
+                            template_id: factoryTemplateId,
+                            width: renderJson.width,
+                            height: renderJson.height,
+                            hero_image_source_url: currentHeroUrls[0] ?? "",
+                          });
+                        } else {
+                          // Image rendered but row swap failed — non-fatal,
+                          // warn so the orphan is visible.
+                          console.warn(
+                            "[revert] image swap failed:",
+                            swapRes.error,
+                          );
+                        }
+                      } else {
+                        const errMsg =
+                          (renderJson as RenderErrorResponse | null)?.error ??
+                          `HTTP ${renderRes.status}`;
+                        setError(
+                          `Reverted, but factory re-render failed: ${errMsg}. Click Generate to refresh the image.`,
+                        );
+                      }
+                    } catch (e) {
+                      const msg = e instanceof Error ? e.message : String(e);
+                      setError(
+                        `Reverted, but factory re-render threw: ${msg}. Click Generate to refresh the image.`,
+                      );
+                    }
+                  }
+
                   // Local cleanup — drop the AI schema + provenance and
                   // close Studio. The next "Edit in Studio" click will
                   // open against the factory template via studioTemplate.
