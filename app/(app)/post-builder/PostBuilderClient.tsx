@@ -1332,7 +1332,12 @@ export default function PostBuilderClient({
           source_mls: selectedListing.source_mls,
           property_id: selectedListing.id ?? null,
           post_type: result.schema.category,
-          variant: result.schema.variant,
+          // 2026-05-24 — fallback to "v1" when the canvas schema is
+          // missing a variant. AI Design rewrites of the template
+          // sometimes drop the field; the DB column is NOT NULL so we
+          // must always send something. "v1" is the soft-deprecated
+          // canonical value.
+          variant: result.schema.variant ?? ("v1" as PostVariant),
           format: result.schema.format,
           template_id: result.schema.id,
           image_url: uploadJson.image_url,

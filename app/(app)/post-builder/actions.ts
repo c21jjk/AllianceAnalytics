@@ -59,7 +59,10 @@ export async function saveGeneratedPostAction(
       source_mls: input.source_mls,
       property_id: input.property_id,
       post_type: input.post_type,
-      variant: input.variant,
+      // 2026-05-24 — AI-rewritten schemas sometimes drop variant; the
+      // DB column is NOT NULL so we default to "v1" (the soft-
+      // deprecated canonical value) at every save call site.
+      variant: input.variant ?? ("v1" as PostVariant),
       format: input.format,
       template_id: input.template_id,
       image_url: input.image_url,
@@ -384,7 +387,12 @@ export async function upsertGeneratedPostFromStudioAction(
         // variant/format mid-edit (e.g., switched from portrait → story).
         template_id: input.template_id,
         post_type: input.post_type,
-        variant: input.variant,
+        // 2026-05-24 — defend against AI-rewritten schemas that drop
+        // the variant field. The DB column is NOT NULL; "v1" is the
+        // soft-deprecated canonical fallback. Without this default,
+        // Studio save errored with "null value in column variant
+        // violates not-null constraint" on AI-edited posts.
+        variant: input.variant ?? ("v1" as PostVariant),
         format: input.format,
         layer_tree: input.layer_tree ?? null,
         // why: default to `[]` (not null) so the column matches its NOT NULL
@@ -451,7 +459,10 @@ export async function upsertGeneratedPostFromStudioAction(
       source_mls: input.source_mls,
       property_id: input.property_id,
       post_type: input.post_type,
-      variant: input.variant,
+      // 2026-05-24 — AI-rewritten schemas sometimes drop variant; the
+      // DB column is NOT NULL so we default to "v1" (the soft-
+      // deprecated canonical value) at every save call site.
+      variant: input.variant ?? ("v1" as PostVariant),
       format: input.format,
       template_id: input.template_id,
       image_url: input.image_url,
