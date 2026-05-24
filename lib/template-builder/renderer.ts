@@ -24,6 +24,7 @@
 
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPublicAppUrl } from "@/lib/app-url";
 import { screenshotHtml } from "@/lib/post-builder/chromium";
 import { getTemplateById } from "./registry";
 import { signRenderToken } from "./render-token";
@@ -67,27 +68,6 @@ export interface RenderInput {
   hosting_agent_name?: string | null;
   /** Pre-formatted OH window label. Forwarded to the render-page route. */
   oh_window?: string | null;
-}
-
-/**
- * Resolve the absolute base URL the render-page route lives at.
- *
- * Priority:
- *   1. RENDER_BASE_URL — explicit override (set in Vercel if the default
- *      doesn't work, e.g., custom domain edge cases).
- *   2. VERCEL_URL — auto-set by Vercel on every deploy. Always the
- *      deployment's canonical *.vercel.app host (NOT the assigned
- *      domain). Headless Chromium hits this fine.
- *   3. http://localhost:3000 — dev fallback.
- */
-function resolveBaseUrl(): string {
-  if (process.env.RENDER_BASE_URL) {
-    return process.env.RENDER_BASE_URL.replace(/\/$/, "");
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  return "http://localhost:3000";
 }
 
 /**
@@ -138,7 +118,7 @@ export async function renderDbTemplate(
     };
   }
 
-  const url = `${resolveBaseUrl()}/render/template/${encodeURIComponent(token)}`;
+  const url = `${await getPublicAppUrl()}/render/template/${encodeURIComponent(token)}`;
 
   // Screenshot the rendered canvas. URL mode polls for
   // data-render-status="ready" on the canvas element before snapping.

@@ -43,6 +43,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPublicAppUrl } from "@/lib/app-url";
 import { screenshotHtml } from "@/lib/post-builder/chromium";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
@@ -100,22 +101,6 @@ interface FinalResultEvent {
   ai_critique_issues: ReadonlyArray<string>;
   duration_ms: number;
   tokens_used: { input: number; output: number };
-}
-
-/**
- * Resolve the absolute base URL for the headless render landing page.
- * Mirrors the helper inside `lib/template-builder/renderer.ts` — kept
- * duplicated here to avoid pulling that whole module's render path into
- * this route just for one helper. If a third caller appears, lift this.
- */
-function resolveBaseUrl(): string {
-  if (process.env.RENDER_BASE_URL) {
-    return process.env.RENDER_BASE_URL.replace(/\/$/, "");
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  return "http://localhost:3000";
 }
 
 /** Validate the request body. Returns either { ok: true, ... } or an error message. */
@@ -322,7 +307,7 @@ export async function POST(request: Request): Promise<Response> {
         return;
       }
 
-      const url = `${resolveBaseUrl()}/render/template/${encodeURIComponent(token)}`;
+      const url = `${await getPublicAppUrl()}/render/template/${encodeURIComponent(token)}`;
       const dims = { width: aiSchema.width, height: aiSchema.height };
 
       let pngBytes: Buffer;

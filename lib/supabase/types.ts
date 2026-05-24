@@ -1666,18 +1666,21 @@ export type Database = {
       system_config: {
         Row: {
           id: number
+          public_app_url: string | null
           publish_test_mode: boolean
           updated_at: string
           updated_by: string | null
         }
         Insert: {
           id?: number
+          public_app_url?: string | null
           publish_test_mode?: boolean
           updated_at?: string
           updated_by?: string | null
         }
         Update: {
           id?: number
+          public_app_url?: string | null
           publish_test_mode?: boolean
           updated_at?: string
           updated_by?: string | null
