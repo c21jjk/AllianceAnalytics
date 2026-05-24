@@ -2706,6 +2706,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               setZoom((z) => Math.max(0.25, +(z - 0.1).toFixed(2)))
             }
             onZoomFit={() => setZoom(1)}
+            onZoomChange={(z) =>
+              // why: clamp to the same range the +/- buttons use so the
+              // slider can never drive zoom out-of-bounds even if the
+              // <input> step config drifts later.
+              setZoom(Math.max(0.25, Math.min(2, +z.toFixed(2))))
+            }
             canUndo={history.canUndo}
             canRedo={history.canRedo}
             onUndo={() => history.undo()}
@@ -3714,6 +3720,12 @@ interface CanvasFooterProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomFit: () => void;
+  /**
+   * Direct setter for the slider drag (2026-05-23, Canva-parity zoom).
+   * The +/- buttons keep their own callbacks because they need to clamp/step
+   * differently — slider is continuous, buttons are discrete 10% jumps.
+   */
+  onZoomChange: (next: number) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -3799,18 +3811,37 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
         ) : null}
       </div>
 
-      {/* === Center cluster — zoom controls === */}
-      <div className="flex items-center gap-0.5">
+      {/* === Center cluster — zoom controls (Canva-style slider) ===
+          Layout: [-] [slider track] [+] 100% Fit
+          The slider is continuous (step 0.05) for smooth dragging;
+          the +/- buttons stay as discrete 10% jumps so users with
+          keyboard/click muscle memory still get a predictable step. */}
+      <div className="flex items-center gap-2">
         <FooterIconButton label="Zoom out" onClick={props.onZoomOut}>
           <ZoomOutIcon />
         </FooterIconButton>
-        <span className="min-w-[44px] text-center font-mono text-[11px] text-neutral-600">
-          {zoomPct}%
-        </span>
+        {/* why: native range input — keeps a11y (keyboard arrows work,
+            screen readers announce value%). Custom-styled via a small
+            inline style block so the thumb is gold and the track is
+            neutral, matching the rest of the editor chrome. */}
+        <input
+          type="range"
+          min={0.25}
+          max={2}
+          step={0.05}
+          value={props.zoom}
+          onChange={(e) => props.onZoomChange(Number(e.target.value))}
+          aria-label="Canvas zoom"
+          title={`Zoom — ${zoomPct}%`}
+          className="cwk-zoom-slider h-1 w-[120px] cursor-pointer appearance-none rounded-full bg-neutral-200 accent-gold-500"
+        />
         <FooterIconButton label="Zoom in" onClick={props.onZoomIn}>
           <ZoomInIcon />
         </FooterIconButton>
-        <span className="mx-1 h-4 w-px bg-neutral-200" />
+        <span className="min-w-[36px] text-center font-mono text-[11px] tabular-nums text-neutral-600">
+          {zoomPct}%
+        </span>
+        <span className="mx-0.5 h-4 w-px bg-neutral-200" />
         <button
           type="button"
           onClick={props.onZoomFit}
