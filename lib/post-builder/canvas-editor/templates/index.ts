@@ -29,14 +29,32 @@ import type { CanvasTemplateSchema, PostType, PostVariant } from "../types";
 import { PLATFORM_DIMENSIONS } from "../types";
 import { isGradientFill } from "../types";
 import { buildAllPlaceholderTemplates } from "./placeholder-factory";
+import { buildJustListedSquareTemplate } from "./just-listed-square";
+import { buildJustSoldSquareTemplate } from "./just-sold-square";
+import { buildOpenHouseSquareTemplate } from "./open-house-square";
 
 /**
- * Source-of-truth array. 10 placeholder templates as of 2026-05-24
- * (5 post types × 2 formats). Replaced incrementally as Larissa ships
- * real Canva references.
+ * Source-of-truth array.
+ *
+ * 2026-05-24 Phase C composition:
+ *   • 3 REAL Larissa-spec templates for the post types we have
+ *     references for (Just Listed × square, Just Sold × square,
+ *     Open House × square).
+ *   • 7 placeholder templates filling the remaining (post_type ×
+ *     format) slots — the placeholder factory's SKIP_TUPLES list
+ *     excludes the 3 above.
+ *
+ * Total: 10 templates, same count as the all-placeholder Phase B
+ * state. As Larissa ships story-format references or new post-type
+ * designs, replace the corresponding placeholder slot with a real
+ * factory (mirror the pattern in just-listed-square.ts etc.).
  */
-export const CANVAS_TEMPLATES: readonly CanvasTemplateSchema[] =
-  buildAllPlaceholderTemplates();
+export const CANVAS_TEMPLATES: readonly CanvasTemplateSchema[] = [
+  buildJustListedSquareTemplate(),
+  buildJustSoldSquareTemplate(),
+  buildOpenHouseSquareTemplate(),
+  ...buildAllPlaceholderTemplates(),
+];
 
 /**
  * Find the template that matches a (category, variant, format) tuple.

@@ -61,6 +61,7 @@ import {
   type TextLayer,
 } from "./types";
 import { textEffectToFabricProps } from "./textEffects";
+import { C21_ALLIANCE_WHITE_LOGO } from "./templates/brand-logos";
 
 // ===========================================================================
 // SECTION 1 — Bound-field formatters
@@ -259,11 +260,20 @@ export function resolveImageBoundField(
     case "agent_photo":
       return listing.agentPhotoUrl;
     case "office_logo":
-      return listing.officeLogoUrl;
+      // why: office_logo falls back to the canonical C21 Alliance white
+      // lockup when the listing doesn't carry a per-office override. The
+      // brand-logos.ts module is the single source of truth for both
+      // factory templates and AI-Design-rewritten schemas. Before
+      // 2026-05-24 this returned listing.officeLogoUrl which was almost
+      // always null in practice — AI Design output came out logo-less.
+      return listing.officeLogoUrl ?? C21_ALLIANCE_WHITE_LOGO;
     case "brokerage_logo":
-      // why: brokerage_logo is a static C21 mark. For now we point at a public
-      // asset; later this becomes per-office configurable.
-      return "/brand/c21-mark.svg";
+      // why: brokerage_logo is the canonical Alliance lockup — always
+      // the white-on-dark variant since most templates place it over a
+      // dark scrim. Previously this returned "/brand/c21-mark.svg" which
+      // doesn't exist as a file, so AI Design output rendered with a
+      // broken logo (the bug Larissa flagged on the first real run).
+      return C21_ALLIANCE_WHITE_LOGO;
     default: {
       const _exhaustive: never = field;
       return _exhaustive;

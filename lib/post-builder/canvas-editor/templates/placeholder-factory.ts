@@ -383,11 +383,30 @@ const FORMATS_TO_BUILD: ReadonlyArray<PostFormat> = [
 /**
  * Build all placeholder templates. Called by templates/index.ts to populate
  * the canonical CANVAS_TEMPLATES array.
+ *
+ * 2026-05-24 Phase C — exclusion list: certain (post_type × format) tuples
+ * now have REAL Larissa-spec templates living in their own files. We skip
+ * those slots here so the placeholder doesn't conflict with the real
+ * template at lookup time. As Larissa ships more references, add the
+ * corresponding tuples to SKIP_TUPLES.
  */
+const SKIP_TUPLES: ReadonlyArray<{ post_type: PostType; format: PostFormat }> = [
+  { post_type: "just_listed", format: "square_1x1" },
+  { post_type: "just_sold", format: "square_1x1" },
+  { post_type: "open_house", format: "square_1x1" },
+] as const;
+
+function shouldSkip(post_type: PostType, format: PostFormat): boolean {
+  return SKIP_TUPLES.some(
+    (t) => t.post_type === post_type && t.format === format,
+  );
+}
+
 export function buildAllPlaceholderTemplates(): CanvasTemplateSchema[] {
   const out: CanvasTemplateSchema[] = [];
   for (const post_type of POST_TYPES_TO_BUILD) {
     for (const format of FORMATS_TO_BUILD) {
+      if (shouldSkip(post_type, format)) continue;
       out.push(buildPlaceholderTemplate(post_type, format));
     }
   }
