@@ -37,6 +37,14 @@ import type { PostFormat } from "@/lib/post-builder/types";
 /** Inside-the-system token payload. Serialized to JSON, base64url-encoded,
  *  HMAC-signed. Decoded on the receiving end. */
 export interface RenderTokenPayload {
+  /**
+   * The template to render. For DB templates this is a UUID; for Phase 2
+   * AI Design it can be any non-empty string (e.g., a synthetic
+   * `ai_design:<post_type>_<variant>_<format>` tag) — when
+   * `ai_schema_cache_id` is also set, the page IGNORES template_id and
+   * loads the schema from the cache instead. Kept required so the token
+   * shape stays back-compat with the existing DB-template path.
+   */
   template_id: string;
   /** UUID of the properties row used as the binding context. */
   listing_id: string;
@@ -45,6 +53,14 @@ export interface RenderTokenPayload {
   hosting_agent_name?: string | null;
   /** Pre-formatted OH window label. Optional. */
   oh_window?: string | null;
+  /**
+   * Phase 2 AI Design — when set, the render page reads the
+   * `CanvasTemplateSchema` from `render_schema_cache.id = <this>` instead
+   * of looking up template_id. This is how a freshly-generated AI design
+   * (not persisted in `template_definitions`) reaches the headless
+   * renderer. Optional; absent on every existing DB-template render path.
+   */
+  ai_schema_cache_id?: string | null;
   /** Unix epoch seconds. Token is invalid once now() > exp. */
   exp: number;
 }

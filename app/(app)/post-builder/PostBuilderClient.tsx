@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AiDesignProvenance,
   CaptionsByPlatform,
   PostBuilderListing,
   PostFormat,
@@ -150,6 +151,19 @@ interface RenderResult {
   height: number;
   hero_image_source_url: string;
 }
+
+/**
+ * Phase 2 AI Design — friendly single-line status labels per pipeline
+ * pass. The NDJSON stream's `pass_started` events carry a `pass` field
+ * that matches one of these keys. Keep these short and verb-y; they
+ * appear in a single line under the preview pane (no bullet list).
+ */
+const AI_PASS_LABELS: Record<string, string> = {
+  composition: "Reading the photo…",
+  strategy: "Choosing a direction…",
+  layout: "Laying out the design…",
+  critique: "Reviewing the result…",
+};
 
 interface CaptionResult {
   /** Legacy single-caption field — mirrors `captions.instagram.caption`. */
@@ -312,6 +326,32 @@ export default function PostBuilderClient({
   // why: studioContext is set at open-time so the overlay receives stable
   // template + listing references rather than re-deriving them on every render
   // (each re-derivation would force the editor to re-init the Fabric canvas).
+  // === Studio AI Design (Phase 2) ===
+  // why: state for the ✨ AI Design button next to Generate. When set, the
+  // current preview pane shows the AI-rendered PNG, the studioTemplate
+  // memo returns aiDesign.schema (so Studio opens to the Claude design),
+  // and the save actions persist the provenance via the ai_design field.
+  //
+  // RESET TRIGGERS — any of these clears aiDesign back to null because
+  // the current design no longer matches the user's intent:
+  //   • Listing change (different listing → different design)
+  //   • Variant change (different layout family)
+  //   • Format change (different dimensions)
+  //   • Post type change (different content)
+  //   • Generate click (user wants the factory render)
+  const [aiDesign, setAiDesign] = useState<{
+    schema: CanvasTemplateSchema;
+    provenance: AiDesignProvenance;
+  } | null>(null);
+  /** When non-empty, the AI Design pipeline is in flight and this string
+   *  is shown under the preview as a single-line status. Cleared when the
+   *  pipeline completes (success or failure). */
+  const [aiProgress, setAiProgress] = useState<string>("");
+  /** Latched error from the most recent AI Design run. Null when the run
+   *  succeeded or hasn't started. Surfaced in the same error banner as
+   *  Generate errors. */
+  const [aiError, setAiError] = useState<string | null>(null);
+
   const [studioOpen, setStudioOpen] = useState<boolean>(false);
   const [studioContext, setStudioContext] = useState<{
     template: CanvasTemplateSchema;
@@ -806,10 +846,26 @@ export default function PostBuilderClient({
   // types × 3 formats (45 templates total). v6 Magazine Cover, v7 Polaroid,
   // and v8 Minimal Frame variant cards still return null and hide the button
   // until those factories are ported from the V1 HTML primitives.
+  // why: AI Design wins. When aiDesign is set (the ✨ button was used for
+  // the current (post_type, variant, format) tuple), Studio opens to the
+  // Claude-redesigned schema instead of the factory template. Clicking a
+  // different variant card / changing format / etc. clears aiDesign back
+  // to null so the next openStudio falls through to the factory lookup.
   const studioTemplate = useMemo<CanvasTemplateSchema | null>(
-    () => findCanvasTemplate(postType, variantId, format),
-    [postType, variantId, format],
+    () => aiDesign?.schema ?? findCanvasTemplate(postType, variantId, format),
+    [aiDesign, postType, variantId, format],
   );
+
+  // why: any change to the user's intent (different listing, post type,
+  // variant, or format) invalidates the AI design Claude produced for the
+  // previous tuple. Wipe aiDesign + clear the progress/error indicators so
+  // the next AI Design click starts fresh. Doing this in an effect (rather
+  // than scattered into every setter) keeps the invariant in ONE place.
+  useEffect(() => {
+    setAiDesign(null);
+    setAiProgress("");
+    setAiError(null);
+  }, [postType, variantId, format, selectedMls]);
 
   /**
    * Multi-property Open House mode.
@@ -1237,6 +1293,12 @@ export default function PostBuilderClient({
           } as unknown as Parameters<
             typeof upsertGeneratedPostFromStudioAction
           >[0]["captions_by_platform"],
+          // Phase 2 AI Design — when the row came out of /design-and-render,
+          // persist the provenance so the Studio badge appears on resume.
+          // Omitted (undefined) on regular Studio saves so the existing
+          // columns stay untouched. NOT cleared with `null` here — only
+          // the Revert action does that.
+          ai_design: aiDesign?.provenance,
         });
         if (!upsertRes.ok) {
           // Non-fatal for the in-memory preview — image is uploaded, the
@@ -1902,6 +1964,10 @@ export default function PostBuilderClient({
       caption: captionResult?.caption ?? "",
       hashtags: captionResult?.hashtags ?? [],
       mls_hashtag: captionResult?.mls_hashtag ?? "",
+      // Phase 2 AI Design — when the user produced this render via the
+      // ✨ AI Design button, stamp the provenance on the row. Null when
+      // the render came from regular Generate.
+      ai_design: aiDesign?.provenance ?? null,
     });
     if (!save.ok) {
       setError(`Save failed: ${save.error}`);
@@ -2221,6 +2287,12 @@ export default function PostBuilderClient({
     setRenderResult(null);
     setCaptionResult(null);
     setEditedCaption("");
+    // why: factory Generate overrides any pending AI Design. The user
+    // explicitly asked for the template — drop the AI provenance so
+    // downstream save calls don't tag this render as Claude-designed.
+    setAiDesign(null);
+    setAiProgress("");
+    setAiError(null);
 
     try {
       const heroUrls = currentHeroUrls;
@@ -2261,6 +2333,171 @@ export default function PostBuilderClient({
       if (captionError && !renderError) setError(captionError);
     } catch (e) {
       setError(`Generate threw: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  /**
+   * Phase 2 AI Design — POST to /api/post-builder/design-and-render,
+   * consume the NDJSON progress stream, and on success populate both
+   * `aiDesign` (schema + provenance) and `renderResult` (image_url +
+   * image_path) so the preview pane swaps to the Claude-designed PNG
+   * and the Edit-in-Studio button opens against the AI schema.
+   *
+   * Why a parallel flow to `generate()` instead of replacing it:
+   *   • Generate is fast (factory Chromium render only). AI Design is
+   *     ~60-90s. Keeping both buttons lets the user pick speed vs
+   *     polish on a per-post basis.
+   *   • If AI Design fails (Anthropic outage, prompt regression, etc.)
+   *     the user has a working fallback already on the page — no
+   *     hidden fallback logic in this function. Failure surfaces in
+   *     the same error banner Generate uses.
+   *
+   * Progress display: the NDJSON stream emits one event per pipeline
+   * pass. We map each `pass_started` event to a single-line status
+   * shown under the preview. No bullet lists / detailed per-pass UI —
+   * per the ADHD design memory the goal is one decision per screen.
+   */
+  async function runAiDesign(): Promise<void> {
+    if (!selectedListing) return;
+    if (currentHeroUrls.length === 0) {
+      setAiError("This listing has no hero photo. Pick another.");
+      return;
+    }
+    setGenerating(true);
+    setError(null);
+    setAiError(null);
+    setRenderResult(null);
+    setAiDesign(null);
+    setAiProgress("Starting…");
+
+    try {
+      const res = await fetch("/api/post-builder/design-and-render", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          post_type: postType,
+          variant: variantId,
+          format,
+          listing: selectedListing,
+          // why: send the FULL hero photo list — the pipeline picks the
+          // hero at index 0 (matches the factory render's behavior) and
+          // may reference later photos in future passes.
+          photo_urls: currentHeroUrls,
+        }),
+      });
+
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => "");
+        setAiError(
+          `AI Design failed (HTTP ${res.status}): ${text.slice(0, 200) || "no body"}`,
+        );
+        setAiProgress("");
+        return;
+      }
+
+      // NDJSON stream consumer — split on "\n", parse each line as JSON.
+      // Buffer the trailing partial line until the next chunk arrives.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      // why: typed loosely — the stream carries a discriminated union of
+      // PipelineProgress events from the pipeline PLUS our own result /
+      // failed events. Narrowing inline below keeps the type churn local.
+      let finalResult:
+        | {
+            image_url: string;
+            image_path: string;
+            original_template_id: string;
+            ai_schema: unknown;
+            ai_mood: string;
+            ai_critique_passed: boolean;
+            duration_ms: number;
+            tokens_used: { input: number; output: number };
+          }
+        | null = null;
+      let failureMessage: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let nlIdx: number;
+        while ((nlIdx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, nlIdx).trim();
+          buffer = buffer.slice(nlIdx + 1);
+          if (!line) continue;
+          let evt: Record<string, unknown>;
+          try {
+            evt = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          const evtType = typeof evt.type === "string" ? evt.type : "";
+          if (evtType === "pass_started" && typeof evt.pass === "string") {
+            setAiProgress(AI_PASS_LABELS[evt.pass] ?? `Running ${evt.pass}…`);
+          } else if (evtType === "render_started") {
+            setAiProgress("Rendering image…");
+          } else if (evtType === "result") {
+            finalResult = {
+              image_url: String(evt.image_url ?? ""),
+              image_path: String(evt.image_path ?? ""),
+              original_template_id: String(evt.original_template_id ?? ""),
+              ai_schema: evt.ai_schema,
+              ai_mood: String(evt.ai_mood ?? "punchy_modern"),
+              ai_critique_passed: Boolean(evt.ai_critique_passed ?? true),
+              duration_ms: Number(evt.duration_ms ?? 0),
+              tokens_used: (evt.tokens_used as { input: number; output: number }) ?? {
+                input: 0,
+                output: 0,
+              },
+            };
+          } else if (evtType === "failed" && typeof evt.error === "string") {
+            failureMessage = evt.error;
+          }
+        }
+      }
+
+      if (finalResult && finalResult.ai_schema) {
+        const schema = finalResult.ai_schema as CanvasTemplateSchema;
+        setAiDesign({
+          schema,
+          provenance: {
+            mood: finalResult.ai_mood,
+            critique_passed: finalResult.ai_critique_passed,
+            token_input: finalResult.tokens_used.input,
+            token_output: finalResult.tokens_used.output,
+            duration_ms: finalResult.duration_ms,
+            original_template_id: finalResult.original_template_id,
+          },
+        });
+        setRenderResult({
+          image_url: finalResult.image_url,
+          image_path: finalResult.image_path,
+          // why: stamp the post's template_id as the FACTORY id so the
+          // existing variant-grid / Created Posts queries (which key on
+          // template_id) still match. The AI-ness is tracked separately
+          // through the ai_design fields on the saved row.
+          template_id: finalResult.original_template_id,
+          width: schema.width,
+          height: schema.height,
+          hero_image_source_url: currentHeroUrls[0] ?? "",
+        });
+        setAiProgress("");
+      } else if (failureMessage) {
+        setAiError(`AI Design failed: ${failureMessage}`);
+        setAiProgress("");
+      } else {
+        setAiError("AI Design ended without a result.");
+        setAiProgress("");
+      }
+    } catch (e) {
+      setAiError(
+        `AI Design threw: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      setAiProgress("");
     } finally {
       setGenerating(false);
     }
@@ -2422,6 +2659,8 @@ export default function PostBuilderClient({
           facebook: parsePlatformText(editedCaptions.facebook),
           tiktok: parsePlatformText(editedCaptions.tiktok),
         },
+        // Phase 2 AI Design — see ensureGeneratedPostId for rationale.
+        ai_design: aiDesign?.provenance ?? null,
       });
       if (!save.ok) {
         setError(`Saved-to-table failed: ${save.error}`);
@@ -3092,14 +3331,31 @@ export default function PostBuilderClient({
                     {variants.find((v) => v.variant === variantId)?.display_name}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={generate}
-                  disabled={generating}
-                  className="btn-primary"
-                >
-                  {generating ? "Generating…" : renderResult ? "Regenerate" : "Generate"}
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* Phase 2 AI Design — sits next to Generate. Slower
+                      (~60-90s) and pricier ($0.30-1.00) than Generate,
+                      so it's a deliberate second action, not the
+                      default. Disabled together with Generate while
+                      either is in flight. */}
+                  <button
+                    type="button"
+                    onClick={runAiDesign}
+                    disabled={generating}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gold-500 bg-white px-3 py-2 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                    title="Let Claude design this post from the photo + listing data (~60-90s)"
+                  >
+                    <span aria-hidden>✨</span>
+                    <span>AI Design</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={generate}
+                    disabled={generating}
+                    className="btn-primary"
+                  >
+                    {generating ? "Generating…" : renderResult ? "Regenerate" : "Generate"}
+                  </button>
+                </div>
               </div>
               ) : null}
 
@@ -3110,6 +3366,29 @@ export default function PostBuilderClient({
                   className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
                 >
                   {error}
+                </div>
+              ) : null}
+
+              {/* Phase 2 AI Design — surface the streamed pipeline status
+                  in a single line above the preview. Stays visible only
+                  while the pipeline is running; clears on success or
+                  failure (which then surfaces in the error banner). */}
+              {aiProgress ? (
+                <div
+                  role="status"
+                  className="mb-3 inline-flex items-center gap-2 rounded-lg border border-gold-200 bg-gold-50 px-3 py-2 text-sm text-gold-900"
+                >
+                  <span aria-hidden>✨</span>
+                  <span>{aiProgress}</span>
+                </div>
+              ) : null}
+
+              {aiError ? (
+                <div
+                  role="alert"
+                  className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                >
+                  {aiError}
                 </div>
               ) : null}
 

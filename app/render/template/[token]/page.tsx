@@ -62,19 +62,33 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
     notFound();
   }
 
-  const template = await getTemplateById(payload.template_id);
-  if (!template) notFound();
-
-  const schema = template.schema[payload.format] as
-    | CanvasTemplateSchema
-    | undefined
-    | null;
-  if (!schema || typeof schema !== "object") {
-    return (
-      <pre style={{ padding: 16, color: "#900" }}>
-        Template {payload.template_id} has no schema for format {payload.format}
-      </pre>
-    );
+  // Phase 2 AI Design: when the token carries an ai_schema_cache_id, the
+  // schema lives in `render_schema_cache` instead of in `template_definitions`.
+  // Resolve from cache first; fall through to the DB-template path otherwise.
+  let schema: CanvasTemplateSchema | null | undefined;
+  if (payload.ai_schema_cache_id) {
+    schema = await fetchAiSchemaFromCache(payload.ai_schema_cache_id);
+    if (!schema) {
+      return (
+        <pre style={{ padding: 16, color: "#900" }}>
+          AI design schema {payload.ai_schema_cache_id} expired or not found.
+        </pre>
+      );
+    }
+  } else {
+    const template = await getTemplateById(payload.template_id);
+    if (!template) notFound();
+    schema = template.schema[payload.format] as
+      | CanvasTemplateSchema
+      | undefined
+      | null;
+    if (!schema || typeof schema !== "object") {
+      return (
+        <pre style={{ padding: 16, color: "#900" }}>
+          Template {payload.template_id} has no schema for format {payload.format}
+        </pre>
+      );
+    }
   }
 
   const listing = await fetchListingById(payload.listing_id);
@@ -131,6 +145,57 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
  * this is the only consumer and the field set is straightforward. If a
  * second caller appears, lift this into the listings module.
  */
+/**
+ * Phase 2 AI Design — load a freshly-generated CanvasTemplateSchema from
+ * the short-lived cache table. Returns null when the cache_id is unknown
+ * or the row has expired.
+ *
+ * Lazy-cleans expired rows on every read so the table never grows past
+ * its working set without needing pg_cron. Failure to delete is non-fatal
+ * (logged silently) — the row will sit until the next read tries again.
+ *
+ * Token + signature gate access — no extra RLS check needed; possession of
+ * a valid signed token containing this cache_id proves the server-side
+ * design route just minted it.
+ */
+async function fetchAiSchemaFromCache(
+  cacheId: string,
+): Promise<CanvasTemplateSchema | null> {
+  const supabase = createAdminClient();
+
+  // why: read first so a slow DELETE doesn't gate the render. The
+  // expires_at filter excludes rows that have aged out — those are
+  // treated identically to "row not found" from the caller's POV.
+  const { data, error } = await supabase
+    .from("render_schema_cache")
+    .select("schema, expires_at")
+    .eq("id", cacheId)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+
+  if (error || !data || !data.schema || typeof data.schema !== "object") {
+    return null;
+  }
+
+  // Best-effort cleanup of any expired rows. Non-blocking on the render —
+  // if this DELETE fails (transient connection blip, etc.) the next render
+  // tries again. Worst case the table accumulates ~minutes-worth of rows.
+  void supabase
+    .from("render_schema_cache")
+    .delete()
+    .lt("expires_at", new Date().toISOString())
+    .then(({ error: delError }) => {
+      if (delError) {
+        console.warn(
+          "[render-page] render_schema_cache cleanup failed:",
+          delError.message,
+        );
+      }
+    });
+
+  return data.schema as unknown as CanvasTemplateSchema;
+}
+
 async function fetchListingById(
   id: string,
 ): Promise<PostBuilderListing | null> {

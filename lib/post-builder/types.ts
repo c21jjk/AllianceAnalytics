@@ -260,6 +260,42 @@ export interface SaveGeneratedPostInput {
    * tuned the IG / FB / TikTok tabs before clicking Download/Save.
    */
   captions_by_platform?: CaptionsByPlatform;
+  /**
+   * Phase 2 AI Design — optional provenance written when the post was
+   * produced by /api/post-builder/design-and-render. Drives the Studio
+   * "Designed by Claude" badge + the Revert link. All-or-nothing: callers
+   * either pass every field or none.
+   */
+  ai_design?: AiDesignProvenance | null;
+}
+
+/**
+ * Phase 2 AI Design provenance bag — telemetry + revert-target written
+ * onto generated_posts when the post was produced via the Studio AI
+ * pipeline. Drives the gold "✨ Designed by Claude" badge in Studio +
+ * the "Revert to template default" link.
+ *
+ * Mood is the closed-enum DesignMood from
+ * `lib/post-builder/canvas-editor/ai/types.ts`; kept as a string here
+ * because this types file is imported by both server actions and client
+ * components, and we don't want a server-only import chain reaching
+ * into the AI types from here.
+ */
+export interface AiDesignProvenance {
+  /** One of the 6 closed-enum DesignMoods from the pipeline strategy pass. */
+  mood: string;
+  /** Pass 4 critique gate result. False = critique returned a revised plan. */
+  critique_passed: boolean;
+  token_input: number;
+  token_output: number;
+  duration_ms: number;
+  /**
+   * Factory template id we started from. Persisted as
+   * `generated_posts.original_template_id` so the Studio revert link can
+   * re-hydrate from the factory after layer_tree was overwritten by the
+   * AI schema.
+   */
+  original_template_id: string;
 }
 
 // FBBundle* types removed on 2026-05-14 — the FB multi-photo bundle path

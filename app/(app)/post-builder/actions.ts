@@ -10,6 +10,7 @@ import {
 import { getPublishTestMode } from "@/lib/data/system-config";
 import type { Json } from "@/lib/supabase/types";
 import type {
+  AiDesignProvenance,
   PostFormat,
   PostType,
   PostVariant,
@@ -79,6 +80,16 @@ export async function saveGeneratedPostAction(
       downloaded_at: new Date().toISOString(),
       created_by: profile.id,
       test_mode: test_mode_default,
+      // Phase 2 AI Design — provenance is written only when the post was
+      // produced by /api/post-builder/design-and-render. When `ai_design`
+      // is null/undefined, every field stays NULL and the row reads as
+      // "factory render" downstream (no badge, no revert affordance).
+      ai_design_mood: input.ai_design?.mood ?? null,
+      ai_design_critique_passed: input.ai_design?.critique_passed ?? null,
+      ai_design_token_input: input.ai_design?.token_input ?? null,
+      ai_design_token_output: input.ai_design?.token_output ?? null,
+      ai_design_duration_ms: input.ai_design?.duration_ms ?? null,
+      original_template_id: input.ai_design?.original_template_id ?? null,
     })
     .select("id")
     .maybeSingle();
@@ -230,6 +241,20 @@ export interface UpsertStudioPostInput {
    * DEFAULT '{}' constraint is always satisfied.
    */
   captions_by_platform?: Json | null;
+  /**
+   * Phase 2 AI Design provenance. Set on INSERT when the post originated
+   * from /api/post-builder/design-and-render. Left null/undefined on the
+   * normal Studio save flow (factory template — no AI involvement).
+   *
+   * Semantics:
+   *   • Pass an `AiDesignProvenance` to WRITE all six DB columns at once.
+   *   • Pass `null` to explicitly CLEAR all six columns (used by the
+   *     Studio "Revert to template default" action — after the user
+   *     reverts, the post is no longer AI-designed).
+   *   • Omit the field entirely to leave the columns untouched.
+   * The action body uses the discriminator below to pick the right path.
+   */
+  ai_design?: AiDesignProvenance | null;
 }
 
 export interface UpsertStudioPostOk {
@@ -250,6 +275,52 @@ export interface UpsertStudioPostOk {
 export interface UpsertStudioPostErr {
   ok: false;
   error: string;
+}
+
+/**
+ * Translate the action input's optional `ai_design` field into a partial
+ * UPDATE bag for the six `generated_posts.ai_design_*` + `original_template_id`
+ * columns. Pulled out of the action body because both the UPDATE and the
+ * INSERT branches need the exact same translation — keeping a single
+ * helper guarantees they can never drift.
+ *
+ * Three branches map to three caller intents:
+ *   • `undefined` → return `{}`, columns untouched.
+ *   • `null`      → return `{ ai_design_*: null, original_template_id: null }`,
+ *                    explicitly clearing the row's AI provenance. Used by
+ *                    the Studio "Revert to template default" action.
+ *   • object      → return `{ ai_design_*: <values> }`, recording the AI
+ *                    design provenance from the design-and-render route.
+ */
+function buildAiDesignUpdate(
+  ai_design: AiDesignProvenance | null | undefined,
+): Partial<{
+  ai_design_mood: string | null;
+  ai_design_critique_passed: boolean | null;
+  ai_design_token_input: number | null;
+  ai_design_token_output: number | null;
+  ai_design_duration_ms: number | null;
+  original_template_id: string | null;
+}> {
+  if (ai_design === undefined) return {};
+  if (ai_design === null) {
+    return {
+      ai_design_mood: null,
+      ai_design_critique_passed: null,
+      ai_design_token_input: null,
+      ai_design_token_output: null,
+      ai_design_duration_ms: null,
+      original_template_id: null,
+    };
+  }
+  return {
+    ai_design_mood: ai_design.mood,
+    ai_design_critique_passed: ai_design.critique_passed,
+    ai_design_token_input: ai_design.token_input,
+    ai_design_token_output: ai_design.token_output,
+    ai_design_duration_ms: ai_design.duration_ms,
+    original_template_id: ai_design.original_template_id,
+  };
 }
 
 export async function upsertGeneratedPostFromStudioAction(
@@ -296,6 +367,14 @@ export async function upsertGeneratedPostFromStudioAction(
 
     const priorImagePath = existing.image_path;
 
+    // why: Phase 2 AI Design — translate the optional ai_design field into
+    // a partial update bag. Three cases the spread handles cleanly:
+    //   • input.ai_design === undefined → don't touch ai_design_* columns
+    //   • input.ai_design === null      → set every ai_design_* column to NULL
+    //                                      (used by the Studio Revert action)
+    //   • input.ai_design = { ... }     → write all six columns from it
+    const aiDesignUpdate = buildAiDesignUpdate(input.ai_design);
+
     const { error: updError } = await supabase
       .from("generated_posts")
       .update({
@@ -321,6 +400,7 @@ export async function upsertGeneratedPostFromStudioAction(
         // route's resolvePerPlatformCaption helper handles that fallback.
         captions_by_platform: input.captions_by_platform ?? {},
         updated_at: nowIso,
+        ...aiDesignUpdate,
       })
       .eq("id", input.id)
       .eq("created_by", profile.id);
@@ -406,6 +486,11 @@ export async function upsertGeneratedPostFromStudioAction(
       // why: seed test_mode from the global default. User can override per
       // post via setPostTestModeAction after creation.
       test_mode: test_mode_default,
+      // Phase 2 AI Design — same translation as the UPDATE branch.
+      // For INSERT the difference vs UPDATE is moot (a fresh row has no
+      // prior AI design state) but using the same helper keeps the two
+      // branches honest about their contract.
+      ...buildAiDesignUpdate(input.ai_design),
     })
     .select("id")
     .maybeSingle();
@@ -665,6 +750,90 @@ function extractStoragePathFromPublicUrl(url: string): string | null {
   // before returning — Storage.remove() takes the bare path only.
   const q = tail.indexOf("?");
   return q === -1 ? tail : tail.slice(0, q);
+}
+
+// ---------------------------------------------------------------------------
+// Revert AI Design — clear ai_design_* + layer_tree so Studio next opens
+// against the factory template_id (= original_template_id) instead of the
+// stashed AI schema.
+// ---------------------------------------------------------------------------
+//
+// Called from the Studio "Revert to template default" link that surfaces
+// next to the "✨ Designed by Claude" badge. After this runs:
+//   • ai_design_* columns are NULL
+//   • original_template_id is NULL
+//   • layer_tree is NULL → Studio re-hydrates from `template_id` on next open
+//   • image_url / image_path are LEFT ALONE — the stale AI render keeps
+//     showing in the "Created Posts" strip until the user saves a fresh
+//     factory PNG. Stale-but-correct beats a missing thumbnail.
+//
+// Caller is responsible for follow-on UX: pop a "Reverted — re-render?"
+// toast, or close + re-open Studio so the factory template loads from
+// scratch.
+
+export interface RevertAiDesignInput {
+  generated_post_id: string;
+}
+
+export type RevertAiDesignResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+export async function revertAiDesignAction(
+  input: RevertAiDesignInput,
+): Promise<RevertAiDesignResult> {
+  const profile = await requireUser();
+  if (!input.generated_post_id) {
+    return { ok: false, error: "generated_post_id required" };
+  }
+
+  const supabase = createAdminClient();
+
+  // Ownership check first — admin client bypasses RLS, gate by created_by.
+  const { data: existing, error: fetchErr } = await supabase
+    .from("generated_posts")
+    .select("id, created_by, ai_design_mood")
+    .eq("id", input.generated_post_id)
+    .maybeSingle();
+
+  if (fetchErr) {
+    return { ok: false, error: `lookup_failed: ${fetchErr.message}` };
+  }
+  if (!existing) {
+    return { ok: false, error: "row not found" };
+  }
+  if (existing.created_by !== profile.id) {
+    return { ok: false, error: "not owner" };
+  }
+  if (!existing.ai_design_mood) {
+    // Idempotent — no AI design to revert. Returning ok lets the UI
+    // optimistically clear the badge without an error toast on a
+    // double-click.
+    return { ok: true };
+  }
+
+  const { error: updErr } = await supabase
+    .from("generated_posts")
+    .update({
+      ai_design_mood: null,
+      ai_design_critique_passed: null,
+      ai_design_token_input: null,
+      ai_design_token_output: null,
+      ai_design_duration_ms: null,
+      original_template_id: null,
+      layer_tree: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+
+  if (updErr) {
+    return { ok: false, error: `update_failed: ${updErr.message}` };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

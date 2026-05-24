@@ -390,6 +390,11 @@ export type Database = {
       generated_posts: {
         Row: {
           additional_images: Json
+          ai_design_critique_passed: boolean | null
+          ai_design_duration_ms: number | null
+          ai_design_mood: string | null
+          ai_design_token_input: number | null
+          ai_design_token_output: number | null
           asset_count: number
           bundle_path: string | null
           bundle_url: string | null
@@ -415,6 +420,7 @@ export type Database = {
           mls_hashtag: string | null
           mls_number: string
           notes: string | null
+          original_template_id: string | null
           output_mode: string
           platform_post_ids: Json
           post_type: string
@@ -437,6 +443,11 @@ export type Database = {
         }
         Insert: {
           additional_images?: Json
+          ai_design_critique_passed?: boolean | null
+          ai_design_duration_ms?: number | null
+          ai_design_mood?: string | null
+          ai_design_token_input?: number | null
+          ai_design_token_output?: number | null
           asset_count?: number
           bundle_path?: string | null
           bundle_url?: string | null
@@ -462,6 +473,7 @@ export type Database = {
           mls_hashtag?: string | null
           mls_number: string
           notes?: string | null
+          original_template_id?: string | null
           output_mode?: string
           platform_post_ids?: Json
           post_type: string
@@ -484,6 +496,11 @@ export type Database = {
         }
         Update: {
           additional_images?: Json
+          ai_design_critique_passed?: boolean | null
+          ai_design_duration_ms?: number | null
+          ai_design_mood?: string | null
+          ai_design_token_input?: number | null
+          ai_design_token_output?: number | null
           asset_count?: number
           bundle_path?: string | null
           bundle_url?: string | null
@@ -509,6 +526,7 @@ export type Database = {
           mls_hashtag?: string | null
           mls_number?: string
           notes?: string | null
+          original_template_id?: string | null
           output_mode?: string
           platform_post_ids?: Json
           post_type?: string
@@ -1454,6 +1472,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      render_schema_cache: {
+        Row: {
+          created_at: string
+          expires_at: string
+          format: string
+          id: string
+          listing_id: string
+          schema: Json
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          format: string
+          id?: string
+          listing_id: string
+          schema: Json
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          format?: string
+          id?: string
+          listing_id?: string
+          schema?: Json
+        }
+        Relationships: []
       }
       report_deliveries: {
         Row: {
