@@ -102,14 +102,23 @@ import {
   getBrandSyncStatusAction,
   syncBrandAssetsAction,
 } from "@/app/(app)/post-builder/actions";
-import { handlePhase2KeyDown } from "./history/keyboard-shortcuts";
+import {
+  handlePhase2KeyDown,
+  handleToolsKeyDown,
+} from "./history/keyboard-shortcuts";
 import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
-import AddLayerToolbar from "./panels/AddLayerToolbar";
+import AddLayerToolbar, {
+  spawnCircle as spawnCircleObj,
+  spawnLine as spawnLineObj,
+  spawnRect as spawnRectObj,
+  spawnText as spawnTextObj,
+} from "./panels/AddLayerToolbar";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
 import ContextualTopToolbar from "./panels/ContextualTopToolbar";
 import LayerListPanel from "./panels/LayerListPanel";
 import PhotosPanel from "./panels/PhotosPanel";
+import ToolsPanel, { type ToolMode } from "./panels/ToolsPanel";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
 import CarouselPreview from "./panels/CarouselPreview";
 import CarouselSlidePicker from "./panels/CarouselSlidePicker";
@@ -255,14 +264,39 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // unchanged — Canva-mindset call: highlight the new affordance without
   // disrupting the established opening behavior.
   const [sidebarTab, setSidebarTab] = useState<
-    "templates" | "brand" | "agents" | "photos"
+    "templates" | "brand" | "agents" | "photos" | "tools"
   >("brand");
+  // why: ToolsPanel (Canva-parity Tools tab — 2026-05-23) owns its own
+  // popout but the active TOOL state (Select vs Draw) lives here at the
+  // editor level so:
+  //   • Esc inside the editor can force-exit Draw mode
+  //   • Switching sidebarTab AWAY from "tools" auto-resets to Select so
+  //     the user doesn't accidentally keep drawing on the canvas
+  //   • Keyboard shortcuts (P for draw, V for select) can toggle it
+  // The brush sub-state (pen/marker/highlighter/eraser + color + width)
+  // is owned inside ToolsPanel; we don't need to lift that here.
+  const [toolMode, setToolMode] = useState<ToolMode>("select");
   // why: Canva-style icon-rail UX — the left rail is always visible at 64px;
   // the 280px expanded panel slides out next to it when a tab is active.
   // Clicking the active tab's icon collapses the panel back to just the rail
   // so Larissa can max out canvas space. Default-open at mount so the
   // existing "land on Brand assets" flow is unchanged.
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(true);
+
+  // why: when the user leaves the Tools tab (or collapses the sidebar
+  // entirely), force-exit Draw mode. Otherwise the canvas stays in
+  // isDrawingMode and the user has no visible affordance explaining
+  // why their click-to-select gestures are painting strokes instead.
+  // This is the inverse of the "switch INTO tools enters Draw" pattern —
+  // the latter is intentionally NOT here because picking a brush
+  // explicitly is the right gesture for "I want to draw".
+  useEffect(() => {
+    const onToolsTab = sidebarExpanded && sidebarTab === "tools";
+    if (!onToolsTab && toolMode === "draw") {
+      setToolMode("select");
+    }
+  }, [sidebarTab, sidebarExpanded, toolMode]);
+
   // why: right-side Layers/properties panel mirror — collapses to a 48px
   // vertical rail showing a single Layers icon. Stays expanded by default.
   const [layersExpanded, setLayersExpanded] = useState<boolean>(true);
@@ -2039,16 +2073,70 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         // why: Phase 2 — delegate Cmd+Z/Cmd+Shift+Z (undo/redo) and arrow-key
         // nudging to Agent B's handler. It returns true if it consumed the
         // event (the helper internally calls e.preventDefault when needed).
-        handlePhase2KeyDown(e, {
+        const consumed = handlePhase2KeyDown(e, {
           canvas,
           history,
           onCanvasMutated: () => setLayerVersion((v) => v + 1),
         });
+        // why: only fall through to Tools shortcuts (R/O/L/T/P/E/Escape)
+        // when Phase 2 didn't already consume the event. This preserves
+        // the precedence: undo/redo + nudge win over any letter that
+        // might collide. The current bindings don't actually collide,
+        // but defending against future additions is cheap.
+        if (!consumed) {
+          const toolsConsumed = handleToolsKeyDown(e, {
+            canvas,
+            toolMode,
+            setToolMode,
+            // why: each spawn shim mirrors what AddLayerToolbar does on
+            // click — add to canvas, select, bump version, record history.
+            // Reusing the toolbar's exported factories keeps defaults
+            // (color/size/font) identical between mouse and keyboard paths.
+            onSpawnRect: () => {
+              const obj = spawnRectObj(canvas);
+              canvas.add(obj);
+              handleLayerAdded(obj);
+              history.record?.();
+            },
+            onSpawnCircle: () => {
+              const obj = spawnCircleObj(canvas);
+              canvas.add(obj);
+              handleLayerAdded(obj);
+              history.record?.();
+            },
+            onSpawnLine: () => {
+              const obj = spawnLineObj(canvas);
+              canvas.add(obj);
+              handleLayerAdded(obj);
+              history.record?.();
+            },
+            onSpawnText: () => {
+              const obj = spawnTextObj(canvas);
+              canvas.add(obj);
+              handleLayerAdded(obj);
+              history.record?.();
+            },
+          });
+          if (toolsConsumed) {
+            e.preventDefault();
+          }
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleDeleteSelection, handleDuplicateSelection, history]);
+  }, [
+    handleDeleteSelection,
+    handleDuplicateSelection,
+    history,
+    // why: Tools-shortcut deps. toolMode changes on every Draw/Select
+    // toggle so we re-attach the listener — that's the cheap way to
+    // ensure the closure inside `onKey` always sees the latest tool
+    // state when Esc fires.
+    handleLayerAdded,
+    toolMode,
+    setToolMode,
+  ]);
 
   // -------------------------------------------------------------------------
   // Selected-layer-derived computed values for the toolbar
@@ -2305,6 +2393,27 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 }
               }}
             />
+            {/* Tools tab — Canva-parity Draw/Shapes/Lines/Text popout.
+                Lives at the BOTTOM of the rail (matches Canva's placement)
+                so it doesn't push the established Templates/Brand/Agents/
+                Photos rhythm. */}
+            <SidebarRailButton
+              label="Tools"
+              icon={<ToolsTabIcon />}
+              active={sidebarExpanded && sidebarTab === "tools"}
+              onClick={() => {
+                if (sidebarExpanded && sidebarTab === "tools") {
+                  setSidebarExpanded(false);
+                  // why: collapsing the Tools panel must also exit Draw
+                  // mode — otherwise the user has no visible affordance
+                  // explaining why their clicks are now painting.
+                  setToolMode("select");
+                } else {
+                  setSidebarTab("tools");
+                  setSidebarExpanded(true);
+                }
+              }}
+            />
           </nav>
 
           {/* Expanded panel — 280px wide, only when sidebarExpanded.
@@ -2326,7 +2435,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                       ? "Brand"
                       : sidebarTab === "agents"
                         ? "Agents"
-                        : "Photos"}
+                        : sidebarTab === "photos"
+                          ? "Photos"
+                          : "Tools"}
                 </span>
                 <button
                   type="button"
@@ -2375,11 +2486,19 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onSync={handleSyncBrandAssets}
                     syncStatus={brandSyncStatus}
                   />
-                ) : (
+                ) : sidebarTab === "photos" ? (
                   <PhotosPanel
                     photos={listingPhotos}
                     isLoading={listingPhotosLoading}
                     onPhotoPicked={(p) => void handleListingPhotoPicked(p)}
+                  />
+                ) : (
+                  <ToolsPanel
+                    canvas={fabricRef.current}
+                    activeTool={toolMode}
+                    onToolChange={setToolMode}
+                    onLayerAdded={handleLayerAdded}
+                    recordHistory={history.record}
                   />
                 )}
               </div>
@@ -3465,6 +3584,29 @@ function PhotosTabIcon(): JSX.Element {
     >
       <rect x="4" y="4" width="9" height="9" rx="1" />
       <path d="M2 11V3a1 1 0 011-1h8" />
+    </svg>
+  );
+}
+
+// Tools tab — Canva-parity Draw / Shapes / Lines / Text panel.
+// why: a pencil-on-paper glyph reads as both "draw" and "tools" at
+// rail size. Matches the visual language of Canva's bottom-of-rail
+// "Tools" icon without being a literal copy.
+function ToolsTabIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 13l8.5-8.5 2 2L5 15H3v-2z" />
+      <path d="M10.5 5.5l2 2" />
     </svg>
   );
 }

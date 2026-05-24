@@ -25,6 +25,7 @@
 import { type Canvas, type FabricObject } from "fabric";
 
 import { type UndoRedoHistory } from "../contracts";
+import type { ToolMode } from "../panels/ToolsPanel";
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -196,4 +197,106 @@ export function handlePhase2KeyDown(
   }
 
   return false;
+}
+
+// ===========================================================================
+// Tools-panel keyboard shortcuts (2026-05-23)
+// ===========================================================================
+//
+// Companion dispatcher for the Canva-parity Tools panel. Handles letter keys
+// for tool/shape/text spawning + Escape for exiting Draw mode. Kept separate
+// from handlePhase2KeyDown because:
+//   • Different bail rules — Tools shortcuts only fire when no modifier is
+//     held (R alone, not Cmd+R which is the browser's reload).
+//   • The orchestrator wires DIFFERENT callbacks per key, so a fan-out
+//     context struct keeps the dispatcher's signature flat instead of one
+//     giant boolean-returning method per key.
+//   • Lets the Tools-panel feature be ripped out cleanly later if needed
+//     without touching the Phase 2 undo/redo + nudge contract.
+//
+// Recognized bindings:
+//   • Escape → exit Draw mode (no-op when already in Select)
+//   • P      → enter Draw mode (Pen sub-tool; sub-tool defaults to last used)
+//   • E      → enter Draw mode + Eraser sub-tool [Phase 2 — currently the
+//              shortcut just enters Draw; ToolsPanel picks the sub-tool]
+//   • R      → spawn rectangle at canvas center
+//   • O      → spawn circle
+//   • L      → spawn straight line
+//   • T      → spawn paragraph text
+// ---------------------------------------------------------------------------
+
+export interface ToolsKeyContext {
+  canvas: Canvas | null;
+  /** Current ToolMode. Used so Esc no-ops when already in Select. */
+  toolMode: ToolMode;
+  /** Set the ToolMode. Used by Esc (→ select) and P (→ draw). */
+  setToolMode: (next: ToolMode) => void;
+  /** Spawn callbacks — orchestrator wires them to the same factories the
+   *  AddLayerToolbar and ToolsPanel buttons use. Each callback is responsible
+   *  for adding the object to the canvas, selecting it, and recording history. */
+  onSpawnRect: () => void;
+  onSpawnCircle: () => void;
+  onSpawnLine: () => void;
+  onSpawnText: () => void;
+}
+
+/**
+ * Handle a Tools-panel keyboard event. Returns true when consumed (so the
+ * caller can preventDefault). Bails (returns false) on the same conditions
+ * as handlePhase2KeyDown — no canvas, focus in a page input, Fabric in
+ * inline text-edit mode.
+ *
+ * Also bails when ANY modifier (Cmd/Ctrl/Alt) is held — letter-key
+ * shortcuts must never compete with browser/OS shortcuts like Cmd+R.
+ */
+export function handleToolsKeyDown(
+  e: KeyboardEvent,
+  ctx: ToolsKeyContext,
+): boolean {
+  const { canvas, toolMode, setToolMode } = ctx;
+  if (!canvas) return false;
+  if (isTypingInPageInput(e.target)) return false;
+  if (isFabricEditingText(canvas.getActiveObject())) return false;
+
+  // Escape — handled regardless of modifiers so users with sticky-keys
+  // habits still get the expected exit-draw behavior.
+  if (e.key === "Escape") {
+    if (toolMode === "draw") {
+      setToolMode("select");
+      return true;
+    }
+    return false;
+  }
+
+  // why: letter shortcuts never fire with a modifier — Cmd+R is reload,
+  // Cmd+T is new tab, etc. We must not intercept those.
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+
+  switch (e.key.toLowerCase()) {
+    case "p":
+      setToolMode("draw");
+      return true;
+    case "e":
+      // why: Phase 1 — pressing E just enters Draw mode (the ToolsPanel
+      // already remembers the user's last brush, so if they were on
+      // Eraser before, they come back to Eraser). Phase 2 will pipe a
+      // setBrush callback through so E directly selects the eraser
+      // brush regardless of prior state.
+      setToolMode("draw");
+      return true;
+    case "r":
+      ctx.onSpawnRect();
+      return true;
+    case "o":
+      ctx.onSpawnCircle();
+      return true;
+    case "l":
+      ctx.onSpawnLine();
+      return true;
+    case "t":
+      ctx.onSpawnText();
+      return true;
+    default:
+      return false;
+  }
 }

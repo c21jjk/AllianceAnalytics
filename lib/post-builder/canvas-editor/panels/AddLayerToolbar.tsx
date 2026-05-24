@@ -86,7 +86,11 @@ function getCanvasCenter(canvas: NonNullable<AddLayerToolbarProps["canvas"]>): {
   return { cx: w / 2, cy: h / 2 };
 }
 
-function spawnText(
+// why: exported (2026-05-23) so the Tools-panel keyboard-shortcut dispatcher
+// can reuse the EXACT same spawn defaults as the toolbar buttons. Without
+// export, T/R/O/L would diverge from the toolbar in subtle ways (font,
+// color, size) over time.
+export function spawnText(
   canvas: NonNullable<AddLayerToolbarProps["canvas"]>,
 ): FabricObject {
   const { cx, cy } = getCanvasCenter(canvas);
@@ -123,7 +127,7 @@ function spawnText(
   return tb;
 }
 
-function spawnRect(
+export function spawnRect(
   canvas: NonNullable<AddLayerToolbarProps["canvas"]>,
 ): FabricObject {
   const { cx, cy } = getCanvasCenter(canvas);
@@ -161,7 +165,7 @@ function spawnRect(
   return rect;
 }
 
-function spawnCircle(
+export function spawnCircle(
   canvas: NonNullable<AddLayerToolbarProps["canvas"]>,
 ): FabricObject {
   const { cx, cy } = getCanvasCenter(canvas);
@@ -194,7 +198,7 @@ function spawnCircle(
   return circle;
 }
 
-function spawnLine(
+export function spawnLine(
   canvas: NonNullable<AddLayerToolbarProps["canvas"]>,
 ): FabricObject {
   const { cx, cy } = getCanvasCenter(canvas);
