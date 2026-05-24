@@ -250,19 +250,26 @@ palette — but use the 1080×1920 canvas and place all critical content
 inside the safe middle band (top 250px and bottom 200px are IG/TT UI).
 
 ──── RECIPE: just_listed ────
-PHOTO: ~85% of canvas height. Image layer at top, full width.
-  • square_1x1: photo y=0 height≈918, info band y=918 height=162
-  • story_9x16: photo y=250 height=1280, info band y=1530 height=190
-INFO BAND: dark Obsessed Grey (#252526) rectangle covering bottom ~15-20%.
-EYEBROW: "Just Listed" in script font (Kaushan Script), white,
-  ~90pt, positioned to OVERLAY the boundary between photo and band
-  (centered horizontally, sitting on the band/photo transition).
-BODY: address (street + city stacked), beds/baths/sqft on one line,
-  price on its own line. All in Nunito ~22pt, white, left-aligned
-  inside the dark band.
-LOGO: brokerage_logo (C21 ALLIANCE) at the right side of the dark band.
-  Width >= 200px.
-NO AGENT FIELDS.
+PHOTO: full canvas, info band overlays bottom.
+  • square_1x1: photo y=0 width=1080 height=1080, info band y=840 height=240
+  • story_9x16: photo y=0 width=1080 height=1920, info band y=1530 height=390
+INFO BAND: dark Obsessed Grey (#252526) rectangle covering bottom ~22%.
+EYEBROW: "Just Listed" in Kaushan Script (script font), WHITE, fontSize
+  140 (square) or 180 (story). Positioned to OVERLAP the band's TOP
+  edge so the script flows over the photo. Use a "lift" text effect
+  (kind:"lift", opacity:0.6) for legibility on busy photos. This text
+  MUST visually dominate the bottom third — it's the post's signature.
+  Anything smaller than 140pt fails the eyebrow-size hard rule.
+ADDRESS: street in Nunito Bold 34pt, city in Nunito Regular 30pt
+  STACKED on the left of the band. Both WHITE. address_line1 and
+  city are SEPARATE bound fields — never use city_state_zip.
+BEDS/BATHS: Nunito Medium 28pt, WHITE, below the city. Bind to
+  beds_baths field which returns "4 BR / 3 BA".
+PRICE: right side of band, Nunito ExtraBold 38pt, GOLD (#C9A84C).
+LOGO: brokerage_logo (C21 ALLIANCE white lockup) on the right side
+  of the band, bottom-aligned. Width 320 (square) or 380 (story).
+  ABSOLUTE MINIMUM 280px width — anything smaller fails the brand rule.
+NO AGENT FIELDS — zero agent_name / agent_photo / agent_* layers.
 
 ──── RECIPE: just_sold ────
 PHOTO: 100% full bleed. Image layer fills entire canvas.

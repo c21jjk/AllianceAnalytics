@@ -87,27 +87,28 @@ export function buildJustListedSquareTemplate(): CanvasTemplateSchema {
     strokeDashArray: [],
   });
 
-  // ---- z=30: "Just Listed" script eyebrow, overlapping band edge ----
-  // ~90pt script, white, horizontally centered. Top edge sits ABOVE the
-  // band (top = BAND_TOP - 50) so the script flows from photo onto band.
-  // Larissa's reference has it offset toward the left half of the canvas;
-  // we center it so any-length address still reads cleanly underneath.
+  // ---- z=30: "Just Listed" script eyebrow, large + into the photo ----
+  // 2026-05-24 John feedback: "Just Listed" needs to stand out — even
+  // embedded into the photo. Bumped from 96pt → 140pt and pushed up
+  // ~110px above the band so most of the script sits on the photo
+  // itself. White on photo + 140pt mass means it reads at thumbnail
+  // scale on Instagram.
   layers.push({
     id: id("eyebrow"),
     name: "Just Listed eyebrow",
     kind: "text",
     locked: false,
     visible: true,
-    left: 80,
-    top: BAND_TOP - 50,
-    width: W - 160,
-    height: 130,
+    left: 60,
+    top: BAND_TOP - 130,
+    width: W - 120,
+    height: 180,
     angle: 0,
     opacity: 1,
     z: 30,
     text: "Just Listed",
     fontFamily: ALLIANCE_FONTS.kaushanScript,
-    fontSize: 96,
+    fontSize: 140,
     fontWeight: 400,
     fontStyle: "normal",
     fill: ALLIANCE_COLORS.white,
@@ -117,6 +118,14 @@ export function buildJustListedSquareTemplate(): CanvasTemplateSchema {
     underline: false,
     linethrough: false,
     editable: true,
+    // why: "lift" preset — subtle drop shadow at 60% opacity. Keeps
+    // "Just Listed" legible against busy photos (foliage, kitchens)
+    // without looking stamped. The preset's fixed black + 4px offset +
+    // 12px blur is the canvas-editor's house style for text-on-photo.
+    effect: {
+      kind: "lift",
+      opacity: 0.6,
+    },
   });
 
   // ---- z=31: street address, Nunito Bold, left-aligned inside band ----
@@ -152,6 +161,7 @@ export function buildJustListedSquareTemplate(): CanvasTemplateSchema {
   });
 
   // ---- z=32: city (NEVER state, NEVER zip — Larissa hard rule) ----
+  // 2026-05-24 John feedback: city was too small. Bumped 22pt → 30pt.
   layers.push({
     id: id("address_city"),
     name: "City",
@@ -161,14 +171,14 @@ export function buildJustListedSquareTemplate(): CanvasTemplateSchema {
     left: 60,
     top: BAND_TOP + 144,
     width: 720,
-    height: 36,
+    height: 44,
     angle: 0,
     opacity: 1,
     z: 32,
     text: "{city}",
     boundField: "city",
     fontFamily: ALLIANCE_FONTS.nunito,
-    fontSize: 22,
+    fontSize: 30,
     fontWeight: 400,
     fontStyle: "normal",
     fill: ALLIANCE_COLORS.white,
@@ -181,8 +191,9 @@ export function buildJustListedSquareTemplate(): CanvasTemplateSchema {
   });
 
   // ---- z=33: beds/baths/sqft summary line ----
-  // The reference puts "4 BR / 2.5 BA" + sqft on one inline-ish row
-  // below the address. boundField "beds_baths" returns "4 BR / 2.5 BA".
+  // 2026-05-24 John feedback: beds/baths was too small. Bumped 20pt →
+  // 28pt. Resolver returns "4 BR / 2.5 BA" via the "beds_baths" bound
+  // field — single short phrase that benefits from the size bump.
   layers.push({
     id: id("beds_baths"),
     name: "Beds / Baths",
@@ -190,17 +201,17 @@ export function buildJustListedSquareTemplate(): CanvasTemplateSchema {
     locked: false,
     visible: true,
     left: 60,
-    top: BAND_TOP + 180,
+    top: BAND_TOP + 188,
     width: 720,
-    height: 30,
+    height: 40,
     angle: 0,
     opacity: 1,
     z: 33,
     text: "{beds_baths}",
     boundField: "beds_baths",
     fontFamily: ALLIANCE_FONTS.nunito,
-    fontSize: 20,
-    fontWeight: 400,
+    fontSize: 28,
+    fontWeight: 500,
     fontStyle: "normal",
     fill: ALLIANCE_COLORS.white,
     textAlign: "left",
@@ -244,20 +255,18 @@ export function buildJustListedSquareTemplate(): CanvasTemplateSchema {
   });
 
   // ---- z=35: C21 ALLIANCE brokerage logo, bottom-right of band ----
-  // Width 220px ≥ 160px Alliance brand floor. Uses the explicit src
-  // (data-URI / Supabase Storage URL from brand-logos.ts) — this is
-  // ALSO what the AI Design path now resolves to thanks to the
-  // brokerage_logo bound-field resolver fix in fabric-factory.ts.
+  // 2026-05-24 John feedback: logo needs to be larger. Bumped from
+  // 220×50 → 320×72 so the lockup reads clearly at IG thumbnail scale.
   layers.push({
     id: id("brokerage_logo"),
     name: "C21 ALLIANCE logo",
     kind: "image",
     locked: false,
     visible: true,
-    left: W - 260,
-    top: BAND_TOP + 170,
-    width: 220,
-    height: 50,
+    left: W - 360,
+    top: BAND_TOP + 158,
+    width: 320,
+    height: 72,
     angle: 0,
     opacity: 1,
     z: 35,
