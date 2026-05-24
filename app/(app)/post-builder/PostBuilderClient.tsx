@@ -938,6 +938,21 @@ export default function PostBuilderClient({
     setAiDesign(null);
     setAiProgress("");
     setAiError(null);
+    // why (2026-05-24 — preview/editor desync fix): we already wipe
+    // aiDesign here, but until now we left renderResult intact. That
+    // produced a confusing split state — the preview pane kept showing
+    // the PRIOR listing's saved AI render JPEG (renderResult.image_url
+    // was stale), while clicking "Edit in Studio" fell through to the
+    // factory template (aiDesign was null). User-facing symptom: pic 1
+    // shows one design, pic 2 shows a totally different one.
+    //
+    // Clearing renderResult alongside aiDesign keeps the four pieces
+    // in lockstep: change ANY of (post_type, variant, format, mls) →
+    // both the in-memory AI schema AND the displayed preview reset.
+    // The user then has to click Generate (factory) or ✨ AI Design
+    // (new run) to repopulate, which matches the user's mental model
+    // of "fresh context, fresh canvas."
+    setRenderResult(null);
   }, [postType, variantId, format, selectedMls]);
 
   /**
