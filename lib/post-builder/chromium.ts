@@ -173,15 +173,35 @@ export async function screenshotHtml(args: ScreenshotArgs): Promise<Buffer> {
 
       // Wait for the canvas to signal it's done rendering. waitForFunction
       // polls the page's JS context until the predicate returns true.
-      await page.waitForFunction(
-        (sel: string, attr: string) => {
+      //
+      // 2026-05-23 diagnostic improvement: predicate now also returns true
+      // when status === "error" — that lets us read the error message off
+      // `data-render-error` and surface it immediately instead of polling
+      // for "ready" until the 30s timeout. Before this change, any
+      // HeadlessRenderClient error (bad image URL, missing font, malformed
+      // schema layer) produced a useless "30000ms exceeded" message.
+      const settled = (await page.waitForFunction(
+        (sel: string, attr: string, errAttr: string) => {
           const el = document.querySelector(sel);
-          return el?.getAttribute(attr) === "ready";
+          const status = el?.getAttribute(attr);
+          if (status === "ready") return { kind: "ready" };
+          if (status === "error") {
+            return {
+              kind: "error",
+              message: el?.getAttribute(errAttr) ?? "(no error message)",
+            };
+          }
+          return false;
         },
         { timeout: readyTimeout, polling: 100 },
         readySelector,
         readyAttribute,
-      );
+        "data-render-error",
+      )) as unknown as { jsonValue(): Promise<{ kind: "ready" } | { kind: "error"; message: string }> };
+      const outcome = await settled.jsonValue();
+      if (outcome.kind === "error") {
+        throw new Error(`headless render reported error: ${outcome.message}`);
+      }
       stage("client signaled ready");
       // Belt + suspenders: one more font tick before snapping. The client
       // already waited for fonts.ready before signaling, but a quick extra

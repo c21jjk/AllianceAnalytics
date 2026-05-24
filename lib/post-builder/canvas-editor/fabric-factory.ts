@@ -422,9 +422,22 @@ export async function createFabricImage(
     // origin). Supabase Storage does; some third-party MLS photo CDNs do not.
     // We surface CORS failures distinctly so the parent can show a clear
     // error toast rather than a generic "export failed".
-    const img = await FabricImage.fromURL(src, {
-      crossOrigin: "anonymous",
-    });
+    //
+    // 2026-05-23 — added a 15s per-image timeout via Promise.race. Before
+    // this, a slow/hung MLS CDN could stall the whole headless renderer
+    // (which awaits images sequentially) and surface only as the
+    // chromium-wide "30000ms exceeded" timeout. The 15s cap lets the
+    // parent caller fall through to the no_src placeholder path while
+    // still leaving headroom under the 30s screenshot ceiling.
+    const img = await Promise.race<FabricImage>([
+      FabricImage.fromURL(src, { crossOrigin: "anonymous" }),
+      new Promise<FabricImage>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`image load timeout after 15s: ${src}`)),
+          15_000,
+        ),
+      ),
+    ]);
     // why: object-fit math. Fabric scales uniformly via scaleX/scaleY based on
     // the image's natural element dimensions. We compute the scale that makes
     // the image fit the layer's width × height per the chosen objectFit.
