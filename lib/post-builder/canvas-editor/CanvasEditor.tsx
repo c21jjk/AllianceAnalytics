@@ -304,7 +304,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // why: user-driven zoom on top of the fit-to-viewport `displayScale`. Range
   // 0.25-2.0 mirrors Canva's bottom-bar zoom. "Fit" resets to 1 which means
   // "use displayScale as-is" — the canvas always fits the viewport at zoom=1.
-  const [zoom, setZoom] = useState<number>(1);
+  //
+  // 2026-05-24 — default lowered from 1.0 → 0.8 per John. At 1.0 (Fit), the
+  // canvas fills the available area but the layer panel + brand sidebar
+  // crowd the visible slide so the user can't see the full composition
+  // without scrolling. 0.8 leaves comfortable margin on both sides while
+  // keeping detail readable for text-edit work.
+  const [zoom, setZoom] = useState<number>(0.8);
   const [brandAssets, setBrandAssets] = useState<readonly BrandAsset[]>([]);
   const [officesForFilter, setOfficesForFilter] = useState<readonly OfficeOption[]>([]);
   const [brandAssetsLoading, setBrandAssetsLoading] = useState<boolean>(true);

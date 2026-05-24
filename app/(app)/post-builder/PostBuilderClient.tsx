@@ -1440,6 +1440,25 @@ export default function PostBuilderClient({
           setGeneratedPostId(upsertRes.id);
         }
 
+        // why (2026-05-24 — edits-survive-reopen fix): when AI Design is
+        // active, `studioTemplate` resolves to `aiDesign.schema`. The save
+        // above persists the edited schema to the DB and refreshes the
+        // preview image, but if we don't ALSO bake the edits into
+        // `aiDesign.schema`, the next click of "Edit in Studio" reads the
+        // ORIGINAL AI schema from in-memory state and shows that instead
+        // — exactly the regression John saw 2026-05-24 (preview correct,
+        // reopen reverted to the un-edited AI design).
+        //
+        // Only runs when `aiDesign` is present; non-AI Studio edits don't
+        // go through this path. Reopening a regular factory render after
+        // edits still rebuilds from the factory template — a separate gap
+        // tracked in task #67-adjacent work.
+        if (upsertRes.ok) {
+          setAiDesign((prev) =>
+            prev ? { ...prev, schema: result.schema } : prev,
+          );
+        }
+
         // ---- 3. Update the preview pane in-memory ----
         // why: reuse the existing renderResult shape so the rest of the UI
         // (download button, post-now flow, caption pane) keeps working
