@@ -42,9 +42,8 @@ import {
 } from "react";
 
 import ColorPicker from "../primitives/ColorPicker";
-import FontPicker, {
-  type FontPickerOption,
-} from "../primitives/FontPicker";
+import FontPicker from "../primitives/FontPicker";
+import { FONT_OPTIONS } from "../primitives/font-options";
 import Tooltip from "../primitives/Tooltip";
 import { ALLIANCE_FONTS } from "../templates/tokens";
 import {
@@ -92,35 +91,9 @@ interface ContextualTopToolbarProps {
   onAlign?: (direction: ContextualAlignDirection) => void;
 }
 
-// ---------------------------------------------------------------------------
-// Shared font option list — mirrors TextPropertiesControls so both surfaces
-// pick from the same family roster. Defined here so the toolbar doesn't
-// import from a sibling control file.
-// ---------------------------------------------------------------------------
-
-const FONT_OPTIONS: ReadonlyArray<FontPickerOption> = [
-  { label: "Inter", value: ALLIANCE_FONTS.bodySans, category: "Sans" },
-  { label: "Montserrat", value: ALLIANCE_FONTS.montserrat, category: "Sans" },
-  { label: "Poppins", value: ALLIANCE_FONTS.poppins, category: "Sans" },
-  { label: "Lato", value: ALLIANCE_FONTS.lato, category: "Sans" },
-  { label: "Oswald", value: ALLIANCE_FONTS.oswald, category: "Display" },
-  { label: "Bebas Neue", value: ALLIANCE_FONTS.bebasNeue, category: "Display" },
-  { label: "Georgia", value: ALLIANCE_FONTS.displaySerif, category: "Serif" },
-  {
-    label: "Playfair Display",
-    value: ALLIANCE_FONTS.playfair,
-    category: "Serif",
-  },
-  {
-    label: "Cormorant Garamond",
-    value: ALLIANCE_FONTS.cormorant,
-    category: "Serif",
-  },
-  { label: "Lora", value: ALLIANCE_FONTS.lora, category: "Serif" },
-  { label: "Merriweather", value: ALLIANCE_FONTS.merriweather, category: "Serif" },
-  { label: "Pacifico", value: ALLIANCE_FONTS.pacifico, category: "Script" },
-  { label: "SF Mono", value: ALLIANCE_FONTS.monoNum, category: "Mono" },
-];
+// FONT_OPTIONS now lives in primitives/font-options.ts as the single source
+// of truth — was duplicated here + in TextPropertiesControls.tsx before the
+// 2026-05-24 expansion. Imported at the top of this file.
 
 // ---------------------------------------------------------------------------
 // Helpers

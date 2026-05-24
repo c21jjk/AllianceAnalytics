@@ -69,7 +69,11 @@ export type { PostFormat, PostType, PostVariant };
 export const PLATFORM_DIMENSIONS: Readonly<
   Record<PostFormat, Readonly<{ width: number; height: number }>>
 > = {
-  portrait_4x5: { width: 1080, height: 1350 },
+  square_1x1: { width: 1080, height: 1080 },
+  // why: portrait_4x5 still listed here so existing (pre-2026-05-24) saved
+  // posts that carry format='portrait_4x5' in their layer_tree continue to
+  // open. New posts use square_1x1. Removed once we confirm zero live
+  // portrait_4x5 references remain.
   story_9x16: { width: 1080, height: 1920 },
 } as const;
 

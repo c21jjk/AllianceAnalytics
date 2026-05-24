@@ -44,7 +44,7 @@ export const FORMAT_DIMS: Record<
   PostFormat,
   { width: number; height: number }
 > = {
-  portrait_4x5: { width: 1080, height: 1350 },
+  square_1x1: { width: 1080, height: 1080 },
   story_9x16: { width: 1080, height: 1920 },
 };
 

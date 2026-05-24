@@ -24,8 +24,56 @@
  * via props and emits onChange. Doesn't know about Fabric.
  */
 
-import { type JSX, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type JSX,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
+
+// ===========================================================================
+// Favorites — localStorage-backed star list
+// ===========================================================================
+//
+// 2026-05-24 — added alongside the 50-font catalog expansion. With ~69 fonts
+// in the dropdown, the originals + Larissa's recipe fonts get lost in the
+// alphabet. Favorites lets each user pin their 5-10 go-to fonts to the
+// top of the popover.
+//
+// Storage: localStorage. Per-browser, no DB sync — matches the two-person
+// team scale. If the team grows or sync becomes a real need, lift to a
+// `user_preferences` table.
+
+const FAVORITES_STORAGE_KEY = "alliance.canvas.favorite-fonts";
+
+function readFavoritesFromStorage(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((v): v is string => typeof v === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeFavoritesToStorage(favorites: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      FAVORITES_STORAGE_KEY,
+      JSON.stringify(Array.from(favorites)),
+    );
+  } catch {
+    // localStorage can throw under quota / private-mode constraints. Failure
+    // is non-fatal — the in-memory Set still works for the current session.
+  }
+}
 
 export interface FontPickerOption {
   /** Display label — typically the family's marketing name ("Playfair Display"). */
@@ -57,6 +105,28 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
     left: number;
     width: number;
   } | null>(null);
+
+  // ----- Favorites state — hydrated from localStorage on mount -----
+  // why: lazy initializer so the SSR pass doesn't access window. The first
+  // client render reads the stored set; toggleFavorite writes back on each
+  // change. Components that mount AFTER the first favorite is set will pick
+  // it up on their next render (each mounts its own snapshot).
+  const [favorites, setFavorites] = useState<Set<string>>(() =>
+    readFavoritesFromStorage(),
+  );
+
+  const toggleFavorite = useCallback((fontValue: string): void => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(fontValue)) {
+        next.delete(fontValue);
+      } else {
+        next.add(fontValue);
+      }
+      writeFavoritesToStorage(next);
+      return next;
+    });
+  }, []);
 
   // why: find the active option's label to render on the trigger button.
   // Fall back to the raw value if no option matches (defensive — shouldn't
@@ -139,9 +209,18 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
     };
   }, [open]);
 
-  // ----- Group options by category, preserving input order within each group -----
+  // ----- Group options by category, plus a virtual "Favorites" section -----
+  //
+  // Sections render in display order: Favorites first (when non-empty), then
+  // Sans / Display / Serif / Script / Mono. Favorites use the same option
+  // objects as the underlying categories — selecting one in Favorites is
+  // identical to selecting it in its native category.
+  //
+  // Section labels are typed as string here (not FontPickerOption["category"])
+  // because "Favorites" is a virtual label that doesn't exist in the option
+  // schema.
   const grouped: ReadonlyArray<{
-    category: FontPickerOption["category"];
+    label: string;
     options: ReadonlyArray<FontPickerOption>;
   }> = (() => {
     const order: ReadonlyArray<FontPickerOption["category"]> = [
@@ -151,12 +230,20 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
       "Script",
       "Mono",
     ];
-    return order
+    const categoryGroups = order
       .map((cat) => ({
-        category: cat,
+        label: cat as string,
         options: options.filter((o) => o.category === cat),
       }))
       .filter((g) => g.options.length > 0);
+    // why: only show Favorites when the user has actually starred something —
+    // an empty Favorites section would just be visual noise on first use.
+    const favoriteOptions = options.filter((o) => favorites.has(o.value));
+    if (favoriteOptions.length === 0) return categoryGroups;
+    return [
+      { label: "★ Favorites", options: favoriteOptions },
+      ...categoryGroups,
+    ];
   })();
 
   const handlePick = (next: string): void => {
@@ -220,53 +307,119 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
               <div className="flex-1 overflow-y-auto py-1">
                 {grouped.map((group, gIdx) => (
                   <div
-                    key={group.category}
+                    key={group.label}
                     className={gIdx > 0 ? "mt-1 border-t border-neutral-100 pt-1" : ""}
                   >
                     <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-                      {group.category}
+                      {group.label}
                     </div>
                     {group.options.map((opt) => {
                       const isActive = opt.value === value;
+                      const isFavorited = favorites.has(opt.value);
+                      // why: the row is a flex container with the option
+                      // SELECT button on the left and the STAR TOGGLE button
+                      // on the right. Two separate <button>s prevents the
+                      // star click from accidentally selecting the font, and
+                      // gives each affordance its own keyboard handling /
+                      // ARIA role.
                       return (
-                        <button
+                        <div
                           key={opt.value}
-                          type="button"
-                          role="option"
-                          aria-selected={isActive}
-                          onClick={() => handlePick(opt.value)}
-                          className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors ${
-                            isActive
-                              ? "bg-gold-50 text-gold-900"
-                              : "text-neutral-800 hover:bg-neutral-50"
+                          className={`flex w-full items-center gap-1 transition-colors ${
+                            isActive ? "bg-gold-50" : "hover:bg-neutral-50"
                           }`}
                         >
-                          {/* why: render the LABEL in its own font and at
-                              18px so the typographic character is obvious
-                              at a glance. Truncate long names. */}
-                          <span
-                            className="truncate"
-                            style={{ fontFamily: opt.value, fontSize: 18 }}
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={isActive}
+                            onClick={() => handlePick(opt.value)}
+                            className={`flex flex-1 items-center justify-between gap-2 px-3 py-2 text-left ${
+                              isActive ? "text-gold-900" : "text-neutral-800"
+                            }`}
                           >
-                            {opt.label}
-                          </span>
-                          {isActive ? (
-                            <svg
-                              width="14"
-                              height="14"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className="flex-shrink-0 text-gold-700"
-                              aria-hidden="true"
+                            {/* why: render the LABEL in its own font and at
+                                18px so the typographic character is obvious
+                                at a glance. Truncate long names. */}
+                            <span
+                              className="truncate"
+                              style={{ fontFamily: opt.value, fontSize: 18 }}
                             >
-                              <path d="M3 8l3 3 7-7" />
-                            </svg>
-                          ) : null}
-                        </button>
+                              {opt.label}
+                            </span>
+                            {isActive ? (
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="flex-shrink-0 text-gold-700"
+                                aria-hidden="true"
+                              >
+                                <path d="M3 8l3 3 7-7" />
+                              </svg>
+                            ) : null}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              // why: stop propagation so the click doesn't
+                              // bubble to any outer handlers and doesn't
+                              // accidentally trigger font selection on the
+                              // sibling button. Critical for the UX
+                              // (star = toggle favorite, NOT select font).
+                              e.stopPropagation();
+                              toggleFavorite(opt.value);
+                            }}
+                            aria-label={
+                              isFavorited
+                                ? `Remove ${opt.label} from favorites`
+                                : `Add ${opt.label} to favorites`
+                            }
+                            title={
+                              isFavorited
+                                ? "Remove from favorites"
+                                : "Add to favorites"
+                            }
+                            className={`flex-shrink-0 rounded p-2 transition-colors ${
+                              isFavorited
+                                ? "text-gold-600 hover:text-gold-700"
+                                : "text-neutral-300 hover:text-neutral-500"
+                            }`}
+                          >
+                            {/* Filled star when favorited, outline when not.
+                                Both glyphs use the same 16×16 viewBox so
+                                they hot-swap cleanly. */}
+                            {isFavorited ? (
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 16 16"
+                                fill="currentColor"
+                                aria-hidden="true"
+                              >
+                                <path d="M8 1l2.09 4.24L15 5.97l-3.5 3.41L12.36 14 8 11.69 3.64 14l.86-4.62L1 5.97l4.91-.73L8 1z" />
+                              </svg>
+                            ) : (
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M8 1l2.09 4.24L15 5.97l-3.5 3.41L12.36 14 8 11.69 3.64 14l.86-4.62L1 5.97l4.91-.73L8 1z" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
                       );
                     })}
                   </div>

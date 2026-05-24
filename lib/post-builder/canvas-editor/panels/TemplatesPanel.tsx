@@ -108,7 +108,7 @@ const FORMAT_META: Record<
   PostFormat,
   Readonly<{ label: string; aspect: string }>
 > = {
-  portrait_4x5: { label: "Portrait 4:5", aspect: "4 / 5" },
+  square_1x1: { label: "Square 1:1", aspect: "1 / 1" },
   story_9x16: { label: "Story 9:16", aspect: "9 / 16" },
 };
 
@@ -167,8 +167,8 @@ export default function TemplatesPanel(
       price_reduction: 4,
     };
     const fmtOrder: Record<PostFormat, number> = {
-      portrait_4x5: 0,
-      story_9x16: 1,
+      square_1x1: 0,
+      story_9x16: 2,
     };
     list.sort((a, b) => {
       const c = catOrder[a.category] - catOrder[b.category];

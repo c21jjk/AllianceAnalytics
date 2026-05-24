@@ -2723,7 +2723,7 @@ const ALLOWED_CUSTOM_TEMPLATE_POST_TYPES = new Set<PostType>([
   "price_reduction",
 ]);
 const ALLOWED_CUSTOM_TEMPLATE_FORMATS = new Set<PostFormat>([
-  "portrait_4x5",
+  "square_1x1",
   "story_9x16",
 ]);
 // why: factory variants in the active set. Custom templates must be based

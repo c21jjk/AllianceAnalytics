@@ -41,12 +41,15 @@ export default async function MultiOHPage() {
   // generate route renders every per-property slide via the DB template
   // (the event hero keeps its dedicated multi-property layout). See
   // docs/adr/0001-template-builder.md.
-  const [portraitTemplates, storyTemplates] = await Promise.all([
-    listTemplatesForPostType("open_house", "portrait_4x5"),
+  const [squareTemplates, storyTemplates] = await Promise.all([
+    listTemplatesForPostType("open_house", "square_1x1"),
     listTemplatesForPostType("open_house", "story_9x16"),
   ]);
+  // 2026-05-24 — square_1x1 replaced portrait_4x5 as the feed default.
+  // portrait_4x5 retained as a key with empty list to satisfy the
+  // Record<PostFormat, TemplateMeta[]> shape for legacy posts.
   const dbTemplatesByFormat = {
-    portrait_4x5: portraitTemplates,
+    square_1x1: squareTemplates,
     story_9x16: storyTemplates,
   };
 

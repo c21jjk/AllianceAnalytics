@@ -38,9 +38,7 @@ import {
 } from "react";
 
 import ColorPicker from "../../primitives/ColorPicker";
-import FontPicker, {
-  type FontPickerOption,
-} from "../../primitives/FontPicker";
+import FontPicker from "../../primitives/FontPicker";
 import { ALLIANCE_FONTS } from "../../templates/tokens";
 import {
   TEXT_EFFECT_PRESETS,
@@ -86,40 +84,10 @@ interface TextState {
   linethrough: boolean;
 }
 
-/**
- * Font family options. Pulled from ALLIANCE_FONTS so the picker stays in sync
- * with the project's font system. Each option carries the literal stack we
- * pass to Fabric AND a short display label so the dropdown reads cleanly.
- *
- * Order matters — the dropdown displays in this sequence. Grouped by visual
- * register (body sans → display sans → serif → script → mono) so Larissa can
- * scan from "safest body choice" down to "most ornamental."
- */
-// why: typed against FontPicker's option shape. The `category` field drives
-// the grouped sections inside the FontPicker popover (Sans / Display / Serif /
-// Script / Mono). Labels are the marketing names without the category suffix
-// — the FontPicker shows the category as a section header so "(Sans)" etc.
-// would be redundant noise.
-const FONT_OPTIONS: ReadonlyArray<FontPickerOption> = [
-  // ----- Sans (body + UI) -----
-  { label: "Inter", value: ALLIANCE_FONTS.bodySans, category: "Sans" },
-  { label: "Montserrat", value: ALLIANCE_FONTS.montserrat, category: "Sans" },
-  { label: "Poppins", value: ALLIANCE_FONTS.poppins, category: "Sans" },
-  { label: "Lato", value: ALLIANCE_FONTS.lato, category: "Sans" },
-  // ----- Display sans -----
-  { label: "Oswald", value: ALLIANCE_FONTS.oswald, category: "Display" },
-  { label: "Bebas Neue", value: ALLIANCE_FONTS.bebasNeue, category: "Display" },
-  // ----- Serif -----
-  { label: "Georgia", value: ALLIANCE_FONTS.displaySerif, category: "Serif" },
-  { label: "Playfair Display", value: ALLIANCE_FONTS.playfair, category: "Serif" },
-  { label: "Cormorant Garamond", value: ALLIANCE_FONTS.cormorant, category: "Serif" },
-  { label: "Lora", value: ALLIANCE_FONTS.lora, category: "Serif" },
-  { label: "Merriweather", value: ALLIANCE_FONTS.merriweather, category: "Serif" },
-  // ----- Script (accent) -----
-  { label: "Pacifico", value: ALLIANCE_FONTS.pacifico, category: "Script" },
-  // ----- Mono -----
-  { label: "SF Mono", value: ALLIANCE_FONTS.monoNum, category: "Mono" },
-];
+// Font catalog moved to primitives/font-options.ts as the single source of
+// truth. Was duplicated here + in ContextualTopToolbar.tsx before the
+// 2026-05-24 expansion to ~69 fonts.
+import { FONT_OPTIONS } from "../../primitives/font-options";
 
 const WEIGHT_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
   { label: "100 Thin", value: 100 },

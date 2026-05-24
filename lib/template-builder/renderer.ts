@@ -36,7 +36,9 @@ import type {
 const STORAGE_BUCKET = "post-builder-renders";
 
 const FORMAT_DIMS: Record<PostFormat, { width: number; height: number }> = {
-  portrait_4x5: { width: 1080, height: 1350 },
+  square_1x1: { width: 1080, height: 1080 },
+  // why: portrait_4x5 retained during the 2026-05-24 transition so existing
+  // saved posts continue to render. Removed once zero live references remain.
   story_9x16: { width: 1080, height: 1920 },
 };
 

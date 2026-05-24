@@ -30,22 +30,22 @@
  *   Latin markets, add &subset=… to the relevant @import.
  */
 
-/* ----- Sans (body + UI) ----- */
+/* ----- Sans (body + UI) — original catalog ----- */
 @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap");
 
-/* ----- Sans (display / headlines) ----- */
+/* ----- Sans (display / headlines) — original catalog ----- */
 @import url("https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap");
 
-/* ----- Serif (editorial / luxury) ----- */
+/* ----- Serif (editorial / luxury) — original catalog ----- */
 @import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700;900&display=swap");
 
-/* ----- Script (accent) ----- */
+/* ----- Script (accent) — original catalog ----- */
 @import url("https://fonts.googleapis.com/css2?family=Pacifico&display=swap");
 
 /*
@@ -53,6 +53,122 @@
  * app/layout.tsx — we don't re-import it here. Georgia and SF Mono are
  * system fonts; no @import needed.
  */
+
+/* ===========================================================================
+ * 2026-05-24 EXPANSION — 50 curated Google Fonts + 5 needed for Larissa's
+ * post-type recipes (Just Listed / SOLD / Open House). All free, all on
+ * Google Fonts. Loading impact: ~2-4s additional on cold cache, fully
+ * cached after first load. The dropdown's "Favorites" feature makes the
+ * larger catalog scannable.
+ * ===========================================================================
+ */
+
+/* ----- Larissa's actual recipe fonts (free Google Fonts) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Livvic:wght@300;400;500;600;700&display=swap");
+
+/* ----- Free Google Fonts substitutes for Larissa's commercial fonts ----- */
+/* Kaushan Script  → stand-in for Above the Beyond Script (Just Listed eyebrow) */
+@import url("https://fonts.googleapis.com/css2?family=Kaushan+Script&display=swap");
+/* DM Serif Display → stand-in for The Seasons (SOLD eyebrow) */
+@import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&display=swap");
+/* Allura → stand-in for Beautifully Delicious Script (Open House eyebrow) */
+@import url("https://fonts.googleapis.com/css2?family=Allura&display=swap");
+
+/* ----- Sans (additional 15 — geometric + humanist variety) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Karla:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Mulish:wght@300;400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fira+Sans:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;600;700;800&display=swap");
+
+/* ----- Display sans (additional 8 — for big eyebrows + headlines) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Anton&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@400;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Staatliches&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Russo+One&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Six+Caps&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Squada+One&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bowlby+One&display=swap");
+
+/* ----- Serif (additional 10 — editorial + body) ----- */
+@import url("https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bodoni+Moda:wght@400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=PT+Serif:wght@400;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Spectral:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Vollkorn:wght@400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bitter:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400;700&display=swap");
+
+/* ----- Display serif (4 — for big price callouts, SOLD treatments) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Abril+Fatface&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Yeseva+One&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Vidaloka&display=swap");
+
+/* ----- Script (additional 10 — biggest gap in original catalog) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Sacramento&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Satisfy&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Yellowtail&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Tangerine:wght@400;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Parisienne&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Pinyon+Script&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cookie&display=swap");
+
+/* ----- Slab serif (3 — currently zero in original catalog) ----- */
+@import url("https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@300;400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Arvo:wght@400;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Alfa+Slab+One&display=swap");
+
+/* ===========================================================================
+ * Self-hosted: Glacial Indifference (Hanken Design Co, SIL Open Font License).
+ * Not on Google Fonts; the .woff2 files live in /public/fonts/ and are
+ * served by Next.js with standard public-asset caching.
+ *
+ * License: SIL OFL 1.1 — free for personal and commercial use, including
+ * webfont embedding. License text bundled with the original Font Squirrel
+ * webfont kit; preserved in /public/fonts/SIL Open Font License.txt if
+ * added to the repo.
+ * ===========================================================================
+ */
+@font-face {
+  font-family: "Glacial Indifference";
+  src: url("/fonts/glacial-indifference-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Glacial Indifference";
+  src: url("/fonts/glacial-indifference-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Glacial Indifference";
+  src: url("/fonts/glacial-indifference-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* ===========================================================================
  * HsvPicker hue slider — styles the native <input type=range> with a full

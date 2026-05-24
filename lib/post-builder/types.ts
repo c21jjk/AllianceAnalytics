@@ -19,7 +19,12 @@ export type PostType =
 // Legacy generated_posts rows with format='square_1x1' keep their column
 // value (it's just text in the DB) and their already-rendered PNG, but no
 // new code path can produce square output.
-export type PostFormat = "portrait_4x5" | "story_9x16";
+// 2026-05-24 — square_1x1 is the default feed format. story_9x16 is for
+// Stories and Reels. portrait_4x5 was retired in the same purge; all
+// generated_posts rows that previously stored 'portrait_4x5' were
+// migrated to 'square_1x1' in the DB. New code must NOT reintroduce
+// portrait_4x5 as a valid format.
+export type PostFormat = "square_1x1" | "story_9x16";
 
 /**
  * Variant identifier. Active single-photo variants: v1 (Hero Editorial),

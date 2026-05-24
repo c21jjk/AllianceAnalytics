@@ -47,7 +47,6 @@ const VARIANT_LABELS: Record<string, string> = {
 
 const FORMAT_LABELS: Record<string, string> = {
   square_1x1: "Square 1:1",
-  portrait_4x5: "Portrait 4:5",
   story_9x16: "Story 9:16",
 };
 

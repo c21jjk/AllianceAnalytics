@@ -227,7 +227,7 @@ const POST_TYPES: { id: PostType; label: string; helper: string }[] = [
   { id: "price_reduction", label: "Price Reduced", helper: "Active · pick" },
 ];
 
-const FORMATS: PostFormat[] = ["portrait_4x5", "story_9x16"];
+const FORMATS: PostFormat[] = ["square_1x1", "story_9x16"];
 
 const STORAGE_KEY_POST_TYPE = "post-builder.post_type";
 const STORAGE_KEY_VARIANT = "post-builder.variant";
@@ -265,7 +265,7 @@ export default function PostBuilderClient({
   globalTestModeOn = false,
 }: Props) {
   const [postType, setPostType] = useState<PostType>("just_listed");
-  const [format, setFormat] = useState<PostFormat>("portrait_4x5");
+  const [format, setFormat] = useState<PostFormat>("square_1x1");
   const [variantId, setVariantId] = useState<PostVariant>("v1");
   const [search, setSearch] = useState("");
   const [selectedMls, setSelectedMls] = useState<string | null>(null);
@@ -586,7 +586,7 @@ export default function PostBuilderClient({
               ? (r.variant as SlideMetadata["variant"])
               : (initialResume.variant as SlideMetadata["variant"]);
             const format =
-              r.format === "portrait_4x5" ||
+              r.format === "square_1x1" ||
               r.format === "story_9x16"
                 ? r.format
                 : initialResume.format;
@@ -1685,8 +1685,6 @@ export default function PostBuilderClient({
 
   const previewAspectClass = useMemo(() => {
     switch (format) {
-      case "portrait_4x5":
-        return "aspect-[4/5]";
       case "story_9x16":
         return "aspect-[9/16]";
     }
@@ -3072,7 +3070,7 @@ export default function PostBuilderClient({
 
                 {/* Step 3 · Variant — hidden in multi-OH mode (per-property
                     card variant was chosen in the wizard). */}
-                {!isMultiOHPost ? (
+                {!isMultiOHPost && mergedVariantCards.length > 0 ? (
                 <div>
                   <div className="eyebrow mb-2">
                     Step 3 · Variant{" "}
@@ -5088,8 +5086,8 @@ function formatTimeRangeET(start: Date, end: Date): string {
 
 function formatShortName(format: PostFormat): string {
   switch (format) {
-    case "portrait_4x5":
-      return "portrait";
+    case "square_1x1":
+      return "square";
     case "story_9x16":
       return "story";
   }
@@ -5097,8 +5095,8 @@ function formatShortName(format: PostFormat): string {
 
 function dimensionsLabel(format: PostFormat): string {
   switch (format) {
-    case "portrait_4x5":
-      return "1080×1350";
+    case "square_1x1":
+      return "1080×1080";
     case "story_9x16":
       return "1080×1920";
   }
@@ -5158,7 +5156,7 @@ function VariantPreviewThumb({
 
   // Native template dimensions per format.
   const nativeDims =
-    format === "portrait_4x5"
+    format === "square_1x1"
       ? { w: 1080, h: 1350 }
       : { w: 1080, h: 1920 };
 
@@ -5166,7 +5164,7 @@ function VariantPreviewThumb({
   // derived from the aspect ratio. Small mode: fixed pixel box (legacy
   // callers — currently unused after the layout refactor, kept for the API).
   const longSide = size === "large" ? measuredW : 84;
-  const dims = format === "portrait_4x5"
+  const dims = format === "square_1x1"
     ? { w: nativeDims.w, h: nativeDims.h, displayW: longSide, displayH: Math.round(longSide * 1350 / 1080) }
     : { w: nativeDims.w, h: nativeDims.h, displayW: Math.round(longSide * 1080 / 1920), displayH: longSide };
   const scaleX = dims.displayW / dims.w;

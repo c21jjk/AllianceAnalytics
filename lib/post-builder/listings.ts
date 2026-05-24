@@ -184,5 +184,11 @@ function toListing(r: PropertyRow): PostBuilderListingWithOH {
     listing_date: r.listing_date,
     status: r.status,
     unit_number: r.unit_number,
+    // 2026-05-24 — PostBuilderListingWithOH adds these three OH event
+    // fields to the base PostBuilderListing. Filled later by the OH
+    // attach loop above when an OH row matches; null on first construction.
+    oh_start_at: null,
+    oh_end_at: null,
+    oh_comments: null,
   };
 }

@@ -103,7 +103,10 @@ export async function renderTemplate(
     listing: input.listing,
     heroImageDataUri: heroImageDataUris[0],
     heroImageDataUris,
-    customizations: input.customizations,
+    // why: TemplateRenderer's customizations param is `?: PostCustomizations`
+    // (undefined-or-omitted, not nullable). Coerce null → undefined to
+    // satisfy the contract after the 2026-05-24 V1 primitives stub refactor.
+    customizations: input.customizations ?? undefined,
   });
 
   // Launch headless Chromium and screenshot.

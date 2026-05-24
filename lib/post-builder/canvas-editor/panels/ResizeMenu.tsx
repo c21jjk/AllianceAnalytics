@@ -52,10 +52,10 @@ interface FormatMeta {
 }
 
 const FORMAT_META: Record<PostFormat, FormatMeta> = {
-  portrait_4x5: {
-    label: "Portrait 4:5",
-    aspectStyle: { width: 16, height: 20 },
-    platformHint: "IG feed preferred",
+  square_1x1: {
+    label: "Square 1:1",
+    aspectStyle: { width: 18, height: 18 },
+    platformHint: "IG feed default",
   },
   story_9x16: {
     label: "Story 9:16",

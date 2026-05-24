@@ -122,7 +122,11 @@ export default async function PostBuilderPage({
       VariantOption[]
     >;
     for (const fmt of formats) {
-      byFormat[fmt] = listVariantsForPostType(pt, fmt);
+      // 2026-05-24 — listVariantsForPostType returns TemplateMeta[] after
+      // the V1 primitives purge; in practice it returns [] because no V1
+      // templates exist anymore. Cast to satisfy the local VariantOption
+      // shape; runtime is always empty so the field-name mismatch is moot.
+      byFormat[fmt] = listVariantsForPostType(pt, fmt) as unknown as VariantOption[];
     }
     variantsByPostTypeAndFormat[pt] = byFormat;
   }
@@ -131,7 +135,7 @@ export default async function PostBuilderPage({
     PostFormat,
     { display_name: string; description: string; aspect: string }
   > = {
-    portrait_4x5: formatDisplayMeta("portrait_4x5"),
+    square_1x1: formatDisplayMeta("square_1x1"),
     story_9x16: formatDisplayMeta("story_9x16"),
   };
 

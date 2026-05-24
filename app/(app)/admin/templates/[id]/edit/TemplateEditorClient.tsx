@@ -31,7 +31,7 @@ import type {
  */
 
 const FORMAT_TABS: Array<{ id: PostFormat; label: string; aspect: string }> = [
-  { id: "portrait_4x5", label: "Portrait", aspect: "4:5" },
+  { id: "square_1x1", label: "Portrait", aspect: "4:5" },
   { id: "story_9x16", label: "Story", aspect: "9:16" },
 ];
 
@@ -47,7 +47,7 @@ export default function TemplateEditorClient({
   template,
   sampleListing,
 }: Props) {
-  const [activeFormat, setActiveFormat] = useState<PostFormat>("portrait_4x5");
+  const [activeFormat, setActiveFormat] = useState<PostFormat>("square_1x1");
   const [canvasOpen, setCanvasOpen] = useState(false);
 
   return (

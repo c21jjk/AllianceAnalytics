@@ -176,7 +176,7 @@ export default function MultiOHWizardClient({
   const [titleDirty, setTitleDirty] = useState(false);
 
   // ---- step 2 — format + variant ---------------------------------------
-  const [format, setFormat] = useState<PostFormat>("portrait_4x5");
+  const [format, setFormat] = useState<PostFormat>("square_1x1");
   const [perPropertyVariant, setPerPropertyVariant] = useState<PerPropertyVariant>("v2");
   /**
    * Phase 2E — when set, every per-property card in the carousel renders
@@ -1089,7 +1089,7 @@ function VariantCard({
   sampleListing,
 }: VariantCardProps) {
   const thumbWidthClass: Record<PostFormat, string> = {
-    portrait_4x5: "w-[100px]",
+    square_1x1: "w-[100px]",
     story_9x16: "w-[72px]",
   };
   return (
@@ -1288,7 +1288,7 @@ function Step3Review({
  * shows square mocks everywhere, etc.
  */
 const FORMAT_ASPECT: Record<PostFormat, string> = {
-  portrait_4x5: "aspect-[4/5]",
+  square_1x1: "aspect-square",
   story_9x16: "aspect-[9/16]",
 };
 
@@ -1982,7 +1982,7 @@ function SlideRibbon({
   // when total width exceeds the container.
   const thumbHeight = 110;
   const thumbWidthClass: Record<PostFormat, string> = {
-    portrait_4x5: "w-[88px]",
+    square_1x1: "w-[110px]",
     story_9x16: "w-[62px]",
   };
 
@@ -2362,8 +2362,8 @@ function deriveEventTitle(selected: readonly PostBuilderListing[]): string {
 /** Map a PostFormat enum to a short display string. */
 function prettyFormat(f: PostFormat): string {
   switch (f) {
-    case "portrait_4x5":
-      return "Portrait 4:5";
+    case "square_1x1":
+      return "Square 1:1";
     case "story_9x16":
       return "Story 9:16";
   }

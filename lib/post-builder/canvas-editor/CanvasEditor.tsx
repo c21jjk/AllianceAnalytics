@@ -2065,7 +2065,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   );
   const FORMAT_DISPLAY_NAMES: Record<string, string> = useMemo(
     () => ({
-      portrait_4x5: "Portrait (4:5)",
       story_9x16: "Story (9:16)",
     }),
     [],
@@ -3559,7 +3558,7 @@ function buildResizeMenuOptions(
   currentFormat: PostFormat,
 ): readonly ResizeMenuOption[] {
   const allFormats: readonly PostFormat[] = [
-    "portrait_4x5",
+    "square_1x1",
     "story_9x16",
   ];
   return allFormats.map((f) => {

@@ -129,7 +129,10 @@ function pickEmitter(
   format: PostFormat,
 ): (input: MultiOHEventInput) => string {
   switch (format) {
-    case "portrait_4x5":
+    case "square_1x1":
+      // 2026-05-24 — square is now the default feed format. Multi-OH still
+      // uses the portrait emitter as a fallback until a square-specific
+      // emitter is authored. Visually close enough; will need polish.
       return emitEventOverviewPortrait;
     case "story_9x16":
       return emitEventOverviewStory;
@@ -312,9 +315,9 @@ export function computeRowDensity(
 
   // Format multipliers — story has the most room, square the least.
   const heightMul =
-    format === "story_9x16" ? 1.18 : format === "portrait_4x5" ? 1.08 : 1.0;
+    format === "story_9x16" ? 1.18 : format === "square_1x1" ? 1.08 : 1.0;
   const fontMul =
-    format === "story_9x16" ? 1.08 : format === "portrait_4x5" ? 1.04 : 1.0;
+    format === "story_9x16" ? 1.08 : format === "square_1x1" ? 1.04 : 1.0;
 
   if (n <= 3) {
     return {
@@ -671,7 +674,7 @@ function renderAgentBlock(_input: MultiOHEventInput): string {
  * headline up to 72px to take advantage of the taller frame.
  */
 export function emitEventOverviewPortrait(input: MultiOHEventInput): string {
-  const fmt: PostFormat = "portrait_4x5";
+  const fmt: PostFormat = "square_1x1";
   const { width, height } = PLATFORM_DIMENSIONS[fmt];
   const margin = 60;
   const density = computeRowDensity(input.properties.length, fmt);

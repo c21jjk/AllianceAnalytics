@@ -119,7 +119,7 @@ export const STRATEGY_PROMPT = `${BRAND_BLOCK}
 
 PASS 2 — CREATIVE STRATEGY.
 
-You will receive: the listing's structured data (price, address, beds, baths, status, public_remarks), the composition brief from Pass 1, the target format (square, portrait_4x5, story_9x16), and optionally a user intent ("more luxury", "punchy", "minimal").
+You will receive: the listing's structured data (price, address, beds, baths, status, public_remarks), the composition brief from Pass 1, the target format (square_1x1 1080×1080 OR story_9x16 1080×1920 — NO other formats), and optionally a user intent ("more luxury", "punchy", "minimal").
 
 Your job is to commit to a CREATIVE DIRECTION before any layout work happens. Make decisions that a senior designer would make: don't pick "luxury_editorial" for a $350K starter home, don't pick "punchy_modern" for a $3M shore estate.
 
@@ -164,21 +164,64 @@ export const LAYOUT_PROMPT = `${BRAND_BLOCK}
 
 PASS 3 — LAYOUT EXECUTION.
 
-You will receive: the listing data, the composition brief from Pass 1, the strategy brief from Pass 2, the target canvas dimensions (width x height), the current layer schema as a starting reference, and a list of allowed bound-field tokens (price, address_line1, city_state_zip, etc.).
+You will receive: the listing data, the composition brief from Pass 1, the strategy brief from Pass 2, the target canvas dimensions (width x height), the current layer schema as a starting reference, and a list of allowed bound-field tokens.
 
 Your job is to produce the FULL CanvasTemplateSchema that executes the strategy. You are not patching — you are designing. Return a complete \`full_replacement\` LayoutPlan.
 
-LAYER RULES (read carefully):
+═══════════════════════════════════════════════════════════════════════════
+ALLIANCE BRAND HARD RULES — VIOLATING THESE FAILS THE CRITIQUE PASS
+═══════════════════════════════════════════════════════════════════════════
+
+ADDRESS FORMATTING (universal):
+  • NEVER display state or zip code on social posts. Use \`address_line1\`
+    (street) and \`city\` as SEPARATE bound fields. Never use the
+    \`city_state_zip\` bound field. Example: "308 Osprey Ct, Cape May
+    Court House" — NOT "308 Osprey Ct, Cape May Court House, NJ 08210".
+
+AGENT INFO (post-type gated):
+  • For \`just_listed\` posts: ZERO agent fields. Do NOT include
+    agent_name, agent_photo, agent_phone, agent_email, agent_title.
+  • For \`just_sold\` posts: ZERO agent fields (default). The closing
+    agent gets attribution elsewhere if the user wants it.
+  • For \`open_house\` posts (retail): ZERO agent fields.
+  • For \`under_contract\` and \`price_reduction\`: ZERO agent fields.
+  • Agent attribution is allowed ONLY on Broker Open House (B2B) flyers
+    which are out-of-scope for this AI pipeline.
+
+BROKERAGE LOGO (universal):
+  • The C21 ALLIANCE brokerage_logo image layer MUST be at least 160px
+    wide on square_1x1 / story_9x16 formats (~14%+ of canvas width).
+    Tiny logos are illegible on Instagram thumbnails.
+
+EYEBROW SIZE (universal):
+  • Post-status eyebrows ("JUST LISTED", "SOLD", "OPEN HOUSE") must be
+    visually dominant. Use fontSize >= 44 for sans eyebrows, or
+    fontSize >= 70 for script/serif eyebrows. The factory default of
+    28px is too small.
+
+═══════════════════════════════════════════════════════════════════════════
+LAYER RULES
+═══════════════════════════════════════════════════════════════════════════
+
   • Layer kinds: text, image, shape. (Group layers exist in the schema but you cannot author them.)
   • Each layer has: id (stable string — keep existing IDs when possible so undo behaves), name (human readable), kind, locked (bool, default false), visible (bool, default true), left/top (px from canvas top-left), width/height (px), angle (deg, default 0), opacity (0..1, default 1).
-  • Text layers also have: text (literal string), boundField (optional — when set, hydrated from listing data and overrides text), fontFamily (full CSS stack — use exactly one of the Inter/Montserrat/Poppins/Lato/Oswald/Bebas Neue/Georgia/Playfair Display/Cormorant Garamond/Lora/Merriweather/Pacifico/SF Mono stacks), fontSize (px), fontWeight (100-900), fontStyle ("normal" | "italic"), fill (hex), textAlign, lineHeight, charSpacing (1/1000 em), underline, linethrough, editable (bool, default true), effect (optional).
+  • Text layers also have: text (literal string), boundField (optional — when set, hydrated from listing data and overrides text), fontFamily (full CSS stack — see "Allowed font stacks" below), fontSize (px), fontWeight (100-900), fontStyle ("normal" | "italic"), fill (hex), textAlign, lineHeight, charSpacing (1/1000 em), underline, linethrough, editable (bool, default true), effect (optional).
   • Image layers: src (URL or empty), boundField (e.g., "hero_photo"), objectFit ("cover" | "contain" | "stretch"), cornerRadius (px), borderColor (hex or ""), borderWidth (px).
   • Shape layers: shapeType ("rect" | "circle" | "ellipse" | "line"), fill (hex OR a gradient — when in doubt use a hex string), stroke (hex), strokeWidth (px), cornerRadius (rect only), strokeDashArray (number[]).
 
+ALLOWED FONT STACKS (use EXACTLY these strings as fontFamily values):
+  Sans body: 'Inter, ui-sans-serif, system-ui, sans-serif', '"Montserrat", "Helvetica Neue", Arial, sans-serif', '"Nunito", "Helvetica Neue", Arial, sans-serif', '"Livvic", "Helvetica Neue", Arial, sans-serif', '"Glacial Indifference", "Helvetica Neue", Arial, sans-serif'
+  Display sans: '"Oswald", "Arial Narrow", sans-serif', '"Bebas Neue", Impact, "Arial Narrow Bold", sans-serif', '"Anton", "Arial Narrow", sans-serif'
+  Serif: '"Playfair Display", Georgia, "Times New Roman", serif', '"DM Serif Display", "Playfair Display", Georgia, serif', '"Cormorant Garamond", "EB Garamond", Garamond, Georgia, serif'
+  Script (signature): '"Kaushan Script", "Brush Script MT", cursive', '"Allura", "Brush Script MT", cursive', '"Pacifico", "Brush Script MT", cursive'
+  (Many more fonts are available — see ALLIANCE_FONTS in templates/tokens.ts. The above are the minimum set you'll need for the post-type recipes below.)
+
 BOUND FIELDS for text layers (use these instead of hardcoded text wherever possible — they hydrate from the listing automatically):
-  • price, close_price, address_line1, city_state_zip, city, state, zip
+  • price, close_price, address_line1, city, state, zip, city_state_zip
+    ⚠ Use \`address_line1\` + \`city\` separately. NEVER \`city_state_zip\`. NEVER \`state\` or \`zip\` alone.
   • beds, baths, beds_baths, property_type, mls_number, tagline, status_label
   • agent_name, agent_phone, agent_email, agent_title, office_name
+    ⚠ Do NOT use any \`agent_*\` field on just_listed / just_sold / open_house. See HARD RULES above.
   • open_house_date, open_house_time
 
 BOUND FIELDS for image layers:
@@ -186,12 +229,90 @@ BOUND FIELDS for image layers:
 
 LAYOUT DECISIONS:
   • RESPECT THE SAFE TEXT ZONES from Pass 1. Place text overlays ONLY in zones the composition pass marked as safe, OR use a scrim/framed treatment.
-  • RESPECT SAFE PLATFORM ZONES for story (9:16) format: top 250px and bottom 200px are reserved for Instagram / TikTok UI overlays. Place ALL critical text inside the safe middle band (top: 250, bottom: 1720 for a 1080x1920 story).
-  • POSITION units: pixels from the canvas top-left. Origin (0,0) is top-left. Layer left/top is the layer's top-left corner.
+  • RESPECT SAFE PLATFORM ZONES for story (9:16) format: top 250px and bottom 200px are reserved for Instagram / TikTok UI overlays. Place ALL critical text inside the safe middle band.
+  • POSITION units: pixels from the canvas top-left. Origin (0,0) is top-left.
   • Z-ORDER: layers are rendered in array order. Earlier = lower (background). Later = higher (foreground).
-  • If the strategy calls for a scrim, add an explicit shape layer (rect, fill = a hex approximation of black-at-65%, like "#00000099" — but our schema is hex-only so use "#000000" with opacity 0.65 instead).
+  • Scrims: add an explicit shape layer (rect) with fill="#000000" and opacity=0.65 (or similar). The schema is hex-only — use opacity for transparency.
 
-OUTPUT SHAPE — exactly this structure:
+═══════════════════════════════════════════════════════════════════════════
+GOLD-STANDARD POST-TYPE RECIPES — copy the structure of the matching one
+═══════════════════════════════════════════════════════════════════════════
+
+These recipes are distilled from real high-performing posts the user's
+marketer (Larissa) has shipped. They are validated visual languages.
+Each post type has its OWN recipe — do NOT generalize across them.
+Match the recipe whose \`category\` matches the listing.
+
+CANVAS DIMENSIONS (2026-05-24 pivot): every recipe below is authored for
+SQUARE 1080×1080 unless explicitly noted as story_9x16. For story format,
+scale the layout proportionally — same hierarchy, same fonts, same color
+palette — but use the 1080×1920 canvas and place all critical content
+inside the safe middle band (top 250px and bottom 200px are IG/TT UI).
+
+──── RECIPE: just_listed ────
+PHOTO: ~85% of canvas height. Image layer at top, full width.
+  • square_1x1: photo y=0 height≈918, info band y=918 height=162
+  • story_9x16: photo y=250 height=1280, info band y=1530 height=190
+INFO BAND: dark Obsessed Grey (#252526) rectangle covering bottom ~15-20%.
+EYEBROW: "Just Listed" in script font (Kaushan Script), white,
+  ~90pt, positioned to OVERLAY the boundary between photo and band
+  (centered horizontally, sitting on the band/photo transition).
+BODY: address (street + city stacked), beds/baths/sqft on one line,
+  price on its own line. All in Nunito ~22pt, white, left-aligned
+  inside the dark band.
+LOGO: brokerage_logo (C21 ALLIANCE) at the right side of the dark band.
+  Width >= 200px.
+NO AGENT FIELDS.
+
+──── RECIPE: just_sold ────
+PHOTO: 100% full bleed. Image layer fills entire canvas.
+FRAME: white rectangle stroke layer, strokeWidth 7, inset ~40px from
+  canvas edges (so the frame appears OVER the photo, boxing the
+  composition). Use a rect shape with fill="" (no fill) and stroke="#FFFFFF".
+LOGO PILL: brokerage_logo (C21 ALLIANCE) at top-center, ~80px from
+  top edge, white "C21" + gold "ALLIANCE" — render via the
+  brokerage_logo image layer (it's pre-composed).
+ADDRESS PILL: small gold-tinted rectangle at top-center below the logo,
+  with "address_line1, city" text in Glacial Indifference 22pt, dark fill.
+EYEBROW: "SOLD" in DM Serif Display (substitute for The Seasons),
+  ~70pt, white, center-aligned, positioned ~70% down the canvas.
+PRICE: \`price\` bound field in Glacial Indifference ~50pt, white,
+  center-aligned, immediately below the SOLD text.
+NO AGENT FIELDS.
+
+──── RECIPE: open_house ────
+PHOTO: ~50% of canvas, NOT 85%. Photo lives in a rounded-corner
+  rectangle CENTERED in the canvas (cornerRadius ~24px). Generous
+  white space ABOVE and BELOW the photo.
+BACKGROUND: white (#FFFFFF), NOT a colored fill.
+DATE/TIME: "open_house_date open_house_time" at top in Livvic ~28pt,
+  dark, center-aligned (e.g., "SATURDAY MAY 23RD 11-1").
+EYEBROW: HUGE composition — "Open" in Allura (substitute for Beautifully
+  Delicious Script) at ~314pt, dark, overlapping with "HOUSE" in
+  Livvic at ~77pt, dark. The script "Open" should visually flow over
+  and around the "HOUSE" sans text. This is the design's signature.
+ADDRESS: "address_line1, city" below the photo, Livvic ~28pt,
+  center-aligned, dark.
+LOGO: brokerage_logo at the bottom of the canvas, gold "C21" +
+  dark "ALLIANCE". Width >= 240px.
+NO AGENT FIELDS.
+
+──── RECIPE: under_contract ────
+No reference yet. Use a tasteful interpretation of the brand: Obsessed
+Grey + gold accent, status_label "UNDER CONTRACT" eyebrow, no agent
+fields, address as street + city only, brokerage logo prominent.
+
+──── RECIPE: price_reduction ────
+No reference yet. Tone is MEASURED, not desperate. status_label "PRICE
+REDUCED" or similar, no exclamation marks. Show old price struck-through
+and new price below if both close_price and price are available; otherwise
+just show the new price. No agent fields, address as street + city only,
+brokerage logo prominent.
+
+═══════════════════════════════════════════════════════════════════════════
+OUTPUT SHAPE — exactly this structure
+═══════════════════════════════════════════════════════════════════════════
+
 {
   "kind": "full_replacement",
   "schema": {
@@ -199,14 +320,14 @@ OUTPUT SHAPE — exactly this structure:
     "name": "AI-designed <mood> for <address>",
     "version": 1,
     "category": "just_listed" | "just_sold" | "under_contract" | "open_house" | "price_reduction" | "evergreen",
-    "format": "square_1x1" | "portrait_4x5" | "story_9x16",
+    "format": "square_1x1" | "story_9x16",
     "width": <px>,
     "height": <px>,
     "background": "#RRGGBB",
     "layers": [
       { "id": "...", "name": "...", "kind": "image", "locked": false, "visible": true, "left": 0, "top": 0, "width": 1080, "height": 1080, "angle": 0, "opacity": 1, "src": "", "boundField": "hero_photo", "objectFit": "cover", "crossOrigin": "anonymous", "cornerRadius": 0, "borderColor": "", "borderWidth": 0 },
-      { "id": "...", "name": "...", "kind": "shape", "locked": false, "visible": true, "left": 0, "top": 900, "width": 1080, "height": 350, "angle": 0, "opacity": 0.7, "shapeType": "rect", "fill": "#000000", "stroke": "", "strokeWidth": 0, "cornerRadius": 0, "strokeDashArray": [] },
-      { "id": "...", "name": "...", "kind": "text", "locked": false, "visible": true, "left": 80, "top": 950, "width": 920, "height": 70, "angle": 0, "opacity": 1, "text": "JUST LISTED", "fontFamily": "Inter, ui-sans-serif, system-ui, sans-serif", "fontSize": 28, "fontWeight": 600, "fontStyle": "normal", "fill": "#C9A84C", "textAlign": "left", "lineHeight": 1.16, "charSpacing": 200, "underline": false, "linethrough": false, "editable": true }
+      { "id": "...", "name": "...", "kind": "shape", "locked": false, "visible": true, "left": 0, "top": 900, "width": 1080, "height": 350, "angle": 0, "opacity": 0.7, "shapeType": "rect", "fill": "#252526", "stroke": "", "strokeWidth": 0, "cornerRadius": 0, "strokeDashArray": [] },
+      { "id": "...", "name": "...", "kind": "text", "locked": false, "visible": true, "left": 80, "top": 880, "width": 920, "height": 110, "angle": 0, "opacity": 1, "text": "Just Listed", "fontFamily": "\\"Kaushan Script\\", \\"Brush Script MT\\", cursive", "fontSize": 90, "fontWeight": 400, "fontStyle": "normal", "fill": "#FFFFFF", "textAlign": "center", "lineHeight": 1.0, "charSpacing": 0, "underline": false, "linethrough": false, "editable": true }
     ]
   }
 }
@@ -226,6 +347,29 @@ You will receive: the strategy brief from Pass 2, the composition brief from Pas
 Your job is to review YOUR OWN layout against the checklist below. Be honest — passing a flawed design is worse than catching its problems now.
 
 CHECKLIST:
+
+  ═══ ALLIANCE BRAND HARD RULES (any violation = FAIL, must revise) ═══
+  HR1. ADDRESS — does any text layer use \`boundField: "city_state_zip"\`
+       or \`"state"\` or \`"zip"\`? If yes, FAIL. The address MUST be
+       street (address_line1) + city only. No state, no zip code.
+  HR2. AGENT FIELDS on Just Listed / Just Sold / Open House — does any
+       text or image layer reference agent_name, agent_photo, agent_phone,
+       agent_email, or agent_title? If yes AND category is just_listed,
+       just_sold, or open_house, FAIL. Strip the offending layers.
+  HR3. BROKERAGE LOGO SIZE — is there an image layer with
+       \`boundField: "brokerage_logo"\` with width >= 160px? If width
+       < 160px or no brokerage_logo layer exists at all, FAIL. The logo
+       is mandatory and must be legible at thumbnail scale.
+  HR4. EYEBROW SIZE — for the post's status eyebrow ("Just Listed",
+       "SOLD", "OPEN HOUSE"), is the fontSize >= 44 (sans) or >= 70
+       (script/serif)? Tiny eyebrows fail the brand standard.
+  HR5. RECIPE MATCH — does the layout follow the gold-standard recipe
+       for the post's category from PASS 3's recipes section? Photo
+       coverage, signature font, info-band style, etc. If the layout
+       is wildly off-recipe (e.g., 50/50 photo+band for Just Listed
+       instead of 85/15), FAIL.
+
+  ═══ Standard design checks ═══
   1. Hierarchy clarity — does ONE element dominate the eye? If three things compete, FAIL.
   2. Readability — is every text element legible? Check small type, low-contrast pairings (gold on warm photo), text over busy photo zones.
   3. Brand consistency — only brand fonts? Only brand colors? Tone matches mood?
@@ -234,6 +378,10 @@ CHECKLIST:
   6. Hierarchy execution — does the strategy's hierarchy decision actually show up in the layout (large = important, small = supporting)?
   7. Price-band match — does the visual treatment match the listing's price tier? A $350K layout should NOT look like a $3M layout, and vice versa.
   8. Emotional register — does the mood match the status (Just Sold = celebration energy, Price Reduction = measured)?
+
+When you revise to fix a HARD RULE violation, the revision is mandatory —
+"close enough" doesn't pass HR1-HR5. Strip non-compliant layers, add
+missing required layers, resize fonts up to the minimum, etc.
 
 If everything passes, return:
 {
