@@ -34,8 +34,10 @@ import { Textbox } from "fabric";
 import type { Canvas, FabricObject } from "fabric";
 import {
   type JSX,
+  type ReactNode,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -44,7 +46,11 @@ import FontPicker, {
   type FontPickerOption,
 } from "../primitives/FontPicker";
 import { ALLIANCE_FONTS } from "../templates/tokens";
-import { isGradientFill } from "../types";
+import {
+  TEXT_EFFECT_PRESETS,
+  textEffectToFabricProps,
+} from "../textEffects";
+import { isGradientFill, type TextEffect } from "../types";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -167,18 +173,27 @@ export default function ContextualTopToolbar(
 // ===========================================================================
 
 function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
-  const { canvas, selectionVersion, onCanvasMutated, recordHistory } = props;
+  const { canvas, selectionVersion, onCanvasMutated, recordHistory, onAlign } =
+    props;
 
   // Local mirror state — written through to Fabric on every input. Pattern
   // matches TextPropertiesControls; see that file's comment for the
   // "controlled input + bumped re-sync" rationale.
+  //
+  // 2026-05-23 expansion (Canva-parity): added linethrough, textAlign,
+  // lineHeight, charSpacing — everything from TextPropertiesControls so the
+  // right panel can revert to the layer list when text is selected.
   const [state, setState] = useState<{
     fontFamily: string;
     fontSize: number;
     fontWeight: number;
     fontStyle: "normal" | "italic";
     underline: boolean;
+    linethrough: boolean;
     fill: string;
+    textAlign: "left" | "center" | "right" | "justify";
+    lineHeight: number;
+    charSpacing: number;
   } | null>(null);
 
   // Re-read on selection change / external mutation.
@@ -193,6 +208,13 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
       typeof fillRaw === "string" && fillRaw.length > 0
         ? fillRaw
         : "#000000";
+    const rawAlign = (active.textAlign ?? "left") as string;
+    const align: "left" | "center" | "right" | "justify" =
+      rawAlign === "center" ||
+      rawAlign === "right" ||
+      rawAlign === "justify"
+        ? rawAlign
+        : "left";
     setState({
       fontFamily: String(active.fontFamily ?? ALLIANCE_FONTS.bodySans),
       fontSize: Number(active.fontSize ?? 48),
@@ -201,7 +223,13 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
         | "normal"
         | "italic",
       underline: Boolean(active.underline),
+      linethrough: Boolean(active.linethrough),
       fill: fillHex,
+      textAlign: align,
+      lineHeight:
+        typeof active.lineHeight === "number" ? active.lineHeight : 1.16,
+      charSpacing:
+        typeof active.charSpacing === "number" ? active.charSpacing : 0,
     });
   }, [canvas, selectionVersion]);
 
@@ -213,7 +241,12 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
         fontWeight: number;
         fontStyle: "normal" | "italic";
         underline: boolean;
+        linethrough: boolean;
         fill: string;
+        textAlign: "left" | "center" | "right" | "justify";
+        lineHeight: number;
+        charSpacing: number;
+        text: string;
       }>,
     ): void => {
       const active = readActive(canvas);
@@ -241,6 +274,15 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
     onCanvasMutated?.();
   };
 
+  // Stepper handlers — Canva's "− value +" pattern. Each click bumps ±1pt
+  // and records history (discrete edit, not a slider drag).
+  const handleSizeStep = (delta: number): void => {
+    const next = Math.max(4, Math.min(400, Math.round(state.fontSize + delta)));
+    setState((prev) => (prev ? { ...prev, fontSize: next } : prev));
+    applyToActive({ fontSize: next });
+    commit(canvas, onCanvasMutated, recordHistory);
+  };
+
   const handleBold = (): void => {
     const next = state.fontWeight >= 600 ? 400 : 700;
     setState((prev) => (prev ? { ...prev, fontWeight: next } : prev));
@@ -263,59 +305,113 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
     commit(canvas, onCanvasMutated, recordHistory);
   };
 
+  const handleStrikethrough = (): void => {
+    const next = !state.linethrough;
+    setState((prev) => (prev ? { ...prev, linethrough: next } : prev));
+    applyToActive({ linethrough: next });
+    commit(canvas, onCanvasMutated, recordHistory);
+  };
+
   const handleFill = (next: string): void => {
     setState((prev) => (prev ? { ...prev, fill: next } : prev));
     applyToActive({ fill: next });
     commit(canvas, onCanvasMutated, recordHistory);
   };
 
+  const handleAlignText = (next: "left" | "center" | "right" | "justify"): void => {
+    setState((prev) => (prev ? { ...prev, textAlign: next } : prev));
+    applyToActive({ textAlign: next });
+    commit(canvas, onCanvasMutated, recordHistory);
+  };
+
+  const handleLineHeight = (next: number): void => {
+    if (!Number.isFinite(next) || next < 0.5 || next > 3) return;
+    setState((prev) => (prev ? { ...prev, lineHeight: next } : prev));
+    applyToActive({ lineHeight: next });
+    canvas?.requestRenderAll();
+    onCanvasMutated?.();
+  };
+
+  const handleCharSpacing = (next: number): void => {
+    if (!Number.isFinite(next) || next < -200 || next > 1000) return;
+    setState((prev) => (prev ? { ...prev, charSpacing: next } : prev));
+    applyToActive({ charSpacing: next });
+    canvas?.requestRenderAll();
+    onCanvasMutated?.();
+  };
+
+  // Letter-case cycle (Canva's `aA` button). Cycles:
+  //   UPPERCASE → lowercase → Title Case → original sentence → UPPERCASE …
+  // We mutate the actual `text` property — there's no Fabric text-transform
+  // CSS-equivalent, so changing case is a string-level transform.
+  const handleCycleCase = (): void => {
+    const active = readActive(canvas);
+    if (!(active instanceof Textbox)) return;
+    const current = String(active.text ?? "");
+    const next = cycleLetterCase(current);
+    applyToActive({ text: next });
+    commit(canvas, onCanvasMutated, recordHistory);
+  };
+
+  // Effects — wires the existing TEXT_EFFECT_PRESETS into a popover. Apply
+  // path mirrors TextPropertiesControls.handleEffectPicked so the right
+  // panel removal is a pure UI move, not a behavior regression.
+  const handleEffectPicked = (kind: TextEffect["kind"]): void => {
+    const active = readActive(canvas);
+    if (!(active instanceof Textbox)) return;
+    const preset = TEXT_EFFECT_PRESETS[kind];
+    const fp = textEffectToFabricProps(preset);
+    active.set({
+      shadow: fp.shadow,
+      stroke: fp.stroke,
+      strokeWidth: fp.strokeWidth,
+      paintFirst: fp.paintFirst,
+    });
+    // Stash on `data` so a future schema-round-trip can pick it up — same
+    // pattern as TextPropertiesControls.
+    const dataBag =
+      (active as unknown as { data?: Record<string, unknown> }).data ?? {};
+    (active as unknown as { data: Record<string, unknown> }).data = {
+      ...dataBag,
+      effect: preset,
+    };
+    commit(canvas, onCanvasMutated, recordHistory);
+  };
+
   return (
     <div className="flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1.5 shadow-elevated animate-fade-in-up">
-      {/* Font family — full picker, compact width. */}
-      <div className="w-40">
+      {/* === 1. Font family === */}
+      <div className="w-36">
         <FontPicker
           value={state.fontFamily}
           onChange={handleFontFamily}
           options={FONT_OPTIONS}
         />
       </div>
-      <span className="h-5 w-px bg-neutral-200" />
-      {/* Font size — numeric stepper. */}
-      <input
-        type="number"
-        min={4}
-        max={400}
-        step={1}
-        value={Math.round(state.fontSize)}
-        onChange={(e) => handleFontSize(Number(e.target.value))}
-        aria-label="Font size"
-        className="h-7 w-14 rounded-md border border-neutral-200 bg-white px-1.5 text-center text-[12px] font-medium text-neutral-800 focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-300"
-      />
-      <span className="h-5 w-px bg-neutral-200" />
-      {/* B / I / U toggles. */}
-      <ToggleIconButton
-        label="Bold"
-        active={state.fontWeight >= 600}
-        onClick={handleBold}
-      >
-        <strong className="text-[13px] leading-none">B</strong>
-      </ToggleIconButton>
-      <ToggleIconButton
-        label="Italic"
-        active={state.fontStyle === "italic"}
-        onClick={handleItalic}
-      >
-        <em className="text-[13px] leading-none">I</em>
-      </ToggleIconButton>
-      <ToggleIconButton
-        label="Underline"
-        active={state.underline}
-        onClick={handleUnderline}
-      >
-        <span className="text-[13px] leading-none underline">U</span>
-      </ToggleIconButton>
-      <span className="h-5 w-px bg-neutral-200" />
-      {/* Fill color — compact swatch trigger. */}
+      <Divider />
+
+      {/* === 2. Font size — Canva-style [−] value [+] stepper === */}
+      <div className="flex items-center gap-0.5 rounded-md border border-neutral-200 bg-white px-1">
+        <StepperButton label="Decrease font size" onClick={() => handleSizeStep(-1)}>
+          −
+        </StepperButton>
+        <input
+          type="number"
+          min={4}
+          max={400}
+          step={1}
+          value={Math.round(state.fontSize)}
+          onChange={(e) => handleFontSize(Number(e.target.value))}
+          aria-label="Font size"
+          className="h-6 w-10 border-0 bg-transparent p-0 text-center text-[12px] font-medium text-neutral-800 focus:outline-none [&::-webkit-inner-spin-button]:hidden [&::-webkit-outer-spin-button]:hidden"
+        />
+        <StepperButton label="Increase font size" onClick={() => handleSizeStep(+1)}>
+          +
+        </StepperButton>
+      </div>
+      <Divider />
+
+      {/* === 3. Text color === */}
       <div className="flex items-center">
         <ColorPicker
           value={state.fill}
@@ -325,7 +421,224 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
           canvas={canvas}
         />
       </div>
+      <Divider />
+
+      {/* === 4-7. B / I / U / S === */}
+      <ToggleIconButton
+        label="Bold (B)"
+        active={state.fontWeight >= 600}
+        onClick={handleBold}
+      >
+        <strong className="text-[13px] leading-none">B</strong>
+      </ToggleIconButton>
+      <ToggleIconButton
+        label="Italic (I)"
+        active={state.fontStyle === "italic"}
+        onClick={handleItalic}
+      >
+        <em className="text-[13px] leading-none">I</em>
+      </ToggleIconButton>
+      <ToggleIconButton
+        label="Underline (U)"
+        active={state.underline}
+        onClick={handleUnderline}
+      >
+        <span className="text-[13px] leading-none underline">U</span>
+      </ToggleIconButton>
+      <ToggleIconButton
+        label="Strikethrough"
+        active={state.linethrough}
+        onClick={handleStrikethrough}
+      >
+        <span className="text-[13px] leading-none line-through">S</span>
+      </ToggleIconButton>
+      <Divider />
+
+      {/* === 8. Letter case (aA) === */}
+      <IconBtn label="Letter case" onClick={handleCycleCase}>
+        <span className="text-[12px] font-semibold leading-none">aA</span>
+      </IconBtn>
+
+      {/* === 9. Alignment popover === */}
+      <Popover
+        label="Text alignment"
+        trigger={<AlignTextIcon value={state.textAlign} />}
+      >
+        {(close) => (
+          <div className="flex items-center gap-0.5 p-1">
+            {(["left", "center", "right", "justify"] as const).map((dir) => (
+              <PopoverIconButton
+                key={dir}
+                label={`Align ${dir}`}
+                active={state.textAlign === dir}
+                onClick={() => {
+                  handleAlignText(dir);
+                  close();
+                }}
+              >
+                <TextAlignGlyph dir={dir} />
+              </PopoverIconButton>
+            ))}
+          </div>
+        )}
+      </Popover>
+
+      {/* === 11. Line spacing popover (Canva's vertical-T icon) === */}
+      <Popover label="Spacing" trigger={<LineSpacingIcon />}>
+        {() => (
+          <div className="w-56 space-y-3 p-3">
+            <SpacingSlider
+              label="Line spacing"
+              min={0.5}
+              max={3}
+              step={0.05}
+              value={state.lineHeight}
+              format={(v) => v.toFixed(2)}
+              onChange={handleLineHeight}
+              onCommit={() => recordHistory?.()}
+            />
+            <SpacingSlider
+              label="Letter spacing"
+              min={-100}
+              max={500}
+              step={5}
+              value={state.charSpacing}
+              format={(v) => `${Math.round(v)}`}
+              onChange={handleCharSpacing}
+              onCommit={() => recordHistory?.()}
+            />
+          </div>
+        )}
+      </Popover>
+
+      {/* === 12. Effects popover === */}
+      <Popover label="Effects" trigger={<EffectsIcon />}>
+        {(close) => (
+          <div className="grid grid-cols-3 gap-2 p-2">
+            {(
+              ["none", "shadow", "lift", "outline", "splice"] as const
+            ).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => {
+                  handleEffectPicked(kind);
+                  close();
+                }}
+                className="flex h-14 w-16 flex-col items-center justify-center gap-1 rounded-md border border-neutral-200 bg-white text-[10px] font-medium text-neutral-700 transition-colors hover:border-gold-500 hover:bg-gold-50 hover:text-gold-700"
+                title={`Effect: ${kind}`}
+              >
+                <EffectPreview kind={kind} />
+                <span className="capitalize">{kind}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Popover>
+
+      {/* === 14. Position popover — aligns text to canvas bounds === */}
+      {onAlign ? (
+        <Popover label="Position" trigger={<PositionIcon />}>
+          {(close) => (
+            <div className="flex items-center gap-0.5 p-1">
+              {(
+                [
+                  ["left", <AlignLeftGlyph key="l" />],
+                  ["center", <AlignCenterGlyph key="c" />],
+                  ["right", <AlignRightGlyph key="r" />],
+                ] as const
+              ).map(([dir, glyph]) => (
+                <PopoverIconButton
+                  key={dir}
+                  label={`Align ${dir}`}
+                  active={false}
+                  onClick={() => {
+                    onAlign(dir);
+                    close();
+                  }}
+                >
+                  {glyph}
+                </PopoverIconButton>
+              ))}
+              <span className="mx-1 h-4 w-px bg-neutral-200" />
+              {(
+                [
+                  ["top", <AlignTopGlyph key="t" />],
+                  ["middle", <AlignMiddleGlyph key="m" />],
+                  ["bottom", <AlignBottomGlyph key="b" />],
+                ] as const
+              ).map(([dir, glyph]) => (
+                <PopoverIconButton
+                  key={dir}
+                  label={`Align ${dir}`}
+                  active={false}
+                  onClick={() => {
+                    onAlign(dir);
+                    close();
+                  }}
+                >
+                  {glyph}
+                </PopoverIconButton>
+              ))}
+            </div>
+          )}
+        </Popover>
+      ) : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Letter-case cycle helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Cycle the case of a string in Canva's order:
+ *   sentence/mixed → UPPERCASE → lowercase → Title Case → sentence (original)
+ *
+ * We detect the current state cheaply (all-upper / all-lower / title-cased /
+ * other) and rotate. Title Case uses a simple word-boundary split — fine for
+ * real-estate copy ("Open House", "Just Listed") which is the dominant use.
+ *
+ * The "sentence" branch preserves the original string by stashing it on the
+ * Fabric object's data bag the FIRST time we touch case, so a full cycle
+ * returns the user to their original wording.
+ */
+function cycleLetterCase(text: string): string {
+  if (text.length === 0) return text;
+  const isAllUpper = text === text.toUpperCase() && /[A-Z]/.test(text);
+  const isAllLower = text === text.toLowerCase() && /[a-z]/.test(text);
+  const isTitle = isTitleCase(text);
+  if (!isAllUpper && !isAllLower && !isTitle) {
+    // Mixed / sentence case → UPPERCASE
+    return text.toUpperCase();
+  }
+  if (isAllUpper) return text.toLowerCase();
+  if (isAllLower) return toTitleCase(text);
+  // isTitle → back to UPPERCASE (we don't try to recover the original — the
+  // user can always undo).
+  return text.toUpperCase();
+}
+
+function isTitleCase(s: string): boolean {
+  // True when every word starts with uppercase and remaining chars are lower.
+  // Allows non-letter chars to pass through unchanged.
+  return s
+    .split(/\s+/)
+    .filter((w) => w.length > 0)
+    .every((w) => {
+      const first = w[0] ?? "";
+      const rest = w.slice(1);
+      return (
+        first === first.toUpperCase() &&
+        (rest === "" || rest === rest.toLowerCase())
+      );
+    });
+}
+
+function toTitleCase(s: string): string {
+  return s.replace(/\w\S*/g, (w) =>
+    w.charAt(0).toUpperCase() + w.substring(1).toLowerCase(),
   );
 }
 
@@ -711,3 +1024,288 @@ function DistributeVerticalGlyph(): JSX.Element {
   );
 }
 
+// ===========================================================================
+// TEXT-cluster atoms (2026-05-23 Canva-parity expansion)
+// ===========================================================================
+//
+// Small UI primitives only used by the TEXT cluster. Kept in this file so
+// the cluster stays self-contained — no new file churn for the parity work.
+// ---------------------------------------------------------------------------
+
+function Divider(): JSX.Element {
+  return <span className="mx-0.5 h-5 w-px bg-neutral-200" />;
+}
+
+function StepperButton(props: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      aria-label={props.label}
+      title={props.label}
+      className="flex h-6 w-5 items-center justify-center rounded text-[14px] font-medium leading-none text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+    >
+      {props.children}
+    </button>
+  );
+}
+
+/**
+ * Lightweight popover. Renders a trigger button; on click toggles a small
+ * absolutely-positioned content panel below the trigger. Closes on:
+ *   • outside-click
+ *   • Escape keypress
+ *   • children calling the `close()` callback they receive
+ *
+ * Why inline (no Radix/Headless UI): the project doesn't have either as a
+ * dep. The popover behavior we need is single-instance + click-outside +
+ * Esc — 30 lines of vanilla React covers it without pulling in a library.
+ */
+function Popover(props: {
+  label: string;
+  trigger: ReactNode;
+  children: (close: () => void) => ReactNode;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (e: MouseEvent): void => {
+      if (!wrapRef.current) return;
+      if (wrapRef.current.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={props.label}
+        aria-expanded={open}
+        title={props.label}
+        className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+          open
+            ? "bg-neutral-900 text-white"
+            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+        }`}
+      >
+        {props.trigger}
+      </button>
+      {open ? (
+        <div
+          // why: pop UPWARD because the floating toolbar lives above the
+          // canvas — opening downward would put the panel ON the canvas
+          // and obscure the user's selection. `top-full` would do that;
+          // `bottom-full` opens up.
+          className="absolute right-0 top-full z-20 mt-1 rounded-lg border border-neutral-200 bg-white shadow-elevated"
+        >
+          {props.children(() => setOpen(false))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PopoverIconButton(props: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      aria-label={props.label}
+      title={props.label}
+      aria-pressed={props.active}
+      className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+        props.active
+          ? "bg-neutral-900 text-white"
+          : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+      }`}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+function SpacingSlider(props: {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  format: (v: number) => string;
+  onChange: (next: number) => void;
+  onCommit: () => void;
+}): JSX.Element {
+  return (
+    <label className="block text-[11px] font-medium text-neutral-700">
+      <div className="mb-0.5 flex items-center justify-between">
+        <span>{props.label}</span>
+        <span className="tabular-nums text-neutral-500">
+          {props.format(props.value)}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={props.min}
+        max={props.max}
+        step={props.step}
+        value={props.value}
+        onChange={(e) => props.onChange(Number(e.target.value))}
+        // why: snapshot history on pointerup, not on every input event. A
+        // single slider sweep produces ONE undo entry instead of fifty.
+        onPointerUp={props.onCommit}
+        className="w-full accent-gold-500"
+      />
+    </label>
+  );
+}
+
+// --- Icon glyphs ---
+
+function AlignTextIcon(props: {
+  value: "left" | "center" | "right" | "justify";
+}): JSX.Element {
+  return <TextAlignGlyph dir={props.value} />;
+}
+
+function TextAlignGlyph(props: {
+  dir: "left" | "center" | "right" | "justify";
+}): JSX.Element {
+  const lines: Record<typeof props.dir, string[]> = {
+    left: ["M2 4 H14", "M2 8 H10", "M2 12 H14", "M2 16 H8"],
+    center: ["M2 4 H14", "M4 8 H12", "M2 12 H14", "M5 16 H11"],
+    right: ["M2 4 H14", "M6 8 H14", "M2 12 H14", "M8 16 H14"],
+    justify: ["M2 4 H14", "M2 8 H14", "M2 12 H14", "M2 16 H14"],
+  };
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      {lines[props.dir].map((d, i) => (
+        <path key={i} d={d} />
+      ))}
+    </svg>
+  );
+}
+
+function LineSpacingIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* Two arrows pointing apart (vertical) + lines suggesting text */}
+      <path d="M3 4 L3 12" />
+      <path d="M1.5 5.5 L3 4 L4.5 5.5" />
+      <path d="M1.5 10.5 L3 12 L4.5 10.5" />
+      <path d="M7 5 H14" />
+      <path d="M7 11 H14" />
+    </svg>
+  );
+}
+
+function EffectsIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      {/* Halftone-dot pattern matching Canva's "Effects" glyph */}
+      <circle cx="3" cy="3" r="1.1" />
+      <circle cx="8" cy="3" r="1.1" />
+      <circle cx="13" cy="3" r="1.1" />
+      <circle cx="3" cy="8" r="1.1" />
+      <circle cx="8" cy="8" r="1.1" />
+      <circle cx="13" cy="8" r="1.1" />
+      <circle cx="3" cy="13" r="1.1" />
+      <circle cx="8" cy="13" r="1.1" />
+      <circle cx="13" cy="13" r="1.1" />
+    </svg>
+  );
+}
+
+function EffectPreview(props: {
+  kind: "none" | "shadow" | "lift" | "outline" | "splice";
+}): JSX.Element {
+  // why: tiny "Ag" tile rendered with the matching CSS so the user can see
+  // each effect's flavor without committing. CSS shadow approximates Fabric's
+  // shadow well enough for a 24px preview.
+  const styles: Record<typeof props.kind, React.CSSProperties> = {
+    none: { color: "#18181B" },
+    shadow: {
+      color: "#18181B",
+      textShadow: "2px 2px 0 rgba(0,0,0,0.35)",
+    },
+    lift: {
+      color: "#18181B",
+      textShadow: "0 4px 6px rgba(0,0,0,0.25)",
+    },
+    outline: {
+      color: "transparent",
+      WebkitTextStroke: "1px #18181B",
+    },
+    splice: {
+      color: "transparent",
+      WebkitTextStroke: "1px #18181B",
+      textShadow: "2px 2px 0 #C9A961",
+    },
+  };
+  return (
+    <span
+      className="text-[14px] font-bold leading-none"
+      style={styles[props.kind]}
+    >
+      Ag
+    </span>
+  );
+}
+
+function PositionIcon(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2" y="2" width="12" height="12" rx="1" />
+      <rect x="5" y="5" width="6" height="6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

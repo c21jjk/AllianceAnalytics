@@ -2750,7 +2750,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   width. Inner components were already authored to be
                   full-height inside their flex parent. */}
               <div className="flex h-full w-full flex-col [&>aside]:w-full [&>aside]:border-l-0">
-                {selectionMode === "none" ? (
+                {/* why (2026-05-23, Canva-parity text toolbar): when a TEXT
+                    layer is selected, the right panel reverts to the layer
+                    list. ALL text editing now lives in the floating top
+                    toolbar (ContextualTopToolbar TEXT cluster), matching
+                    Canva exactly. The right-panel TextPropertiesControls
+                    file is intentionally kept on disk as a fallback /
+                    future reference but is no longer reachable from the
+                    orchestrator. */}
+                {selectionMode === "none" || selectionMode === "text" ? (
                   <LayerListPanel
                     entries={layerEntries}
                     selectedLayerId={selection.layerId}
