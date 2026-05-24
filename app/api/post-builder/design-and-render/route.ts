@@ -42,14 +42,10 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getPublicAppUrl } from "@/lib/app-url";
-import { screenshotHtml } from "@/lib/post-builder/chromium";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
 import { runDesignPipeline } from "@/lib/post-builder/canvas-editor/ai/design-pipeline";
-import { signRenderToken } from "@/lib/template-builder/render-token";
-import type { Json } from "@/lib/supabase/types";
+import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import type {
   PostBuilderListing,
   PostFormat,
@@ -69,8 +65,6 @@ import type {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 180;
-
-const STORAGE_BUCKET = "post-builder-renders";
 
 interface DesignAndRenderBody {
   post_type?: PostType;
@@ -261,106 +255,44 @@ export async function POST(request: Request): Promise<Response> {
 
       const aiSchema = output.plan.schema;
 
-      // ---- Cache the AI schema for the render page to pick up ----
+      // ---- Cache schema + sign token + Chromium render + Storage upload ----
+      // Single helper call as of 2026-05-24. The exact same helper runs
+      // for the Generate-button path in /api/post-builder/render — both
+      // factory and AI-designed schemas reach Storage through one code
+      // path so the rendering mechanics can't drift between routes.
       await writeLine({ type: "render_started", ts: Date.now() });
-      const supabase = createAdminClient();
-      const { data: cacheRow, error: cacheErr } = await supabase
-        .from("render_schema_cache")
-        .insert({
-          // why: cast through unknown — the row's `schema` column is jsonb;
-          // CanvasTemplateSchema is a typed shape that serializes cleanly
-          // to JSON. The DB column accepts any JSON.
-          schema: aiSchema as unknown as Json,
-          listing_id: v.listing.id,
-          format: v.format,
-        })
-        .select("id")
-        .maybeSingle();
+      const renderStart = Date.now();
+      const rendered = await renderCanvasSchema({
+        schema: aiSchema,
+        listingId: v.listing.id,
+        mlsNumber: v.listing.mls_number,
+        format: v.format,
+        // why: "ai-" prefix on the storage path so AI renders sort
+        // separately from factory renders when browsing the bucket.
+        storagePrefix: "ai-",
+        logLabel: `ai-design:${originalTemplateId}`,
+      });
 
-      if (cacheErr || !cacheRow) {
+      if (!rendered.ok) {
         await writeLine({
           type: "failed",
-          error: `cache insert failed: ${cacheErr?.message ?? "no row returned"}`,
+          error: `${rendered.stage} failed: ${rendered.error}`,
           ts: Date.now(),
         });
         return;
       }
-
-      // ---- Sign a render token + hit Chromium ----
-      let token: string;
-      try {
-        token = await signRenderToken({
-          // Synthetic template_id — the render page ignores this field
-          // when ai_schema_cache_id is set, but the payload shape requires
-          // a non-empty string here for back-compat with DB-template tokens.
-          template_id: `ai_design:${originalTemplateId}`,
-          listing_id: v.listing.id,
-          format: v.format,
-          ai_schema_cache_id: cacheRow.id,
-        });
-      } catch (e) {
-        await writeLine({
-          type: "failed",
-          error: `token sign failed: ${e instanceof Error ? e.message : String(e)}`,
-          ts: Date.now(),
-        });
-        return;
-      }
-
-      const url = `${await getPublicAppUrl()}/render/template/${encodeURIComponent(token)}`;
-      const dims = { width: aiSchema.width, height: aiSchema.height };
-
-      let pngBytes: Buffer;
-      try {
-        pngBytes = await screenshotHtml({
-          url,
-          width: dims.width,
-          height: dims.height,
-          log_label: `ai-design:${originalTemplateId}`,
-        });
-      } catch (e) {
-        await writeLine({
-          type: "failed",
-          error: `chromium render failed: ${e instanceof Error ? e.message : String(e)}`,
-          ts: Date.now(),
-        });
-        return;
-      }
-
-      // ---- Upload PNG to Storage ----
-      const renderedAt = Date.now();
-      const storagePath = `${originalTemplateId}/${v.listing.mls_number}/ai-${renderedAt}.png`;
-      const { error: uploadErr } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .upload(storagePath, pngBytes, {
-          contentType: "image/png",
-          upsert: false,
-          cacheControl: "31536000",
-        });
-      if (uploadErr) {
-        await writeLine({
-          type: "failed",
-          error: `upload failed: ${uploadErr.message}`,
-          ts: Date.now(),
-        });
-        return;
-      }
-
-      const { data: pub } = supabase.storage
-        .from(STORAGE_BUCKET)
-        .getPublicUrl(storagePath);
 
       const finalEvent: FinalResultEvent = {
         type: "result",
         ok: true,
-        image_url: pub.publicUrl,
-        image_path: storagePath,
+        image_url: rendered.image_url,
+        image_path: rendered.image_path,
         original_template_id: originalTemplateId,
         ai_schema: aiSchema,
         ai_mood: output.strategy.mood,
         ai_critique_passed: output.critique.passed,
         ai_critique_issues: output.critique.issues,
-        duration_ms: output.totalDurationMs + (Date.now() - renderedAt),
+        duration_ms: output.totalDurationMs + (Date.now() - renderStart),
         tokens_used: output.tokensUsed,
       };
       await writeLine(finalEvent);

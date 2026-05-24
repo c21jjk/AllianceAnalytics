@@ -2372,7 +2372,13 @@ export default function PostBuilderClient({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            // 2026-05-24 — post_type + format are now the primary lookup
+            // keys for the factory canvas branch. template_id is kept
+            // for back-compat with stale clients hitting the legacy /
+            // DB-template branches.
             template_id: templateId,
+            post_type: postType,
+            format,
             listing: selectedListing,
             hero_image_urls: heroUrls,
           }),
@@ -3786,7 +3792,12 @@ export default function PostBuilderClient({
                           method: "POST",
                           headers: { "content-type": "application/json" },
                           body: JSON.stringify({
+                            // 2026-05-24 — Revert re-render goes through
+                            // the factory canvas branch; pass post_type +
+                            // format so the route can findCanvasTemplate.
                             template_id: factoryTemplateId,
+                            post_type: postType,
+                            format,
                             listing: selectedListing,
                             hero_image_urls: currentHeroUrls,
                           }),
