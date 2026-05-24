@@ -61,7 +61,11 @@ import {
   type TextLayer,
 } from "./types";
 import { textEffectToFabricProps } from "./textEffects";
-import { C21_ALLIANCE_WHITE_LOGO } from "./templates/brand-logos";
+import {
+  C21_ALLIANCE_WHITE_LOGO,
+  EXCELLENCE_COLLECTION_LOGO,
+} from "./templates/brand-logos";
+import { EXCELLENCE_PRICE_THRESHOLD } from "../excellence-collection";
 
 // ===========================================================================
 // SECTION 1 — Bound-field formatters
@@ -260,19 +264,41 @@ export function resolveImageBoundField(
     case "agent_photo":
       return listing.agentPhotoUrl;
     case "office_logo":
-      // why: office_logo falls back to the canonical C21 Alliance white
-      // lockup when the listing doesn't carry a per-office override. The
-      // brand-logos.ts module is the single source of truth for both
-      // factory templates and AI-Design-rewritten schemas. Before
-      // 2026-05-24 this returned listing.officeLogoUrl which was almost
-      // always null in practice — AI Design output came out logo-less.
-      return listing.officeLogoUrl ?? C21_ALLIANCE_WHITE_LOGO;
+      // why: office_logo falls back to a brand lockup when the listing
+      // doesn't carry a per-office override. The brand-logos.ts module
+      // is the single source of truth for both factory templates and
+      // AI-Design-rewritten schemas. Before 2026-05-24 this returned
+      // listing.officeLogoUrl which was almost always null in practice —
+      // AI Design output came out logo-less.
+      //
+      // 2026-05-24 — price-tier branching: listings at-or-above the
+      // Excellence Collection threshold ($949k) get the premium
+      // Excellence wordmark; everything else gets the standard C21
+      // Alliance lockup. Mirrors the same rule applied to
+      // brokerage_logo below so both bound fields stay consistent.
+      if (listing.officeLogoUrl) return listing.officeLogoUrl;
+      if ((listing.priceList ?? 0) >= EXCELLENCE_PRICE_THRESHOLD) {
+        return EXCELLENCE_COLLECTION_LOGO;
+      }
+      return C21_ALLIANCE_WHITE_LOGO;
     case "brokerage_logo":
-      // why: brokerage_logo is the canonical Alliance lockup — always
-      // the white-on-dark variant since most templates place it over a
-      // dark scrim. Previously this returned "/brand/c21-mark.svg" which
-      // doesn't exist as a file, so AI Design output rendered with a
-      // broken logo (the bug Larissa flagged on the first real run).
+      // why: brokerage_logo is the canonical Alliance lockup — by
+      // default the white-on-dark variant since most templates place
+      // it over a dark scrim. Previously this returned
+      // "/brand/c21-mark.svg" which doesn't exist as a file, so AI
+      // Design output rendered with a broken logo (the bug Larissa
+      // flagged on the first real run).
+      //
+      // 2026-05-24 — price-tier branching: listings priced at-or-above
+      // the Excellence Collection threshold ($949k, per
+      // EXCELLENCE_PRICE_THRESHOLD) swap to the Excellence Collection
+      // wordmark. Below threshold, fall back to the standard C21
+      // Alliance lockup. This is a hard brand rule from John: premium
+      // listings carry the premium brand mark wherever a brokerage
+      // logo appears.
+      if ((listing.priceList ?? 0) >= EXCELLENCE_PRICE_THRESHOLD) {
+        return EXCELLENCE_COLLECTION_LOGO;
+      }
       return C21_ALLIANCE_WHITE_LOGO;
     default: {
       const _exhaustive: never = field;
