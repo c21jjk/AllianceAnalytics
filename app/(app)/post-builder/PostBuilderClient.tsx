@@ -344,6 +344,34 @@ export default function PostBuilderClient({
     schema: CanvasTemplateSchema;
     provenance: AiDesignProvenance;
   } | null>(null);
+  /**
+   * 2026-05-25 — the user's most recent Fabric canvas snapshot. The
+   * single source of truth for `initialFabricJson` when (re)opening
+   * Studio.
+   *
+   * Lifecycle:
+   *   • Seeded on mount from `initialResume?.fabric_json` (so a
+   *     ?gp=<id> resume picks up the prior save's edits).
+   *   • Updated by `handleStudioSave` after every successful upsert
+   *     with `result.fabricJson` (toObject snapshot of the canvas).
+   *   • Cleared by the reset effect on listing/postType/variant/format
+   *     change, by `runAiDesign` at the top of a fresh run, by
+   *     `handleMagicDesignApply` (new design, new context), and by
+   *     the Studio Revert action.
+   *
+   * Why a separate state from aiDesign: non-AI Studio edits (factory
+   * template flow) also need round-trip — and the schema-vs-fabric
+   * distinction matters. aiDesign.schema is the AI-generated layer
+   * tree; editedFabricJson is the Fabric serialization of whatever
+   * the user has on canvas right now, irrespective of source.
+   */
+  const [editedFabricJson, setEditedFabricJson] = useState<unknown>(
+    () =>
+      initialResume?.fabric_json &&
+      typeof initialResume.fabric_json === "object"
+        ? initialResume.fabric_json
+        : null,
+  );
   /** When non-empty, the AI Design pipeline is in flight and this string
    *  is shown under the preview as a single-line status. Cleared when the
    *  pipeline completes (success or failure). */
@@ -965,43 +993,14 @@ export default function PostBuilderClient({
     // (new run) to repopulate, which matches the user's mental model
     // of "fresh context, fresh canvas."
     setRenderResult(null);
+    // 2026-05-25 — same lockstep rule for the user's Fabric snapshot.
+    // A change to the listing/template tuple invalidates the prior
+    // canvas — keeping editedFabricJson around would cause the next
+    // Studio open to hydrate the wrong listing's edits onto the new
+    // template (Fabric layer ids would collide with new schema layer
+    // ids and the rebind pass would produce nonsense).
+    setEditedFabricJson(null);
   }, [postType, variantId, format, selectedMls]);
-
-  // ===================================================================
-  // 2026-05-25 — DIAGNOSTIC ONLY (remove once preview-blank bug is fixed)
-  // ===================================================================
-  // why: track which state change is wiping renderResult after a Studio
-  // save. Logs every renderResult mutation + each reset-effect dep so we
-  // can read the timeline in the browser console and identify the
-  // trigger. Strict mode will double-log in dev, which is expected.
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log("[diag] renderResult changed", {
-      ts: new Date().toISOString().slice(11, 23),
-      hasResult: !!renderResult,
-      imageUrl: renderResult?.image_url ?? null,
-      templateId: renderResult?.template_id ?? null,
-      // Snapshot the four reset-effect deps so we can correlate.
-      postType,
-      variantId,
-      format,
-      selectedMls,
-      // And the Studio flags so we know which phase of the flow we're in.
-      studioOpen,
-      hasAiDesign: !!aiDesign,
-      aiDesignSchemaId: aiDesign?.schema?.id ?? null,
-      generatedPostId,
-    });
-  }, [
-    renderResult,
-    postType,
-    variantId,
-    format,
-    selectedMls,
-    studioOpen,
-    aiDesign,
-    generatedPostId,
-  ]);
 
   /**
    * Multi-property Open House mode.
@@ -1062,9 +1061,19 @@ export default function PostBuilderClient({
           isDefault: true,
           fabricJson: customDefault.fabric_json,
         },
+        // 2026-05-25 — even when a customDefault is the hydration
+        // source, prior in-session edits should override it (the user
+        // already iterated past the custom default). initialFabricJson
+        // wins in CanvasEditor's dispatch — see hydrateFromFabricJson
+        // priority order.
+        initialFabricJson: editedFabricJson ?? undefined,
       });
     } else {
-      setStudioContext({ template: studioTemplate, listing: payload });
+      setStudioContext({
+        template: studioTemplate,
+        listing: payload,
+        initialFabricJson: editedFabricJson ?? undefined,
+      });
     }
     setStudioOpen(true);
   }, [
@@ -1075,6 +1084,7 @@ export default function PostBuilderClient({
     variantId,
     postType,
     format,
+    editedFabricJson,
   ]);
 
   /**
@@ -1529,6 +1539,15 @@ export default function PostBuilderClient({
           setAiDesign((prev) =>
             prev ? { ...prev, schema: result.schema } : prev,
           );
+          // 2026-05-25 — stash the just-saved Fabric snapshot so the
+          // next in-session "Edit in Studio" click picks up the user's
+          // edits via `studioContext.initialFabricJson` instead of
+          // falling back to the (un-edited) AI/factory template. Falls
+          // through to null if toObject failed in handleExport — the
+          // editor then hydrates from schema, which matches the old
+          // behavior. Mirrors what `initialResume.fabric_json` does
+          // for the page-reload resume path.
+          setEditedFabricJson(result.fabricJson ?? null);
         }
 
         // ---- 3. Update the preview pane in-memory ----
@@ -1898,24 +1917,26 @@ export default function PostBuilderClient({
       agentName: selectedListing.agent_name ?? null,
       officeName: selectedListing.listing_office_name ?? null,
     });
-    // 2026-05-24 — Studio edit round-trip. When the row carries a
-    // fabric_json snapshot (the user's edits from a prior save), hand
-    // it to the editor via initialFabricJson so canvas.loadFromJSON()
-    // restores the exact prior canvas state. When fabric_json is null
-    // (older row, never Studio-edited, etc.), Studio falls through to
-    // schema-driven hydration from `template`.
-    const savedFabricJson: unknown =
-      initialResume.fabric_json && typeof initialResume.fabric_json === "object"
-        ? initialResume.fabric_json
-        : null;
+    // 2026-05-25 — Studio edit round-trip. `editedFabricJson` is the
+    // single source of truth for "the user's latest canvas snapshot"
+    // and was seeded from `initialResume.fabric_json` on mount, so
+    // reading it here keeps the resume + in-session paths consistent.
+    // Falls through to undefined when null, which makes the editor
+    // hydrate from the schema (factory or AI) as a fallback.
     setStudioContext({
       template,
       listing: payload,
-      initialFabricJson: savedFabricJson ?? undefined,
+      initialFabricJson: editedFabricJson ?? undefined,
     });
     setStudioOpen(true);
     resumeAutoOpenedRef.current = true;
-  }, [initialResume, selectedListing, photosLoading, availablePhotos]);
+  }, [
+    initialResume,
+    selectedListing,
+    photosLoading,
+    availablePhotos,
+    editedFabricJson,
+  ]);
 
   // Fetch photos when the selected listing changes.
   useEffect(() => {
@@ -2056,6 +2077,10 @@ export default function PostBuilderClient({
       setGeneratedPostId(null);
       setAiDesign(null);
       setRenderResult(null);
+      // 2026-05-25 — Magic Design applies a fresh recommendation;
+      // any prior Fabric snapshot is for a different design and
+      // must not bleed in.
+      setEditedFabricJson(null);
 
       // 1-3 — pre-apply all the recommendation state
       setPostType(payload.post_type);
@@ -2655,6 +2680,10 @@ export default function PostBuilderClient({
     setAiError(null);
     setRenderResult(null);
     setAiDesign(null);
+    // 2026-05-25 — AI Design produces a brand-new schema; any prior
+    // editedFabricJson is for a now-stale template and would corrupt
+    // the next Studio open if it survived.
+    setEditedFabricJson(null);
     setAiProgress("Starting…");
 
     try {
@@ -4069,6 +4098,12 @@ export default function PostBuilderClient({
                   // close Studio. The next "Edit in Studio" click will
                   // open against the factory template via studioTemplate.
                   setAiDesign(null);
+                  // 2026-05-25 — Revert wipes the edits too. Leaving
+                  // editedFabricJson set would make the next Studio
+                  // open hydrate the user's now-reverted-away edits
+                  // onto the factory template, which is the opposite
+                  // of what Revert promises.
+                  setEditedFabricJson(null);
                   setStudioOpen(false);
                 },
               }
