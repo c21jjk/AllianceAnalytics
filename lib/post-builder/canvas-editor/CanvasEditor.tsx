@@ -282,8 +282,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // 2026-05-25 — Live frame rect during crop mode. Updates on every
   // drag of the border's handles. Drives:
   //   • Done/Cancel bar positioning (it floats above the live frame).
-  //   • The image's clipPath, which gets mutated to match in real time
-  //     so the visible portion of the photo updates as the frame moves.
+  //   • The clipPath rebuild on Done — `currentClipRectRef.current`
+  //     holds the latest value the commit handler reads.
+  //
+  // Why TWO copies (state + ref): React's state powers the Done bar's
+  // JSX re-render at every frame-drag tick. The ref shadows it for the
+  // exit handler closure — useEffect captures state at mount, so a
+  // mid-session frame resize wouldn't reach the closure otherwise.
   //
   // Initially seeded to the same value as cropMode.originalClipRect on
   // crop entry. Cleared with cropMode on exit.
@@ -293,6 +298,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     width: number;
     height: number;
   } | null>(null);
+  const currentClipRectRef = useRef<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  useEffect(() => {
+    currentClipRectRef.current = currentClipRect;
+  }, [currentClipRect]);
   // Visual overlay objects (violet border on the active frame + four
   // dimmer rects covering the area outside the frame). Stored on a ref
   // so the enter/exit handlers can add+remove them without a re-render
@@ -1344,6 +1358,17 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       }
     }
 
+    // 2026-05-25 — Canva crop semantics: SHOW the full photo,
+    // including parts that would be cropped. Remove the clipPath
+    // for the duration of crop mode. The 4 dimmer rects below
+    // give the user a visual cue of what's currently being cropped
+    // by sitting on top of the photo's "to-be-cropped" portions.
+    // On exit (Done or Cancel), we re-apply the clipPath at the
+    // appropriate rect (current frame for commit, original for
+    // cancel).
+    const savedClipPath = targetImage.clipPath;
+    targetImage.clipPath = undefined;
+
     // 2 — make the target the active selection AND configure its
     // interaction controls for crop semantics.
     //   • Side handles (ml/mr/mt/mb) are hidden — dragging a side
@@ -1420,6 +1445,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       borderScaleFactor: 2,
       hasControls: true,
       lockRotation: true,
+      // 2026-05-25 — critical for crop UX: only the stroke (the 3px
+      // violet edge) hit-tests. The transparent body falls through to
+      // the photo below so the user can drag the photo from anywhere
+      // INSIDE the frame. Canva-equivalent behavior.
+      perPixelTargetFind: true,
     });
     // Same Canva-style 8-handle chrome (pills on sides, circles on
     // corners) the image + text use. The renderers are shared via
@@ -1493,6 +1523,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     for (const d of dimmers) canvas.add(d);
     canvas.add(border);
     cropOverlayRef.current = { border, dimmers };
+
+    // 2026-05-25 — re-assert the image as the active selection AFTER
+    // adding the border. canvas.add(border) clears the selection
+    // because Fabric routes the implicit selection-clear event to
+    // new objects too. Without this re-assert, the user would enter
+    // crop mode with nothing selected and have to click the photo
+    // first before they could drag it.
+    canvas.setActiveObject(targetImage);
     canvas.requestRenderAll();
 
     // 2026-05-25 — seed currentClipRect so the Done bar positions
@@ -1544,15 +1582,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         scaleX: 1,
         scaleY: 1,
       });
-      // Update the image's clipPath to match the new frame.
-      if (targetImage.clipPath instanceof Rect) {
-        targetImage.clipPath.set({
-          left: clampedLeft,
-          top: clampedTop,
-          width: clampedW,
-          height: clampedH,
-        });
-      }
+      // 2026-05-25 — clipPath is INTENTIONALLY null during crop so
+      // the user sees the full photo. We don't mutate it here; the
+      // dimmers communicate "this area will be cropped". On exit
+      // (Done) we re-apply clipPath using currentClipRect.
+      //
       // Update dimmers: 4 rects covering the canvas area outside
       // the new frame. Re-assigning width/height/top/left in place
       // is cheaper than removing + re-adding them.
@@ -1600,20 +1634,40 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     const exitFn = (cancel: boolean): void => {
       const c = fabricRef.current;
       if (!c) return;
+      // 2026-05-25 — re-apply the image's clipPath now that we're
+      // leaving crop mode. Cover the appropriate rect:
+      //   • cancel → originalClipRect (user backed out)
+      //   • commit → currentClipRect (user dragged the frame)
+      // The clipPath rect we apply is a fresh absolutePositioned
+      // Rect — same shape as what fabric-factory.ts originally
+      // attached. Preserve corner radius from the saved clipPath.
+      const targetRect = cancel
+        ? cropMode.originalClipRect
+        : currentClipRectRef.current ?? cropMode.originalClipRect;
+      const priorClipRx =
+        savedClipPath instanceof Rect &&
+        typeof (savedClipPath as unknown as { rx?: number }).rx === "number"
+          ? (savedClipPath as unknown as { rx: number }).rx
+          : 0;
+      const priorClipRy =
+        savedClipPath instanceof Rect &&
+        typeof (savedClipPath as unknown as { ry?: number }).ry === "number"
+          ? (savedClipPath as unknown as { ry: number }).ry
+          : 0;
+      targetImage.clipPath = new Rect({
+        left: targetRect.left,
+        top: targetRect.top,
+        width: targetRect.width,
+        height: targetRect.height,
+        rx: priorClipRx,
+        ry: priorClipRy,
+        originX: "left",
+        originY: "top",
+        absolutePositioned: true,
+      });
       if (cancel) {
         // Restore image pose
         targetImage.set(cropMode.originalImagePose);
-        // 2026-05-25 — also restore the clipPath. The user may have
-        // resized the frame via the border's handles; cancel means
-        // they don't want to keep the new frame either.
-        if (targetImage.clipPath instanceof Rect) {
-          targetImage.clipPath.set({
-            left: cropMode.originalClipRect.left,
-            top: cropMode.originalClipRect.top,
-            width: cropMode.originalClipRect.width,
-            height: cropMode.originalClipRect.height,
-          });
-        }
       }
       // Remove overlays.
       const overlay = cropOverlayRef.current;
