@@ -961,7 +961,33 @@ export default function PostBuilderClient({
     format: PostFormat;
     mls: string | null;
   } | null>(null);
+  // 2026-05-25 — ref-based "actual tuple change" gate.
+  //
+  // Why this guards the reset effect: React's useEffect fires on EVERY
+  // render where any dep object's reference inequality holds. For
+  // string primitive deps that's value inequality — but server props
+  // can cascade fresh references through descendant useEffects, and
+  // `setX(sameX)` calls inside those effects MIGHT not bail out in all
+  // edge cases (Strict Mode double-invocation, batched async updates,
+  // future React behavior changes).
+  //
+  // What we caught (2026-05-25 investigation): the upsert action calls
+  // `revalidatePath("/post-builder")`. The server re-renders, the page
+  // re-emits `initialResume` / `initialPick` props with fresh refs
+  // (object literals each render). The resume effect at line ~569
+  // re-fires and calls `setPostType(initialPick.postType)` /
+  // `setSelectedMls(initialPick.mls)`. If those happen to be the same
+  // values, React usually bails — but the moment they're different
+  // (because the user changed pick in-session), the reset effect fires
+  // and clears `renderResult` immediately after the save's own
+  // `setRenderResult(newImage)`, producing a blank preview pane.
+  //
+  // The ref-based gate makes the reset deterministic: ONLY run when
+  // the tuple's *content* actually changed since the last invocation.
+  // Spurious re-fires bail at the gate.
+  const lastResetTupleRef = useRef<string | null>(null);
   useEffect(() => {
+    const nextTuple = `${postType}|${variantId}|${format}|${selectedMls}`;
     if (resumeIntentSnapshotRef.current) {
       const s = resumeIntentSnapshotRef.current;
       if (
@@ -970,11 +996,33 @@ export default function PostBuilderClient({
         s.format === format &&
         s.mls === selectedMls
       ) {
+        // Stamp the tuple so a later (non-resume) re-fire with the
+        // same values also short-circuits at the gate below.
+        lastResetTupleRef.current = nextTuple;
         return;
       }
       // User changed something — drop the snapshot AND fall through to reset.
       resumeIntentSnapshotRef.current = null;
     }
+    // 2026-05-25 — gate. Skip the reset when the tuple is unchanged
+    // from the last time this effect actually ran the clears. This
+    // is the line that protects the Save → revalidate → preview-blank
+    // regression: even if the resume effect re-fires and sets state
+    // to the same value, this effect's body runs but exits without
+    // wiping renderResult.
+    if (lastResetTupleRef.current === nextTuple) {
+      // eslint-disable-next-line no-console
+      console.log("[reset-effect] skipped — tuple unchanged", {
+        tuple: nextTuple,
+      });
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.log("[reset-effect] firing", {
+      prev: lastResetTupleRef.current,
+      next: nextTuple,
+    });
+    lastResetTupleRef.current = nextTuple;
     setAiDesign(null);
     setAiProgress("");
     setAiError(null);
