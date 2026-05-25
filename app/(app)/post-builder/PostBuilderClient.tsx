@@ -504,7 +504,50 @@ export default function PostBuilderClient({
   const [magicDesignPhotos, setMagicDesignPhotos] = useState<string[]>([]);
   const [magicDesignPhotosLoading, setMagicDesignPhotosLoading] = useState(false);
   // Render + caption state
-  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
+  const [renderResult, _setRenderResult_raw] = useState<RenderResult | null>(null);
+  // 2026-05-25 — DIAGNOSTIC. Traced wrapper for setRenderResult so we
+  // can see every site that mutates it (with a stack trace) and
+  // correlate against the reset-effect logs. Remove after the
+  // preview-blank bug is fixed.
+  const mountIdRef = useRef<string>("");
+  if (!mountIdRef.current) {
+    mountIdRef.current = `m${Math.random().toString(36).slice(2, 8)}`;
+  }
+  const setRenderResult: typeof _setRenderResult_raw = useCallback(
+    (next) => {
+      const nextValueDesc =
+        typeof next === "function"
+          ? "(updater fn)"
+          : next === null
+            ? "null"
+            : `image_url=${(next as RenderResult).image_url?.slice(0, 80)}…`;
+      // eslint-disable-next-line no-console
+      console.log("[setRenderResult]", {
+        mountId: mountIdRef.current,
+        ts: new Date().toISOString().slice(11, 23),
+        value: nextValueDesc,
+        // stack lets us see WHO called this — the line numbers map back
+        // to handleStudioSave / reset effect / runAiDesign / etc.
+        stack: new Error().stack?.split("\n").slice(2, 6).join(" ⏎ "),
+      });
+      _setRenderResult_raw(next);
+    },
+    [],
+  );
+
+  // 2026-05-25 — DIAGNOSTIC. Detect mount/unmount cycles. If the
+  // PostBuilderClient remounts during the save flow (which would
+  // reset every useState/useRef including renderResult), we'll see a
+  // [mount] / [unmount] pair sandwich the save events. Remove once
+  // the bug is identified.
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[mount]", { mountId: mountIdRef.current });
+    return () => {
+      // eslint-disable-next-line no-console
+      console.log("[unmount]", { mountId: mountIdRef.current });
+    };
+  }, []);
   // Phase 2C — tracks which admin (DB) template is currently active so the
   // card highlights. Independent from variantId/customTemplate selection
   // because the legacy variant grid still owns the main pick. When a DB
@@ -1013,12 +1056,14 @@ export default function PostBuilderClient({
     if (lastResetTupleRef.current === nextTuple) {
       // eslint-disable-next-line no-console
       console.log("[reset-effect] skipped — tuple unchanged", {
+        mountId: mountIdRef.current,
         tuple: nextTuple,
       });
       return;
     }
     // eslint-disable-next-line no-console
     console.log("[reset-effect] firing", {
+      mountId: mountIdRef.current,
       prev: lastResetTupleRef.current,
       next: nextTuple,
     });
