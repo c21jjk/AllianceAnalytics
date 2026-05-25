@@ -1388,6 +1388,41 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       mtr: false,
     });
 
+    // 2026-05-25 — Canva-style matboard: extend the canvas to 2×
+    // template dimensions and center the template inside. This makes
+    // the photo's overflow VISIBLE in the buffer area surrounding
+    // the template, so the user can see what they're cropping
+    // outside the frame edges. Without this, anything that extends
+    // past the canvas pixel bounds is clipped at the canvas edge.
+    //
+    // Implementation: increase canvas pixel dimensions, then pan
+    // the viewport so scene (0,0) maps to canvas pixel
+    // (templateW/2, templateH/2). All scene-coord objects (including
+    // the photo) keep their original positions in scene space — they
+    // just have more room to extend without being clipped.
+    const EXTEND_FACTOR = 2;
+    const savedCanvasW = canvas.getWidth();
+    const savedCanvasH = canvas.getHeight();
+    // why: Fabric typings expect a 6-tuple (TMat2D). Cast the saved
+    // copy via tuple so setViewportTransform on exit accepts it.
+    const savedViewportTransform: [number, number, number, number, number, number] =
+      canvas.viewportTransform
+        ? [
+            canvas.viewportTransform[0],
+            canvas.viewportTransform[1],
+            canvas.viewportTransform[2],
+            canvas.viewportTransform[3],
+            canvas.viewportTransform[4],
+            canvas.viewportTransform[5],
+          ]
+        : [1, 0, 0, 1, 0, 0];
+    const extendedW = template.width * EXTEND_FACTOR;
+    const extendedH = template.height * EXTEND_FACTOR;
+    const tx = (extendedW - template.width) / 2;
+    const ty = (extendedH - template.height) / 2;
+    canvas.setDimensions({ width: extendedW, height: extendedH });
+    canvas.setViewportTransform([1, 0, 0, 1, tx, ty]);
+
     // 3 — paint the visual overlays. Canva-style crop chrome:
     //   • A thin violet outline at the original frame edges (visual
     //     reference for "this is the visible window").
@@ -1395,10 +1430,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     //     frame, on top of the now-clipPath-less photo. These
     //     communicate what's going to be cropped.
     //
-    // Both are non-interactive (selectable: false, evented: false)
-    // — they're purely visual cues. The photo itself is the only
-    // interactive object; user manipulates IT to change the crop.
-    // The frame stays static for the duration of crop mode.
+    // 2026-05-25 — Dimmers now extend ACROSS the matboard too — not
+    // just the original canvas area. The visible scene area in crop
+    // mode spans (-tx, -ty) to (template.width + tx, template.height +
+    // ty), so dimmers must cover that whole region outside the frame.
+    //
+    // Both border and dimmers are non-interactive (selectable: false,
+    // evented: false) — they're purely visual cues. The photo itself
+    // is the only interactive object; user manipulates IT to change
+    // the crop. The frame stays static for the duration of crop mode.
     const { left, top, width, height } = cropMode.originalClipRect;
     const border = new Rect({
       left,
@@ -1415,37 +1455,48 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       originX: "left",
       originY: "top",
     });
+    // Dimmer bounds: cover the entire VISIBLE SCENE AREA outside the
+    // template frame. Visible scene now spans (-tx, -ty) to
+    // (template.width + tx, template.height + ty) thanks to the
+    // matboard extension above. The dimmers tile around the frame
+    // edges to cover the matboard + any photo overflow into it.
     const dimmerOpacity = 0.55;
+    const matLeft = -tx;
+    const matTop = -ty;
+    const matWidth = template.width + 2 * tx;
+    const matHeight = template.height + 2 * ty;
     const dimmers: Rect[] = [
-      // Top strip
+      // Top strip — spans full matboard width, from top of mat to
+      // the top edge of the frame.
       new Rect({
-        left: 0,
-        top: 0,
-        width: template.width,
-        height: top,
+        left: matLeft,
+        top: matTop,
+        width: matWidth,
+        height: top - matTop,
         fill: "#000000",
         opacity: dimmerOpacity,
         selectable: false,
         evented: false,
         excludeFromExport: true,
       }),
-      // Bottom strip
+      // Bottom strip — from bottom edge of frame to bottom of mat.
       new Rect({
-        left: 0,
+        left: matLeft,
         top: top + height,
-        width: template.width,
-        height: Math.max(0, template.height - (top + height)),
+        width: matWidth,
+        height: matTop + matHeight - (top + height),
         fill: "#000000",
         opacity: dimmerOpacity,
         selectable: false,
         evented: false,
         excludeFromExport: true,
       }),
-      // Left strip
+      // Left strip — from left of mat to left edge of frame, between
+      // the top and bottom strips.
       new Rect({
-        left: 0,
+        left: matLeft,
         top: top,
-        width: left,
+        width: left - matLeft,
         height: height,
         fill: "#000000",
         opacity: dimmerOpacity,
@@ -1453,11 +1504,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         evented: false,
         excludeFromExport: true,
       }),
-      // Right strip
+      // Right strip — from right edge of frame to right of mat.
       new Rect({
         left: left + width,
         top: top,
-        width: Math.max(0, template.width - (left + width)),
+        width: matLeft + matWidth - (left + width),
         height: height,
         fill: "#000000",
         opacity: dimmerOpacity,
@@ -1518,6 +1569,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (overlay.border) c.remove(overlay.border);
       for (const d of overlay.dimmers) c.remove(d);
       cropOverlayRef.current = { border: null, dimmers: [] };
+      // 2026-05-25 — restore canvas dimensions + viewport transform
+      // (we extended them on entry for the matboard view).
+      c.setDimensions({ width: savedCanvasW, height: savedCanvasH });
+      c.setViewportTransform(savedViewportTransform);
       // Restore the target image's control visibility to whatever
       // it was before crop mode.
       (
@@ -2608,12 +2663,18 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // why: target a 720px max display height (leaves room for top header +
     // bottom controls in a ~1080px viewport). Width is bounded by the right
     // layer panel + future left toolbar, so we use 880px max display width.
+    //
+    // 2026-05-25 — Crop mode "matboard": canvas grows 2× to show photo
+    // overflow. Re-fit the larger canvas to the same viewport budget so
+    // the user sees everything at once without scrolling.
     const maxDisplayWidth = 880;
     const maxDisplayHeight = 720;
-    const scaleW = maxDisplayWidth / template.width;
-    const scaleH = maxDisplayHeight / template.height;
+    const effectiveW = cropMode ? template.width * 2 : template.width;
+    const effectiveH = cropMode ? template.height * 2 : template.height;
+    const scaleW = maxDisplayWidth / effectiveW;
+    const scaleH = maxDisplayHeight / effectiveH;
     return Math.min(scaleW, scaleH, 1);
-  }, [template.width, template.height]);
+  }, [template.width, template.height, cropMode]);
 
   // -------------------------------------------------------------------------
   // Keyboard shortcuts — Delete, Backspace, Cmd+D
@@ -3250,17 +3311,34 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 centered as zoom changes. Soft Canva-style drop
                 shadow (low + blurred) sells "this is a card on a
                 surface" without competing with the canvas content. */}
+            {/* 2026-05-25 — Crop mode matboard: when in cropMode,
+                the underlying Fabric canvas grows to 2× the template
+                dimensions so the photo's overflow is visible in the
+                buffer area around the frame. The wrapper grows too,
+                with the drop shadow removed (the dimmers + violet
+                frame border act as the visual cue). On exit, all of
+                this snaps back to template-sized. */}
             <div
-              className="relative bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+              className={
+                cropMode
+                  ? "relative bg-transparent"
+                  : "relative bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+              }
               style={{
-                width: template.width * displayScale * zoom,
-                height: template.height * displayScale * zoom,
+                width:
+                  (cropMode ? template.width * 2 : template.width) *
+                  displayScale *
+                  zoom,
+                height:
+                  (cropMode ? template.height * 2 : template.height) *
+                  displayScale *
+                  zoom,
               }}
             >
               <div
                 style={{
-                  width: template.width,
-                  height: template.height,
+                  width: cropMode ? template.width * 2 : template.width,
+                  height: cropMode ? template.height * 2 : template.height,
                   transform: `scale(${displayScale * zoom})`,
                   transformOrigin: "top left",
                   position: "absolute",
@@ -3282,13 +3360,23 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     position: "absolute",
                     // 2026-05-25 (Canva-match refactor) — frame is
                     // fixed during crop, so read directly from the
-                    // entry snapshot. No live state needed.
+                    // entry snapshot.
+                    //
+                    // Offset by (template.width/2, template.height/2)
+                    // because the canvas was extended 2× and viewport
+                    // translates scene origin to canvas (templateW/2,
+                    // templateH/2). The Done bar lives in wrapper-div
+                    // CSS space (canvas pixel space) so we need that
+                    // translate baked in.
                     left:
-                      cropMode.originalClipRect.left * displayScale * zoom,
+                      (cropMode.originalClipRect.left + template.width / 2) *
+                      displayScale *
+                      zoom,
                     top:
                       Math.max(
                         0,
-                        cropMode.originalClipRect.top -
+                        cropMode.originalClipRect.top +
+                          template.height / 2 -
                           48 / (displayScale * zoom),
                       ) *
                       displayScale *
