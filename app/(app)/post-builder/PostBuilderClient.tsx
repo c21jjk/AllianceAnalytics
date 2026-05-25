@@ -967,6 +967,42 @@ export default function PostBuilderClient({
     setRenderResult(null);
   }, [postType, variantId, format, selectedMls]);
 
+  // ===================================================================
+  // 2026-05-25 — DIAGNOSTIC ONLY (remove once preview-blank bug is fixed)
+  // ===================================================================
+  // why: track which state change is wiping renderResult after a Studio
+  // save. Logs every renderResult mutation + each reset-effect dep so we
+  // can read the timeline in the browser console and identify the
+  // trigger. Strict mode will double-log in dev, which is expected.
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[diag] renderResult changed", {
+      ts: new Date().toISOString().slice(11, 23),
+      hasResult: !!renderResult,
+      imageUrl: renderResult?.image_url ?? null,
+      templateId: renderResult?.template_id ?? null,
+      // Snapshot the four reset-effect deps so we can correlate.
+      postType,
+      variantId,
+      format,
+      selectedMls,
+      // And the Studio flags so we know which phase of the flow we're in.
+      studioOpen,
+      hasAiDesign: !!aiDesign,
+      aiDesignSchemaId: aiDesign?.schema?.id ?? null,
+      generatedPostId,
+    });
+  }, [
+    renderResult,
+    postType,
+    variantId,
+    format,
+    selectedMls,
+    studioOpen,
+    aiDesign,
+    generatedPostId,
+  ]);
+
   /**
    * Multi-property Open House mode.
    *
