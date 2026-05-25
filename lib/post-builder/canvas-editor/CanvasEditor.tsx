@@ -235,6 +235,57 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [layerVersion, setLayerVersion] = useState<number>(0);
   const [editorError, setEditorError] = useState<EditorError | null>(null);
   const [isLocalSaving, setIsLocalSaving] = useState<boolean>(false);
+
+  // ===================================================================
+  // 2026-05-25 — Crop / Reposition mode (Canva-style)
+  // ===================================================================
+  //
+  // What it does: double-click an image layer → enter "crop mode" for
+  // that layer. The image becomes free to drag/scale WITHOUT the
+  // clipPath following it (default behavior is clipPath-syncs-to-image).
+  // The user can reposition the photo INSIDE its fixed frame to change
+  // which portion is visible. Click outside / press Enter to commit;
+  // Escape to cancel and restore the pre-crop state.
+  //
+  // Why a ref shadowing the state: the canvas event handlers (mouse
+  // dblclick, object:modified, etc.) are attached ONCE in the init
+  // effect and capture references at that time. Reading the live state
+  // value from inside those handlers requires a ref because the closure
+  // would otherwise see the stale initial value forever.
+  //
+  // Saved state shape: { layerId, originalImagePose, originalClipRect }
+  // is what we restore on Escape. originalImagePose captures the four
+  // transform fields that move/scale the image. originalClipRect
+  // captures the clipPath's canvas-space anchor so we can pin it during
+  // image drags inside crop mode.
+  interface CropModeState {
+    layerId: string;
+    originalImagePose: {
+      left: number;
+      top: number;
+      scaleX: number;
+      scaleY: number;
+    };
+    originalClipRect: {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+    };
+  }
+  const [cropMode, setCropMode] = useState<CropModeState | null>(null);
+  const cropModeRef = useRef<CropModeState | null>(null);
+  useEffect(() => {
+    cropModeRef.current = cropMode;
+  }, [cropMode]);
+  // Visual overlay objects (gold border on the active frame + four
+  // dimmer rects covering the area outside the frame). Stored on a ref
+  // so the enter/exit handlers can add+remove them without a re-render
+  // dance — they're not part of the layer tree.
+  const cropOverlayRef = useRef<{
+    border: Rect | null;
+    dimmers: Rect[];
+  }>({ border: null, dimmers: [] });
   // why: drives the "Save as Template" modal. Closed by default; opens
   // when the user clicks the header button (rendered only when the parent
   // wired `onSaveAsTemplate`). State lives here (not at the parent) because
@@ -830,6 +881,17 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (cancelled) return;
       const obj = e.target;
       if (!(obj instanceof FabricImage)) return;
+      // 2026-05-25 — Crop mode short-circuit. When the user is
+      // repositioning the photo inside its fixed frame, the clipPath
+      // MUST NOT follow the image (that would defeat the whole point
+      // of crop — moving the image would also move the visible
+      // window). Skip the rebuild; the absolutePositioned clipPath
+      // stays anchored where it was when crop mode was entered.
+      const activeCrop = cropModeRef.current;
+      const data = getLayerData(obj);
+      if (activeCrop && data?.layerId === activeCrop.layerId) {
+        return;
+      }
       // Current displayed bounds in canvas px.
       const naturalW = obj.width ?? 1;
       const naturalH = obj.height ?? 1;
@@ -867,6 +929,58 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         absolutePositioned: true,
       });
       fabricCanvas.requestRenderAll();
+    });
+
+    // 2026-05-25 — Crop mode: enter via double-click on an image layer.
+    //
+    // Why mouse:dblclick (not dom click): Fabric synthesizes its own
+    // double-click events that fire ONLY on canvas objects (not the
+    // background). It captures the target object cleanly without us
+    // having to do hit-testing.
+    //
+    // What happens:
+    //   1. Grab the image's current clipPath rect → that's the
+    //      "frame" the user is cropping within. Snapshot its
+    //      canvas-space anchor + dims.
+    //   2. Capture image.left / top / scaleX / scaleY for Escape /
+    //      Cancel restoration.
+    //   3. Set cropMode state — the object:modified handler above
+    //      now knows to skip the clipPath rebuild for THIS layer,
+    //      letting the image move freely inside the fixed frame.
+    fabricCanvas.on("mouse:dblclick", (e) => {
+      if (cancelled) return;
+      const obj = e.target;
+      if (!(obj instanceof FabricImage)) return;
+      const data = getLayerData(obj);
+      if (!data?.layerId) return;
+      // Lock out double-clicks on locked images (e.g. background photo
+      // that some templates pin) — user can still single-click select.
+      if ((obj as unknown as { lockMovementX?: boolean }).lockMovementX)
+        return;
+
+      const clip = obj.clipPath;
+      if (!(clip instanceof Rect)) return;
+      const clipLeft = (clip as unknown as { left?: number }).left ?? 0;
+      const clipTop = (clip as unknown as { top?: number }).top ?? 0;
+      const clipW = (clip as unknown as { width?: number }).width ?? 0;
+      const clipH = (clip as unknown as { height?: number }).height ?? 0;
+
+      const next: CropModeState = {
+        layerId: data.layerId,
+        originalImagePose: {
+          left: obj.left ?? 0,
+          top: obj.top ?? 0,
+          scaleX: obj.scaleX ?? 1,
+          scaleY: obj.scaleY ?? 1,
+        },
+        originalClipRect: {
+          left: clipLeft,
+          top: clipTop,
+          width: clipW,
+          height: clipH,
+        },
+      };
+      setCropMode(next);
     });
 
     // why: optional background image. Drawn UNDERNEATH all layers, not in the
@@ -1154,6 +1268,310 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // sufficient for "should we recreate the canvas".
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template.id, listing.id, customTemplate?.id]);
+
+  // ===================================================================
+  // 2026-05-25 — Crop mode lifecycle effect
+  // ===================================================================
+  //
+  // Fires whenever `cropMode` flips on or off. On enter:
+  //   1. Lock every non-target layer (no selection, no interaction).
+  //   2. Force the target image into a selectable + free-movement
+  //      state — its movement locks get cleared so the user can drag.
+  //   3. Paint the visual cue: a gold border around the active frame
+  //      and four dimmer rects covering the canvas area outside it.
+  //   4. Wire global keydown handlers for Enter (commit) + Escape
+  //      (cancel + restore).
+  //
+  // On exit:
+  //   1. Remove the visual overlays.
+  //   2. Restore the other layers' interactivity to whatever the
+  //      schema said (locked vs. unlocked).
+  //   3. If `cancel=true`, restore the image's saved pose.
+  //   4. Unbind the keydown handlers.
+  //   5. Push a single object:modified event so the undo history
+  //      treats the crop as one step.
+  const exitCropModeRef = useRef<((cancel: boolean) => void) | null>(null);
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    if (!cropMode) return;
+
+    // Find the target image object by layer id.
+    const targetImage = canvas.getObjects().find((o) => {
+      const data = getLayerData(o);
+      return data?.layerId === cropMode.layerId && o instanceof FabricImage;
+    }) as FabricImage | undefined;
+    if (!targetImage) {
+      // why: defensive — if the layer vanished between dblclick and this
+      // effect running (extremely unlikely, but possible if a parallel
+      // effect removes it), just bail out of crop mode.
+      setCropMode(null);
+      return;
+    }
+
+    // 1 — snapshot pre-crop interactivity so we can restore on exit.
+    interface Restorable {
+      obj: import("fabric").FabricObject;
+      selectable: boolean;
+      evented: boolean;
+    }
+    const restoreList: Restorable[] = [];
+    for (const obj of canvas.getObjects()) {
+      restoreList.push({
+        obj,
+        selectable: obj.selectable ?? true,
+        evented: obj.evented ?? true,
+      });
+      if (obj === targetImage) {
+        obj.set({ selectable: true, evented: true });
+      } else {
+        obj.set({ selectable: false, evented: false });
+      }
+    }
+
+    // 2 — make the target the active selection AND configure its
+    // interaction controls for crop semantics.
+    //   • Side handles (ml/mr/mt/mb) are hidden — dragging a side
+    //     would skew the image which makes no sense when cropping.
+    //     Corner handles (tl/tr/bl/br) stay visible for zoom.
+    //   • Rotation handle (mtr) is hidden — no rotation in crop mode.
+    //   • Canvas-level uniformScaling = true is enabled so corner
+    //     drags preserve aspect ratio. Shift inverts (Canva default).
+    canvas.setActiveObject(targetImage);
+    const priorControlsVisibility = {
+      tl: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("tl") ?? true,
+      tr: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("tr") ?? true,
+      bl: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("bl") ?? true,
+      br: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("br") ?? true,
+      ml: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("ml") ?? true,
+      mr: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mr") ?? true,
+      mt: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mt") ?? true,
+      mb: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mb") ?? true,
+      mtr: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mtr") ?? true,
+    };
+    (
+      targetImage as unknown as {
+        setControlsVisibility: (v: Record<string, boolean>) => void;
+      }
+    ).setControlsVisibility({
+      tl: true,
+      tr: true,
+      bl: true,
+      br: true,
+      ml: false,
+      mr: false,
+      mt: false,
+      mb: false,
+      mtr: false,
+    });
+    const priorUniformScaling = (
+      canvas as unknown as { uniformScaling?: boolean }
+    ).uniformScaling ?? false;
+    (canvas as unknown as { uniformScaling: boolean }).uniformScaling = true;
+
+    // 3 — paint the visual overlays.
+    // Gold border: a non-evented Rect anchored to the active clipPath's
+    // anchor. We draw it on TOP so the user always sees it framing
+    // their crop window.
+    const { left, top, width, height } = cropMode.originalClipRect;
+    // 2026-05-25 — match the new Canva-style violet selection language
+    // so the active crop frame reads as part of the same visual system.
+    const border = new Rect({
+      left,
+      top,
+      width,
+      height,
+      fill: "transparent",
+      stroke: "#8B5CF6",
+      strokeWidth: 3,
+      strokeUniform: true,
+      selectable: false,
+      evented: false,
+      excludeFromExport: true,
+      originX: "left",
+      originY: "top",
+    });
+    // Four dimmer rects covering the canvas area OUTSIDE the frame.
+    // Each is a semi-transparent black rectangle; together they form a
+    // mask. Adding four small rects (vs. one big rect with cutout) is
+    // cheaper than a clipPath and works with Fabric's render pipeline
+    // without surprises.
+    const dimmerOpacity = 0.55;
+    const dimmers: Rect[] = [
+      // Top strip
+      new Rect({
+        left: 0,
+        top: 0,
+        width: template.width,
+        height: top,
+        fill: "#000000",
+        opacity: dimmerOpacity,
+        selectable: false,
+        evented: false,
+        excludeFromExport: true,
+      }),
+      // Bottom strip
+      new Rect({
+        left: 0,
+        top: top + height,
+        width: template.width,
+        height: Math.max(0, template.height - (top + height)),
+        fill: "#000000",
+        opacity: dimmerOpacity,
+        selectable: false,
+        evented: false,
+        excludeFromExport: true,
+      }),
+      // Left strip (between top and bottom strips)
+      new Rect({
+        left: 0,
+        top: top,
+        width: left,
+        height: height,
+        fill: "#000000",
+        opacity: dimmerOpacity,
+        selectable: false,
+        evented: false,
+        excludeFromExport: true,
+      }),
+      // Right strip
+      new Rect({
+        left: left + width,
+        top: top,
+        width: Math.max(0, template.width - (left + width)),
+        height: height,
+        fill: "#000000",
+        opacity: dimmerOpacity,
+        selectable: false,
+        evented: false,
+        excludeFromExport: true,
+      }),
+    ];
+    for (const d of dimmers) canvas.add(d);
+    canvas.add(border);
+    cropOverlayRef.current = { border, dimmers };
+    canvas.requestRenderAll();
+
+    // 4 — define the exit function. Cancel=true restores image pose;
+    // cancel=false commits the current pose.
+    const exitFn = (cancel: boolean): void => {
+      const c = fabricRef.current;
+      if (!c) return;
+      if (cancel) {
+        targetImage.set(cropMode.originalImagePose);
+      }
+      // Remove overlays.
+      const overlay = cropOverlayRef.current;
+      if (overlay.border) c.remove(overlay.border);
+      for (const d of overlay.dimmers) c.remove(d);
+      cropOverlayRef.current = { border: null, dimmers: [] };
+      // Restore the target image's control visibility to whatever
+      // it was before crop mode. Side + rotate handles come back.
+      (
+        targetImage as unknown as {
+          setControlsVisibility: (v: Record<string, boolean>) => void;
+        }
+      ).setControlsVisibility(priorControlsVisibility);
+      (c as unknown as { uniformScaling: boolean }).uniformScaling =
+        priorUniformScaling;
+      // Restore other layers' interactivity.
+      for (const r of restoreList) {
+        r.obj.set({ selectable: r.selectable, evented: r.evented });
+      }
+      // Force a final modified event so undo history captures one step
+      // — but ONLY on commit. On cancel we already restored, so no
+      // modified event is needed (and would add a noise step).
+      if (!cancel) {
+        c.fire("object:modified", { target: targetImage });
+      }
+      c.requestRenderAll();
+      setCropMode(null);
+    };
+    exitCropModeRef.current = exitFn;
+
+    // 5 — keyboard handlers. Enter commits, Escape cancels. We use
+    // document-level listeners (not canvas) because the canvas only
+    // has focus when an object's edit mode is active (e.g. Textbox
+    // typing), which isn't our case here.
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        exitFn(true);
+      } else if (ev.key === "Enter") {
+        ev.preventDefault();
+        exitFn(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+
+    // 6 — click-outside handler. If the user clicks anywhere on the
+    // canvas BACKGROUND (no target) or any non-target object, commit
+    // and exit. We use mouse:down here so it fires before any other
+    // canvas response.
+    const onCanvasClick = (e: {
+      target?: import("fabric").FabricObject | null;
+    }): void => {
+      if (!e.target || e.target !== targetImage) {
+        // Edge: ignore clicks on the gold border or dimmers (which
+        // are non-evented, so they wouldn't be targets — but defend).
+        if (
+          e.target === cropOverlayRef.current.border ||
+          cropOverlayRef.current.dimmers.includes(e.target as Rect)
+        ) {
+          return;
+        }
+        exitFn(false);
+      }
+    };
+    canvas.on("mouse:down", onCanvasClick);
+
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      canvas.off("mouse:down", onCanvasClick);
+      // why: don't auto-exit here on cleanup — that would fire
+      // whenever cropMode toggles or the component unmounts mid-edit
+      // and could overwrite a legitimate state. The user-driven exit
+      // paths (Enter / Escape / click outside) handle all cases.
+      exitCropModeRef.current = null;
+    };
+  }, [cropMode, template.width, template.height]);
+
+  // 2026-05-25 — Crop mode entry via toolbar button.
+  //
+  // Mirrors what the mouse:dblclick handler does, but reads the
+  // currently-active object instead of an event target. Wired into
+  // ContextualTopToolbar's `onEnterCropMode` prop so users have two
+  // ways to enter crop mode: double-click the image OR click the
+  // Crop button in the floating toolbar.
+  const enterCropModeForActive = useCallback((): void => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const active = canvas.getActiveObject();
+    if (!(active instanceof FabricImage)) return;
+    const data = getLayerData(active);
+    if (!data?.layerId) return;
+    const clip = active.clipPath;
+    if (!(clip instanceof Rect)) return;
+    const clipLeft = (clip as unknown as { left?: number }).left ?? 0;
+    const clipTop = (clip as unknown as { top?: number }).top ?? 0;
+    const clipW = (clip as unknown as { width?: number }).width ?? 0;
+    const clipH = (clip as unknown as { height?: number }).height ?? 0;
+    setCropMode({
+      layerId: data.layerId,
+      originalImagePose: {
+        left: active.left ?? 0,
+        top: active.top ?? 0,
+        scaleX: active.scaleX ?? 1,
+        scaleY: active.scaleY ?? 1,
+      },
+      originalClipRect: {
+        left: clipLeft,
+        top: clipTop,
+        width: clipW,
+        height: clipH,
+      },
+    });
+  }, []);
 
   // -------------------------------------------------------------------------
   // Layer panel data — derived from Fabric on each layerVersion bump
@@ -2718,7 +3136,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               <div className="absolute top-6 z-10 flex flex-col items-center gap-2">
                 {(selectionMode === "text" ||
                   selectionMode === "shape" ||
-                  selectionMode === "multi") &&
+                  selectionMode === "multi" ||
+                  selectionMode === "image") &&
                 fabricRef.current ? (
                   <ContextualTopToolbar
                     canvas={fabricRef.current}
@@ -2728,6 +3147,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onCanvasMutated={() => setLayerVersion((v) => v + 1)}
                     recordHistory={history.record}
                     onAlign={handleAlign}
+                    onEnterCropMode={enterCropModeForActive}
                   />
                 ) : null}
                 {selectedEntry && !selectedEntry.locked ? (
@@ -2803,6 +3223,76 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               >
                 <canvas ref={canvasRef} />
               </div>
+              {/* 2026-05-25 — Crop mode floating Done/Cancel bar.
+                  Anchored above the active frame box. Positioned using
+                  the SAME canvas-px space the clipPath uses, then
+                  scaled together with the canvas by the parent
+                  transform — so it tracks the frame regardless of
+                  user zoom level. */}
+              {cropMode ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: cropMode.originalClipRect.left * displayScale * zoom,
+                    top:
+                      Math.max(
+                        0,
+                        cropMode.originalClipRect.top - 48 / (displayScale * zoom),
+                      ) *
+                      displayScale *
+                      zoom,
+                    display: "flex",
+                    gap: "8px",
+                    background: "white",
+                    border: "1px solid #E5E5E5",
+                    borderRadius: "8px",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+                    padding: "4px 6px",
+                    zIndex: 50,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => exitCropModeRef.current?.(false)}
+                    className="inline-flex items-center gap-1 rounded-md bg-gold-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-gold-600"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 8l3 3 7-8" />
+                    </svg>
+                    Done
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exitCropModeRef.current?.(true)}
+                    className="inline-flex items-center gap-1 rounded-md border border-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 3l10 10M13 3L3 13" />
+                    </svg>
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
 

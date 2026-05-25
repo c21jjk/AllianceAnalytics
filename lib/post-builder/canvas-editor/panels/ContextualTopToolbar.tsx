@@ -76,6 +76,13 @@ interface ContextualTopToolbarProps {
   /** Bumped by the orchestrator on every Fabric mutation; signals a re-read. */
   selectionVersion: number;
   /**
+   * 2026-05-25 — image-mode handler. Fires the parent's "enter crop"
+   * action against the currently-selected image. Wired only for the
+   * image cluster. When omitted, the Crop button is hidden — the
+   * parent can opt out (e.g. for read-only previews) by not passing it.
+   */
+  onEnterCropMode?: () => void;
+  /**
    * Multi-mode only — used to enable Distribute (requires ≥3 objects).
    * Ignored for single-object modes.
    */
@@ -135,11 +142,48 @@ export default function ContextualTopToolbar(
     case "multi":
       return <MultiContextualControls {...props} />;
     case "image":
-      // why: image edits (crop, replace, filters) don't fit a one-row bar
-      // — they live in the right panel. Returning null keeps the canvas
-      // chrome clean when an image is selected.
-      return null;
+      return <ImageContextualControls {...props} />;
   }
+}
+
+// ===========================================================================
+// IMAGE cluster — Crop entry point
+// ===========================================================================
+
+function ImageContextualControls(
+  props: ContextualTopToolbarProps,
+): JSX.Element | null {
+  const { onEnterCropMode } = props;
+  if (!onEnterCropMode) return null;
+  return (
+    <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-white px-1 py-1 shadow-sm">
+      <Tooltip label="Crop / reposition photo">
+        <button
+          type="button"
+          onClick={onEnterCropMode}
+          className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+        >
+          {/* Inline crop glyph — two perpendicular L-shapes, classic
+              crop-tool icon. Sized to match the rest of the toolbar. */}
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 1v11h11" />
+            <path d="M1 4h11v11" />
+          </svg>
+          <span>Crop</span>
+        </button>
+      </Tooltip>
+    </div>
+  );
 }
 
 // ===========================================================================

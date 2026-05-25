@@ -66,6 +66,10 @@ import {
   EXCELLENCE_COLLECTION_LOGO,
 } from "./templates/brand-logos";
 import { EXCELLENCE_PRICE_THRESHOLD } from "../excellence-collection";
+import {
+  CANVA_VIOLET,
+  createCanvaStyleControls,
+} from "./canva-style-controls";
 
 // ===========================================================================
 // SECTION 1 — Bound-field formatters
@@ -408,13 +412,23 @@ export function createFabricTextbox(
     visible: layer.visible,
     // why: hide the default Fabric corner controls until the user actually
     // hovers/selects. Phase 2 will customize these with brand colors.
+    // 2026-05-25 — Canva-style selection chrome. Violet borders +
+    // pills + larger circles. See canva-style-controls.ts.
     cornerStyle: "circle",
-    cornerSize: 10,
+    cornerSize: 16,
     transparentCorners: false,
-    borderColor: "#C9A961", // gold-500
-    cornerColor: "#C9A961",
+    borderColor: CANVA_VIOLET,
+    cornerColor: CANVA_VIOLET,
+    borderScaleFactor: 2,
     padding: 2,
   });
+  // why: replace Fabric's default 8-circle control set with pills on
+  // the side midpoints + larger circles on the corners. Visual + UX
+  // match Canva. Apply after construction so each instance gets its
+  // own Control objects (Fabric mutates them per-object).
+  (
+    tb as unknown as { controls: Record<string, unknown> }
+  ).controls = createCanvaStyleControls();
   setLayerData(tb, {
     layerId: layer.id,
     layerKind: "text",
@@ -517,12 +531,17 @@ export async function createFabricImage(
       // bleed past the intended frame. Without this, a cover-fit photo
       // extends beyond its layer box. Implemented as a clipPath rect aligned
       // to the layer dimensions, positioned relative to the image's origin.
+      // 2026-05-25 — Canva-style selection chrome.
       cornerStyle: "circle",
-      cornerSize: 10,
+      cornerSize: 16,
       transparentCorners: false,
-      borderColor: "#C9A961",
-      cornerColor: "#C9A961",
+      borderColor: CANVA_VIOLET,
+      cornerColor: CANVA_VIOLET,
+      borderScaleFactor: 2,
     });
+    (
+      img as unknown as { controls: Record<string, unknown> }
+    ).controls = createCanvaStyleControls();
 
     // why (2026-05-23 — Cover/Contain/Stretch bug fix): ALWAYS attach a
     // clipPath at the BOX dimensions (layer.width × layer.height),
@@ -694,11 +713,13 @@ export function createFabricShape(layer: ShapeLayer): FabricObject {
     visible: layer.visible,
     selectable: !layer.locked,
     evented: !layer.locked,
+    // 2026-05-25 — Canva-style selection chrome.
     cornerStyle: "circle" as const,
-    cornerSize: 10,
+    cornerSize: 16,
     transparentCorners: false,
-    borderColor: "#C9A961",
-    cornerColor: "#C9A961",
+    borderColor: CANVA_VIOLET,
+    cornerColor: CANVA_VIOLET,
+    borderScaleFactor: 2,
   };
 
   let obj: FabricObject;
@@ -747,6 +768,10 @@ export function createFabricShape(layer: ShapeLayer): FabricObject {
       return _exhaustive;
     }
   }
+  // 2026-05-25 — Canva-style controls (pills + larger violet circles).
+  (
+    obj as unknown as { controls: Record<string, unknown> }
+  ).controls = createCanvaStyleControls();
   setLayerData(obj, {
     layerId: layer.id,
     layerKind: "shape",
