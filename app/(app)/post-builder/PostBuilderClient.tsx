@@ -369,6 +369,18 @@ export default function PostBuilderClient({
       isDefault: boolean;
       fabricJson: unknown;
     };
+    /**
+     * 2026-05-24 — Studio edit round-trip. When resuming a saved
+     * generated_posts row whose `fabric_json` column is populated, this
+     * holds that JSON so CanvasEditor can hydrate via
+     * `canvas.loadFromJSON()` instead of the schema's layer list. The
+     * user's prior edits come back exactly as they left them.
+     *
+     * Null/undefined on fresh Studio opens (no prior save), on rows
+     * pre-dating the fabric_json column, and on rows that have never
+     * been Studio-edited (Generate only).
+     */
+    initialFabricJson?: unknown;
   } | null>(null);
 
   // === Custom Templates (2026-05-17) ===
@@ -1443,6 +1455,15 @@ export default function PostBuilderClient({
           // columns stay untouched. NOT cleared with `null` here — only
           // the Revert action does that.
           ai_design: aiDesign?.provenance,
+          // 2026-05-24 — Studio edit round-trip. result.fabricJson is
+          // canvas.toObject() output: the FAITHFUL snapshot of every
+          // edit the user made. On reopen the editor hydrates from this
+          // via initialFabricJson so changes survive. result.fabricJson
+          // can be null if toObject() failed (defensive in handleExport);
+          // we propagate that null and let the row reopen via schema.
+          fabric_json: result.fabricJson as Parameters<
+            typeof upsertGeneratedPostFromStudioAction
+          >[0]["fabric_json"],
         });
         if (!upsertRes.ok) {
           // Non-fatal for the in-memory preview — image is uploaded, the
@@ -1841,7 +1862,21 @@ export default function PostBuilderClient({
       agentName: selectedListing.agent_name ?? null,
       officeName: selectedListing.listing_office_name ?? null,
     });
-    setStudioContext({ template, listing: payload });
+    // 2026-05-24 — Studio edit round-trip. When the row carries a
+    // fabric_json snapshot (the user's edits from a prior save), hand
+    // it to the editor via initialFabricJson so canvas.loadFromJSON()
+    // restores the exact prior canvas state. When fabric_json is null
+    // (older row, never Studio-edited, etc.), Studio falls through to
+    // schema-driven hydration from `template`.
+    const savedFabricJson: unknown =
+      initialResume.fabric_json && typeof initialResume.fabric_json === "object"
+        ? initialResume.fabric_json
+        : null;
+    setStudioContext({
+      template,
+      listing: payload,
+      initialFabricJson: savedFabricJson ?? undefined,
+    });
     setStudioOpen(true);
     resumeAutoOpenedRef.current = true;
   }, [initialResume, selectedListing, photosLoading, availablePhotos]);
@@ -4008,6 +4043,7 @@ export default function PostBuilderClient({
           archiveBrandAssetAction({ id })
         }
         customTemplate={studioContext?.customTemplate}
+        initialFabricJson={studioContext?.initialFabricJson}
         onSaveAsTemplate={async (input) => {
           const res = await saveCustomTemplateAction(input);
           if (res.ok) {

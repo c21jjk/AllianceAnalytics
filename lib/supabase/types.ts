@@ -407,6 +407,7 @@ export type Database = {
           custom_feature: string | null
           customizations: Json
           downloaded_at: string | null
+          fabric_json: Json | null
           format: string
           hashtags: string[] | null
           hero_image_source_url: string | null
@@ -460,6 +461,7 @@ export type Database = {
           custom_feature?: string | null
           customizations?: Json
           downloaded_at?: string | null
+          fabric_json?: Json | null
           format: string
           hashtags?: string[] | null
           hero_image_source_url?: string | null
@@ -513,6 +515,7 @@ export type Database = {
           custom_feature?: string | null
           customizations?: Json
           downloaded_at?: string | null
+          fabric_json?: Json | null
           format?: string
           hashtags?: string[] | null
           hero_image_source_url?: string | null

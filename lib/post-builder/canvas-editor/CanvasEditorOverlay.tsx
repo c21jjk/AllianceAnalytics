@@ -88,6 +88,14 @@ export interface CanvasEditorOverlayProps {
   onSaveAsTemplate?: CanvasEditorProps["onSaveAsTemplate"];
   customTemplate?: CanvasEditorProps["customTemplate"];
   /**
+   * 2026-05-24 — Studio edit round-trip. Forwarded verbatim to the
+   * underlying CanvasEditor. When set, the editor hydrates from
+   * `canvas.loadFromJSON()` against this snapshot instead of building
+   * from the factory schema, restoring the user's prior edits. See
+   * CanvasEditorProps.initialFabricJson for the full contract.
+   */
+  initialFabricJson?: CanvasEditorProps["initialFabricJson"];
+  /**
    * Phase 2 AI Design provenance. When non-null, the overlay renders a
    * floating "✨ Designed by Claude" badge in the top-left + a small
    * "Revert to template default" link. Clicking Revert pops a
@@ -244,6 +252,7 @@ export default function CanvasEditorOverlay(
           onArchiveBrandAsset={props.onArchiveBrandAsset}
           onSaveAsTemplate={props.onSaveAsTemplate}
           customTemplate={props.customTemplate}
+          initialFabricJson={props.initialFabricJson}
         />
       </div>
 

@@ -191,6 +191,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     onMakeReel,
     onSaveAsTemplate,
     customTemplate,
+    initialFabricJson,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -918,7 +919,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // completes we walk the objects and re-bind any boundField values to
     // the CURRENT listing — so when Larissa opens her saved template on a
     // different property, the price + address + photos update automatically.
-    const hydrateFromCustomTemplate = async (): Promise<void> => {
+    //
+    // 2026-05-24 — generalized from "custom template" to "any Fabric JSON
+    // source". Now also called for `initialFabricJson` (the Studio
+    // round-trip path): when a saved generated_post has fabric_json
+    // populated, we load THAT instead of the factory schema so the
+    // user's prior edits come back exactly as they left them.
+    const hydrateFromFabricJson = async (json: unknown): Promise<void> => {
       try {
         await document.fonts.ready;
       } catch {
@@ -932,13 +939,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         // it — Fabric preserves arbitrary `data` properties through the
         // serialization round-trip natively.
         await fabricRef.current.loadFromJSON(
-          customTemplate!.fabricJson as Record<string, unknown>,
+          json as Record<string, unknown>,
         );
       } catch (err) {
         if (cancelled) return;
         setEditorError({
           kind: "init",
-          message: `Custom template load failed: ${
+          message: `Fabric JSON load failed: ${
             err instanceof Error ? err.message : String(err)
           }`,
         });
@@ -1103,12 +1110,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     };
 
     void loadBackground();
-    // why: dispatch on `customTemplate` presence. When a custom row is
-    // supplied, the saved Fabric JSON already encodes every object the
-    // user wants — we load + rebind to the current listing. Otherwise
-    // we hydrate from the factory schema as usual.
-    if (customTemplate?.fabricJson) {
-      void hydrateFromCustomTemplate();
+    // why: dispatch order matters.
+    //   1. `initialFabricJson` — saved Studio edits from a generated_posts
+    //      row. This is the "reopen a post you previously edited" path
+    //      and must win over any other source. The user's prior canvas
+    //      state is the most specific authoritative source.
+    //   2. `customTemplate.fabricJson` — user-authored custom template
+    //      (Save-as-Template flow). Authored against a different listing,
+    //      now being applied to the current listing.
+    //   3. Otherwise — hydrate from the factory schema's layer list.
+    //
+    // 1 and 2 use the same loader (hydrateFromFabricJson); the rebind
+    // pass below handles bound-field updates identically for both.
+    const fabricJsonSource: unknown =
+      initialFabricJson ?? customTemplate?.fabricJson ?? null;
+    if (fabricJsonSource) {
+      void hydrateFromFabricJson(fabricJsonSource);
     } else {
       void hydrateLayers();
     }
@@ -1956,15 +1973,58 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const filename = `${template.id}_${Date.now()}.jpg`;
       const file = new File([blob], filename, { type: "image/jpeg" });
 
+      // why (2026-05-24 — Studio edit round-trip): capture the FAITHFUL
+      // Fabric snapshot alongside the rendered PNG. Same propsToInclude
+      // list the debounced autosave uses (line ~1638) so the `data`
+      // metadata — crucially `boundField` for text/image layers —
+      // survives the toObject → loadFromJSON round-trip. Strip the
+      // hover-preview rect first if present so it doesn't get persisted.
+      //
+      // Why a sibling of `schema` (not a replacement):
+      //   `schema` is the ORIGINAL template the editor was hydrated from.
+      //   Downstream code (Revert link, original_template_id) still wants
+      //   the original. `fabricJson` is the editable snapshot for the
+      //   reopen path. Both get persisted; the editor prefers fabricJson
+      //   on reopen via `initialFabricJson`.
+      const propsToInclude: string[] = [
+        "data",
+        "selectable",
+        "evented",
+        "lockMovementX",
+        "lockMovementY",
+      ];
+      const hoverForExport = hoverHighlightRef.current;
+      if (hoverForExport) canvas.remove(hoverForExport);
+      let fabricJson: unknown;
+      try {
+        fabricJson = canvas.toObject(propsToInclude);
+      } catch (jsonErr) {
+        // why: toObject doesn't normally throw, but if a layer carries a
+        // non-serializable value in `data` we'd lose the snapshot. Log,
+        // then surface an empty object so the rest of the save still
+        // succeeds (image already uploaded, row writes with null
+        // fabric_json → reopen falls back to schema hydration). Not
+        // user-blocking.
+        console.warn("[CanvasEditor.handleExport] toObject failed:", jsonErr);
+        fabricJson = null;
+      } finally {
+        if (hoverForExport) {
+          canvas.add(hoverForExport);
+          canvas.bringObjectToFront(hoverForExport);
+        }
+      }
+
       const exportResult: CanvasExportResult = {
         file,
         dataUrl,
-        // why: in Phase 1 we return the ORIGINAL hydrated schema, not the
-        // user's edits. The Fabric→schema serializer lands in Phase 2 so the
-        // parent can persist the editable source. For now, the rendered PNG
-        // is the artifact of record.
-        // TODO(phase-2): serialize current Fabric state back to schema here.
+        // why: `schema` remains the ORIGINAL hydrated template — kept for
+        // downstream consumers that key on template identity (Revert link,
+        // original_template_id, post type metadata). User edits are
+        // carried by `fabricJson` below; the editor prefers fabricJson on
+        // reopen. Future Phase: replace this with a true Fabric→schema
+        // serializer so both fields hold the same edited source of truth.
         schema: template,
+        fabricJson,
         width: template.width * EXPORT_RESOLUTION_MULTIPLIER,
         height: template.height * EXPORT_RESOLUTION_MULTIPLIER,
         mimeType: "image/jpeg",

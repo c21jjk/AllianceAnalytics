@@ -205,6 +205,21 @@ export interface CreatedPostResumeRow {
    * after the AI fields are cleared.
    */
   original_template_id: string | null;
+  /**
+   * Faithful Fabric canvas snapshot from the most recent Studio save —
+   * `canvas.toObject(...)` output. The editor PREFERS this on reopen
+   * (via `initialFabricJson`) so user edits survive the round trip.
+   *
+   * Null on rows that pre-date the column (added 2026-05-24) and on
+   * rows that were never edited in Studio after Generate. When null,
+   * Studio falls back to the `layer_tree` schema for hydration —
+   * which gives the original template look (no edits), matching the
+   * pre-2026-05-24 behavior.
+   *
+   * Opaque shape — passed to `canvas.loadFromJSON()` verbatim; consumers
+   * MUST NOT introspect.
+   */
+  fabric_json: unknown | null;
 }
 
 export async function fetchCreatedPostResume(
@@ -222,7 +237,10 @@ export async function fetchCreatedPostResume(
       // 2026-05-23 Phase 2.1 — ai_design_* + original_template_id added so
       // the Studio "Designed by Claude" badge re-appears on resume + the
       // Revert action knows what factory template to re-render against.
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, additional_images, slide_metadata, caption, hashtags, captions_by_platform, test_mode, created_by, ai_design_mood, ai_design_critique_passed, ai_design_token_input, ai_design_token_output, ai_design_duration_ms, original_template_id",
+      // 2026-05-24 — fabric_json added so the editor can rehydrate from
+      // the user's actual canvas state on reopen (via initialFabricJson).
+      // See CreatedPostResumeRow.fabric_json for the contract.
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, fabric_json, additional_images, slide_metadata, caption, hashtags, captions_by_platform, test_mode, created_by, ai_design_mood, ai_design_critique_passed, ai_design_token_input, ai_design_token_output, ai_design_duration_ms, original_template_id",
     )
     .eq("id", id)
     .maybeSingle();
@@ -259,6 +277,7 @@ export async function fetchCreatedPostResume(
     ai_design_token_output: data.ai_design_token_output ?? null,
     ai_design_duration_ms: data.ai_design_duration_ms ?? null,
     original_template_id: data.original_template_id ?? null,
+    fabric_json: data.fabric_json ?? null,
   };
 }
 

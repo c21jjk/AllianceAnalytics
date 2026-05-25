@@ -804,6 +804,25 @@ export interface CanvasExportResult {
   dataUrl: string;
   /** The post-hydration template schema, in case caller wants to persist the source. */
   schema: CanvasTemplateSchema;
+  /**
+   * Fabric canvas state via `canvas.toObject(propsToInclude)` at export
+   * time — the FAITHFUL snapshot of what the user has on canvas, including
+   * every move/resize/recolor/hide and any new layers added via toolbar.
+   *
+   * Why we ship this alongside `schema`:
+   *   `schema` is the ORIGINAL template passed into the editor at mount
+   *   (Phase 1 placeholder — there's no Fabric→schema serializer yet).
+   *   `fabricJson` is the only path that round-trips edits faithfully.
+   *
+   * Persistence contract: the parent should write this to a `fabric_json`
+   * column on the saved row, and on reopen, hand it back to the editor
+   * via `initialFabricJson` so `canvas.loadFromJSON()` rebuilds the
+   * exact canvas state — Fabric preserves the `data` metadata on every
+   * object so `boundField` continues to work for fresh listing data.
+   *
+   * Shape: opaque to consumers. Treat as JSON; do not introspect.
+   */
+  fabricJson: unknown;
   /** Output dimensions (post retina multiplier). */
   width: number;
   height: number;
@@ -1050,4 +1069,26 @@ export interface CanvasEditorProps {
     isDefault: boolean;
     fabricJson: unknown;
   };
+  /**
+   * Saved Studio canvas state from a prior Save Post — the snapshot of the
+   * user's actual edits. When set, the editor:
+   *   • Loads `initialFabricJson` via `canvas.loadFromJSON()` INSTEAD of
+   *     building from the factory schema's layer list. Faithful round-trip
+   *     of every move/resize/recolor/hide/font-swap the user did before.
+   *   • Runs the same bound-field rebind pass that customTemplate uses
+   *     (text `boundField` re-resolves against the current MLS data,
+   *     image `boundField` swaps to the current listing's photo/logo).
+   *
+   * Wins over `customTemplate.fabricJson` when both are present — the
+   * Studio reopen is a more specific intent than a custom-template open.
+   *
+   * The factory `template` prop is still required for canvas dimensions,
+   * format metadata, and the bound-field rebind lookup table. The
+   * fabricJson REPLACES the layer list; the template envelope remains.
+   *
+   * Shape: opaque `unknown` — Fabric's loadFromJSON accepts the result of
+   * its toObject()/toJSON() output verbatim. Pass through without
+   * introspection.
+   */
+  initialFabricJson?: unknown;
 }

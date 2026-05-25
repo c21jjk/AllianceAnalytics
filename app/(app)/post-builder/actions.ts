@@ -258,6 +258,24 @@ export interface UpsertStudioPostInput {
    * The action body uses the discriminator below to pick the right path.
    */
   ai_design?: AiDesignProvenance | null;
+  /**
+   * Faithful Fabric canvas snapshot from `canvas.toObject(...)` at save
+   * time — captures every move/resize/recolor/hide the user did, plus
+   * any layers added via toolbar. On reopen the editor hydrates via
+   * `canvas.loadFromJSON()` from this column so edits survive the round
+   * trip. Persisted to the `fabric_json` jsonb column.
+   *
+   * Semantics:
+   *   • Pass the toObject output (or null) to WRITE.
+   *   • Omit entirely to leave the column untouched on UPDATE (lets
+   *     metadata-only updates skip overwriting good edits).
+   *
+   * Layered alongside `layer_tree` (the original template schema): both
+   * persist, but the editor PREFERS `fabric_json` on reopen via the
+   * `initialFabricJson` prop. Falls back to `layer_tree` schema
+   * hydration only when fabric_json is null (pre-2026-05-24 rows).
+   */
+  fabric_json?: Json | null;
 }
 
 export interface UpsertStudioPostOk {
@@ -398,6 +416,16 @@ export async function upsertGeneratedPostFromStudioAction(
     //   • input.ai_design = { ... }     → write all six columns from it
     const aiDesignUpdate = buildAiDesignUpdate(input.ai_design);
 
+    // why (2026-05-24 — fabric_json round-trip): same undefined-vs-set
+    // pattern as ai_design. Most Studio saves want to WRITE the fresh
+    // Fabric snapshot (caller passes `fabric_json: <toObject output>`).
+    // A metadata-only UPDATE that doesn't touch the canvas would pass
+    // `undefined` so we don't clobber the previous good snapshot.
+    const fabricJsonUpdate: { fabric_json?: Json | null } =
+      input.fabric_json === undefined
+        ? {}
+        : { fabric_json: input.fabric_json };
+
     const { error: updError } = await supabase
       .from("generated_posts")
       .update({
@@ -429,6 +457,7 @@ export async function upsertGeneratedPostFromStudioAction(
         captions_by_platform: input.captions_by_platform ?? {},
         updated_at: nowIso,
         ...aiDesignUpdate,
+        ...fabricJsonUpdate,
       })
       .eq("id", input.id)
       .eq("created_by", profile.id);
@@ -522,6 +551,12 @@ export async function upsertGeneratedPostFromStudioAction(
       // prior AI design state) but using the same helper keeps the two
       // branches honest about their contract.
       ...buildAiDesignUpdate(input.ai_design),
+      // 2026-05-24 — Studio edit round-trip. INSERT writes whatever the
+      // caller passed (null on first-save-from-Generate where the user
+      // didn't edit; the toObject snapshot when they edited in Studio).
+      // We don't omit-on-undefined here because there's no prior good
+      // value to preserve on INSERT.
+      fabric_json: input.fabric_json ?? null,
     })
     .select("id")
     .maybeSingle();
