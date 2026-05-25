@@ -279,38 +279,18 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   useEffect(() => {
     cropModeRef.current = cropMode;
   }, [cropMode]);
-  // 2026-05-25 — Live frame rect during crop mode. Updates on every
-  // drag of the border's handles. Drives:
-  //   • Done/Cancel bar positioning (it floats above the live frame).
-  //   • The clipPath rebuild on Done — `currentClipRectRef.current`
-  //     holds the latest value the commit handler reads.
+  // 2026-05-25 — Visual overlay objects for crop mode.
   //
-  // Why TWO copies (state + ref): React's state powers the Done bar's
-  // JSX re-render at every frame-drag tick. The ref shadows it for the
-  // exit handler closure — useEffect captures state at mount, so a
-  // mid-session frame resize wouldn't reach the closure otherwise.
+  // Canva-style model (refactored): the FRAME stays static throughout
+  // crop mode — only the PHOTO is manipulated. So we only need the
+  // dimmer rects (covering the area outside the original frame) and
+  // a single violet border outline. Neither is interactive — both
+  // exist solely for visual feedback. The user manipulates the photo
+  // directly via its standard Fabric selection handles.
   //
-  // Initially seeded to the same value as cropMode.originalClipRect on
-  // crop entry. Cleared with cropMode on exit.
-  const [currentClipRect, setCurrentClipRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  const currentClipRectRef = useRef<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  useEffect(() => {
-    currentClipRectRef.current = currentClipRect;
-  }, [currentClipRect]);
-  // Visual overlay objects (violet border on the active frame + four
-  // dimmer rects covering the area outside the frame). Stored on a ref
-  // so the enter/exit handlers can add+remove them without a re-render
-  // dance — they're not part of the layer tree.
+  // Stored on a ref so the enter/exit handlers can add+remove them
+  // without going through a React render cycle — they're not part of
+  // the layer tree.
   const cropOverlayRef = useRef<{
     border: Rect | null;
     dimmers: Rect[];
@@ -1369,14 +1349,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     const savedClipPath = targetImage.clipPath;
     targetImage.clipPath = undefined;
 
-    // 2 — make the target the active selection AND configure its
-    // interaction controls for crop semantics.
-    //   • Side handles (ml/mr/mt/mb) are hidden — dragging a side
-    //     would skew the image which makes no sense when cropping.
-    //     Corner handles (tl/tr/bl/br) stay visible for zoom.
-    //   • Rotation handle (mtr) is hidden — no rotation in crop mode.
-    //   • Canvas-level uniformScaling = true is enabled so corner
-    //     drags preserve aspect ratio. Shift inverts (Canva default).
+    // 2 — make the target the active selection. All 8 handles
+    // remain visible:
+    //   • Corners (tl/tr/bl/br) — uniform scale via the
+    //     `scalingEqually` action handler in canva-style-controls.ts.
+    //   • Side pills (ml/mr/mt/mb) — single-axis scale. Lets the
+    //     user shrink the photo on one axis only ("squeeze") to
+    //     control aspect mismatch with the frame. Matches Canva.
+    //   • Rotation (mtr) — hidden in crop mode to keep the surface
+    //     focused on cropping.
     canvas.setActiveObject(targetImage);
     const priorControlsVisibility = {
       tl: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("tl") ?? true,
@@ -1398,30 +1379,26 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       tr: true,
       bl: true,
       br: true,
-      ml: false,
-      mr: false,
-      mt: false,
-      mb: false,
+      // 2026-05-25 — Canva-match: side pills enabled in crop mode
+      // so the user can do single-axis photo scaling (their ask).
+      ml: true,
+      mr: true,
+      mt: true,
+      mb: true,
       mtr: false,
     });
-    const priorUniformScaling = (
-      canvas as unknown as { uniformScaling?: boolean }
-    ).uniformScaling ?? false;
-    (canvas as unknown as { uniformScaling: boolean }).uniformScaling = true;
 
-    // 3 — paint the visual overlays.
-    // Violet border: an INTERACTIVE Rect anchored to the active
-    // clipPath's anchor. Drawn on TOP so the user always sees it
-    // framing their crop window.
+    // 3 — paint the visual overlays. Canva-style crop chrome:
+    //   • A thin violet outline at the original frame edges (visual
+    //     reference for "this is the visible window").
+    //   • Four black dimmer rects covering everything OUTSIDE the
+    //     frame, on top of the now-clipPath-less photo. These
+    //     communicate what's going to be cropped.
     //
-    // 2026-05-25 — Frame handles. The border itself is selectable
-    // and gets its own 8 Canva-style controls. Dragging a corner
-    // resizes the frame uniformly (shift inverts via canvas
-    // uniformScaling), dragging a side handle resizes one axis
-    // ("crop edge"), dragging the center moves the frame. The
-    // "scaling"/"moving" listeners below mutate the image's
-    // clipPath rect to match every transform tick — keeping the
-    // visible window aligned with the user's intent in real time.
+    // Both are non-interactive (selectable: false, evented: false)
+    // — they're purely visual cues. The photo itself is the only
+    // interactive object; user manipulates IT to change the crop.
+    // The frame stays static for the duration of crop mode.
     const { left, top, width, height } = cropMode.originalClipRect;
     const border = new Rect({
       left,
@@ -1430,45 +1407,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       height,
       fill: "transparent",
       stroke: "#8B5CF6",
-      strokeWidth: 3,
+      strokeWidth: 2,
       strokeUniform: true,
-      selectable: true,
-      evented: true,
+      selectable: false,
+      evented: false,
       excludeFromExport: true,
       originX: "left",
       originY: "top",
-      cornerStyle: "circle",
-      cornerSize: 16,
-      transparentCorners: false,
-      borderColor: "#8B5CF6",
-      cornerColor: "#8B5CF6",
-      borderScaleFactor: 2,
-      hasControls: true,
-      lockRotation: true,
-      // 2026-05-25 — critical for crop UX: only the stroke (the 3px
-      // violet edge) hit-tests. The transparent body falls through to
-      // the photo below so the user can drag the photo from anywhere
-      // INSIDE the frame. Canva-equivalent behavior.
-      perPixelTargetFind: true,
     });
-    // Same Canva-style 8-handle chrome (pills on sides, circles on
-    // corners) the image + text use. The renderers are shared via
-    // createCanvaStyleControls — just attach a fresh copy here.
-    (
-      border as unknown as { controls: Record<string, unknown> }
-    ).controls = createCanvaStyleControls();
-    // Tag the border so we can identify it in canvas-wide handlers
-    // without an instanceof check that'd false-positive on other
-    // Rects. The mouse:down click-outside-to-commit logic in
-    // step 6 below uses this tag.
-    (
-      border as unknown as { data: Record<string, unknown> }
-    ).data = { isCropFrameBorder: true };
-    // Four dimmer rects covering the canvas area OUTSIDE the frame.
-    // Each is a semi-transparent black rectangle; together they form a
-    // mask. Adding four small rects (vs. one big rect with cutout) is
-    // cheaper than a clipPath and works with Fabric's render pipeline
-    // without surprises.
     const dimmerOpacity = 0.55;
     const dimmers: Rect[] = [
       // Top strip
@@ -1495,7 +1441,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         evented: false,
         excludeFromExport: true,
       }),
-      // Left strip (between top and bottom strips)
+      // Left strip
       new Rect({
         left: 0,
         top: top,
@@ -1524,110 +1470,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     canvas.add(border);
     cropOverlayRef.current = { border, dimmers };
 
-    // 2026-05-25 — re-assert the image as the active selection AFTER
-    // adding the border. canvas.add(border) clears the selection
-    // because Fabric routes the implicit selection-clear event to
-    // new objects too. Without this re-assert, the user would enter
-    // crop mode with nothing selected and have to click the photo
-    // first before they could drag it.
+    // Re-assert image as active selection AFTER adding overlays
+    // (canvas.add() can clear the active selection in some flows).
     canvas.setActiveObject(targetImage);
     canvas.requestRenderAll();
-
-    // 2026-05-25 — seed currentClipRect so the Done bar positions
-    // itself above the frame. Every border drag updates this state
-    // via the scaling/moving listeners below.
-    setCurrentClipRect({ left, top, width, height });
-
-    // 3b — wire the live-sync listeners that mutate the image's
-    // clipPath, the dimmer rects, and the Done bar position
-    // whenever the user moves or scales the frame border.
-    //
-    // Normalization step inside the handler: Fabric's scaling
-    // changes scaleX/scaleY on the Rect but leaves width/height
-    // alone. We immediately bake scale → width/height (scaleX = 1,
-    // scaleY = 1) so the NEXT drag starts from a clean state and
-    // the clipPath math stays straightforward.
-    const syncFrameToClipPath = (): void => {
-      // Effective bounds (scaledW, scaledH at left,top).
-      const rawW = (border.width ?? 0) * (border.scaleX ?? 1);
-      const rawH = (border.height ?? 0) * (border.scaleY ?? 1);
-      const newLeft = border.left ?? 0;
-      const newTop = border.top ?? 0;
-      // Clamp to canvas bounds — the frame can't extend past the
-      // canvas edges, and it can't go negative width/height.
-      const MIN = 40;
-      const clampedW = Math.max(
-        MIN,
-        Math.min(rawW, template.width - newLeft),
-      );
-      const clampedH = Math.max(
-        MIN,
-        Math.min(rawH, template.height - newTop),
-      );
-      const clampedLeft = Math.max(
-        0,
-        Math.min(newLeft, template.width - clampedW),
-      );
-      const clampedTop = Math.max(
-        0,
-        Math.min(newTop, template.height - clampedH),
-      );
-      // Normalize: bake scale into width/height for a clean next
-      // transform. Also re-anchor in case clamping shifted us.
-      border.set({
-        left: clampedLeft,
-        top: clampedTop,
-        width: clampedW,
-        height: clampedH,
-        scaleX: 1,
-        scaleY: 1,
-      });
-      // 2026-05-25 — clipPath is INTENTIONALLY null during crop so
-      // the user sees the full photo. We don't mutate it here; the
-      // dimmers communicate "this area will be cropped". On exit
-      // (Done) we re-apply clipPath using currentClipRect.
-      //
-      // Update dimmers: 4 rects covering the canvas area outside
-      // the new frame. Re-assigning width/height/top/left in place
-      // is cheaper than removing + re-adding them.
-      const [dTop, dBottom, dLeft, dRight] = dimmers;
-      dTop.set({
-        left: 0,
-        top: 0,
-        width: template.width,
-        height: clampedTop,
-      });
-      dBottom.set({
-        left: 0,
-        top: clampedTop + clampedH,
-        width: template.width,
-        height: Math.max(0, template.height - (clampedTop + clampedH)),
-      });
-      dLeft.set({
-        left: 0,
-        top: clampedTop,
-        width: clampedLeft,
-        height: clampedH,
-      });
-      dRight.set({
-        left: clampedLeft + clampedW,
-        top: clampedTop,
-        width: Math.max(0, template.width - (clampedLeft + clampedW)),
-        height: clampedH,
-      });
-      // Update Done bar React state. setState in a Fabric-event
-      // callback is intentionally throttled-by-React-batching: even
-      // at 60fps Fabric events, React batches the renders.
-      setCurrentClipRect({
-        left: clampedLeft,
-        top: clampedTop,
-        width: clampedW,
-        height: clampedH,
-      });
-      canvas.requestRenderAll();
-    };
-    border.on("scaling", syncFrameToClipPath);
-    border.on("moving", syncFrameToClipPath);
 
     // 4 — define the exit function. Cancel=true restores image pose
     // AND clipPath rect; cancel=false commits both.
@@ -1636,14 +1482,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (!c) return;
       // 2026-05-25 — re-apply the image's clipPath now that we're
       // leaving crop mode. Cover the appropriate rect:
-      //   • cancel → originalClipRect (user backed out)
-      //   • commit → currentClipRect (user dragged the frame)
-      // The clipPath rect we apply is a fresh absolutePositioned
-      // Rect — same shape as what fabric-factory.ts originally
-      // attached. Preserve corner radius from the saved clipPath.
-      const targetRect = cancel
-        ? cropMode.originalClipRect
-        : currentClipRectRef.current ?? cropMode.originalClipRect;
+      // The frame is fixed throughout crop mode, so the clipPath
+      // re-applies at the ORIGINAL rect for both commit and cancel.
+      // Only difference: cancel additionally restores the image's
+      // pre-crop pose. Preserve corner radius from the saved
+      // clipPath so rounded photo frames stay rounded.
+      const targetRect = cropMode.originalClipRect;
       const priorClipRx =
         savedClipPath instanceof Rect &&
         typeof (savedClipPath as unknown as { rx?: number }).rx === "number"
@@ -1675,14 +1519,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       for (const d of overlay.dimmers) c.remove(d);
       cropOverlayRef.current = { border: null, dimmers: [] };
       // Restore the target image's control visibility to whatever
-      // it was before crop mode. Side + rotate handles come back.
+      // it was before crop mode.
       (
         targetImage as unknown as {
           setControlsVisibility: (v: Record<string, boolean>) => void;
         }
       ).setControlsVisibility(priorControlsVisibility);
-      (c as unknown as { uniformScaling: boolean }).uniformScaling =
-        priorUniformScaling;
       // Restore other layers' interactivity.
       for (const r of restoreList) {
         r.obj.set({ selectable: r.selectable, evented: r.evented });
@@ -1694,9 +1536,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         c.fire("object:modified", { target: targetImage });
       }
       c.requestRenderAll();
-      // 2026-05-25 — also clear currentClipRect so the Done bar
-      // unmounts (it's gated on `cropMode && currentClipRect`).
-      setCurrentClipRect(null);
       setCropMode(null);
     };
     exitCropModeRef.current = exitFn;
@@ -1716,32 +1555,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     };
     document.addEventListener("keydown", onKey);
 
-    // 6 — click-outside handler. If the user clicks anywhere on the
-    // canvas BACKGROUND (no target) or any non-target object, commit
-    // and exit. We use mouse:down here so it fires before any other
-    // canvas response.
-    //
-    // 2026-05-25 — also accept clicks on the FRAME BORDER as
-    // "stay in crop mode" — the user is interacting with the frame
-    // handles, not trying to exit. Dimmers stay non-evented so
-    // clicks fall through to whatever's beneath (which in our case
-    // is the canvas background → exit).
+    // 6 — click-outside handler. If the user clicks anywhere that
+    // ISN'T the photo (e.g. another layer, or canvas background),
+    // commit + exit. The border and dimmers are non-evented so they
+    // can't be click targets; clicks pass through them.
     const onCanvasClick = (e: {
       target?: import("fabric").FabricObject | null;
     }): void => {
-      // Inside-crop-target hits don't exit.
       if (e.target === targetImage) return;
-      // Clicks on the frame border are "stay in crop mode" (user is
-      // engaging the frame handles). The data tag we stamped at
-      // border creation lets us identify it without an instanceof
-      // chain.
-      const borderData = e.target
-        ? (
-            e.target as unknown as { data?: { isCropFrameBorder?: boolean } }
-          ).data
-        : null;
-      if (borderData?.isCropFrameBorder) return;
-      // Otherwise — clicked outside the crop chrome. Commit + exit.
       exitFn(false);
     };
     canvas.on("mouse:down", onCanvasClick);
@@ -3359,7 +3180,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   selectionMode === "shape" ||
                   selectionMode === "multi" ||
                   selectionMode === "image") &&
-                fabricRef.current ? (
+                fabricRef.current &&
+                !cropMode ? (
+                  /* 2026-05-25 — hide the contextual toolbar in crop
+                     mode. Matches Canva — the toolbar disappears
+                     while cropping so the surface is fully focused
+                     on the photo manipulation. Re-appears on Done. */
                   <ContextualTopToolbar
                     canvas={fabricRef.current}
                     mode={selectionMode}
@@ -3450,18 +3276,20 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   scaled together with the canvas by the parent
                   transform — so it tracks the frame regardless of
                   user zoom level. */}
-              {cropMode && currentClipRect ? (
+              {cropMode ? (
                 <div
                   style={{
                     position: "absolute",
-                    // 2026-05-25 — read from `currentClipRect` (live)
-                    // not `originalClipRect` (frozen) so the bar
-                    // tracks the frame as the user drags handles.
-                    left: currentClipRect.left * displayScale * zoom,
+                    // 2026-05-25 (Canva-match refactor) — frame is
+                    // fixed during crop, so read directly from the
+                    // entry snapshot. No live state needed.
+                    left:
+                      cropMode.originalClipRect.left * displayScale * zoom,
                     top:
                       Math.max(
                         0,
-                        currentClipRect.top - 48 / (displayScale * zoom),
+                        cropMode.originalClipRect.top -
+                          48 / (displayScale * zoom),
                       ) *
                       displayScale *
                       zoom,
