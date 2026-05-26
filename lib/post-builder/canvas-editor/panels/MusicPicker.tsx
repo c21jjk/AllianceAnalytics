@@ -34,6 +34,14 @@
  */
 
 import {
+  AudioWaveform,
+  ChevronDown,
+  Pause,
+  Play,
+  Square,
+  X,
+} from "lucide-react";
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -310,87 +318,12 @@ function usePreviewAudio(): {
 }
 
 // ---------------------------------------------------------------------------
-// Inline icons — same approach the rest of canvas-editor uses
+// 2026-05-26 — inline PlayIcon / StopIcon / WaveformGlyph / CloseIcon /
+// ChevronDownIcon were replaced with Lucide imports above (Play / Square /
+// AudioWaveform / X / ChevronDown). StopIcon used to render a filled
+// square — Lucide's Square is outline-only, so the call sites pass
+// fill="currentColor" to match the original look.
 // ---------------------------------------------------------------------------
-
-function PlayIcon({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M8 5.5v13a.5.5 0 0 0 .77.42l10-6.5a.5.5 0 0 0 0-.84l-10-6.5A.5.5 0 0 0 8 5.5z" />
-    </svg>
-  );
-}
-
-function StopIcon({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <rect x="6" y="6" width="12" height="12" rx="1.5" />
-    </svg>
-  );
-}
-
-/** Small purely-decorative waveform glyph for the collapsed-with-track card. */
-function WaveformGlyph({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 16"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <rect x="1" y="6" width="2" height="4" rx="1" />
-      <rect x="5" y="3" width="2" height="10" rx="1" />
-      <rect x="9" y="1" width="2" height="14" rx="1" />
-      <rect x="13" y="4" width="2" height="8" rx="1" />
-      <rect x="17" y="2" width="2" height="12" rx="1" />
-      <rect x="21" y="5" width="2" height="6" rx="1" />
-    </svg>
-  );
-}
-
-function CloseIcon({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M18 6 6 18M6 6l12 12" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon({ className }: { className?: string }): JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -569,10 +502,10 @@ function CollapsedCard({
         aria-label="Add background music"
       >
         <span className="inline-flex items-center gap-2">
-          <PlayIcon className="h-4 w-4" />
+          <Play className="h-4 w-4" fill="currentColor" />
           <span>No music — tap to add</span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 text-gold-700" />
+        <ChevronDown className="h-4 w-4 text-gold-700" />
       </button>
     );
   }
@@ -594,7 +527,7 @@ function CollapsedCard({
           aria-hidden="true"
           className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-gold-50 text-gold-700"
         >
-          <WaveformGlyph className="h-3.5 w-5" />
+          <AudioWaveform className="h-3.5 w-5" />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
@@ -614,7 +547,7 @@ function CollapsedCard({
         aria-label="Remove music"
         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
       >
-        <CloseIcon className="h-3.5 w-3.5" />
+        <X className="h-3.5 w-3.5" />
       </button>
     </div>
   );
@@ -693,7 +626,7 @@ function ExpandedPicker({
               aria-label="Close picker"
               className="inline-flex h-6 w-6 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
             >
-              <CloseIcon className="h-3 w-3" />
+              <X className="h-3 w-3" />
             </button>
           </div>
         </div>
@@ -860,9 +793,9 @@ function TrackRow({
           ].join(" ")}
         >
           {isPreviewPlaying ? (
-            <StopIcon className="h-3 w-3" />
+            <Square className="h-3 w-3" fill="currentColor" />
           ) : (
-            <PlayIcon className="h-3.5 w-3.5" />
+            <Play className="h-3.5 w-3.5" fill="currentColor" />
           )}
         </button>
       )}
@@ -936,7 +869,7 @@ function VolumeAndFadeControls({
           aria-controls="reel-music-fade-controls"
           className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-600 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
         >
-          <ChevronDownIcon
+          <ChevronDown
             className={[
               "h-3 w-3 transition-transform",
               showFadeControls ? "rotate-0" : "-rotate-90",

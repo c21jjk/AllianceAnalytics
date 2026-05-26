@@ -52,12 +52,24 @@ import {
   Textbox,
 } from "fabric";
 import {
+  ArrowRight,
+  Brush,
   Circle as LCircle,
+  CornerDownRight,
+  Diamond,
+  Eraser,
   Heading as LHeading,
   Heading2 as LHeading2,
+  Highlighter,
+  MessageCircle,
   Minus as LMinus,
+  Pen,
+  Pentagon,
   Pilcrow as LPilcrow,
+  Spline,
   Square as LSquare,
+  Star,
+  Triangle,
 } from "lucide-react";
 import { type JSX, useCallback, useEffect, useState } from "react";
 
@@ -1029,37 +1041,44 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
           <ShapeButton
             label="Triangle"
             onClick={() => handleSpawnShape("triangle")}
-            icon={<TriangleGlyph />}
+            icon={<Triangle size={22} fill="currentColor" stroke="none" />}
           />
           <ShapeButton
             label="Triangle down"
             onClick={() => handleSpawnShape("triangle_down")}
-            icon={<TriangleDownGlyph />}
+            icon={
+              <Triangle
+                size={22}
+                fill="currentColor"
+                stroke="none"
+                style={{ transform: "rotate(180deg)" }}
+              />
+            }
           />
           <ShapeButton
             label="Diamond"
             onClick={() => handleSpawnShape("diamond")}
-            icon={<DiamondGlyph />}
+            icon={<Diamond size={22} fill="currentColor" stroke="none" />}
           />
           <ShapeButton
             label="Pentagon"
             onClick={() => handleSpawnShape("pentagon")}
-            icon={<PentagonGlyph />}
+            icon={<Pentagon size={22} fill="currentColor" stroke="none" />}
           />
           <ShapeButton
             label="Star"
             onClick={() => handleSpawnShape("star")}
-            icon={<StarGlyph />}
+            icon={<Star size={22} fill="currentColor" stroke="none" />}
           />
           <ShapeButton
             label="Arrow"
             onClick={() => handleSpawnShape("arrow")}
-            icon={<ArrowGlyph />}
+            icon={<ArrowRight size={22} />}
           />
           <ShapeButton
             label="Speech bubble"
             onClick={() => handleSpawnShape("speech_bubble")}
-            icon={<SpeechBubbleGlyph />}
+            icon={<MessageCircle size={22} />}
           />
         </div>
       </Section>
@@ -1070,12 +1089,12 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
           <ShapeButton
             label="Curved"
             onClick={() => handleSpawnLine("curved")}
-            icon={<CurvedLineGlyph />}
+            icon={<Spline size={26} />}
           />
           <ShapeButton
             label="Elbow"
             onClick={() => handleSpawnLine("elbow")}
-            icon={<ElbowLineGlyph />}
+            icon={<CornerDownRight size={26} />}
           />
         </div>
       </Section>
@@ -1143,12 +1162,12 @@ function BrushButton(props: {
           : "Eraser";
   const Icon =
     props.brush === "pen"
-      ? PenGlyph
+      ? Pen
       : props.brush === "marker"
-        ? MarkerGlyph
+        ? Brush
         : props.brush === "highlighter"
-          ? HighlighterGlyph
-          : EraserGlyph;
+          ? Highlighter
+          : Eraser;
   // why: don't wrap brush buttons in Tooltip — they already render the
   // tool name as a label INSIDE the tile (under the icon). A pill
   // hovering on top of an already-labeled button is redundant and
@@ -1166,7 +1185,7 @@ function BrushButton(props: {
           : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
       }`}
     >
-      <Icon />
+      <Icon size={20} />
       <span className="text-[10px] font-medium leading-none">{label}</span>
     </button>
   );
@@ -1241,123 +1260,13 @@ function ShapeButton(props: {
 }
 
 // ===========================================================================
-// Inline SVG glyphs
+// Icons — Lucide
 // ===========================================================================
 //
-// Conventions follow the rest of canvas-editor/ — inline SVG, currentColor
-// fills, viewBox 0 0 24 24 for the tool icons (24 px reads cleanly inside
-// the 56-px aspect-square buttons).
-// ---------------------------------------------------------------------------
-
-function PenGlyph(): JSX.Element {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 19l7-7 3 3-7 7-3-3z" />
-      <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-      <path d="M2 2l7.586 7.586" />
-      <circle cx="11" cy="11" r="2" />
-    </svg>
-  );
-}
-
-function MarkerGlyph(): JSX.Element {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 11l-5 5v3h3l5-5" />
-      <path d="M14 6l4-4 4 4-4 4" />
-      <path d="M9 11l4-4 4 4-4 4" />
-    </svg>
-  );
-}
-
-function HighlighterGlyph(): JSX.Element {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 11l-4 9h6l3-3" />
-      <path d="M15 6l3 3-9 9-3-3 9-9z" />
-      <path d="M17 4l3 3" />
-    </svg>
-  );
-}
-
-function EraserGlyph(): JSX.Element {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 17l6 6h12" />
-      <path d="M9 17l8-8a2.828 2.828 0 114 4l-8 8" />
-      <path d="M14 7l4 4" />
-    </svg>
-  );
-}
-
-function TriangleGlyph(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 4 L22 20 L2 20 Z" />
-    </svg>
-  );
-}
-
-function TriangleDownGlyph(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M2 4 L22 4 L12 20 Z" />
-    </svg>
-  );
-}
-
-function DiamondGlyph(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 3 L21 12 L12 21 L3 12 Z" />
-    </svg>
-  );
-}
-
-function PentagonGlyph(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 3 L22 10 L18 21 L6 21 L2 10 Z" />
-    </svg>
-  );
-}
-
-function StarGlyph(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 3 L14.6 9.8 L22 10.3 L16.3 14.9 L18.2 22 L12 18 L5.8 22 L7.7 14.9 L2 10.3 L9.4 9.8 Z" />
-    </svg>
-  );
-}
-
-function ArrowGlyph(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M2 10 L14 10 L14 6 L22 12 L14 18 L14 14 L2 14 Z" />
-    </svg>
-  );
-}
-
-function SpeechBubbleGlyph(): JSX.Element {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M4 4 H20 a2 2 0 0 1 2 2 V14 a2 2 0 0 1 -2 2 H10 L5 21 V16 H4 a2 2 0 0 1 -2 -2 V6 a2 2 0 0 1 2 -2 Z" />
-    </svg>
-  );
-}
-
-function CurvedLineGlyph(): JSX.Element {
-  return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <path d="M3 18 Q 12 4 21 18" />
-    </svg>
-  );
-}
-
-function ElbowLineGlyph(): JSX.Element {
-  return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 5 L3 18 L21 18" />
-    </svg>
-  );
-}
+// 2026-05-26 — all 12 inline-SVG glyphs were replaced with their Lucide
+// equivalents (Pen / Brush / Highlighter / Eraser / Triangle / Diamond /
+// Pentagon / Star / ArrowRight / MessageCircle / Spline / CornerDownRight).
+// The closed-shape tiles (Triangle / Diamond / Pentagon / Star) override
+// stroke to none + fill currentColor so they read as filled silhouettes
+// like the originals. Lines + open icons (ArrowRight, MessageCircle,
+// Spline, CornerDownRight) render with default stroke for legibility.

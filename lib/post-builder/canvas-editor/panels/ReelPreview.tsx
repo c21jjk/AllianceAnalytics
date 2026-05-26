@@ -27,6 +27,7 @@
  *     at its correct virtual timestamp.
  */
 
+import { Pause, Play } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -1080,9 +1081,9 @@ export default function ReelPreview({
           className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-gold-600 text-white shadow-sm transition hover:bg-gold-700 focus:outline-none focus:ring-2 focus:ring-gold-500/50"
         >
           {isPlaying ? (
-            <PauseIcon className="h-5 w-5" />
+            <Pause className="h-5 w-5" fill="currentColor" />
           ) : (
-            <PlayIcon className="h-5 w-5" />
+            <Play className="h-5 w-5" fill="currentColor" />
           )}
         </button>
         <div
@@ -1142,34 +1143,7 @@ export default function ReelPreview({
 }
 
 // ---------------------------------------------------------------------------
-// Inline icons — no external dependency for the play/pause glyphs
+// 2026-05-26 — inline PlayIcon / PauseIcon were replaced with Lucide
+// Play / Pause imports above. Both call sites pass fill="currentColor" so
+// the icons render as filled silhouettes like the originals.
 // ---------------------------------------------------------------------------
-
-/** Filled play triangle. */
-function PlayIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M8 5.5v13a.5.5 0 0 0 .77.42l10-6.5a.5.5 0 0 0 0-.84l-10-6.5A.5.5 0 0 0 8 5.5z" />
-    </svg>
-  );
-}
-
-/** Two vertical bars. */
-function PauseIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <rect x="6" y="5" width="4" height="14" rx="1" />
-      <rect x="14" y="5" width="4" height="14" rx="1" />
-    </svg>
-  );
-}

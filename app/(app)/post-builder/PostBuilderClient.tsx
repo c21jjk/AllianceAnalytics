@@ -398,6 +398,11 @@ export default function PostBuilderClient({
    *  succeeded or hasn't started. Surfaced in the same error banner as
    *  Generate errors. */
   const [aiError, setAiError] = useState<string | null>(null);
+  /** Soft, dismissible hint shown only when the post-AI-Design caption
+   *  hydration call fails. The design itself succeeded — we just couldn't
+   *  fill in captions automatically. The Regenerate button is still
+   *  available to retry. Null = no hint. */
+  const [aiCaptionHint, setAiCaptionHint] = useState<string | null>(null);
 
   const [studioOpen, setStudioOpen] = useState<boolean>(false);
   const [studioContext, setStudioContext] = useState<{
@@ -2735,6 +2740,7 @@ export default function PostBuilderClient({
     setGenerating(true);
     setError(null);
     setAiError(null);
+    setAiCaptionHint(null);
     setRenderResult(null);
     setAiDesign(null);
     // 2026-05-25 — AI Design produces a brand-new schema; any prior
@@ -2856,6 +2862,48 @@ export default function PostBuilderClient({
           height: schema.height,
           hero_image_source_url: currentHeroUrls[0] ?? "",
         });
+        // why (2026-05-26 — caption-gap fix): regular Generate fires
+        // /api/post-builder/caption in parallel with /api/post-builder/render
+        // so captions land on the same generation. AI Design only fires
+        // /api/post-builder/design-and-render, which left captions blank
+        // on every AI-designed post. Mirror Generate's pattern but kick
+        // off the caption call AFTER the design pipeline finishes (since
+        // AI Design takes ~60-90s and the caption call is listing-only —
+        // no dependence on the AI schema). Failure is non-fatal: the
+        // design is already on screen and Regenerate can retry captions.
+        setAiCaptionHint(null);
+        setAiProgress("Writing captions…");
+        try {
+          const [captionRes] = await Promise.allSettled([
+            fetch("/api/post-builder/caption", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                listing: selectedListing,
+                post_type: postType,
+              }),
+            }),
+          ]);
+          const captionError = await safelyHandleCaption(
+            captionRes,
+            setCaptionResult,
+            setEditedCaptions,
+          );
+          if (captionError) {
+            console.warn("AI Design caption hydration failed:", captionError);
+            setAiCaptionHint(
+              "Captions weren't generated automatically — click Regenerate to try again.",
+            );
+          }
+        } catch (captionErr) {
+          // Defensive — safelyHandleCaption already swallows most errors
+          // and returns a string. This catches anything thrown before it
+          // could (e.g. fetch itself blowing up synchronously).
+          console.warn("AI Design caption hydration threw:", captionErr);
+          setAiCaptionHint(
+            "Captions weren't generated automatically — click Regenerate to try again.",
+          );
+        }
         setAiProgress("");
       } else if (failureMessage) {
         setAiError(`AI Design failed: ${failureMessage}`);
@@ -2980,6 +3028,9 @@ export default function PostBuilderClient({
         // Phase D — regenerate refreshes ALL three platform tabs in one
         // pass so the user gets a fresh set of variants to pick from.
         setEditedCaptions(buildPlatformTextsFromCaption(cap));
+        // 2026-05-26 — if the AI Design caption-hydration hint is still
+        // up, clear it now that captions are populated again.
+        setAiCaptionHint(null);
       } else {
         setError(`Caption regen failed: ${json.error}`);
       }
@@ -3729,6 +3780,27 @@ export default function PostBuilderClient({
                 >
                   <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
                   <span>{aiError}</span>
+                </div>
+              ) : null}
+
+              {/* 2026-05-26 — soft hint shown when AI Design succeeded but
+                  the post-design caption fetch failed. Design stays on
+                  screen; user can hit Regenerate in the caption pane. */}
+              {aiCaptionHint ? (
+                <div
+                  role="status"
+                  className="mb-3 inline-flex items-start gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700"
+                >
+                  <Sparkles size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-gold-600" />
+                  <span>{aiCaptionHint}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAiCaptionHint(null)}
+                    className="ml-1 text-xs text-neutral-500 hover:text-neutral-800 focus-ring rounded"
+                    aria-label="Dismiss hint"
+                  >
+                    Dismiss
+                  </button>
                 </div>
               ) : null}
 
