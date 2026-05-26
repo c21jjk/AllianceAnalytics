@@ -149,12 +149,6 @@ import {
   handleToolsKeyDown,
 } from "./history/keyboard-shortcuts";
 import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
-import AddLayerToolbar, {
-  spawnCircle as spawnCircleObj,
-  spawnLine as spawnLineObj,
-  spawnRect as spawnRectObj,
-  spawnText as spawnTextObj,
-} from "./panels/AddLayerToolbar";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
 import ContextualTopToolbar from "./panels/ContextualTopToolbar";
@@ -162,7 +156,17 @@ import FontPickerPanel from "./panels/FontPickerPanel";
 import LayerListPanel from "./panels/LayerListPanel";
 import { FONT_OPTIONS } from "./primitives/font-options";
 import PhotosPanel from "./panels/PhotosPanel";
-import ToolsPanel, { type ToolMode } from "./panels/ToolsPanel";
+// why (2026-05-26): the floating AddLayerToolbar component was removed and
+// its spawn factories moved into ToolsPanel. The keyboard shortcuts that
+// previously called AddLayerToolbar's exports now import the same-named
+// functions from ToolsPanel — semantics are identical.
+import ToolsPanel, {
+  spawnCircle as spawnCircleObj,
+  spawnLine as spawnLineObj,
+  spawnRect as spawnRectObj,
+  spawnText as spawnTextObj,
+  type ToolMode,
+} from "./panels/ToolsPanel";
 import Tooltip from "./primitives/Tooltip";
 import SelectionPropertiesPanel from "./panels/SelectionPropertiesPanel";
 import CarouselPreview from "./panels/CarouselPreview";
@@ -3477,8 +3481,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             {/* Phase B.6 — autosave restore banner. Renders only when we
                 detected a recent localStorage autosave for this (template,
                 mls) pair AND the user hasn't dismissed it yet. Non-blocking;
-                shown above the AddLayerToolbar so it's noticeable but not
-                in the canvas chrome. */}
+                sits at the top of the canvas surround above the canvas
+                itself. */}
             {pendingAutosave && !autosaveBannerDismissed ? (
               <div className="mb-3 flex w-full max-w-2xl items-center justify-between rounded-lg border border-amber-500/30 bg-[var(--studio-popover)] px-3 py-2 text-[12px] text-white shadow-lg shadow-black/40">
                 <div className="flex min-w-0 items-center gap-2">
@@ -3514,17 +3518,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               </div>
             ) : null}
 
-            {/* Phase 2 — Add Layer Toolbar (always visible, top of canvas area).
-                why: primary creation affordance — adding text/shape layers is
-                one of the top-3 things Larissa will do once Phase 2 ships. */}
-            <div className="mb-4 flex w-full justify-center">
-              <AddLayerToolbar
-                canvas={fabricRef.current}
-                listing={listing}
-                onLayerAdded={handleLayerAdded}
-                recordHistory={history.record}
-              />
-            </div>
+            {/* 2026-05-26 — the floating Add Layer Toolbar that used to sit
+                here was removed. Its four affordances (Text / Rect / Circle /
+                Line) plus three new text subtypes (Heading / Subheading /
+                Paragraph) now live in the Tools panel's "Add" section in the
+                left rail. Keyboard shortcuts (T/R/O/L) still work and route
+                through the spawn factories re-exported by ToolsPanel. */}
             {/* Phase B.2 — floating chrome above the canvas. Two stacked
                 bars: contextual content controls (top) + structural ops
                 (bottom). The wrapper owns positioning so both bars share
@@ -3806,6 +3805,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onCanvasMutated={() => setLayerVersion((v) => v + 1)}
                     onClearSelection={handleClearSelection}
                     recordHistory={history.record}
+                    onOpenFontPicker={() => setFontPickerOpen((v) => !v)}
+                    fontPickerOpen={fontPickerOpen}
                   />
                 )}
               </div>

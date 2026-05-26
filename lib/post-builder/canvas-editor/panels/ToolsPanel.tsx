@@ -40,6 +40,9 @@
  */
 
 import {
+  Circle as FabricCircle,
+  Line as FabricLine,
+  Rect as FabricRect,
   type Canvas,
   type FabricObject,
   PencilBrush,
@@ -48,6 +51,14 @@ import {
   Polyline,
   Textbox,
 } from "fabric";
+import {
+  Circle as LCircle,
+  Heading as LHeading,
+  Heading2 as LHeading2,
+  Minus as LMinus,
+  Pilcrow as LPilcrow,
+  Square as LSquare,
+} from "lucide-react";
 import { type JSX, useCallback, useEffect, useState } from "react";
 
 import { setLayerData } from "../fabric-factory";
@@ -533,6 +544,217 @@ export function spawnTextFromTools(canvas: Canvas): FabricObject {
 }
 
 // ===========================================================================
+// ADD section factories — migrated 2026-05-26 from the deleted AddLayerToolbar.
+// ===========================================================================
+//
+// The floating "Add layer" toolbar that used to sit above the canvas was
+// removed in favor of a top "ADD" tile section inside this Tools panel. Its
+// four spawn factories (text / rect / circle / line) live here so callers
+// outside this panel (keyboard shortcuts in CanvasEditor.tsx) still have a
+// stable import path. We also add Heading + Subheading variants on top of
+// the original text spawn — Canva exposes the three sizes as distinct tiles
+// in its Elements panel and Larissa expects the same.
+// ---------------------------------------------------------------------------
+
+/** Distinct text-subtype tiles in the ADD section. */
+export type AddTextKind = "heading" | "subheading" | "paragraph";
+
+/** Per-subtype defaults — diverge mainly on fontSize + fontWeight + content. */
+const ADD_TEXT_PRESETS: Record<
+  AddTextKind,
+  { content: string; fontSize: number; fontWeight: number; displayName: string }
+> = {
+  heading: {
+    content: "Add a heading",
+    fontSize: 96,
+    fontWeight: 700,
+    displayName: "Heading",
+  },
+  subheading: {
+    content: "Add a subheading",
+    fontSize: 64,
+    fontWeight: 600,
+    displayName: "Subheading",
+  },
+  paragraph: {
+    content: ADD_LAYER_DEFAULTS.textContent,
+    fontSize: 32,
+    fontWeight: 400,
+    displayName: "Paragraph",
+  },
+};
+
+/**
+ * Spawn a Textbox configured for the given text-subtype preset. Shares the
+ * placement + corner-handle styling of all Tools-panel spawns. Used by the
+ * ADD section tiles (3 text tiles).
+ */
+export function spawnAddText(
+  canvas: Canvas,
+  kind: AddTextKind,
+): FabricObject {
+  const { cx, cy } = getCenter(canvas);
+  const preset = ADD_TEXT_PRESETS[kind];
+  const id = makeId(`user_${kind}`);
+  const tb = new Textbox(preset.content, {
+    left: cx,
+    top: cy,
+    width: ADD_LAYER_DEFAULTS.textWidth,
+    originX: "center",
+    originY: "center",
+    fontFamily: ALLIANCE_FONTS.bodySans,
+    fontSize: preset.fontSize,
+    fontWeight: preset.fontWeight,
+    fill: ALLIANCE_COLORS.ink900,
+    textAlign: "center",
+    editable: true,
+    selectable: true,
+    evented: true,
+    cornerStyle: "circle",
+    cornerSize: 10,
+    transparentCorners: false,
+    borderColor: ALLIANCE_COLORS.gold500,
+    cornerColor: ALLIANCE_COLORS.gold500,
+    padding: 2,
+  });
+  setLayerData(tb, {
+    layerId: id,
+    layerKind: "text",
+    displayName: preset.displayName,
+  });
+  return tb;
+}
+
+/**
+ * Spawn a default text layer — kept for CanvasEditor's keyboard-shortcut
+ * dispatcher (the `T` key) which expects a single zero-argument factory.
+ * Equivalent to spawnAddText(canvas, "paragraph") with the legacy
+ * "Double-click to edit" placeholder and 48px size so the existing T
+ * binding's behavior doesn't change.
+ */
+export function spawnText(canvas: Canvas): FabricObject {
+  const { cx, cy } = getCenter(canvas);
+  const id = makeId("user_text");
+  const tb = new Textbox(ADD_LAYER_DEFAULTS.textContent, {
+    left: cx,
+    top: cy,
+    width: ADD_LAYER_DEFAULTS.textWidth,
+    originX: "center",
+    originY: "center",
+    fontFamily: ALLIANCE_FONTS.bodySans,
+    fontSize: 48,
+    fontWeight: 600,
+    fill: ALLIANCE_COLORS.ink900,
+    textAlign: "center",
+    editable: true,
+    selectable: true,
+    evented: true,
+    cornerStyle: "circle",
+    cornerSize: 10,
+    transparentCorners: false,
+    borderColor: ALLIANCE_COLORS.gold500,
+    cornerColor: ALLIANCE_COLORS.gold500,
+    padding: 2,
+  });
+  setLayerData(tb, {
+    layerId: id,
+    layerKind: "text",
+    displayName: "Text",
+  });
+  return tb;
+}
+
+/** Spawn a default Rectangle — migrated from AddLayerToolbar. */
+export function spawnRect(canvas: Canvas): FabricObject {
+  const { cx, cy } = getCenter(canvas);
+  const id = makeId("user_rect");
+  const size = ADD_LAYER_DEFAULTS.shapeSize;
+  const rect = new FabricRect({
+    left: cx,
+    top: cy,
+    width: size,
+    height: size,
+    originX: "center",
+    originY: "center",
+    fill: ALLIANCE_COLORS.gold500,
+    stroke: undefined,
+    strokeWidth: 0,
+    rx: 0,
+    ry: 0,
+    selectable: true,
+    evented: true,
+    cornerStyle: "circle",
+    cornerSize: 10,
+    transparentCorners: false,
+    borderColor: ALLIANCE_COLORS.gold500,
+    cornerColor: ALLIANCE_COLORS.gold500,
+  });
+  setLayerData(rect, {
+    layerId: id,
+    layerKind: "shape",
+    displayName: "Rectangle",
+  });
+  return rect;
+}
+
+/** Spawn a default Circle — migrated from AddLayerToolbar. */
+export function spawnCircle(canvas: Canvas): FabricObject {
+  const { cx, cy } = getCenter(canvas);
+  const id = makeId("user_circle");
+  const radius = ADD_LAYER_DEFAULTS.shapeSize / 2;
+  const circle = new FabricCircle({
+    left: cx,
+    top: cy,
+    radius,
+    originX: "center",
+    originY: "center",
+    fill: ALLIANCE_COLORS.gold500,
+    stroke: undefined,
+    strokeWidth: 0,
+    selectable: true,
+    evented: true,
+    cornerStyle: "circle",
+    cornerSize: 10,
+    transparentCorners: false,
+    borderColor: ALLIANCE_COLORS.gold500,
+    cornerColor: ALLIANCE_COLORS.gold500,
+  });
+  setLayerData(circle, {
+    layerId: id,
+    layerKind: "shape",
+    displayName: "Circle",
+  });
+  return circle;
+}
+
+/** Spawn a default straight Line — migrated from AddLayerToolbar. */
+export function spawnLine(canvas: Canvas): FabricObject {
+  const { cx, cy } = getCenter(canvas);
+  const id = makeId("user_line");
+  const len = ADD_LAYER_DEFAULTS.lineLength;
+  // why: Fabric Line takes [x1, y1, x2, y2] in the constructor. We DON'T set
+  // originX/originY=center here — Fabric computes the origin from the
+  // endpoints, and overriding the origin shifts the visible line.
+  const line = new FabricLine([cx - len / 2, cy, cx + len / 2, cy], {
+    stroke: ALLIANCE_COLORS.ink900,
+    strokeWidth: ADD_LAYER_DEFAULTS.lineStrokeWidth,
+    selectable: true,
+    evented: true,
+    cornerStyle: "circle",
+    cornerSize: 10,
+    transparentCorners: false,
+    borderColor: ALLIANCE_COLORS.gold500,
+    cornerColor: ALLIANCE_COLORS.gold500,
+  });
+  setLayerData(line, {
+    layerId: id,
+    layerKind: "shape",
+    displayName: "Line",
+  });
+  return line;
+}
+
+// ===========================================================================
 // Component
 // ===========================================================================
 
@@ -644,16 +866,31 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
     [canvas, activeTool, onToolChange, onLayerAdded, recordHistory],
   );
 
-  const handleSpawnText = useCallback((): void => {
-    if (!canvas) return;
-    if (activeTool === "draw") onToolChange("select");
-    const obj = spawnTextFromTools(canvas);
-    canvas.add(obj);
-    canvas.setActiveObject(obj);
-    canvas.requestRenderAll();
-    onLayerAdded(obj);
-    recordHistory?.();
-  }, [canvas, activeTool, onToolChange, onLayerAdded, recordHistory]);
+  // why (2026-05-26 — migrated from the deleted floating AddLayerToolbar):
+  // generic single-step spawn for the ADD section tiles. Takes a factory
+  // closure rather than an enum so future entries (e.g. star, triangle)
+  // can reuse the same exit-draw-mode + add + select + record sequence
+  // without ballooning the switch statement.
+  const handleSpawnObject = useCallback(
+    (factory: (c: Canvas) => FabricObject): void => {
+      if (!canvas) return;
+      if (activeTool === "draw") onToolChange("select");
+      const obj = factory(canvas);
+      canvas.add(obj);
+      canvas.setActiveObject(obj);
+      canvas.requestRenderAll();
+      onLayerAdded(obj);
+      recordHistory?.();
+    },
+    [canvas, activeTool, onToolChange, onLayerAdded, recordHistory],
+  );
+
+  const handleAddText = useCallback(
+    (kind: AddTextKind): void => {
+      handleSpawnObject((c) => spawnAddText(c, kind));
+    },
+    [handleSpawnObject],
+  );
 
   // -------------------------------------------------------------------------
   // Render
@@ -661,6 +898,52 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto p-3">
+      {/* ===== ADD (migrated from the deleted floating AddLayerToolbar) =====
+          Always-on top section. Three text subtypes + the three primitive
+          shapes that used to live in the floating "Add layer" pill. Stays
+          visible regardless of the active tool — adding a layer is a
+          primary action that shouldn't depend on Draw / Select state. */}
+      <Section title="Add">
+        <div className="grid grid-cols-3 gap-2">
+          <AddTile
+            label="Heading"
+            sublabel="H1"
+            previewFontWeight={700}
+            icon={<LHeading size={18} />}
+            onClick={() => handleAddText("heading")}
+          />
+          <AddTile
+            label="Subheading"
+            sublabel="H2"
+            previewFontWeight={600}
+            icon={<LHeading2 size={18} />}
+            onClick={() => handleAddText("subheading")}
+          />
+          <AddTile
+            label="Paragraph"
+            sublabel="P"
+            previewFontWeight={400}
+            icon={<LPilcrow size={18} />}
+            onClick={() => handleAddText("paragraph")}
+          />
+          <AddTile
+            label="Rectangle"
+            icon={<LSquare size={18} />}
+            onClick={() => handleSpawnObject(spawnRect)}
+          />
+          <AddTile
+            label="Circle"
+            icon={<LCircle size={18} />}
+            onClick={() => handleSpawnObject(spawnCircle)}
+          />
+          <AddTile
+            label="Line"
+            icon={<LMinus size={18} />}
+            onClick={() => handleSpawnObject(spawnLine)}
+          />
+        </div>
+      </Section>
+
       {/* ===== DRAW ===== */}
       <Section title="Draw">
         <div className="grid grid-cols-4 gap-2">
@@ -779,9 +1062,6 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
             icon={<SpeechBubbleGlyph />}
           />
         </div>
-        <p className="mt-2 text-[10px] leading-tight text-[var(--studio-text-muted)]">
-          Square, circle, and straight line live in the top toolbar.
-        </p>
       </Section>
 
       {/* ===== LINES ===== */}
@@ -800,16 +1080,9 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
         </div>
       </Section>
 
-      {/* ===== TEXT ===== */}
-      <Section title="Text">
-        <button
-          type="button"
-          onClick={handleSpawnText}
-          className="w-full rounded-lg border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-3 py-3 text-left text-sm font-semibold text-white transition-colors hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
-        >
-          + Add a paragraph
-        </button>
-      </Section>
+      {/* 2026-05-26 — removed the standalone "+ Add a paragraph" Text
+          section. Paragraph (along with Heading + Subheading) now lives
+          in the ADD section at the top of this panel. */}
     </div>
   );
 }
@@ -896,6 +1169,50 @@ function BrushButton(props: {
       <Icon />
       <span className="text-[10px] font-medium leading-none">{label}</span>
     </button>
+  );
+}
+
+/**
+ * 2026-05-26 — ADD-section tile. Icon + label on a dark-themed pill, sized
+ * to fit a 3-col grid in the 320-ish-wide Tools panel. Lucide-only icons,
+ * white-on-input-bg, hover surfaces the gold accent so the affordance
+ * reads as "click to add to canvas" without needing extra copy.
+ *
+ * `sublabel` and `previewFontWeight` are optional — when both are supplied
+ * the tile renders the sublabel ("H1"/"H2"/"P") with the matching weight
+ * so the three text tiles preview their own typographic hierarchy. Shape
+ * tiles omit them and just show icon + name.
+ */
+function AddTile(props: {
+  label: string;
+  icon: JSX.Element;
+  onClick: () => void;
+  sublabel?: string;
+  previewFontWeight?: number;
+}): JSX.Element {
+  return (
+    <Tooltip label={`Add ${props.label.toLowerCase()}`} wrapperClassName="w-full">
+      <button
+        type="button"
+        onClick={props.onClick}
+        aria-label={`Add ${props.label}`}
+        className="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white transition-colors hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
+      >
+        {props.sublabel ? (
+          <span
+            className="text-base leading-none"
+            style={{ fontWeight: props.previewFontWeight ?? 600 }}
+          >
+            {props.sublabel}
+          </span>
+        ) : (
+          props.icon
+        )}
+        <span className="text-[10px] font-medium leading-none">
+          {props.label}
+        </span>
+      </button>
+    </Tooltip>
   );
 }
 

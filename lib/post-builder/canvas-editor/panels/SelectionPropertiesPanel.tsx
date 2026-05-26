@@ -125,6 +125,8 @@ export default function SelectionPropertiesPanel(
             selectionVersion={props.selectionVersion}
             onCanvasMutated={props.onCanvasMutated}
             recordHistory={props.recordHistory}
+            onOpenFontPicker={props.onOpenFontPicker}
+            fontPickerOpen={props.fontPickerOpen}
           />
         ) : null}
         {props.mode === "image" ? (

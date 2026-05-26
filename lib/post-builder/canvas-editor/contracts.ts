@@ -18,7 +18,7 @@
  *   • Makes the integration surface explicit and reviewable in one file
  */
 
-import type { Canvas, FabricObject } from "fabric";
+import type { Canvas } from "fabric";
 
 import type { Database } from "@/lib/supabase/types";
 
@@ -617,27 +617,29 @@ export interface SelectionPropertiesPanelProps {
    * Agent B provides this via useUndoRedoHistory.
    */
   recordHistory?: () => void;
+  /**
+   * 2026-05-26 — opens the unified Canva-style FontPicker left panel.
+   * Wired from CanvasEditor to the SAME setFontPickerOpen state the top
+   * toolbar uses, so the right-panel font trigger and the top-toolbar
+   * font trigger both open the single canonical picker.
+   */
+  onOpenFontPicker?: () => void;
+  /**
+   * 2026-05-26 — drives the font trigger's active styling + aria-expanded
+   * in the right panel. Mirrors the same prop on ContextualTopToolbar.
+   */
+  fontPickerOpen?: boolean;
 }
 
 // ===========================================================================
-// Agent B — AddLayerToolbar
+// Agent B — AddLayerToolbar (REMOVED 2026-05-26)
 // ===========================================================================
-
-/**
- * Which kind of layer to add. The toolbar exposes 4 buttons.
- */
-export type AddLayerKind = "text" | "rect" | "circle" | "line";
-
-export interface AddLayerToolbarProps {
-  /** Fabric canvas — toolbar adds new objects directly via `canvas.add(...)`. */
-  canvas: Canvas | null;
-  /** Listing payload — for context (e.g., choose a placeholder bound field). May be unused in Phase 2. */
-  listing: MLSListingPayload | null;
-  /** Fired after a layer is added — orchestrator bumps layerVersion + selects the new layer. */
-  onLayerAdded: (newFabricObject: FabricObject) => void;
-  /** Optional: snapshot history after add. */
-  recordHistory?: () => void;
-}
+// The floating AddLayerToolbar above the canvas was deleted in favor of an
+// always-on "Add" section at the top of the Tools panel (left rail). The
+// spawn factories that used to live here (spawnText / spawnRect /
+// spawnCircle / spawnLine) are now exported from `panels/ToolsPanel.tsx`.
+// `ADD_LAYER_DEFAULTS` below remains in use by both the keyboard shortcut
+// path and the ToolsPanel-resident factories.
 
 // ===========================================================================
 // Agent B — useUndoRedoHistory hook

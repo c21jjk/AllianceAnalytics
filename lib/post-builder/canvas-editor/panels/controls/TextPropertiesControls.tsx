@@ -51,6 +51,18 @@ interface TextPropertiesControlsProps {
   selectionVersion: number;
   onCanvasMutated?: () => void;
   recordHistory?: () => void;
+  /**
+   * 2026-05-26 — opens the unified Canva-style left-panel FontPicker.
+   * Forwarded down from CanvasEditor via SelectionPropertiesPanel so the
+   * right-panel font row uses the SAME picker as the top toolbar. When
+   * omitted (legacy callers) the trigger button no-ops on click.
+   */
+  onOpenFontPicker?: () => void;
+  /**
+   * 2026-05-26 — drives the font trigger's active styling + aria-expanded
+   * so the right panel reflects whichever surface opened the picker.
+   */
+  fontPickerOpen?: boolean;
 }
 
 /**
@@ -168,7 +180,14 @@ function readTextState(canvas: Canvas | null): TextState | null {
 export default function TextPropertiesControls(
   props: TextPropertiesControlsProps,
 ): JSX.Element {
-  const { canvas, selectionVersion, onCanvasMutated, recordHistory } = props;
+  const {
+    canvas,
+    selectionVersion,
+    onCanvasMutated,
+    recordHistory,
+    onOpenFontPicker,
+    fontPickerOpen,
+  } = props;
   const [state, setState] = useState<TextState | null>(() =>
     readTextState(canvas),
   );
@@ -379,10 +398,19 @@ export default function TextPropertiesControls(
           consistently across Chrome / Safari / Firefox — native <option>
           doesn't honor font-family in Chrome). */}
       <Section title="Font">
+        {/* why (2026-05-26): right panel uses the SAME Canva-style left-panel
+            FontPicker as the top toolbar — single source of truth for font
+            selection. `panelMode` flips FontPicker into trigger-only mode;
+            CanvasEditor owns the open/close state via setFontPickerOpen and
+            applyFontFromPanel mutates the same active Textbox we'd otherwise
+            mutate via handleFontFamilyChange. */}
         <FontPicker
           value={state.fontFamily}
           onChange={handleFontFamilyChange}
           options={FONT_OPTIONS}
+          panelMode={true}
+          onOpenPanel={onOpenFontPicker}
+          panelOpen={fontPickerOpen}
         />
       </Section>
 

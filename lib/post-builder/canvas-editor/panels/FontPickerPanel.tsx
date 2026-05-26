@@ -45,14 +45,51 @@ import type { FontPickerOption } from "../primitives/FontPicker";
 // ===========================================================================
 // Starred fonts — localStorage-backed
 // ===========================================================================
-// why: fresh storage key (vs. the popover's `alliance.canvas.favorite-fonts`)
-// so the panel + legacy popover can coexist without one wiping the other's
-// state. Once the legacy dropdown usage in TextPropertiesControls is also
-// migrated, we can collapse to a single key.
+// why: the panel is now the canonical font picker (the right-panel dropdown
+// in TextPropertiesControls was migrated to panel-mode on 2026-05-26 so it
+// also opens this panel). The legacy storage key `alliance.canvas.favorite-fonts`
+// belonged to the dropdown's old star list. We do a one-time, best-effort
+// migration on mount: if `studio:starred-fonts` is empty and the legacy key
+// has values, copy them over. The legacy key is left in place (no point
+// deleting — it's only ever read on this migration path).
 const STARRED_STORAGE_KEY = "studio:starred-fonts";
+const LEGACY_FAVORITES_STORAGE_KEY = "alliance.canvas.favorite-fonts";
+
+/**
+ * One-time migration: 2026-05-26.
+ *
+ * Reads the legacy `alliance.canvas.favorite-fonts` list and seeds the new
+ * `studio:starred-fonts` store IF the new store is empty/missing. Safe to
+ * call on every panel mount — once `studio:starred-fonts` has any value the
+ * migration short-circuits and never runs again.
+ *
+ * TODO: remove after a few release cycles (say, after 2026-08) — by then
+ * any user who ever interacted with the legacy dropdown will have been
+ * migrated.
+ */
+function migrateLegacyFavoritesIfNeeded(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const existing = window.localStorage.getItem(STARRED_STORAGE_KEY);
+    if (existing !== null) return; // already migrated or seeded
+    const legacy = window.localStorage.getItem(LEGACY_FAVORITES_STORAGE_KEY);
+    if (!legacy) return;
+    const parsed = JSON.parse(legacy);
+    if (!Array.isArray(parsed)) return;
+    const cleaned = parsed.filter((v): v is string => typeof v === "string");
+    if (cleaned.length === 0) return;
+    window.localStorage.setItem(STARRED_STORAGE_KEY, JSON.stringify(cleaned));
+  } catch {
+    // best-effort
+  }
+}
 
 function readStarredFromStorage(): Set<string> {
   if (typeof window === "undefined") return new Set();
+  // why: run the migration first so the read picks up anything we just
+  // copied. Cheaper than a separate useEffect — the migration is a no-op
+  // after first success.
+  migrateLegacyFavoritesIfNeeded();
   try {
     const raw = window.localStorage.getItem(STARRED_STORAGE_KEY);
     if (!raw) return new Set();
