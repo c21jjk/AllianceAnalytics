@@ -47,12 +47,10 @@ import {
   type JSX,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 
-import ColorPicker from "../primitives/ColorPicker";
 import {
   TEXT_EFFECT_PRESETS,
   textEffectToFabricProps,
@@ -710,8 +708,17 @@ function Slider(props: SliderProps): JSX.Element {
 }
 
 // ===========================================================================
-// ColorRow — label + ColorPicker primitive
+// ColorRow — label + native color input
 // ===========================================================================
+//
+// why a native <input type="color"> here (vs. opening ColorPickerPanel): the
+// EffectsPanel itself is a left-rail panel. Opening ColorPickerPanel would
+// kick EffectsPanel closed (they share the same overlay slot + mutual
+// exclusivity), so the user loses their effect tuning context. The native
+// color input picks any color directly from the OS color picker, which is
+// the right affordance for an inline tuning sub-control inside a sibling
+// panel. Cmd-click semantics differ from the full ColorPickerPanel but the
+// tradeoff is the right one for this surface.
 
 function ColorRow(props: {
   label: string;
@@ -720,28 +727,26 @@ function ColorRow(props: {
   onCommit: (next: string) => void;
 }): JSX.Element {
   const { label, value, onChange, onCommit } = props;
-  // why: ColorPicker fires onChange on every swatch click. Treat each pick
-  // as both an inflight change AND a commit — color is a discrete value
-  // (no drag, no continuous range) so there's no reason to defer history.
-  const handlePick = useCallback(
-    (next: string) => {
-      onChange(next);
-      onCommit(next);
-    },
-    [onChange, onCommit],
-  );
-  // params currently use this so memo wraps it for the rare re-render
-  // savings; not load-bearing.
-  const memoValue = useMemo(() => value, [value]);
+  // why: native color input expects "#RRGGBB" upper or lower case. Coerce
+  // anything else to a safe default so the picker shows SOMETHING instead
+  // of an undefined browser state.
+  const safeValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#000000";
   return (
     <div className="flex items-center justify-between gap-3">
       <label className="text-xs font-medium text-white">{label}</label>
-      <ColorPicker
-        value={memoValue}
-        onChange={handlePick}
-        compact
-        allowTransparent={false}
-      />
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={safeValue}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          onBlur={(e) => onCommit(e.target.value.toUpperCase())}
+          aria-label={`${label} color`}
+          className="focus-ring-dark h-7 w-7 cursor-pointer rounded-md border border-[var(--studio-border)] bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-md [&::-webkit-color-swatch]:border-0"
+        />
+        <span className="font-mono text-[10px] uppercase text-[var(--studio-text-muted)]">
+          {safeValue}
+        </span>
+      </div>
     </div>
   );
 }

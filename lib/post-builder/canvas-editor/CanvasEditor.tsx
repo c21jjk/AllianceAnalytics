@@ -152,8 +152,10 @@ import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
 import ContextualTopToolbar from "./panels/ContextualTopToolbar";
+import ColorPickerPanel, { type ColorTarget } from "./panels/ColorPickerPanel";
 import EffectsPanel from "./panels/EffectsPanel";
 import FontPickerPanel from "./panels/FontPickerPanel";
+import { extractPhotoColors } from "./primitives/extractPhotoColors";
 import LayerListPanel from "./panels/LayerListPanel";
 import { FONT_OPTIONS } from "./primitives/font-options";
 import PhotosPanel from "./panels/PhotosPanel";
@@ -440,6 +442,17 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // canonical panel. Mutually exclusive with `fontPickerOpen` (both occupy
   // the same left:64px slot) — see the effect below that enforces that.
   const [effectsPanelOpen, setEffectsPanelOpen] = useState<boolean>(false);
+  // why: Canva-style ColorPickerPanel (2026-05-26). Replaces the legacy
+  // popover that lived inside primitives/ColorPicker.tsx. Same left:64px
+  // slot + z-30 + 320px width as FontPickerPanel + EffectsPanel; mutually
+  // exclusive with both (the openX helpers below enforce that). The state
+  // is `null` when closed; when open, holds the target ("text" / "shape_fill"
+  // / "shape_stroke" / "text_background" / "background") so the apply path
+  // knows which Fabric property to mutate, plus the initial value as a
+  // safety net for renders that miss the live re-read.
+  const [colorPickerPanel, setColorPickerPanel] = useState<
+    { target: ColorTarget; initialValue: string } | null
+  >(null);
   // why: ref the editor passes to FontPickerPanel so focus can return to
   // the trigger pill on close. Updated via a callback ref because the
   // trigger itself is rendered inside ContextualTopToolbar — we hand the
@@ -3100,16 +3113,35 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     }
   }, [selectionMode, effectsPanelOpen]);
 
-  // why: FontPicker + Effects panels both occupy the same left:64px slot.
-  // Without mutual exclusion they'd overlap visually (last-mounted wins).
-  // Whichever one opens last wins — close the other.
+  // why: FontPicker + Effects + ColorPicker panels all occupy the same
+  // left:64px slot. Without mutual exclusion they'd overlap visually
+  // (last-mounted wins). Whichever one opens wins — close the others.
   const openFontPicker = useCallback(() => {
     setEffectsPanelOpen(false);
+    setColorPickerPanel(null);
     setFontPickerOpen((v) => !v);
   }, []);
   const openEffectsPanel = useCallback(() => {
     setFontPickerOpen(false);
+    setColorPickerPanel(null);
     setEffectsPanelOpen((v) => !v);
+  }, []);
+  // why: ColorPickerPanel — invoked from every ColorPicker trigger AND from
+  // the ScenePropertiesPanel + footer "Background color" triggers. Takes the
+  // target + the current value (the panel reads live state via props too, so
+  // initialValue is mostly belt-and-braces for the first paint). Setting this
+  // to a non-null value triggers the panel mount via the conditional render
+  // below.
+  const openColorPicker = useCallback(
+    (target: ColorTarget, initialValue: string) => {
+      setFontPickerOpen(false);
+      setEffectsPanelOpen(false);
+      setColorPickerPanel({ target, initialValue });
+    },
+    [],
+  );
+  const closeColorPicker = useCallback(() => {
+    setColorPickerPanel(null);
   }, []);
 
   // why: apply a font from the panel by reaching directly into the active
@@ -3128,6 +3160,237 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     },
     [history],
   );
+
+  // -------------------------------------------------------------------------
+  // 2026-05-26 — ColorPickerPanel wiring
+  // -------------------------------------------------------------------------
+  // why: write to the appropriate Fabric property based on the current
+  // target. Live drag previews go through `previewColorFromPanel` (no history)
+  // and final commits go through `applyColorFromPanel` (records history).
+  // Without the split, an HsvPicker drag would create one undo step per
+  // pixel — unusable.
+  const writeColorToTarget = useCallback(
+    (target: ColorTarget, value: string): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      if (target === "background") {
+        // why: Fabric's canvas.backgroundColor is typed as `string | TFiller`
+        // (no undefined). Store the empty string for "no fill" — the export
+        // pipeline already treats falsy / "transparent" the same way
+        // (forced white during PNG export). Storing "" keeps the type
+        // stable while still rendering as transparent in the editor.
+        canvas.backgroundColor =
+          value === "transparent" || value === "" ? "" : value;
+      } else {
+        const active = canvas.getActiveObject();
+        if (!active) return;
+        switch (target) {
+          case "text":
+            if (active instanceof Textbox) active.set({ fill: value });
+            break;
+          case "shape_fill":
+            active.set({ fill: value });
+            break;
+          case "shape_stroke":
+            active.set({ stroke: value });
+            break;
+          case "text_background":
+            if (active instanceof Textbox) {
+              active.set({
+                backgroundColor:
+                  value === "transparent" || value === "" ? "" : value,
+              });
+            }
+            break;
+        }
+      }
+      canvas.requestRenderAll();
+    },
+    [],
+  );
+
+  const applyColorFromPanel = useCallback(
+    (value: string): void => {
+      const state = colorPickerPanel;
+      if (!state) return;
+      writeColorToTarget(state.target, value);
+      setLayerVersion((v) => v + 1);
+      history.record();
+    },
+    [colorPickerPanel, writeColorToTarget, history],
+  );
+
+  const previewColorFromPanel = useCallback(
+    (value: string): void => {
+      const state = colorPickerPanel;
+      if (!state) return;
+      writeColorToTarget(state.target, value);
+      // why: we still bump layerVersion so any downstream subscribers (the
+      // contextual toolbar's local mirror, the right panel's swatch chip)
+      // re-read and reflect the live color. History is NOT recorded — the
+      // pointer-up commit anchors the undo step.
+      setLayerVersion((v) => v + 1);
+    },
+    [colorPickerPanel, writeColorToTarget],
+  );
+
+  // why: read the live target value for the panel each render. For "background"
+  // we read canvas.backgroundColor; for selection-driven targets we re-read
+  // the active object. Bumps off layerVersion + colorPickerPanel.target so
+  // external mutations (e.g., user picks a different layer with a different
+  // fill) bubble through.
+  const colorPickerCurrentValue = useMemo<string>(() => {
+    const state = colorPickerPanel;
+    if (!state) return "";
+    const canvas = fabricRef.current;
+    if (!canvas) return state.initialValue;
+    if (state.target === "background") {
+      const bg = canvas.backgroundColor;
+      return typeof bg === "string" && bg.length > 0 ? bg : "transparent";
+    }
+    const active = canvas.getActiveObject();
+    if (!active) return state.initialValue;
+    switch (state.target) {
+      case "text":
+        if (active instanceof Textbox) {
+          const fill = active.fill;
+          return typeof fill === "string" ? fill : state.initialValue;
+        }
+        return state.initialValue;
+      case "shape_fill": {
+        const fill = active.fill;
+        return typeof fill === "string" ? fill : state.initialValue;
+      }
+      case "shape_stroke": {
+        const stroke = active.stroke;
+        return typeof stroke === "string" ? stroke : state.initialValue;
+      }
+      case "text_background":
+        if (active instanceof Textbox) {
+          const bg = active.backgroundColor;
+          return typeof bg === "string" && bg.length > 0 ? bg : "transparent";
+        }
+        return state.initialValue;
+      default:
+        return state.initialValue;
+    }
+    // why: depends on colorPickerPanel (target identity) AND layerVersion
+    // (any mutation could shift the value). selection.layerId catches the
+    // "selection changed underneath the panel" case which doesn't always
+    // bump layerVersion.
+  }, [colorPickerPanel, layerVersion, selection.layerId]);
+
+  // why: "Colors in this design" — walk the canvas's current objects for
+  // distinct hex/rgb fill/stroke/backgroundColor values. Cheap enough to
+  // recompute on every render with the panel open; gated on `colorPickerPanel`
+  // so a closed picker doesn't iterate.
+  const colorPickerDocumentColors = useMemo<ReadonlyArray<string>>(() => {
+    if (!colorPickerPanel) return [];
+    const canvas = fabricRef.current;
+    if (!canvas) return [];
+    const seen = new Set<string>();
+    const addIfHex = (raw: unknown): void => {
+      if (typeof raw !== "string") return;
+      const lower = raw.trim();
+      if (!lower) return;
+      if (lower.startsWith("#") || lower.startsWith("rgb")) {
+        seen.add(lower.toUpperCase());
+      }
+    };
+    for (const obj of canvas.getObjects()) {
+      addIfHex(obj.fill);
+      addIfHex(obj.stroke);
+      if (obj instanceof Textbox) {
+        addIfHex(obj.backgroundColor);
+      }
+    }
+    return Array.from(seen).slice(0, 12);
+    // why: layerVersion bumps on add/remove/modify so the section adapts to
+    // live edits without polling.
+  }, [colorPickerPanel, layerVersion]);
+
+  // why: "Photo colors" — extract dominant palette from every FabricImage on
+  // the canvas. Median-cut quantization via the same primitive the legacy
+  // popover used. Memoized per canvas-instance reference; recomputes when
+  // the canvas reference changes (template reload).
+  const [colorPickerPhotoColors, setColorPickerPhotoColors] = useState<
+    ReadonlyArray<string>
+  >([]);
+  const photoColorsExtractedForRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (!colorPickerPanel) return;
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    if (photoColorsExtractedForRef.current === canvas) return;
+    const imageObjs = canvas
+      .getObjects()
+      .filter((o): o is FabricImage => o instanceof FabricImage);
+    if (imageObjs.length === 0) {
+      setColorPickerPhotoColors([]);
+      photoColorsExtractedForRef.current = canvas;
+      return;
+    }
+    const COLORS_PER_IMAGE = 4;
+    const combined: string[] = [];
+    for (const img of imageObjs) {
+      const el = img.getElement();
+      if (el instanceof HTMLImageElement || el instanceof HTMLCanvasElement) {
+        combined.push(...extractPhotoColors(el, COLORS_PER_IMAGE));
+      }
+    }
+    const deduped = Array.from(new Set(combined)).slice(0, 12);
+    setColorPickerPhotoColors(deduped);
+    photoColorsExtractedForRef.current = canvas;
+  }, [colorPickerPanel]);
+
+  // why: live read of canvas.backgroundColor so the LayerListPanel's
+  // "Background color" swatch + the footer's swatch reflect the current
+  // value. Bumps off layerVersion so any mutation (including the panel's
+  // own commits) re-derives. Falls back to "transparent" when Fabric
+  // holds undefined (matches the export pipeline's understanding).
+  const canvasBackgroundColor = useMemo<string>(() => {
+    const canvas = fabricRef.current;
+    const bg = canvas?.backgroundColor;
+    if (typeof bg === "string" && bg.length > 0) return bg;
+    return "transparent";
+    // why: layerVersion bumps on every mutation; we treat any bump as a
+    // potential bg change. Cheap memo.
+  }, [layerVersion]);
+
+  // why: whether the ColorPickerPanel currently allows the "transparent"
+  // neutral chip. Background + shape stroke + text highlight allow no-fill;
+  // text fill + shape fill (gradients aside) don't.
+  const colorPickerAllowsTransparent = useMemo<boolean>(() => {
+    if (!colorPickerPanel) return false;
+    switch (colorPickerPanel.target) {
+      case "shape_stroke":
+      case "text_background":
+      case "background":
+        return true;
+      case "text":
+      case "shape_fill":
+        return false;
+    }
+  }, [colorPickerPanel]);
+
+  // why: auto-close when the selection that triggered the panel goes away.
+  // Skipped for "background" — that target isn't selection-dependent and
+  // should stay open while the user clicks around the canvas.
+  useEffect(() => {
+    if (!colorPickerPanel) return;
+    if (colorPickerPanel.target === "background") return;
+    const needsText =
+      colorPickerPanel.target === "text" ||
+      colorPickerPanel.target === "text_background";
+    const needsShape =
+      colorPickerPanel.target === "shape_fill" ||
+      colorPickerPanel.target === "shape_stroke";
+    if (needsText && selectionMode !== "text") {
+      setColorPickerPanel(null);
+    } else if (needsShape && selectionMode !== "shape") {
+      setColorPickerPanel(null);
+    }
+  }, [selectionMode, colorPickerPanel]);
 
   // -------------------------------------------------------------------------
   // Render
@@ -3507,6 +3770,26 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           recordHistory={history.record}
         />
 
+        {/* === 2026-05-26 — ColorPickerPanel — Canva-style color picker ===
+            Same overlay slot as FontPickerPanel + EffectsPanel
+            (left:64px, z-30, 320px wide). Mutually exclusive with both —
+            see openFontPicker / openEffectsPanel / openColorPicker helpers
+            above. Replaces the legacy in-place popover that used to live
+            inside primitives/ColorPicker.tsx. */}
+        {colorPickerPanel ? (
+          <ColorPickerPanel
+            open
+            target={colorPickerPanel.target}
+            currentValue={colorPickerCurrentValue}
+            documentColors={colorPickerDocumentColors}
+            photoColors={colorPickerPhotoColors}
+            allowTransparent={colorPickerAllowsTransparent}
+            onApply={applyColorFromPanel}
+            onPreview={previewColorFromPanel}
+            onClose={closeColorPicker}
+          />
+        ) : null}
+
         {/* === Center column — canvas area + footer ===
             why: stacked into its own flex-col so the canvas footer
             (zoom + undo/redo + alignment) sits inside the same column
@@ -3601,6 +3884,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     fontPickerOpen={fontPickerOpen}
                     onOpenEffectsPanel={openEffectsPanel}
                     effectsPanelOpen={effectsPanelOpen}
+                    onOpenColorPicker={openColorPicker}
+                    colorPickerOpenTarget={colorPickerPanel?.target ?? null}
                   />
                 ) : null}
                 {selectedEntry && !selectedEntry.locked ? (
@@ -3789,6 +4074,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             canRedo={history.canRedo}
             onUndo={() => history.undo()}
             onRedo={() => history.redo()}
+            backgroundColor={canvasBackgroundColor}
+            onOpenBackgroundColorPicker={(v) =>
+              openColorPicker("background", v)
+            }
+            backgroundColorPanelOpen={
+              colorPickerPanel?.target === "background"
+            }
           />
         </div>
 
@@ -3840,6 +4132,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onDelete={handleDeleteLayer}
                     onReorder={handleReorderLayers}
                     onHoverEntry={handleHoverEntry}
+                    backgroundColor={canvasBackgroundColor}
+                    onOpenBackgroundColorPicker={(v) =>
+                      openColorPicker("background", v)
+                    }
+                    backgroundColorPanelOpen={
+                      colorPickerPanel?.target === "background"
+                    }
                   />
                 ) : (
                   <SelectionPropertiesPanel
@@ -3854,6 +4153,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     fontPickerOpen={fontPickerOpen}
                     onOpenEffectsPanel={openEffectsPanel}
                     effectsPanelOpen={effectsPanelOpen}
+                    onOpenColorPicker={openColorPicker}
+                    colorPickerOpenTarget={colorPickerPanel?.target ?? null}
                   />
                 )}
               </div>
@@ -4441,6 +4742,14 @@ interface CanvasFooterProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  /**
+   * 2026-05-26 — slide-level Background color trigger. Always visible in
+   * the right cluster (no selection-gated). Clicking opens the
+   * ColorPickerPanel with target="background".
+   */
+  backgroundColor: string;
+  onOpenBackgroundColorPicker: (currentValue: string) => void;
+  backgroundColorPanelOpen: boolean;
 }
 
 /**
@@ -4566,13 +4875,42 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
         </Tooltip>
       </div>
 
-      {/* === Right cluster — reserved for future footer affordances ===
-          2026-05-25 — Undo/Redo were relocated to the top header bar to
-          match Canva's chrome. Right cluster kept as an empty flex slot
-          so the center cluster's flex-justify-between layout still
-          balances visually. */}
+      {/* === Right cluster — slide-level Background color trigger ===
+          2026-05-26 — added a tiny Background swatch button so the user can
+          edit canvas.backgroundColor without having to deselect every
+          layer first. Click → opens ColorPickerPanel with target="background".
+          Visible regardless of selection. */}
       <div className="flex w-20 items-center justify-end gap-0.5">
-        {/* intentionally empty — preserves footer layout symmetry */}
+        <Tooltip label="Slide background color" placement="top">
+          <button
+            type="button"
+            onClick={() =>
+              props.onOpenBackgroundColorPicker(props.backgroundColor)
+            }
+            className="focus-ring-dark inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)]"
+            aria-haspopup="dialog"
+            aria-expanded={props.backgroundColorPanelOpen}
+            aria-label="Slide background color"
+            title="Slide background color"
+          >
+            <span
+              className={`h-4 w-4 rounded border ${
+                props.backgroundColorPanelOpen
+                  ? "border-transparent ring-2 ring-gold-500"
+                  : "border-[var(--studio-border)]"
+              }`}
+              style={{
+                background:
+                  props.backgroundColor === "transparent" ||
+                  props.backgroundColor === ""
+                    ? "repeating-conic-gradient(#e5e5e2 0% 25%, #ffffff 0% 50%) 50% / 6px 6px"
+                    : props.backgroundColor,
+              }}
+              aria-hidden="true"
+            />
+            <span className="hidden md:inline">BG</span>
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

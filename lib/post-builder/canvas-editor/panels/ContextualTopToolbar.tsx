@@ -42,6 +42,7 @@ import {
   useState,
 } from "react";
 
+import type { ColorTarget } from "./ColorPickerPanel";
 import ColorPicker from "../primitives/ColorPicker";
 import FontPicker from "../primitives/FontPicker";
 import { FONT_OPTIONS } from "../primitives/font-options";
@@ -122,6 +123,16 @@ interface ContextualTopToolbarProps {
    */
   onOpenEffectsPanel?: () => void;
   effectsPanelOpen?: boolean;
+  /**
+   * 2026-05-26 — Canva-style ColorPickerPanel wiring. Fired by every
+   * ColorPicker swatch trigger inside the toolbar (text fill, shape fill,
+   * shape stroke). The orchestrator opens the left-rail color panel with
+   * the requested target + initial value. `colorPickerOpenTarget` drives
+   * the active styling on whichever swatch corresponds to the open panel
+   * so the user can see which control they're editing.
+   */
+  onOpenColorPicker?: (target: ColorTarget, currentValue: string) => void;
+  colorPickerOpenTarget?: ColorTarget | null;
 }
 
 // FONT_OPTIONS now lives in primitives/font-options.ts as the single source
@@ -227,6 +238,8 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
     fontPickerOpen = false,
     onOpenEffectsPanel,
     effectsPanelOpen = false,
+    onOpenColorPicker,
+    colorPickerOpenTarget = null,
   } = props;
 
   // Local mirror state — written through to Fabric on every input. Pattern
@@ -365,12 +378,6 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
     commit(canvas, onCanvasMutated, recordHistory);
   };
 
-  const handleFill = (next: string): void => {
-    setState((prev) => (prev ? { ...prev, fill: next } : prev));
-    applyToActive({ fill: next });
-    commit(canvas, onCanvasMutated, recordHistory);
-  };
-
   const handleAlignText = (next: "left" | "center" | "right" | "justify"): void => {
     setState((prev) => (prev ? { ...prev, textAlign: next } : prev));
     applyToActive({ textAlign: next });
@@ -459,10 +466,11 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
       <div className="flex items-center">
         <ColorPicker
           value={state.fill}
-          onChange={handleFill}
+          target="text"
+          onOpenPanel={(t, v) => onOpenColorPicker?.(t, v)}
           label="Text color"
           compact
-          canvas={canvas}
+          panelOpen={colorPickerOpenTarget === "text"}
         />
       </div>
       <Divider />
@@ -686,7 +694,14 @@ function toTitleCase(s: string): string {
 function ShapeContextualControls(
   props: ContextualTopToolbarProps,
 ): JSX.Element {
-  const { canvas, selectionVersion, onCanvasMutated, recordHistory } = props;
+  const {
+    canvas,
+    selectionVersion,
+    onCanvasMutated,
+    recordHistory,
+    onOpenColorPicker,
+    colorPickerOpenTarget = null,
+  } = props;
 
   const [state, setState] = useState<{
     fill: string;
@@ -729,12 +744,10 @@ function ShapeContextualControls(
 
   if (!state) return <span aria-hidden="true" />;
 
-  const applyAndCommit = (patch: Record<string, unknown>): void => {
-    const active = readActive(canvas);
-    if (!active) return;
-    active.set(patch);
-    commit(canvas, onCanvasMutated, recordHistory);
-  };
+  // why: recordHistory captured here for the strokeWidth number input —
+  // change-finalization on blur. Color edits route through the panel which
+  // owns its own history wiring.
+  void recordHistory;
 
   return (
     <div className="flex items-center gap-1.5 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2.5 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
@@ -744,14 +757,11 @@ function ShapeContextualControls(
         </span>
         <ColorPicker
           value={state.fill}
-          onChange={(next) => {
-            setState((prev) => (prev ? { ...prev, fill: next } : prev));
-            applyAndCommit({ fill: next });
-          }}
+          target="shape_fill"
+          onOpenPanel={(t, v) => onOpenColorPicker?.(t, v)}
           label="Fill"
-          allowTransparent
           compact
-          canvas={canvas}
+          panelOpen={colorPickerOpenTarget === "shape_fill"}
         />
       </div>
       <span className="h-5 w-px bg-[var(--studio-border)]" />
@@ -761,14 +771,11 @@ function ShapeContextualControls(
         </span>
         <ColorPicker
           value={state.stroke}
-          onChange={(next) => {
-            setState((prev) => (prev ? { ...prev, stroke: next } : prev));
-            applyAndCommit({ stroke: next });
-          }}
+          target="shape_stroke"
+          onOpenPanel={(t, v) => onOpenColorPicker?.(t, v)}
           label="Stroke"
-          allowTransparent
           compact
-          canvas={canvas}
+          panelOpen={colorPickerOpenTarget === "shape_stroke"}
         />
       </div>
       <span className="h-5 w-px bg-[var(--studio-border)]" />

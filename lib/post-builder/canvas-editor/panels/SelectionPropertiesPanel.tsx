@@ -129,6 +129,8 @@ export default function SelectionPropertiesPanel(
             fontPickerOpen={props.fontPickerOpen}
             onOpenEffectsPanel={props.onOpenEffectsPanel}
             effectsPanelOpen={props.effectsPanelOpen}
+            onOpenColorPicker={props.onOpenColorPicker}
+            colorPickerOpenTarget={props.colorPickerOpenTarget}
           />
         ) : null}
         {props.mode === "image" ? (
@@ -146,6 +148,8 @@ export default function SelectionPropertiesPanel(
             selectionVersion={props.selectionVersion}
             onCanvasMutated={props.onCanvasMutated}
             recordHistory={props.recordHistory}
+            onOpenColorPicker={props.onOpenColorPicker}
+            colorPickerOpenTarget={props.colorPickerOpenTarget}
           />
         ) : null}
         {props.mode === "multi" ? (

@@ -37,6 +37,7 @@ import {
   useState,
 } from "react";
 
+import type { ColorTarget } from "../ColorPickerPanel";
 import ColorPicker from "../../primitives/ColorPicker";
 import FontPicker from "../../primitives/FontPicker";
 import { ALLIANCE_FONTS } from "../../templates/tokens";
@@ -47,6 +48,19 @@ interface TextPropertiesControlsProps {
   selectionVersion: number;
   onCanvasMutated?: () => void;
   recordHistory?: () => void;
+  /**
+   * 2026-05-26 — opens the unified Canva-style left-panel ColorPickerPanel.
+   * Both the text fill swatch and the text highlight swatch route through
+   * this single callback with different targets ("text" vs.
+   * "text_background"). When omitted (legacy callers) the trigger button
+   * no-ops on click.
+   */
+  onOpenColorPicker?: (target: ColorTarget, currentValue: string) => void;
+  /**
+   * Drives the active styling + aria-expanded on whichever swatch
+   * corresponds to the currently-open panel target.
+   */
+  colorPickerOpenTarget?: ColorTarget | null;
   /**
    * 2026-05-26 — opens the unified Canva-style left-panel FontPicker.
    * Forwarded down from CanvasEditor via SelectionPropertiesPanel so the
@@ -194,6 +208,8 @@ export default function TextPropertiesControls(
     fontPickerOpen,
     onOpenEffectsPanel,
     effectsPanelOpen,
+    onOpenColorPicker,
+    colorPickerOpenTarget = null,
   } = props;
   const [state, setState] = useState<TextState | null>(() =>
     readTextState(canvas),
@@ -300,24 +316,12 @@ export default function TextPropertiesControls(
     [applyMutation],
   );
 
-  const handleFillChange = useCallback(
-    (next: string) => {
-      applyMutation({ fill: next }, true);
-    },
-    [applyMutation],
-  );
-
-  // why: handleBackgroundChange writes Fabric's Textbox.backgroundColor. The
-  // ColorPicker passes "transparent" or "" when the user picks the clear
-  // swatch; Fabric treats falsy as no fill — we normalize to "" so the
-  // serialized template JSON stays clean (no "transparent" literal stored).
-  const handleBackgroundChange = useCallback(
-    (next: string) => {
-      const normalized = next === "transparent" ? "" : next;
-      applyMutation({ backgroundColor: normalized }, true);
-    },
-    [applyMutation],
-  );
+  // 2026-05-26 — handleFillChange and handleBackgroundChange removed. Both
+  // ColorPicker swatches now route through `onOpenColorPicker` which opens
+  // the left-rail ColorPickerPanel; the panel writes to Fabric directly via
+  // CanvasEditor's `applyColorFromPanel`. Keeping the trigger swatches here
+  // so the right panel still surfaces "this layer's text color" + "this
+  // layer's highlight color" as discoverable chips.
 
   const handleLineHeightChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
@@ -507,9 +511,9 @@ export default function TextPropertiesControls(
             <ColorPicker
               label=""
               value={state.fill}
-              onChange={handleFillChange}
-              allowTransparent={false}
-              canvas={canvas}
+              target="text"
+              onOpenPanel={(t, v) => onOpenColorPicker?.(t, v)}
+              panelOpen={colorPickerOpenTarget === "text"}
             />
             <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
               Text · {state.fill}
@@ -523,9 +527,9 @@ export default function TextPropertiesControls(
             <ColorPicker
               label=""
               value={state.backgroundColor || "transparent"}
-              onChange={handleBackgroundChange}
-              allowTransparent={true}
-              canvas={canvas}
+              target="text_background"
+              onOpenPanel={(t, v) => onOpenColorPicker?.(t, v)}
+              panelOpen={colorPickerOpenTarget === "text_background"}
             />
             <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
               Highlight ·{" "}

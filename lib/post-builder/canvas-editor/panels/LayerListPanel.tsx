@@ -97,6 +97,15 @@ export default function LayerListPanel(
 
   const layerCount = props.entries.length;
 
+  // why: 2026-05-26 — slide-level Background color trigger lives at the
+  // TOP of the right panel when no layer is selected. The natural mental
+  // model: "the slide is the surface, the background is one of its
+  // properties." Hidden when the orchestrator didn't wire the callback.
+  const showBackgroundRow =
+    typeof props.onOpenBackgroundColorPicker === "function";
+  const bgValue = props.backgroundColor ?? "";
+  const bgIsTransparent = bgValue === "" || bgValue === "transparent";
+
   return (
     <aside className="flex w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]">
       <header className="border-b border-[var(--studio-border)] px-4 py-3">
@@ -118,6 +127,51 @@ export default function LayerListPanel(
           </span>
         </div>
       </header>
+
+      {/* === 2026-05-26 — Slide background color row ===
+          Sits above the layer list because the slide background is a
+          slide-level property (no layer to select for it). Click swatch =
+          opens ColorPickerPanel with target="background". */}
+      {showBackgroundRow ? (
+        <div className="border-b border-[var(--studio-border)] px-4 py-3">
+          <div className="mb-1.5 flex items-center gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
+              Slide
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              props.onOpenBackgroundColorPicker?.(bgValue);
+            }}
+            className="focus-ring-dark group flex w-full items-center justify-between gap-2 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-left transition-colors hover:border-white/20"
+            aria-haspopup="dialog"
+            aria-expanded={props.backgroundColorPanelOpen ?? false}
+            aria-label="Slide background color"
+            title="Slide background color"
+          >
+            <span className="flex items-center gap-2">
+              <span
+                className={`h-5 w-5 rounded border ${
+                  props.backgroundColorPanelOpen
+                    ? "border-transparent ring-2 ring-gold-500"
+                    : "border-[var(--studio-border)]"
+                }`}
+                style={{
+                  background: bgIsTransparent
+                    ? "repeating-conic-gradient(#e5e5e2 0% 25%, #ffffff 0% 50%) 50% / 6px 6px"
+                    : bgValue,
+                }}
+                aria-hidden="true"
+              />
+              <span className="text-xs text-white">Background color</span>
+            </span>
+            <span className="font-mono text-[10px] uppercase text-[var(--studio-text-muted)]">
+              {bgIsTransparent ? "none" : bgValue}
+            </span>
+          </button>
+        </div>
+      ) : null}
       <ul className="flex-1 overflow-y-auto px-2 py-2">
         {layerCount === 0 ? (
           <li className="px-2 py-6 text-center text-sm text-[var(--studio-text-muted)]">

@@ -27,6 +27,7 @@ import {
   useState,
 } from "react";
 
+import type { ColorTarget } from "../ColorPickerPanel";
 import ColorPicker from "../../primitives/ColorPicker";
 
 interface ShapePropertiesControlsProps {
@@ -34,6 +35,18 @@ interface ShapePropertiesControlsProps {
   selectionVersion: number;
   onCanvasMutated?: () => void;
   recordHistory?: () => void;
+  /**
+   * 2026-05-26 — opens the unified Canva-style left-panel ColorPickerPanel.
+   * Both the shape fill swatch and the shape stroke swatch route through
+   * this single callback with different targets ("shape_fill" vs.
+   * "shape_stroke"). When omitted the trigger button no-ops on click.
+   */
+  onOpenColorPicker?: (target: ColorTarget, currentValue: string) => void;
+  /**
+   * Drives the active styling + aria-expanded on whichever swatch
+   * corresponds to the currently-open panel target.
+   */
+  colorPickerOpenTarget?: ColorTarget | null;
 }
 
 /** Narrow ShapeKind that mirrors our schema's shapeType union. */
@@ -100,7 +113,14 @@ function readShapeState(canvas: Canvas | null): ShapeState | null {
 export default function ShapePropertiesControls(
   props: ShapePropertiesControlsProps,
 ): JSX.Element {
-  const { canvas, selectionVersion, onCanvasMutated, recordHistory } = props;
+  const {
+    canvas,
+    selectionVersion,
+    onCanvasMutated,
+    recordHistory,
+    onOpenColorPicker,
+    colorPickerOpenTarget = null,
+  } = props;
   const [state, setState] = useState<ShapeState | null>(() =>
     readShapeState(canvas),
   );
@@ -162,15 +182,9 @@ export default function ShapePropertiesControls(
     [canvas, onCanvasMutated, recordHistory],
   );
 
-  const handleFillChange = useCallback(
-    (next: string) => applyMutation({ fill: next }, true),
-    [applyMutation],
-  );
-
-  const handleStrokeChange = useCallback(
-    (next: string) => applyMutation({ stroke: next }, true),
-    [applyMutation],
-  );
+  // 2026-05-26 — fill + stroke ColorPicker swatches route through the
+  // CanvasEditor-owned `applyColorFromPanel` instead of mutating state from
+  // here. The trigger swatches keep their right-panel chip role.
 
   const handleStrokeWidthChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
@@ -226,9 +240,9 @@ export default function ShapePropertiesControls(
             <ColorPicker
               label=""
               value={state.fill || "transparent"}
-              onChange={handleFillChange}
-              allowTransparent
-              canvas={canvas}
+              target="shape_fill"
+              onOpenPanel={(t, v) => onOpenColorPicker?.(t, v)}
+              panelOpen={colorPickerOpenTarget === "shape_fill"}
             />
             <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
               {state.fill || "transparent"}
@@ -243,9 +257,9 @@ export default function ShapePropertiesControls(
           <ColorPicker
             label=""
             value={state.stroke || "transparent"}
-            onChange={handleStrokeChange}
-            allowTransparent
-            canvas={canvas}
+            target="shape_stroke"
+            onOpenPanel={(t, v) => onOpenColorPicker?.(t, v)}
+            panelOpen={colorPickerOpenTarget === "shape_stroke"}
           />
           <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
             {state.stroke || "transparent"}

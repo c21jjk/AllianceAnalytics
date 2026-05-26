@@ -557,6 +557,15 @@ export interface LayerListPanelProps {
    * Optional — when omitted, the panel skips the hover-preview wiring.
    */
   onHoverEntry?: (layerId: string | null) => void;
+  /**
+   * 2026-05-26 — slide-level "Background color" trigger. When provided, the
+   * panel renders a small row above the layer list with a swatch button.
+   * Clicking opens the ColorPickerPanel with target="background". Optional
+   * so older callers / tests that don't wire it still render fine.
+   */
+  backgroundColor?: string;
+  onOpenBackgroundColorPicker?: (currentValue: string) => void;
+  backgroundColorPanelOpen?: boolean;
 }
 
 // ===========================================================================
@@ -641,6 +650,24 @@ export interface SelectionPropertiesPanelProps {
    * ContextualTopToolbar.
    */
   effectsPanelOpen?: boolean;
+  /**
+   * 2026-05-26 — opens the unified Canva-style ColorPickerPanel. The same
+   * callback is shared by every ColorPicker swatch trigger across the
+   * editor (text fill, text highlight, shape fill, shape stroke, slide
+   * background). The target argument tells the orchestrator which Fabric
+   * property to mutate.
+   */
+  onOpenColorPicker?: (
+    target: import("./panels/ColorPickerPanel").ColorTarget,
+    currentValue: string,
+  ) => void;
+  /**
+   * 2026-05-26 — drives the active styling on whichever swatch trigger
+   * corresponds to the currently-open ColorPickerPanel target.
+   */
+  colorPickerOpenTarget?:
+    | import("./panels/ColorPickerPanel").ColorTarget
+    | null;
 }
 
 // ===========================================================================
