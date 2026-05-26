@@ -1,0 +1,63 @@
+mls_number,source_mls,address,city,office,list_price,listing_date,returncode,message,n_sites,first_date,last_date,n_days,views,inquiries,shares,favorites,sites
+250434,cmc,33-35-37 W Boardwalk,Grassy Sound,CENTURY 21 ALLIANCE wc,899971,2025-02-13,0,,8,20250326,20250911,170,6413,0,2,1,Coldwell Banker|IDC Global|Moxi Works|Properstar|Realtor.com|Trulia|Zillow.com|century21.com
+252252,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,489000,2025-07-27,0,,16,20250803,20260525,295,6095,0,0,0,Coldwell Banker|Financial Times|Gabriels Technology Solutions|IDC Global|Inside Real Estate|Luxury Presence|Moxi Works|Properstar|RE/MAX.com|REMAX.com|Real Geeks|Realtor.com|Reliance Network|Trulia|Zillow.com|century21.com
+252253,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,299000,2025-08-01,0,,15,20250803,20260524,281,2478,0,0,1,BHGRE.com|Coldwell Banker|Financial Times|Gabriels Technology Solutions|Luxury Presence|Properstar|Property Panorama|RE/MAX.com|Real Geeks|Realtor.com|Reliance Network|Sierra Interactive LLC|Trulia|Zillow.com|century21.com
+252254,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,499000,2025-07-24,0,,14,20250803,20260524,294,4511,0,0,0,BHGRE.com|IDC Global|Luxury Presence|Moxi Works|Properstar|RE/MAX.com|REMAX.com|Real Geeks|Realtor.com|Reliance Network|Sierra Interactive LLC|Trulia|Zillow.com|century21.com
+252332,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,499000,2025-08-01,0,,7,20241002,20250314,164,6197,0,1,0,Coldwell Banker|Moxi Works|Placester Inc|Realtor.com|Trulia|Ylopo|Zillow.com
+252334,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,439000,2025-08-01,0,,0,,,0,0,0,0,0,
+252743,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,269000,2025-09-12,0,,7,20250523,20250831,95,2713,0,0,1,Coldwell Banker|EVRealEstate.com|LeadingRE.com|RE/MAX.com|Reliance Network|Trulia|Zillow.com
+253158,cmc,4705 Park Boulevard,Wildwood,CENTURY 21 ALLIANCE wc,539000,2025-10-16,0,,10,20260202,20260524,111,829,0,0,0,Luxury Presence|Moxi Works|RE/MAX.com|Real Geeks|Realtor.com|Reliance Network|Trulia|Zillow.com|century21.com|century21global.com
+253256,cmc,727 Spruce Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,1124999,2025-11-02,0,,0,,,0,0,0,0,0,
+253282,cmc,W Memphis Avenue,Lower Township,CENTURY 21 ALLIANCE wc,39971,2025-11-06,0,,0,,,0,0,0,0,0,
+253321,cmc,809 Turnberry Court,Swainton,CENTURY 21 ALLIANCE - Moorestown,665000,2025-11-12,0,,3,20241019,20241201,30,72,0,0,0,Delta Media Group Inc.|Trulia|Zillow.com
+260060,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,259000,2026-01-09,0,,3,20260220,20260507,5,8,0,0,0,Luxury Presence|RE/MAX.com|REMAX.com
+260100,cmc,115 W 6th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,1495000,2026-01-15,0,,5,20260227,20260523,86,2774,0,0,0,Coldwell Banker|Placester Inc|RE/MAX.com|Trulia|Zillow.com
+260134,cmc,135 Maurice Boulevard,Rio Grande,CENTURY 21 ALLIANCE  - NCM,182500,2026-01-19,0,,4,20260318,20260523,62,1522,0,0,0,Moxi Works|RE/MAX.com|Trulia|Zillow.com
+260211,cmc,536 W Maple Avenue,West Wildwood,KELLER WILLIAMS REALTY - Washington Twp,658000,2026-01-30,0,,5,20260423,20260523,31,2582,0,0,0,Lands of America|Moxi Works|RE/MAX.com|Trulia|Zillow.com
+260247,cmc,500 Kennedy Drive,North Wildwood,CENTURY 21 ALLIANCE wc,579000,2026-02-04,0,,5,20260413,20260522,38,383,0,0,0,Coldwell Banker|Placester Inc|RE/MAX.com|REMAX.com|Realtor.com
+260360,cmc,159 Stagecoach Road,Cape May Court House,CENTURY 21 ALLIANCE  - NCM,325000,2026-02-09,0,,22,20260314,20260523,64,491,0,0,0,AgentFire|Constellation|Corcoran.com|CoreLogic - OneHome|IDC Global|Ihomefinder Inc.|Inside Real Estate|Luxury Presence|NRT|Online Connexions|RE/MAX.com|Real Geeks|Realtor.com|Reliance Network|Smarter Agent|TRIAD - MLS|Trulia|Weichert|Xome|Zillow.com|iHouseWeb|propgoluxury.com
+260427,cmc,606 New Jersey Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,799000,2026-02-20,0,,4,20250805,20251005,35,1185,0,0,0,RE/MAX.com|Trulia|Ylopo|Zillow.com
+260436,cmc,1810 Bayshore Road,Villas,CENTURY 21 ALLIANCE  - NCM,349900,2026-02-20,0,,5,20250103,20260126,41,104,0,0,0,BHHS.com|Corcoran.com|CoreLogic - OneHome|Inside Real Estate|RE/MAX.com
+260497,cmc,130 W Andrews Avenue,Wildwood,CENTURY 21 ALLIANCE wc,449900,2026-03-05,0,,0,,,0,0,0,0,0,
+260518,cmc,430 N Route 9,Cape May Court House,CENTURY 21 ALLIANCE wc,155000,2026-03-02,0,,0,,,0,0,0,0,0,
+260540,cmc,1062 Hansey Creek Road,Port Norris,CENTURY 21 ALLIANCE  - NCM,259900,2026-03-06,0,,15,20260320,20260428,38,2569,0,0,2,Constellation|Corcoran.com|CoreLogic - OneHome|EVRealEstate.com|Gabriels Technology Solutions|IDC Global|Luxury Presence|NRT|RE/MAX.com|Real Geeks|Sierra Interactive LLC|Trulia|Xome.com|Ylopo|Zillow.com
+260567,cmc,410 E Lavender Road,Wildwood Crest,CENTURY 21 ALLIANCE wc,669999,2026-03-06,0,,0,,,0,0,0,0,0,
+260570,cmc,618 W Burk Avenue,Wildwood,CENTURY 21 ALLIANCE wc,635000,2026-03-09,0,,0,,,0,0,0,0,0,
+260592,cmc,506 West Hampton Court,Swainton,CENTURY 21 ALLIANCE wc,525000,2026-03-11,0,,0,,,0,0,0,0,0,
+260656,cmc,840 Ocean Avenue,Ocean City,CENTURY 21 ALLIANCE oc,209000,2026-03-17,0,,3,20260206,20260319,25,227,0,0,0,EVRealEstate.com|Trulia|Zillow.com
+260666,cmc,10 Empire Drive,Egg Harbor Township,CENTURY 21 ALLIANCE  - NCM,334900,2026-03-16,0,,0,,,0,0,0,0,0,
+260718,cmc,184 W Oak Avenue,Wildwood,CENTURY 21 ALLIANCE wc,814900,2026-03-22,0,,0,,,0,0,0,0,0,
+260832,cmc,101 W Spruce Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,959900,2026-04-02,0,,0,,,0,0,0,0,0,
+260871,cmc,513 E 17th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,359900,2026-04-03,0,,9,20260404,20260525,52,1899,0,0,0,Coldwell Banker|Luxury Presence|Properstar|RE/MAX.com|Real Geeks|Realtor.com|Reliance Network|Trulia|Zillow.com
+260957,cmc,430 S Shore Road,Marmora,CENTURY 21 ALLIANCE oc,259900,2026-04-07,0,,4,20260413,20260523,41,939,0,0,0,RE/MAX.com|REMAX.com|Trulia|Zillow.com
+261024,cmc,405 Ocean Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,305000,2026-04-19,0,,10,20260430,20260523,24,1172,0,0,4,AgentFire|Constellation|Corcoran.com|CoreLogic - OneHome|IDC Global|Inside Real Estate|RE/MAX.com|REMAX.com|Trulia|Zillow.com
+261094,cmc,110 W Garfield Avenue,Wildwood,CENTURY 21 ALLIANCE wc,549900,2026-04-24,0,,0,,,0,0,0,0,0,
+261133,cmc,35 Route 47 South,Cape May Court House,CENTURY 21 ALLIANCE wc,229000,2026-04-27,0,,0,,,0,0,0,0,0,
+261169,cmc,220 Village Road,Villas,CENTURY 21 ALLIANCE wc,535000,2026-05-01,0,,0,,,0,0,0,0,0,
+261171,cmc,110 W Garfield Avenue,Wildwood,CENTURY 21 ALLIANCE wc,569900,2026-04-30,0,,3,20260224,20260523,88,779,0,0,0,Luxury Presence|Trulia|Zillow.com
+261188,cmc,19 Maple Street,South Seaville,CENTURY 21 ALLIANCE  - NCM,250000,2026-05-03,0,,10,20260414,20260521,32,138,0,0,0,AgentFire|Constellation|Corcoran.com|CoreLogic - OneHome|LeadingRE.com|Luxury Presence|NRT|Real Estate Digital - MLS Portal|Trulia|Zillow.com
+261220,cmc,639 W Spruce Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,895000,2026-05-01,0,,8,20260419,20260524,32,139,0,0,0,AgentFire|Constellation|Corcoran.com|CoreLogic - OneHome|IDC Global|Luxury Presence|Trulia|Zillow.com
+261228,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,325000,2026-05-06,0,,0,,,0,0,0,0,0,
+261230,cmc,511 E 11th Avenue,North Wildwood,CENTURY 21 ALLIANCE wc,319000,2026-05-06,0,,2,20260520,20260520,1,189,0,0,0,Trulia|Zillow.com
+261231,cmc,102 E Primrose Road,Wildwood Crest,CENTURY 21 ALLIANCE wc,599900,2026-05-06,0,,9,20260507,20260524,18,1834,0,0,0,Coldwell Banker|IDC Global|Luxury Presence|RE/MAX.com|REMAX.com|Real Geeks|Realtor.com|Trulia|Zillow.com
+261250,cmc,117 E Maple Avenue,Wildwood,CENTURY 21 ALLIANCE wc,929000,2026-05-08,0,,10,20260508,20260524,17,505,0,0,0,Coldwell Banker|Luxury Presence|Properstar|RE/MAX.com|Real Geeks|Realtor.com|Reliance Network|Showcase IDX|Trulia|Zillow.com
+261321,cmc,119 E Cresse Avenue,Wildwood,CENTURY 21 ALLIANCE wc,345000,2026-05-15,0,,12,20260419,20260523,35,319,0,0,0,AgentFire|Constellation|Corcoran.com|CoreLogic - OneHome|Gabriels Technology Solutions|IDC Global|Luxury Presence|NRT|REMAX.com|Trulia|Zillow.com|propgoluxury.com
+261369,cmc,308 Osprey Court,Cape May Court House,CENTURY 21 ALLIANCE wc,690000,2026-05-19,0,,6,20260521,20260524,4,111,0,0,0,Coldwell Banker|Luxury Presence|Real Geeks|Trulia|Union Street Media|Zillow.com
+261379,cmc,35 Route 47 S,Cape May Court House,CENTURY 21 ALLIANCE wc,239900,2026-05-19,0,,13,20260428,20260523,26,1526,0,0,1,AgentFire|Constellation|Corcoran.com|CoreLogic - OneHome|IDC Global|Inside Real Estate|Luxury Presence|Moxi Works|NRT|RE/MAX.com|Sierra Interactive LLC|Trulia|Zillow.com
+261425,cmc,4001-4009 New Jersey Avenue,Wildwood,CENTURY 21 ALLIANCE wc,549000,2026-05-23,0,,2,20250919,20251023,35,328,0,0,0,RE/MAX.com|Realtor.com
+600420,sjsr,6418 Black Horse Pike,Egg Harbor Township,CENTURY 21 ALLIANCE-O1O4J,0,2025-09-13,0,,0,,,0,0,0,0,0,
+603059,sjsr,117 Delaware Ave,Egg Harbor Township,CENTURY 21 ALLIANCE-O1O4J,559000,2025-12-11,0,,0,,,0,0,0,0,0,
+603443,sjsr,16-20 Roosevelt Blvd,Marmora,CENTURY 21 ALLIANCE-O1O4J,849900,2026-01-03,0,,0,,,0,0,0,0,0,
+603938,sjsr,5734 Central Ave,Ocean City,CENTURY 21 ALLIANCE-O1O4J,2199900,2026-01-16,0,,0,,,0,0,0,0,0,
+604179,sjsr,3501 Pacific Ave,Atlantic City,CENTURY 21 ALLIANCE-O1O4J,106000,2026-01-24,0,,7,20250316,20250831,18,48,0,0,0,Coldwell Banker|IDC Global|Inside Real Estate|SaleCORE|Trulia|Zillow.com|century21.com
+605211,sjsr,840 Ocean Ave,Ocean City,CENTURY 21 ALLIANCE-O1O4J,209000,2026-03-01,0,,0,,,0,0,0,0,0,
+605696,sjsr,10 Empire Dr,Egg Harbor Township,Century 21 Alliance-S104L,334900,2026-03-17,0,,0,,,0,0,0,0,0,
+605946,sjsr,131 Central Ave,Ocean City,CENTURY 21 ALLIANCE-O1O4J,569900,2026-03-24,0,,0,,,0,0,0,0,0,
+606108,sjsr,921 Wesley Ave,Ocean City,CENTURY 21 ALLIANCE-O1O4J,298000,2026-03-28,0,,12,20260328,20260524,57,1226,0,0,0,Coldwell Banker|Gabriels Technology Solutions|Luxury Presence|Moxi Works|RE/MAX.com|Real Geeks|Reliance Network|Trulia|Weichert|Zillow.com|century21.com|propgoluxury.com
+606468,sjsr,430 S Shore Road,Marmora,CENTURY 21 ALLIANCE-O1O4J,259900,2026-04-07,0,,4,20240112,20260522,54,106,0,0,0,CBCworldwide.com|FlexMLS|Inside Real Estate|RealistiQ
+606967,sjsr,1934 West Ave Ave,Ocean City,CENTURY 21 ALLIANCE-S104I,2950000,2026-04-15,0,,0,,,0,0,0,0,0,
+607181,sjsr,405 Ocean Ave,North Wildwood,CENTURY 21 ALLIANCE-S104B,305000,2026-04-19,0,,0,,,0,0,0,0,0,
+607680,sjsr,117 E Maple Ave,Wildwood,CENTURY 21 ALLIANCE-S104B,929000,2026-05-08,0,,15,20260407,20260524,38,221,0,0,0,AgentFire|BHHS.com|CINC|CoreLogic - OneHome|IDC Global|Inside Real Estate|Luxury Presence|NRT|Property Panorama|REMAX.com|Real Geeks|Realtor.com|Sierra Interactive LLC|Trulia|Zillow.com
+608073,sjsr,665 Cypress Point Dr,Galloway Township,CENTURY 21 ALLIANCE-O1O4J,479900,2026-05-20,0,,0,,,0,0,0,0,0,
+608085,sjsr,308 Osprey Ct,Cape May Court House,CENTURY 21 ALLIANCE-S104B,690000,2026-05-19,0,,0,,,0,0,0,0,0,
+608118,sjsr,1934 West Ave Ave,Ocean City,CENTURY 21 ALLIANCE-S104I,2499000,2026-05-21,0,,0,,,0,0,0,0,0,

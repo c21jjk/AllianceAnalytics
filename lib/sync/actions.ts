@@ -214,6 +214,73 @@ export interface SyncAllResult {
   grouper: { groups_created: number; posts_assigned: number } | null;
 }
 
+/**
+ * Result shape returned by the listtrac-sync Edge Function. Mirrors the
+ * `SyncResult` interface inside the function so the dashboard / settings UI
+ * can render per-run totals (listings checked, listings that returned data,
+ * rows written, aggregate view counts).
+ */
+export interface ListtracSyncResult {
+  ok: boolean;
+  listings_checked: number;
+  listings_with_data: number;
+  rows_written: number;
+  total_views: number;
+  errors: { mls_number?: string; message: string }[];
+  duration_ms: number;
+}
+
+/**
+ * Invoke the listtrac-sync Edge Function. Pulls portal traffic counts for
+ * every active + pending + recently-sold Alliance listing, normalizes per
+ * (listing × portal × day), and upserts into listing_portal_metrics.
+ *
+ * Runs serially per listing inside the function (with internal concurrency
+ * of 8) — each metrics request requires a fresh ListTrac auth key, so the
+ * function performs `getkey → MD5(pw+key) → POST` as a tightly-bound unit.
+ */
+export async function syncListtracAction(): Promise<ListtracSyncResult> {
+  await requireAdmin();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error(
+      "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars not set on Vercel",
+    );
+  }
+  try {
+    const fnUrl = `${url}/functions/v1/listtrac-sync`;
+    const res = await fetch(fnUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `listtrac-sync HTTP ${res.status}: ${body.slice(0, 200)}`,
+      );
+    }
+    const raw = await res.json() as ListtracSyncResult;
+    revalidatePath("/", "layout");
+    return raw;
+  } catch (e) {
+    return {
+      ok: false,
+      listings_checked: 0,
+      listings_with_data: 0,
+      rows_written: 0,
+      total_views: 0,
+      errors: [{ message: (e as Error).message }],
+      duration_ms: 0,
+    };
+  }
+}
+
 export async function syncAll(): Promise<SyncAllResult> {
   await requireAdmin();
   // Parallel: each platform's sync hits a different upstream API (Meta

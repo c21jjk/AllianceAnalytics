@@ -2,6 +2,7 @@ import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import MlsFeedCard from "@/components/MlsFeedCard";
 import CredentialCard from "@/components/CredentialCard";
+import ListtracSyncCard from "@/components/ListtracSyncCard";
 import OfficeCard from "@/components/OfficeCard";
 import TestModeBanner from "@/components/TestModeBanner";
 import SendTestEmailButton from "@/components/SendTestEmailButton";
@@ -70,6 +71,27 @@ export default async function SettingsPage() {
     .from("properties")
     .select("id", { count: "exact", head: true })
     .not("promotion_dismissed_at", "is", null);
+
+  // ListTrac last-validated timestamp powers the ListtracSyncCard pill.
+  // why: cast through unknown — "listtrac" was added to the credential_platform
+  // enum in 20260526_003 but the generated Database types haven't been
+  // regenerated to include it yet. Regenerate Supabase types after this
+  // change lands to drop the cast.
+  const { data: listtracCred } = await (admin as unknown as {
+    from: (rel: string) => {
+      select: (cols: string) => {
+        eq: (col: string, val: string) => {
+          maybeSingle: () => Promise<{
+            data: { last_validated_at: string | null } | null;
+          }>;
+        };
+      };
+    };
+  })
+    .from("api_credentials")
+    .select("last_validated_at")
+    .eq("platform", "listtrac")
+    .maybeSingle();
 
   // Group platforms into MLS-style and API-style. The new "MLS / RETS Feeds"
   // section is sourced from mls_feeds; the older paragon_mls / bright_mls
@@ -154,6 +176,16 @@ export default async function SettingsPage() {
             ))}
           </div>
         )}
+      </section>
+
+      <section>
+        <SectionHeading
+          title="Portal traffic — ListTrac"
+          subtitle="Golden Ruler portal-traffic ingestion. Pulls Zillow, Realtor.com, Trulia, CIH brand sites, and IDX feeds for every active, pending, and recently sold listing."
+        />
+        <ListtracSyncCard
+          lastSyncAt={listtracCred?.last_validated_at ?? null}
+        />
       </section>
 
       <section>

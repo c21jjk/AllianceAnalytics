@@ -11,6 +11,7 @@ import OwnerReportRecipientsPanel from "@/components/OwnerReportRecipientsPanel"
 import OwnerStoryAdminCard from "@/components/OwnerStoryAdminCard";
 import NullAgentEmailWarning from "@/components/NullAgentEmailWarning";
 import CreatedPostsStrip from "@/components/CreatedPostsStrip";
+import PortalTrafficSection from "@/components/PortalTrafficSection";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 import {
   fetchOwnerStoryViewStats,
@@ -234,6 +235,17 @@ export default async function LivePropertyDetail({
           syncs, it&rsquo;ll appear here automatically.
         </section>
       )}
+
+      {/* Portal traffic — ListTrac syndication counts (Zillow / Realtor /
+          Trulia / CIH brand network). Renders both with-data and empty
+          states; the helper resolves CMC twins so SJSR listings get
+          attributed to their CMC counterpart's counts. */}
+      {property.source_mls === "cmc" || property.source_mls === "sjsr" ? (
+        <PortalTrafficSection
+          mlsNumber={property.mls_number}
+          sourceMls={property.source_mls}
+        />
+      ) : null}
 
       {/* Recipients + cadence — only after a report exists */}
       {existingReport ? (
