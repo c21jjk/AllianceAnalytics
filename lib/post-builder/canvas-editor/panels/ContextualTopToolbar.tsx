@@ -47,11 +47,7 @@ import FontPicker from "../primitives/FontPicker";
 import { FONT_OPTIONS } from "../primitives/font-options";
 import Tooltip from "../primitives/Tooltip";
 import { ALLIANCE_FONTS } from "../templates/tokens";
-import {
-  TEXT_EFFECT_PRESETS,
-  textEffectToFabricProps,
-} from "../textEffects";
-import { isGradientFill, type TextEffect } from "../types";
+import { isGradientFill } from "../types";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -116,6 +112,16 @@ interface ContextualTopToolbarProps {
    */
   onOpenFontPicker?: () => void;
   fontPickerOpen?: boolean;
+  /**
+   * 2026-05-26 — Canva-style EffectsPanel wiring. Text mode only. When
+   * provided, the Effects glyph button switches from the legacy inline
+   * popover to a trigger that opens the left-rail panel. `effectsPanelOpen`
+   * drives the trigger's active styling + aria-expanded. Both are optional
+   * for the same defensive reason as the FontPicker pair — callers that
+   * omit them get the legacy popover behavior.
+   */
+  onOpenEffectsPanel?: () => void;
+  effectsPanelOpen?: boolean;
 }
 
 // FONT_OPTIONS now lives in primitives/font-options.ts as the single source
@@ -219,6 +225,8 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
     onAlign,
     onOpenFontPicker,
     fontPickerOpen = false,
+    onOpenEffectsPanel,
+    effectsPanelOpen = false,
   } = props;
 
   // Local mirror state — written through to Fabric on every input. Pattern
@@ -398,30 +406,12 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
     commit(canvas, onCanvasMutated, recordHistory);
   };
 
-  // Effects — wires the existing TEXT_EFFECT_PRESETS into a popover. Apply
-  // path mirrors TextPropertiesControls.handleEffectPicked so the right
-  // panel removal is a pure UI move, not a behavior regression.
-  const handleEffectPicked = (kind: TextEffect["kind"]): void => {
-    const active = readActive(canvas);
-    if (!(active instanceof Textbox)) return;
-    const preset = TEXT_EFFECT_PRESETS[kind];
-    const fp = textEffectToFabricProps(preset);
-    active.set({
-      shadow: fp.shadow,
-      stroke: fp.stroke,
-      strokeWidth: fp.strokeWidth,
-      paintFirst: fp.paintFirst,
-    });
-    // Stash on `data` so a future schema-round-trip can pick it up — same
-    // pattern as TextPropertiesControls.
-    const dataBag =
-      (active as unknown as { data?: Record<string, unknown> }).data ?? {};
-    (active as unknown as { data: Record<string, unknown> }).data = {
-      ...dataBag,
-      effect: preset,
-    };
-    commit(canvas, onCanvasMutated, recordHistory);
-  };
+  // 2026-05-26 — Effects: the previous inline popover (3-col grid of
+  // EffectPreview tiles) was migrated to a full-height left panel
+  // (`EffectsPanel.tsx`) so sliders + per-effect params have room to live.
+  // The trigger button below now toggles that panel via
+  // `onOpenEffectsPanel`. Apply logic moved into EffectsPanel; same
+  // TEXT_EFFECT_PRESETS / textEffectToFabricProps under the hood.
 
   return (
     <div className="flex items-center gap-1 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
@@ -565,30 +555,23 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
         )}
       </Popover>
 
-      {/* === 12. Effects popover === */}
-      <Popover label="Effects" trigger={<EffectsIcon />}>
-        {(close) => (
-          <div className="grid grid-cols-3 gap-2 p-2">
-            {(
-              ["none", "shadow", "lift", "outline", "splice"] as const
-            ).map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                onClick={() => {
-                  handleEffectPicked(kind);
-                  close();
-                }}
-                className="flex h-14 w-16 flex-col items-center justify-center gap-1 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-[10px] font-medium text-white transition-colors hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
-                title={`Effect: ${kind}`}
-              >
-                <EffectPreview kind={kind} />
-                <span className="capitalize">{kind}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </Popover>
+      {/* === 12. Effects — opens the left-rail EffectsPanel === */}
+      <Tooltip label="Effects">
+        <button
+          type="button"
+          onClick={() => onOpenEffectsPanel?.()}
+          aria-haspopup="dialog"
+          aria-expanded={effectsPanelOpen}
+          aria-label="Effects"
+          className={`focus-ring-dark inline-flex h-7 w-7 items-center justify-center rounded transition-colors ${
+            effectsPanelOpen
+              ? "bg-gold-500/15 text-gold-300"
+              : "text-white hover:bg-[var(--studio-hover)]"
+          }`}
+        >
+          <EffectsIcon />
+        </button>
+      </Tooltip>
 
       {/* === 14. Position popover — aligns text to canvas bounds === */}
       {onAlign ? (
@@ -1316,42 +1299,6 @@ function EffectsIcon(): JSX.Element {
       <circle cx="8" cy="13" r="1.1" />
       <circle cx="13" cy="13" r="1.1" />
     </svg>
-  );
-}
-
-function EffectPreview(props: {
-  kind: "none" | "shadow" | "lift" | "outline" | "splice";
-}): JSX.Element {
-  // why: tiny "Ag" tile rendered with the matching CSS so the user can see
-  // each effect's flavor without committing. CSS shadow approximates Fabric's
-  // shadow well enough for a 24px preview.
-  const styles: Record<typeof props.kind, React.CSSProperties> = {
-    none: { color: "#18181B" },
-    shadow: {
-      color: "#18181B",
-      textShadow: "2px 2px 0 rgba(0,0,0,0.35)",
-    },
-    lift: {
-      color: "#18181B",
-      textShadow: "0 4px 6px rgba(0,0,0,0.25)",
-    },
-    outline: {
-      color: "transparent",
-      WebkitTextStroke: "1px #18181B",
-    },
-    splice: {
-      color: "transparent",
-      WebkitTextStroke: "1px #18181B",
-      textShadow: "2px 2px 0 #C9A84C",
-    },
-  };
-  return (
-    <span
-      className="text-[14px] font-bold leading-none"
-      style={styles[props.kind]}
-    >
-      Ag
-    </span>
   );
 }
 

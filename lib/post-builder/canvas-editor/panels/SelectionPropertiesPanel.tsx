@@ -127,6 +127,8 @@ export default function SelectionPropertiesPanel(
             recordHistory={props.recordHistory}
             onOpenFontPicker={props.onOpenFontPicker}
             fontPickerOpen={props.fontPickerOpen}
+            onOpenEffectsPanel={props.onOpenEffectsPanel}
+            effectsPanelOpen={props.effectsPanelOpen}
           />
         ) : null}
         {props.mode === "image" ? (

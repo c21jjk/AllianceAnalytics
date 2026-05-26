@@ -40,10 +40,6 @@ import {
 import ColorPicker from "../../primitives/ColorPicker";
 import FontPicker from "../../primitives/FontPicker";
 import { ALLIANCE_FONTS } from "../../templates/tokens";
-import {
-  TEXT_EFFECT_PRESETS,
-  textEffectToFabricProps,
-} from "../../textEffects";
 import type { TextEffect } from "../../types";
 
 interface TextPropertiesControlsProps {
@@ -63,6 +59,15 @@ interface TextPropertiesControlsProps {
    * so the right panel reflects whichever surface opened the picker.
    */
   fontPickerOpen?: boolean;
+  /**
+   * 2026-05-26 — opens the unified Canva-style EffectsPanel. Forwarded
+   * down from CanvasEditor via SelectionPropertiesPanel so the right-panel
+   * Effects trigger and the top-toolbar Effects glyph open the same
+   * canonical panel. When omitted (legacy callers) the trigger no-ops.
+   */
+  onOpenEffectsPanel?: () => void;
+  /** Drives the Effects trigger's active styling + aria-expanded. */
+  effectsPanelOpen?: boolean;
 }
 
 /**
@@ -187,6 +192,8 @@ export default function TextPropertiesControls(
     recordHistory,
     onOpenFontPicker,
     fontPickerOpen,
+    onOpenEffectsPanel,
+    effectsPanelOpen,
   } = props;
   const [state, setState] = useState<TextState | null>(() =>
     readTextState(canvas),
@@ -206,8 +213,19 @@ export default function TextPropertiesControls(
   // the underlying canvas instance also re-syncs.
   useEffect(() => {
     setState(readTextState(canvas));
-    // Reset effect chip highlight on selection change — see comment above.
-    setEffectKind("none");
+    // why (2026-05-26): read the stashed effect off `active.data.effect` if
+    // present so the trigger label here mirrors whatever the EffectsPanel
+    // most recently applied. Fall back to "none" when nothing is stashed.
+    // Same data-bag the panel writes to (and the legacy chip grid wrote to).
+    const active = canvas?.getActiveObject();
+    if (active instanceof Textbox) {
+      const stashed = (
+        active as unknown as { data?: { effect?: TextEffect } }
+      ).data?.effect;
+      setEffectKind(stashed?.kind ?? "none");
+    } else {
+      setEffectKind("none");
+    }
   }, [canvas, selectionVersion]);
 
   /**
@@ -346,39 +364,11 @@ export default function TextPropertiesControls(
     applyMutation({ linethrough: !state.linethrough }, true);
   }, [applyMutation, state]);
 
-  // Phase B.3 — apply a text-effect preset. Resolves the preset's default
-  // params → Fabric shadow/stroke/paintFirst props, writes them to the
-  // active textbox, and snapshots history so the change is one undo step.
-  const handleEffectPicked = useCallback(
-    (kind: TextEffect["kind"]): void => {
-      if (!canvas) return;
-      const active = canvas.getActiveObject();
-      if (!active || !(active instanceof Textbox)) return;
-      const preset = TEXT_EFFECT_PRESETS[kind];
-      const fabricProps = textEffectToFabricProps(preset);
-      active.set({
-        shadow: fabricProps.shadow,
-        stroke: fabricProps.stroke,
-        strokeWidth: fabricProps.strokeWidth,
-        paintFirst: fabricProps.paintFirst,
-      });
-      // why: stash the picked effect on the Fabric object's `data` bag so a
-      // future schema-round-trip can serialize it back out. The bag is
-      // already used by the layer panel for display name; adding a `effect`
-      // field is non-invasive.
-      const data =
-        (active as unknown as { data?: Record<string, unknown> }).data ?? {};
-      (active as unknown as { data: Record<string, unknown> }).data = {
-        ...data,
-        effect: preset,
-      };
-      setEffectKind(kind);
-      canvas.requestRenderAll();
-      onCanvasMutated?.();
-      recordHistory?.();
-    },
-    [canvas, onCanvasMutated, recordHistory],
-  );
+  // 2026-05-26 — the prior `handleEffectPicked` helper used to apply
+  // TEXT_EFFECT_PRESETS directly from inline chips here. That code path
+  // moved into EffectsPanel.tsx (the single source of truth for effect
+  // application). The right-panel trigger button just opens that panel
+  // now — no per-chip handler needed.
 
   // why: while waiting for the first selection sync (or if the active object
   // isn't actually a Textbox), render an empty hint instead of crashing.
@@ -602,68 +592,42 @@ export default function TextPropertiesControls(
         </p>
       </Section>
 
-      {/* ===== Phase B.3 — Text effects ===== */}
+      {/* ===== Phase B.3 — Text effects =====
+          2026-05-26 — the inline EffectChip grid was migrated into a
+          Canva-style left-rail EffectsPanel. The right panel now just
+          shows a trigger button that opens that panel — single canonical
+          surface for browsing presets + tuning per-effect parameters. */}
       <Section title="Effects">
-        <div className="grid grid-cols-5 gap-1">
-          <EffectChip
-            label="None"
-            active={effectKind === "none"}
-            onClick={() => handleEffectPicked("none")}
-            preview="—"
-            previewStyle={undefined}
-          />
-          <EffectChip
-            label="Shadow"
-            active={effectKind === "shadow"}
-            onClick={() => handleEffectPicked("shadow")}
-            preview="Ag"
-            previewStyle={{
-              color: "#18181B",
-              textShadow: "0 2px 4px rgba(0,0,0,0.5)",
-            }}
-          />
-          <EffectChip
-            label="Lift"
-            active={effectKind === "lift"}
-            onClick={() => handleEffectPicked("lift")}
-            preview="Ag"
-            previewStyle={{
-              color: "#18181B",
-              textShadow: "0 4px 12px rgba(0,0,0,0.5)",
-            }}
-          />
-          <EffectChip
-            label="Hollow"
-            active={effectKind === "outline"}
-            onClick={() => handleEffectPicked("outline")}
-            preview="Ag"
-            previewStyle={{
-              color: "transparent",
-              WebkitTextStroke: "1px #18181B",
-            }}
-          />
-          <EffectChip
-            label="Splice"
-            active={effectKind === "splice"}
-            onClick={() => handleEffectPicked("splice")}
-            preview="Ag"
-            previewStyle={{
-              color: "#18181B",
-              textShadow: "3px 3px 0 #C9A84C",
-            }}
-          />
-        </div>
-        <p className="mt-1.5 text-[10px] leading-tight text-[var(--studio-text-muted)]">
-          {effectKind === "none"
-            ? "No effect — plain text."
-            : effectKind === "shadow"
-              ? "Soft drop shadow."
-              : effectKind === "lift"
-                ? "Subtle shadow lifts text off the background."
-                : effectKind === "outline"
-                  ? "Hollow outline — keeps the fill glyph crisp."
-                  : "Splice — outlined text with an offset duplicate."}
-        </p>
+        <button
+          type="button"
+          onClick={() => onOpenEffectsPanel?.()}
+          disabled={!onOpenEffectsPanel}
+          aria-haspopup="dialog"
+          aria-expanded={Boolean(effectsPanelOpen)}
+          className={`focus-ring-dark flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            effectsPanelOpen
+              ? "border-gold-500 bg-[var(--studio-active)] text-gold-300"
+              : "border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)]"
+          }`}
+        >
+          <span className="capitalize">
+            {effectKind === "none" ? "None" : effectKind === "outline" ? "Hollow" : effectKind}
+          </span>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="flex-shrink-0 text-[var(--studio-text-muted)]"
+            aria-hidden="true"
+          >
+            <path d="M6 4l4 4-4 4" />
+          </svg>
+        </button>
       </Section>
     </div>
   );
@@ -712,43 +676,6 @@ function StyleToggle(props: StyleToggleProps): JSX.Element {
       }`}
     >
       <span className={props.extraClass}>{props.label}</span>
-    </button>
-  );
-}
-
-interface EffectChipProps {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  /** Tiny "Ag" preview rendered in the chip's body. */
-  preview: string;
-  /** Inline style applied to the preview text so each chip can hint at its
-   *  effect (e.g. textShadow for Shadow, WebkitTextStroke for Hollow). */
-  previewStyle: React.CSSProperties | undefined;
-}
-
-function EffectChip(props: EffectChipProps): JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      aria-pressed={props.active}
-      title={props.label}
-      className={`flex h-14 flex-col items-center justify-center gap-0.5 rounded-md border transition-colors ${
-        props.active
-          ? "border-gold-500 bg-[var(--studio-active)]"
-          : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] hover:border-gold-400 hover:bg-[var(--studio-hover)]"
-      }`}
-    >
-      <span
-        className="text-base font-semibold leading-none"
-        style={props.previewStyle}
-      >
-        {props.preview}
-      </span>
-      <span className="text-[9px] font-medium uppercase tracking-wider text-[var(--studio-text-muted)]">
-        {props.label}
-      </span>
     </button>
   );
 }

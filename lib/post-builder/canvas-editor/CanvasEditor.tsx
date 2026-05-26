@@ -152,6 +152,7 @@ import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
 import ContextualTopToolbar from "./panels/ContextualTopToolbar";
+import EffectsPanel from "./panels/EffectsPanel";
 import FontPickerPanel from "./panels/FontPickerPanel";
 import LayerListPanel from "./panels/LayerListPanel";
 import { FONT_OPTIONS } from "./primitives/font-options";
@@ -433,6 +434,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // Closing the panel when text selection clears is handled in the
   // selection effect below.
   const [fontPickerOpen, setFontPickerOpen] = useState<boolean>(false);
+  // why: Canva-style Effects panel (2026-05-26). Mirrors the FontPickerPanel
+  // pattern — single boolean owned at editor scope because triggers live in
+  // ContextualTopToolbar AND TextPropertiesControls and both flip the same
+  // canonical panel. Mutually exclusive with `fontPickerOpen` (both occupy
+  // the same left:64px slot) — see the effect below that enforces that.
+  const [effectsPanelOpen, setEffectsPanelOpen] = useState<boolean>(false);
   // why: ref the editor passes to FontPickerPanel so focus can return to
   // the trigger pill on close. Updated via a callback ref because the
   // trigger itself is rendered inside ContextualTopToolbar — we hand the
@@ -3083,6 +3090,28 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     }
   }, [selectionMode, fontPickerOpen]);
 
+  // why: same auto-close behavior for the Effects panel — if the user
+  // deselects (or the active object isn't a Textbox anymore), the panel has
+  // nothing to apply to. Close it so the left rail goes back to whichever
+  // tab was underneath.
+  useEffect(() => {
+    if (selectionMode !== "text" && effectsPanelOpen) {
+      setEffectsPanelOpen(false);
+    }
+  }, [selectionMode, effectsPanelOpen]);
+
+  // why: FontPicker + Effects panels both occupy the same left:64px slot.
+  // Without mutual exclusion they'd overlap visually (last-mounted wins).
+  // Whichever one opens last wins — close the other.
+  const openFontPicker = useCallback(() => {
+    setEffectsPanelOpen(false);
+    setFontPickerOpen((v) => !v);
+  }, []);
+  const openEffectsPanel = useCallback(() => {
+    setFontPickerOpen(false);
+    setEffectsPanelOpen((v) => !v);
+  }, []);
+
   // why: apply a font from the panel by reaching directly into the active
   // text object — same mechanism the floating toolbar uses. Record history
   // so each font swap is its own undo step (matches Canva's behavior:
@@ -3464,6 +3493,20 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           triggerRef={fontPickerTriggerRef}
         />
 
+        {/* === 2026-05-26 — EffectsPanel — Canva-style text-effect browser ===
+            Same overlay slot as FontPickerPanel (left:64px, z-30). Mutually
+            exclusive with FontPickerPanel — see openFontPicker /
+            openEffectsPanel helpers above which close the other one before
+            toggling. */}
+        <EffectsPanel
+          open={effectsPanelOpen}
+          onClose={() => setEffectsPanelOpen(false)}
+          canvas={fabricRef.current}
+          selectionVersion={layerVersion}
+          onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+          recordHistory={history.record}
+        />
+
         {/* === Center column — canvas area + footer ===
             why: stacked into its own flex-col so the canvas footer
             (zoom + undo/redo + alignment) sits inside the same column
@@ -3554,8 +3597,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onAlign={handleAlign}
                     onEnterCropMode={enterCropModeForActive}
                     onActivateResize={activateResizeForActive}
-                    onOpenFontPicker={() => setFontPickerOpen((v) => !v)}
+                    onOpenFontPicker={openFontPicker}
                     fontPickerOpen={fontPickerOpen}
+                    onOpenEffectsPanel={openEffectsPanel}
+                    effectsPanelOpen={effectsPanelOpen}
                   />
                 ) : null}
                 {selectedEntry && !selectedEntry.locked ? (
@@ -3805,8 +3850,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onCanvasMutated={() => setLayerVersion((v) => v + 1)}
                     onClearSelection={handleClearSelection}
                     recordHistory={history.record}
-                    onOpenFontPicker={() => setFontPickerOpen((v) => !v)}
+                    onOpenFontPicker={openFontPicker}
                     fontPickerOpen={fontPickerOpen}
+                    onOpenEffectsPanel={openEffectsPanel}
+                    effectsPanelOpen={effectsPanelOpen}
                   />
                 )}
               </div>

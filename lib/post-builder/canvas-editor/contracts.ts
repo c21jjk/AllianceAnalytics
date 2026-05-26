@@ -629,6 +629,18 @@ export interface SelectionPropertiesPanelProps {
    * in the right panel. Mirrors the same prop on ContextualTopToolbar.
    */
   fontPickerOpen?: boolean;
+  /**
+   * 2026-05-26 — opens the unified Canva-style EffectsPanel left panel.
+   * Wired from CanvasEditor to the SAME setEffectsPanelOpen state the top
+   * toolbar uses, so both Effects triggers open the single canonical panel.
+   */
+  onOpenEffectsPanel?: () => void;
+  /**
+   * 2026-05-26 — drives the Effects trigger's active styling +
+   * aria-expanded in the right panel. Mirrors the same prop on
+   * ContextualTopToolbar.
+   */
+  effectsPanelOpen?: boolean;
 }
 
 // ===========================================================================
