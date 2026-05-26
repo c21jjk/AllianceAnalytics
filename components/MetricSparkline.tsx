@@ -23,8 +23,8 @@ export default function MetricSparkline({
   values,
   width = 120,
   height = 36,
-  stroke = "var(--accent, #C9A961)",
-  fill = "rgba(201, 169, 97, 0.18)",
+  stroke = "var(--accent, #C9A84C)",
+  fill = "rgba(201, 168, 76, 0.18)",
   className,
   ariaLabel,
 }: MetricSparklineProps) {

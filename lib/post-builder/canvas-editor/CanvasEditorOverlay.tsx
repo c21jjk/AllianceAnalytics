@@ -24,6 +24,7 @@
  *   means the same editor component renders identically in either context.
  */
 
+import { ChevronDown, Sparkles } from "lucide-react";
 import { type JSX, useEffect, useRef, useState } from "react";
 
 import CanvasEditor from "./CanvasEditor";
@@ -135,6 +136,28 @@ export default function CanvasEditorOverlay(
   // is purely UI scaffolding around the parent's `onRevert` callback.
   const [revertConfirmOpen, setRevertConfirmOpen] = useState(false);
   const [reverting, setReverting] = useState(false);
+  // 2026-05-25 — consolidated badge: single pill with a popover menu that
+  // contains "Revert to template default" instead of two separate floating
+  // chips. badgeMenuRef catches outside-clicks to close the popover.
+  const [badgeMenuOpen, setBadgeMenuOpen] = useState(false);
+  const badgeMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!badgeMenuOpen) return;
+    const onDocMouseDown = (e: MouseEvent): void => {
+      if (!badgeMenuRef.current) return;
+      if (badgeMenuRef.current.contains(e.target as Node)) return;
+      setBadgeMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setBadgeMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [badgeMenuOpen]);
 
   // -------------------------------------------------------------------------
   // Body scroll lock — restore on close/unmount
@@ -256,33 +279,55 @@ export default function CanvasEditorOverlay(
         />
       </div>
 
-      {/* Phase 2 AI Design — floating badge in the top-left. Sits above
-          the editor in z-order so the canvas chrome doesn't cover it,
-          but pointer-events on the children only so the rest of the
-          modal stays clickable. */}
+      {/* Phase 2 AI Design — single consolidated pill at top-left (2026-05-25).
+          Was two separate chips (badge + Revert link) — now one pill with
+          a chevron-trigger that opens a small menu containing "Revert to
+          template default". Same Revert confirm modal flow; only the launcher
+          changed. Sits above the editor in z-order so the canvas chrome
+          doesn't cover it, but pointer-events on the children only so the
+          rest of the modal stays clickable. */}
       {props.aiDesignBadge ? (
-        <div className="pointer-events-none fixed left-4 top-4 z-[60] flex items-center gap-2">
-          <div
-            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-gold-500 bg-white/95 px-3 py-1.5 text-xs font-semibold text-gold-900 shadow-elevated"
+        <div
+          ref={badgeMenuRef}
+          className="pointer-events-none fixed left-4 top-4 z-[60]"
+        >
+          <button
+            type="button"
+            onClick={() => setBadgeMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={badgeMenuOpen}
             title={`Mood: ${props.aiDesignBadge.mood.replace(/_/g, " ")}${
               props.aiDesignBadge.critiquePassed ? "" : " · critique revised the layout"
             }`}
+            className="focus-ring pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-gold-500 bg-white/95 px-3 py-1.5 text-xs font-semibold text-gold-900 shadow-elevated transition-colors hover:bg-gold-50"
           >
-            <span aria-hidden>✨</span>
+            <Sparkles size={14} />
             <span>Designed by Claude</span>
             {!props.aiDesignBadge.critiquePassed ? (
-              <span className="ml-1 rounded bg-gold-100 px-1.5 py-0.5 text-[10px] font-medium text-gold-800">
+              <span className="rounded bg-gold-100 px-1.5 py-0.5 text-[10px] font-medium text-gold-800">
                 revised
               </span>
             ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={() => setRevertConfirmOpen(true)}
-            className="pointer-events-auto rounded-full border border-neutral-300 bg-white/95 px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm hover:bg-neutral-50"
-          >
-            Revert to template default
+            <ChevronDown size={14} aria-hidden />
           </button>
+          {badgeMenuOpen ? (
+            <div
+              role="menu"
+              className="pointer-events-auto absolute left-0 top-full mt-1 min-w-[220px] rounded-lg border border-neutral-200 bg-white py-1 shadow-elevated"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setBadgeMenuOpen(false);
+                  setRevertConfirmOpen(true);
+                }}
+                className="focus-ring block w-full px-3 py-2 text-left text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Revert to template default
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -313,7 +358,7 @@ export default function CanvasEditorOverlay(
                 type="button"
                 onClick={() => setRevertConfirmOpen(false)}
                 disabled={reverting}
-                className="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                className="focus-ring rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -333,7 +378,7 @@ export default function CanvasEditorOverlay(
                   }
                 }}
                 disabled={reverting}
-                className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
+                className="focus-ring rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-white hover:bg-gold-600 disabled:opacity-50"
               >
                 {reverting ? "Reverting…" : "Revert"}
               </button>

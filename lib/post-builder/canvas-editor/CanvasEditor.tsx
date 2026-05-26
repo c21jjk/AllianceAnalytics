@@ -40,6 +40,47 @@ import {
   Textbox,
 } from "fabric";
 import {
+  AlertTriangle as LAlertTriangle,
+  AlignCenter as LAlignCenter,
+  AlignHorizontalDistributeCenter as LDistributeHorizontal,
+  AlignLeft as LAlignLeft,
+  AlignRight as LAlignRight,
+  AlignVerticalDistributeCenter as LDistributeVertical,
+  AlignVerticalJustifyCenter as LAlignMiddle,
+  AlignVerticalJustifyEnd as LAlignBottom,
+  AlignVerticalJustifyStart as LAlignTop,
+  BookmarkPlus as LBookmarkPlus,
+  BringToFront as LBringToFront,
+  Check as LCheck,
+  ChevronsLeft as LChevronsLeft,
+  ChevronsRight as LChevronsRight,
+  Clock as LClock,
+  Copy as LCopy,
+  Eye as LEye,
+  EyeOff as LEyeOff,
+  FileText as LFileText,
+  Film as LFilm,
+  Image as LImageIcon,
+  LayoutGrid as LLayoutGrid,
+  Layers as LLayers,
+  Loader2 as LLoader2,
+  Lock as LLock,
+  Maximize2 as LMaximize2,
+  PencilRuler as LPencilRuler,
+  Redo2 as LRedo2,
+  Save as LSave,
+  SendToBack as LSendToBack,
+  Shapes as LShapes,
+  Square as LSquare,
+  Trash2 as LTrash2,
+  Type as LType,
+  Undo2 as LUndo2,
+  User as LUser,
+  X as LX,
+  ZoomIn as LZoomIn,
+  ZoomOut as LZoomOut,
+} from "lucide-react";
+import {
   type JSX,
   useCallback,
   useEffect,
@@ -78,7 +119,7 @@ import {
   resolveTextBoundField,
   setLayerData,
 } from "./fabric-factory";
-import { createCanvaStyleControls } from "./canva-style-controls";
+import { createCanvaStyleControls, BRAND_GOLD } from "./canva-style-controls";
 import {
   clearAutosave,
   formatAutosaveAge,
@@ -593,8 +634,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           cornerStyle: "circle",
           cornerSize: 10,
           transparentCorners: false,
-          borderColor: "#C9A961",
-          cornerColor: "#C9A961",
+          borderColor: BRAND_GOLD,
+          cornerColor: BRAND_GOLD,
         });
         setLayerData(img, {
           layerId: `photo_${photo.sequence}_${Date.now()}`,
@@ -1201,8 +1242,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               top: layer.top,
               width: layer.width,
               height: layer.height,
-              fill: "rgba(201, 169, 97, 0.08)", // gold-500 at 8% alpha
-              stroke: "#C9A961",
+              fill: "rgba(201, 168, 76, 0.08)", // gold-500 at 8% alpha
+              stroke: BRAND_GOLD,
               strokeWidth: 2,
               strokeDashArray: [8, 6],
               rx: layer.cornerRadius,
@@ -1211,8 +1252,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               cornerStyle: "circle",
               cornerSize: 10,
               transparentCorners: false,
-              borderColor: "#C9A961",
-              cornerColor: "#C9A961",
+              borderColor: BRAND_GOLD,
+              cornerColor: BRAND_GOLD,
             });
             setLayerData(placeholder, {
               layerId: layer.id,
@@ -2437,7 +2478,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         width: bb.width,
         height: bb.height,
         fill: "transparent",
-        stroke: "#C9A961", // gold-500 — matches the selection ring
+        stroke: BRAND_GOLD, // gold-500 — matches the selection ring
         strokeWidth: 2,
         strokeDashArray: [6, 4],
         // why: skipTargetFind keeps the rect from intercepting clicks on
@@ -2531,8 +2572,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           cornerStyle: "circle",
           cornerSize: 10,
           transparentCorners: false,
-          borderColor: "#C9A961",
-          cornerColor: "#C9A961",
+          borderColor: BRAND_GOLD,
+          cornerColor: BRAND_GOLD,
         });
         // why: apply the circular clipPath AFTER set() so the scale values
         // are stable when we divide the half-dim radius into image-local
@@ -2992,7 +3033,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           {/* why: small file-icon glyph anchors the title block — same visual
               affordance Canva uses at the leftmost edge of its top bar. */}
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-neutral-500">
-            <FileGlyphIcon />
+            <LFileText size={14} />
           </span>
           <span className="truncate text-[13px] font-semibold text-neutral-900">
             {template.name}
@@ -3008,6 +3049,33 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             <span className="mx-1.5 text-neutral-300">·</span>
             {template.width}×{template.height}
           </span>
+          {/* 2026-05-25 — Undo / Redo moved here from the canvas footer to
+              match Canva's chrome (per John's screenshot). Visual divider on
+              both sides isolates the pair from the title cluster and the
+              spacer that follows. Cmd+Z / Cmd+Shift+Z shortcuts remain
+              wired in keyboard-shortcuts.ts → handlePhase2KeyDown. */}
+          <span aria-hidden="true" className="h-5 w-px bg-neutral-200 mx-1" />
+          <button
+            type="button"
+            onClick={() => history.undo()}
+            disabled={!history.canUndo}
+            aria-label="Undo"
+            title="Undo (Cmd+Z)"
+            className="focus-ring flex h-8 w-8 items-center justify-center rounded-md text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+          >
+            <LUndo2 size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => history.redo()}
+            disabled={!history.canRedo}
+            aria-label="Redo"
+            title="Redo (Cmd+Shift+Z)"
+            className="focus-ring flex h-8 w-8 items-center justify-center rounded-md text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+          >
+            <LRedo2 size={16} />
+          </button>
+          <span aria-hidden="true" className="h-5 w-px bg-neutral-200 mx-1" />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {/* Phase 4 — Smart Resize. Sits left of Save so the reading order
@@ -3037,22 +3105,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               disabled={effectiveSaving}
               aria-label="Make a Reel from this listing"
               title="Open Reel Studio for this listing"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-                <path d="M7 6.5l3 1.5-3 1.5z" fill="currentColor" />
-              </svg>
+              <LFilm size={14} />
               + Reel
             </button>
           ) : null}
@@ -3077,24 +3132,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   ? `Update “${customTemplate.name}”`
                   : "Save as Template"
               }
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                {/* lucide BookmarkPlus */}
-                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />
-                <line x1="12" y1="7" x2="12" y2="13" />
-                <line x1="9" y1="10" x2="15" y2="10" />
-              </svg>
+              <LBookmarkPlus size={14} />
               {customTemplate ? "Update template" : "Save as Template"}
             </button>
           ) : null}
@@ -3102,16 +3142,16 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             type="button"
             onClick={handleExport}
             disabled={effectiveSaving || dimensionWarning !== null}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-gold-500 px-3 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
+            className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md bg-gold-500 px-3 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {effectiveSaving ? (
               <span className="flex items-center gap-1.5">
-                <SpinnerIcon />
+                <LLoader2 size={16} className="animate-spin" />
                 Saving…
               </span>
             ) : (
               <>
-                <SaveIcon />
+                <LSave size={16} />
                 {saveLabel ?? "Save Post"}
               </>
             )}
@@ -3122,9 +3162,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               onClick={onClose}
               aria-label="Close editor"
               title="Close editor"
-              className="ml-0.5 flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              className="focus-ring ml-0.5 flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
             >
-              <CloseIcon />
+              <LX size={16} />
             </button>
           ) : null}
         </div>
@@ -3157,7 +3197,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           >
             <SidebarRailButton
               label="Templates"
-              icon={<TemplatesTabIcon />}
+              icon={<LLayoutGrid size={22} />}
               active={sidebarExpanded && sidebarTab === "templates"}
               onClick={() => {
                 if (sidebarExpanded && sidebarTab === "templates") {
@@ -3170,7 +3210,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             />
             <SidebarRailButton
               label="Brand"
-              icon={<BrandTabIcon />}
+              icon={<LSquare size={22} />}
               active={sidebarExpanded && sidebarTab === "brand"}
               onClick={() => {
                 if (sidebarExpanded && sidebarTab === "brand") {
@@ -3183,7 +3223,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             />
             <SidebarRailButton
               label="Agents"
-              icon={<AgentTabIcon />}
+              icon={<LUser size={22} />}
               active={sidebarExpanded && sidebarTab === "agents"}
               onClick={() => {
                 if (sidebarExpanded && sidebarTab === "agents") {
@@ -3196,7 +3236,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             />
             <SidebarRailButton
               label="Photos"
-              icon={<PhotosTabIcon />}
+              icon={<LImageIcon size={22} />}
               active={sidebarExpanded && sidebarTab === "photos"}
               onClick={() => {
                 if (sidebarExpanded && sidebarTab === "photos") {
@@ -3213,7 +3253,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 Photos rhythm. */}
             <SidebarRailButton
               label="Tools"
-              icon={<ToolsTabIcon />}
+              icon={<LPencilRuler size={22} />}
               active={sidebarExpanded && sidebarTab === "tools"}
               onClick={() => {
                 if (sidebarExpanded && sidebarTab === "tools") {
@@ -3258,9 +3298,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   onClick={() => setSidebarExpanded(false)}
                   aria-label="Collapse panel"
                   title="Collapse panel"
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+                  className="focus-ring flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
                 >
-                  <ChevronDoubleLeftIcon />
+                  <LChevronsLeft size={12} />
                 </button>
               </div>
               {/* Active panel — render only the visible one. why: keeps
@@ -3332,11 +3372,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               The dot-pattern SVG is rendered at 4% opacity so it adds
               texture without competing for attention. */}
           <div
-            className="relative flex flex-1 flex-col items-center justify-center overflow-auto p-6"
-            style={{
-              backgroundImage: `radial-gradient(ellipse at center, #fafafa 0%, #f5f5f5 100%), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='1' cy='1' r='1' fill='%23a3a3a3' fill-opacity='0.04'/></svg>")`,
-              backgroundSize: "100% 100%, 24px 24px",
-            }}
+            className="canvas-bg-pattern relative flex flex-1 flex-col items-center justify-center overflow-auto p-6"
           >
             {/* Phase B.6 — autosave restore banner. Renders only when we
                 detected a recent localStorage autosave for this (template,
@@ -3346,21 +3382,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             {pendingAutosave && !autosaveBannerDismissed ? (
               <div className="mb-3 flex w-full max-w-2xl items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 shadow-sm">
                 <div className="flex min-w-0 items-center gap-2">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.75}
-                    stroke="currentColor"
-                    aria-hidden="true"
-                    className="h-4 w-4 shrink-0"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
+                  <LClock size={16} className="shrink-0" />
                   <span className="truncate">
                     Unsaved changes from{" "}
                     <strong className="font-semibold">
@@ -3370,17 +3392,21 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   </span>
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-1">
+                  {/* 2026-05-25 — Restore primary recolored from amber-900 to
+                      neutral-800 for consistency with the rest of Studio (gold
+                      is reserved for the actual Save Post CTA; banner action
+                      stays as a quieter dark-neutral). */}
                   <button
                     type="button"
                     onClick={handleRestoreAutosave}
-                    className="rounded-md bg-amber-900 px-2 py-1 text-[11px] font-semibold text-white hover:bg-amber-950"
+                    className="focus-ring rounded-md bg-neutral-800 px-2 py-1 text-[11px] font-semibold text-white hover:bg-neutral-900"
                   >
                     Restore
                   </button>
                   <button
                     type="button"
                     onClick={handleDiscardAutosave}
-                    className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                    className="focus-ring rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
                   >
                     Discard
                   </button>
@@ -3408,7 +3434,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 display). */}
             {(selectedEntry && !selectedEntry.locked) ||
             (selection.isMulti && selection.count > 0) ? (
-              <div className="absolute top-6 z-10 flex flex-col items-center gap-2">
+              <div className="absolute top-6 z-10 flex flex-col items-center gap-1">
                 {(selectionMode === "text" ||
                   selectionMode === "shape" ||
                   selectionMode === "multi" ||
@@ -3449,17 +3475,23 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               </div>
             ) : null}
 
-            {/* Dimension warning — blocks export when template is malformed */}
+            {/* Dimension warning — blocks export when template is malformed.
+                2026-05-25 — unified to the rose-50/rose-200/rose-800 palette
+                shared with the non-blocking error toast below. */}
             {dimensionWarning ? (
-              <div className="absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 shadow-card">
-                {dimensionWarning}
+              <div className="absolute left-1/2 top-6 z-20 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800 shadow-card">
+                <LAlertTriangle size={16} className="shrink-0" />
+                <span>{dimensionWarning}</span>
               </div>
             ) : null}
 
-            {/* Non-blocking error toast */}
+            {/* Non-blocking error toast.
+                2026-05-25 — unified palette with dimensionWarning (rose-*)
+                and AlertTriangle icon swapped in for visual parity. */}
             {editorError ? (
-              <div className="absolute bottom-6 left-1/2 z-20 max-w-[80%] -translate-x-1/2 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700 shadow-elevated">
+              <div className="absolute bottom-6 left-1/2 z-20 max-w-[80%] -translate-x-1/2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 shadow-elevated">
                 <div className="flex items-start gap-3">
+                  <LAlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <span className="font-semibold uppercase tracking-wide">
                     {editorError.kind === "export" ? "Export" : "Warning"}
                   </span>
@@ -3468,9 +3500,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     type="button"
                     onClick={() => setEditorError(null)}
                     aria-label="Dismiss error"
-                    className="text-neutral-400 hover:text-neutral-700"
+                    className="focus-ring text-rose-400 hover:text-rose-700"
                   >
-                    <CloseIcon />
+                    <LX size={16} />
                   </button>
                 </div>
               </div>
@@ -3528,19 +3560,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   transform — so it tracks the frame regardless of
                   user zoom level. */}
               {cropMode && currentClipRect ? (
+                /* 2026-05-25 — Done/Cancel chrome moved to tailwind. Only the
+                   dynamic positioning (left/top, derived from currentClipRect
+                   + the 2× canvas extension translate) stays inline; the
+                   visual chrome — border, bg, padding, shadow — is now
+                   utility-classed for theme consistency. */
                 <div
+                  className="absolute z-50 flex gap-2 rounded-lg border border-neutral-200 bg-white px-1.5 py-1 shadow-elevated"
                   style={{
-                    position: "absolute",
-                    // 2026-05-25 — Position tracks the LIVE frame
-                    // rect (currentClipRect), so the bar follows
-                    // every frame-handle drag.
-                    //
-                    // Offset by (template.width/2, template.height/2)
-                    // because the canvas was extended 2× and viewport
-                    // translates scene origin to canvas (templateW/2,
-                    // templateH/2). The Done bar lives in wrapper-div
-                    // CSS space (canvas pixel space) so we need that
-                    // translate baked in.
+                    // why: position tracks the LIVE frame rect
+                    // (currentClipRect), so the bar follows every
+                    // frame-handle drag. Offset by (template.width/2,
+                    // template.height/2) because the canvas was extended 2×
+                    // and viewport translates scene origin to canvas
+                    // (templateW/2, templateH/2). The Done bar lives in
+                    // wrapper-div CSS space (canvas pixel space) so we need
+                    // that translate baked in.
                     left:
                       (currentClipRect.left + template.width / 2) *
                       displayScale *
@@ -3554,54 +3589,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                       ) *
                       displayScale *
                       zoom,
-                    display: "flex",
-                    gap: "8px",
-                    background: "white",
-                    border: "1px solid #E5E5E5",
-                    borderRadius: "8px",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-                    padding: "4px 6px",
-                    zIndex: 50,
                   }}
                 >
                   <button
                     type="button"
                     onClick={() => exitCropModeRef.current?.(false)}
-                    className="inline-flex items-center gap-1 rounded-md bg-gold-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-gold-600"
+                    className="focus-ring inline-flex items-center gap-1 rounded-md bg-gold-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-gold-600"
                   >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M3 8l3 3 7-8" />
-                    </svg>
+                    <LCheck size={12} />
                     Done
                   </button>
                   <button
                     type="button"
                     onClick={() => exitCropModeRef.current?.(true)}
-                    className="inline-flex items-center gap-1 rounded-md border border-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+                    className="focus-ring inline-flex items-center gap-1 rounded-md border border-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
                   >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M3 3l10 10M13 3L3 13" />
-                    </svg>
+                    <LX size={12} />
                     Cancel
                   </button>
                 </div>
@@ -3661,9 +3664,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 onClick={() => setLayersExpanded(false)}
                 aria-label="Collapse layers panel"
                 title="Collapse layers panel"
-                className="flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+                className="focus-ring flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
               >
-                <ChevronDoubleRightIcon />
+                <LChevronsRight size={12} />
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
@@ -3708,17 +3711,26 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           </div>
         ) : (
           // why: collapsed rail — single 48px column with a Layers icon
-          // that acts as the expand affordance. Vertical-label keeps the
-          // rail readable when shut.
+          // that acts as the expand affordance. 2026-05-25 — added an
+          // affordance label below the icon (writing-mode vertical-rl)
+          // so the rail still reads as "Layers" when collapsed, no
+          // hover required. Matches the labeled-rail pattern in the
+          // left sidebar.
           <div className="flex w-12 shrink-0 flex-col border-l border-neutral-200 bg-white">
             <button
               type="button"
               onClick={() => setLayersExpanded(true)}
               aria-label="Expand layers panel"
               title="Expand layers panel"
-              className="group flex h-12 w-full items-center justify-center text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              className="focus-ring group flex h-28 w-full flex-col items-center justify-center gap-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
             >
-              <LayersStackIcon />
+              <LLayers size={18} />
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wider"
+                style={{ writingMode: "vertical-rl" }}
+              >
+                Layers
+              </span>
             </button>
           </div>
         )}
@@ -3843,14 +3855,14 @@ function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
       </span>
       <span className="h-5 w-px bg-neutral-200" />
       <IconButton label="Bring forward" onClick={props.onBringForward}>
-        <BringForwardIcon />
+        <LBringToFront size={14} />
       </IconButton>
       <IconButton label="Send backward" onClick={props.onSendBackward}>
-        <SendBackwardIcon />
+        <LSendToBack size={14} />
       </IconButton>
       <span className="h-5 w-px bg-neutral-200" />
       <IconButton label="Duplicate" onClick={props.onDuplicate}>
-        <DuplicateIcon />
+        <LCopy size={14} />
       </IconButton>
       {/* === Transparency — opens a portaled popover with an opacity slider.
           why: matches Canva's selection-toolbar pattern; quick access without
@@ -3862,11 +3874,11 @@ function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
         onCommit={props.onOpacityCommit}
       />
       <IconButton label="Lock" onClick={props.onToggleLock}>
-        <LockIcon />
+        <LLock size={14} />
       </IconButton>
       <span className="h-5 w-px bg-neutral-200" />
       <IconButton label="Delete" onClick={props.onDelete} variant="danger">
-        <TrashIcon />
+        <LTrash2 size={14} />
       </IconButton>
     </div>
   );
@@ -4105,16 +4117,17 @@ function IconButton(props: IconButtonProps): JSX.Element {
 
 function LayerKindIcon({ kind }: { kind: CanvasLayer["kind"] }): JSX.Element {
   // why: visual cue in the layer panel so the user can scan kind at a glance.
-  // Tiny 14px SVGs match the panel's row height without adding visual noise.
+  // 2026-05-25 — backed by lucide-react. Tiny 14px icons match the panel's
+  // row height without adding visual noise.
   switch (kind) {
     case "text":
-      return <TextIcon />;
+      return <LType size={14} />;
     case "image":
-      return <ImageIcon />;
+      return <LImageIcon size={14} />;
     case "shape":
-      return <ShapeIcon />;
+      return <LShapes size={14} />;
     case "group":
-      return <GroupIcon />;
+      return <LLayers size={14} />;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -4123,297 +4136,17 @@ function LayerKindIcon({ kind }: { kind: CanvasLayer["kind"] }): JSX.Element {
 }
 
 // ===========================================================================
-// SECTION 5 — Inline SVG icons
+// SECTION 5 — Icons (lucide-react)
 // ===========================================================================
 //
-// Why inline SVG instead of a lib like lucide:
-//   • lucide-react isn't installed in this project (verified at build time).
-//   • Adding a 50KB icon dependency just for Phase 1 isn't justified — Phase 4
-//     (Brand panel + Uploads panel) is where icon variety actually matters.
-//     If/when we add lucide, replace these. The interfaces won't change.
-//   • These icons use currentColor so they inherit text color from Tailwind
-//     classes on the parent — no per-icon color prop needed.
-//
-// All icons follow the Heroicons-mini conventions: 16×16 viewBox, 1.5 stroke.
+// 2026-05-25 — Migrated from inline SVG to lucide-react. The dead old icon
+// components were removed. Imports live at the top of the file under the
+// `L…` alias convention (e.g., `LUndo2`, `LSparkles`) so they don't shadow
+// any local symbols. See SECTION 7 below for the small set of bespoke
+// canvas-specific glyphs that DON'T have a Lucide equivalent (currently
+// just the legacy align icons — pending removal).
 // ---------------------------------------------------------------------------
 
-function CloseIcon(): JSX.Element {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M3 3l10 10M13 3L3 13" />
-    </svg>
-  );
-}
-
-function SaveIcon(): JSX.Element {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3 3h7l3 3v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
-      <path d="M5 3v4h5V3" />
-      <path d="M5 11h6" />
-    </svg>
-  );
-}
-
-function SpinnerIcon(): JSX.Element {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      className="animate-spin"
-      aria-hidden="true"
-    >
-      <circle
-        cx="8"
-        cy="8"
-        r="6"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeOpacity="0.25"
-        fill="none"
-      />
-      <path
-        d="M14 8a6 6 0 0 1-6 6"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </svg>
-  );
-}
-
-function TrashIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3 4h10M6.5 4V2.5h3V4M5 4l.5 9a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1L11 4" />
-    </svg>
-  );
-}
-
-function BringForwardIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <rect x="5" y="2" width="9" height="9" rx="1" />
-      <rect
-        x="2"
-        y="5"
-        width="9"
-        height="9"
-        rx="1"
-        fill="white"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function SendBackwardIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <rect x="2" y="5" width="9" height="9" rx="1" />
-      <rect
-        x="5"
-        y="2"
-        width="9"
-        height="9"
-        rx="1"
-        fill="white"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function DuplicateIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <rect x="5" y="2" width="9" height="9" rx="1" />
-      <path d="M3 5v8a1 1 0 0 0 1 1h7" />
-    </svg>
-  );
-}
-
-function LockIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <rect x="3.5" y="7" width="9" height="6.5" rx="1" />
-      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
-    </svg>
-  );
-}
-
-function EyeIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5S1 8 1 8z" />
-      <circle cx="8" cy="8" r="2" />
-    </svg>
-  );
-}
-
-function EyeOffIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M2 2l12 12" />
-      <path d="M6.5 6.5A2 2 0 0 0 8 10a2 2 0 0 0 1.5-.6" />
-      <path d="M3 8s1-2 3-3.5M13 8s-1 2-3 3.5M1 8s2.5-5 7-5c1 0 1.9.2 2.7.5" />
-    </svg>
-  );
-}
-
-function TextIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M3 4V3h10v1M8 3v10M6 13h4" />
-    </svg>
-  );
-}
-
-function ImageIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="2" y="3" width="12" height="10" rx="1" />
-      <circle cx="6" cy="7" r="1" />
-      <path d="M3 12l3-3 2 2 3-4 4 5" />
-    </svg>
-  );
-}
-
-function ShapeIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <rect x="3" y="3" width="7" height="7" />
-      <circle cx="11" cy="11" r="3" />
-    </svg>
-  );
-}
-
-function GroupIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="2" y="2" width="8" height="8" rx="1" />
-      <rect x="6" y="6" width="8" height="8" rx="1" />
-    </svg>
-  );
-}
-
-// why: Phase 3 — brand-tab icon. Abstract "building / brand mark" glyph.
 // why: Phase 4 — Smart Resize. Build the menu option list for the current
 // (category, variant) tuple, checking the registry to mark each target
 // format as available or disabled. Disabled = no canvas template exists
@@ -4448,112 +4181,6 @@ function buildResizeMenuOptions(
   });
 }
 
-// why: Phase 4 — templates-tab icon. 2×2 grid glyph reads as "a set of
-// templates to choose from" — the canonical design-tool affordance, used
-// by Canva / Figma / Adobe Express for the same panel.
-function TemplatesTabIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
-      <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
-      <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
-      <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
-    </svg>
-  );
-}
-
-function BrandTabIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M2 14h12" />
-      <path d="M3 14V6l5-3 5 3v8" />
-      <path d="M6 14v-4h4v4" />
-    </svg>
-  );
-}
-
-// why: Phase 3 — agents-tab icon. Person / user silhouette.
-function AgentTabIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="8" cy="5.5" r="2.5" />
-      <path d="M3 14c0-2.5 2-4.5 5-4.5s5 2 5 4.5" />
-    </svg>
-  );
-}
-
-// why: photos-tab icon. Stack-of-photos silhouette so it reads "more than
-// one image" without competing with the brand/agent glyphs above.
-function PhotosTabIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="4" y="4" width="9" height="9" rx="1" />
-      <path d="M2 11V3a1 1 0 011-1h8" />
-    </svg>
-  );
-}
-
-// Tools tab — Canva-parity Draw / Shapes / Lines / Text panel.
-// why: a pencil-on-paper glyph reads as both "draw" and "tools" at
-// rail size. Matches the visual language of Canva's bottom-of-rail
-// "Tools" icon without being a literal copy.
-function ToolsTabIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3 13l8.5-8.5 2 2L5 15H3v-2z" />
-      <path d="M10.5 5.5l2 2" />
-    </svg>
-  );
-}
-
 // ===========================================================================
 // SECTION 6 — Canva-style chrome subcomponents (Phase A.4 redesign)
 // ===========================================================================
@@ -4585,7 +4212,7 @@ function SidebarRailButton(props: SidebarRailButtonProps): JSX.Element {
       onClick={onClick}
       aria-pressed={active}
       title={label}
-      className={`relative flex h-14 w-full flex-col items-center justify-center gap-0.5 transition-colors ${
+      className={`focus-ring relative flex h-14 w-full flex-col items-center justify-center gap-0.5 transition-colors ${
         active
           ? "bg-gold-50 text-gold-700"
           : "text-neutral-600 hover:bg-neutral-100"
@@ -4601,15 +4228,12 @@ function SidebarRailButton(props: SidebarRailButtonProps): JSX.Element {
           className="absolute left-0 top-1/2 h-8 w-[3px] -translate-y-1/2 rounded-r-sm bg-gold-500"
         />
       ) : null}
-      {/* why: scale the existing 14px tab icons up to ~22px for the rail
-          via an inline style — the rail icons read MUCH bigger than the
-          old text-tab icons, so we re-use the same SVGs but project them
-          at a larger render size. Keeps the icon set single-sourced. */}
-      <span
-        className="flex items-center justify-center"
-        style={{ width: 22, height: 22 }}
-      >
-        <span className="scale-150">{icon}</span>
+      {/* 2026-05-25 — icons are passed in at their native 22px size
+          (Lucide). The scale-150 hack that previously projected the
+          14px legacy SVGs up to rail size is gone — callers now pass
+          `size={22}` directly to the Lucide component. */}
+      <span className="flex items-center justify-center">
+        {icon}
       </span>
       <span className="text-[10px] font-semibold leading-none">{label}</span>
     </button>
@@ -4685,38 +4309,38 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
               label="Align left"
               onClick={() => props.onAlign("left")}
             >
-              <AlignLeftIcon />
+              <LAlignLeft size={14} />
             </FooterIconButton>
             <FooterIconButton
               label="Align center"
               onClick={() => props.onAlign("center")}
             >
-              <AlignCenterIcon />
+              <LAlignCenter size={14} />
             </FooterIconButton>
             <FooterIconButton
               label="Align right"
               onClick={() => props.onAlign("right")}
             >
-              <AlignRightIcon />
+              <LAlignRight size={14} />
             </FooterIconButton>
             <span className="mx-1 h-4 w-px bg-neutral-200" />
             <FooterIconButton
               label="Align top"
               onClick={() => props.onAlign("top")}
             >
-              <AlignTopIcon />
+              <LAlignTop size={14} />
             </FooterIconButton>
             <FooterIconButton
               label="Align middle"
               onClick={() => props.onAlign("middle")}
             >
-              <AlignMiddleIcon />
+              <LAlignMiddle size={14} />
             </FooterIconButton>
             <FooterIconButton
               label="Align bottom"
               onClick={() => props.onAlign("bottom")}
             >
-              <AlignBottomIcon />
+              <LAlignBottom size={14} />
             </FooterIconButton>
             <span className="mx-1 h-4 w-px bg-neutral-200" />
             {/* Distribute — needs ≥3 objects. Disabled chip stays visible
@@ -4731,7 +4355,7 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
               onClick={() => props.onAlign("distribute_horizontal")}
               disabled={!props.canDistribute}
             >
-              <DistributeHorizontalIcon />
+              <LDistributeHorizontal size={14} />
             </FooterIconButton>
             <FooterIconButton
               label={
@@ -4742,7 +4366,7 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
               onClick={() => props.onAlign("distribute_vertical")}
               disabled={!props.canDistribute}
             >
-              <DistributeVerticalIcon />
+              <LDistributeVertical size={14} />
             </FooterIconButton>
           </>
         ) : null}
@@ -4755,7 +4379,7 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
           keyboard/click muscle memory still get a predictable step. */}
       <div className="flex items-center gap-2">
         <FooterIconButton label="Zoom out" onClick={props.onZoomOut}>
-          <ZoomOutIcon />
+          <LZoomOut size={14} />
         </FooterIconButton>
         {/* why: native range input — keeps a11y (keyboard arrows work,
             screen readers announce value%). Custom-styled via a small
@@ -4773,7 +4397,7 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
           className="cwk-zoom-slider h-1 w-[120px] cursor-pointer appearance-none rounded-full bg-neutral-200 accent-gold-500"
         />
         <FooterIconButton label="Zoom in" onClick={props.onZoomIn}>
-          <ZoomInIcon />
+          <LZoomIn size={14} />
         </FooterIconButton>
         <span className="min-w-[36px] text-center font-mono text-[11px] tabular-nums text-neutral-600">
           {zoomPct}%
@@ -4784,29 +4408,21 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
             type="button"
             onClick={props.onZoomFit}
             title="Fit to viewport"
-            className="flex h-7 items-center rounded-md px-2 text-[11px] font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+            className="focus-ring inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
           >
+            <LMaximize2 size={12} />
             Fit
           </button>
         </Tooltip>
       </div>
 
-      {/* === Right cluster — undo / redo === */}
-      <div className="flex items-center gap-0.5">
-        <FooterIconButton
-          label="Undo"
-          onClick={props.onUndo}
-          disabled={!props.canUndo}
-        >
-          <UndoIcon />
-        </FooterIconButton>
-        <FooterIconButton
-          label="Redo"
-          onClick={props.onRedo}
-          disabled={!props.canRedo}
-        >
-          <RedoIcon />
-        </FooterIconButton>
+      {/* === Right cluster — reserved for future footer affordances ===
+          2026-05-25 — Undo/Redo were relocated to the top header bar to
+          match Canva's chrome. Right cluster kept as an empty flex slot
+          so the center cluster's flex-justify-between layout still
+          balances visually. */}
+      <div className="flex w-20 items-center justify-end gap-0.5">
+        {/* intentionally empty — preserves footer layout symmetry */}
       </div>
     </div>
   );
@@ -4827,6 +4443,8 @@ interface FooterIconButtonProps {
 function FooterIconButton(props: FooterIconButtonProps): JSX.Element {
   // why: footer sits at the BOTTOM of the canvas area — pill pops UP
   // so it doesn't get clipped by the bottom of the editor chrome.
+  // 2026-05-25: disabled text darkened from neutral-300 → neutral-400 +
+  // cursor-not-allowed for legibility per the cleanup spec.
   return (
     <Tooltip label={props.label} placement="top">
       <button
@@ -4835,7 +4453,7 @@ function FooterIconButton(props: FooterIconButtonProps): JSX.Element {
         disabled={props.disabled}
         aria-label={props.label}
         title={props.label}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+        className="focus-ring flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-transparent"
       >
         {props.children}
       </button>
@@ -4844,313 +4462,8 @@ function FooterIconButton(props: FooterIconButtonProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// SECTION 7 — Phase A.4 inline icons (file glyph, chevrons, zoom, undo, align)
+// SECTION 7 — (formerly Phase A.4 inline icons; migrated to lucide-react
+// 2026-05-25). All icons are imported at the top of the file with the
+// `L…` alias convention (e.g., LUndo2, LFileText). No bespoke SVG defs
+// remain in this file.
 // ---------------------------------------------------------------------------
-
-function FileGlyphIcon(): JSX.Element {
-  // why: small document glyph in the header — Canva's leftmost item is the
-  // app icon, but here a file glyph reads as "this is the document title."
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 2h5l3 3v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
-      <path d="M9 2v3h3" />
-    </svg>
-  );
-}
-
-function ChevronDoubleLeftIcon(): JSX.Element {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M9 4L5 8l4 4M13 4l-4 4 4 4" />
-    </svg>
-  );
-}
-
-function ChevronDoubleRightIcon(): JSX.Element {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M7 4l4 4-4 4M3 4l4 4-4 4" />
-    </svg>
-  );
-}
-
-function LayersStackIcon(): JSX.Element {
-  // why: three stacked layers — the canonical "layers" glyph in design tools.
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 20 20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M10 2L2.5 6 10 10l7.5-4L10 2z" />
-      <path d="M2.5 10L10 14l7.5-4" />
-      <path d="M2.5 14L10 18l7.5-4" />
-    </svg>
-  );
-}
-
-function ZoomInIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="M10.5 10.5l3 3M5 7h4M7 5v4" />
-    </svg>
-  );
-}
-
-function ZoomOutIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="M10.5 10.5l3 3M5 7h4" />
-    </svg>
-  );
-}
-
-function UndoIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 7h6a3 3 0 0 1 0 6H7" />
-      <path d="M6 4L3 7l3 3" />
-    </svg>
-  );
-}
-
-function RedoIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 7H6a3 3 0 0 0 0 6h3" />
-      <path d="M10 4l3 3-3 3" />
-    </svg>
-  );
-}
-
-// why: alignment icons are pure UI for Phase A.4. The visuals match Canva
-// — a baseline + a small rectangle anchored to the relevant edge.
-function AlignLeftIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M2 2v12" />
-      <rect x="4" y="4" width="9" height="3" />
-      <rect x="4" y="9" width="6" height="3" />
-    </svg>
-  );
-}
-
-function AlignCenterIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M8 2v12" />
-      <rect x="3.5" y="4" width="9" height="3" />
-      <rect x="5" y="9" width="6" height="3" />
-    </svg>
-  );
-}
-
-function AlignRightIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M14 2v12" />
-      <rect x="3" y="4" width="9" height="3" />
-      <rect x="6" y="9" width="6" height="3" />
-    </svg>
-  );
-}
-
-function AlignTopIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M2 2h12" />
-      <rect x="4" y="4" width="3" height="9" />
-      <rect x="9" y="4" width="3" height="6" />
-    </svg>
-  );
-}
-
-function AlignMiddleIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M2 8h12" />
-      <rect x="4" y="3.5" width="3" height="9" />
-      <rect x="9" y="5" width="3" height="6" />
-    </svg>
-  );
-}
-
-function AlignBottomIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M2 14h12" />
-      <rect x="4" y="3" width="3" height="9" />
-      <rect x="9" y="6" width="3" height="6" />
-    </svg>
-  );
-}
-
-// why: distribute icons match Canva's pattern — three small rectangles with
-// arrows below (horizontal) or beside (vertical) indicating the axis of
-// even spacing. Stroke only, currentColor so the disabled state inherits
-// neutral-300 from FooterIconButton.
-function DistributeHorizontalIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <rect x="1.5" y="4" width="2.5" height="8" />
-      <rect x="6.75" y="4" width="2.5" height="8" />
-      <rect x="12" y="4" width="2.5" height="8" />
-    </svg>
-  );
-}
-
-function DistributeVerticalIcon(): JSX.Element {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <rect x="4" y="1.5" width="8" height="2.5" />
-      <rect x="4" y="6.75" width="8" height="2.5" />
-      <rect x="4" y="12" width="8" height="2.5" />
-    </svg>
-  );
-}

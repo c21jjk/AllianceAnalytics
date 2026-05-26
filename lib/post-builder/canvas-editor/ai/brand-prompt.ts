@@ -349,34 +349,80 @@ export const CRITIQUE_PROMPT = `${BRAND_BLOCK}
 
 PASS 4 — DESIGN CRITIQUE.
 
-You will receive: the strategy brief from Pass 2, the composition brief from Pass 1, and the LayoutPlan you produced in Pass 3.
+You will receive: the strategy brief from Pass 2, the composition brief from Pass 1, the LayoutPlan you produced in Pass 3, and OPTIONALLY a \`DETECTED VIOLATIONS\` section in the user message containing hard-rule failures detected by a deterministic code-side check.
 
-Your job is to review YOUR OWN layout against the checklist below. Be honest — passing a flawed design is worse than catching its problems now.
+Your job is to review YOUR OWN layout against the checklist below AND fix every DETECTED VIOLATION (when present). Be honest — passing a flawed design is worse than catching its problems now.
 
-CHECKLIST:
+═══════════════════════════════════════════════════════════════════════════
+ALLIANCE BRAND HARD RULES — NUMERIC THRESHOLDS
+═══════════════════════════════════════════════════════════════════════════
 
-  ═══ ALLIANCE BRAND HARD RULES (any violation = FAIL, must revise) ═══
-  HR1. ADDRESS — does any text layer use \`boundField: "city_state_zip"\`
-       or \`"state"\` or \`"zip"\`? If yes, FAIL. The address MUST be
-       street (address_line1) + city only. No state, no zip code.
-  HR2. AGENT FIELDS on Just Listed / Just Sold / Open House — does any
-       text or image layer reference agent_name, agent_photo, agent_phone,
-       agent_email, or agent_title? If yes AND category is just_listed,
-       just_sold, or open_house, FAIL. Strip the offending layers.
-  HR3. BROKERAGE LOGO SIZE — is there an image layer with
-       \`boundField: "brokerage_logo"\` with width >= 160px? If width
-       < 160px or no brokerage_logo layer exists at all, FAIL. The logo
-       is mandatory and must be legible at thumbnail scale.
-  HR4. EYEBROW SIZE — for the post's status eyebrow ("Just Listed",
-       "SOLD", "OPEN HOUSE"), is the fontSize >= 44 (sans) or >= 70
-       (script/serif)? Tiny eyebrows fail the brand standard.
-  HR5. RECIPE MATCH — does the layout follow the gold-standard recipe
-       for the post's category from PASS 3's recipes section? Photo
-       coverage, signature font, info-band style, etc. If the layout
-       is wildly off-recipe (e.g., 50/50 photo+band for Just Listed
-       instead of 85/15), FAIL.
+  HR1. ADDRESS — no text layer may use \`boundField: "city_state_zip"\`
+       or \`"state"\` or \`"zip"\`. Address is street (address_line1) + city only.
+       FIX: remove the layer OR rebind to address_line1 / city.
 
-  ═══ Standard design checks ═══
+  HR2. AGENT FIELDS on just_listed / just_sold / open_house / under_contract / price_reduction —
+       no text or image layer may reference agent_name, agent_photo, agent_phone,
+       agent_email, agent_title.
+       FIX: strip every offending layer entirely.
+
+  HR3. BROKERAGE LOGO — image layer with \`boundField: "brokerage_logo"\` MUST exist
+       and its width MUST be >= 160px (recipe target 280px for just_listed).
+       FIX: add the layer if missing; set width to at least 280, never less than 160.
+
+  HR4. EYEBROW SIZE — status eyebrow (text containing "JUST LISTED", "SOLD",
+       "OPEN HOUSE", "UNDER CONTRACT", "PRICE REDUCED", or bound to status_label)
+       MUST have fontSize >= 44 for sans fonts OR >= 70 for script/serif fonts.
+       FIX: bump fontSize to the threshold. Don't downsize the canvas to compensate.
+
+  HR5. RECIPE FIDELITY — follow the matching gold-standard recipe from Pass 3:
+       • just_listed script eyebrow (Kaushan/Allura/Pacifico): fontSize >= 140
+       • open_house script "Open" layer: fontSize >= 250 (recipe target 314)
+       • just_sold serif "SOLD" (DM Serif/Playfair): fontSize >= 60 (target 70)
+       • just_sold frame: rect shape with fill='' (no fill), white stroke, strokeWidth >= 5
+       FIX: resize the eyebrow, add the frame layer, etc.
+
+  HR6. BODY TEXT — text layers bound to beds / baths / beds_baths / price /
+       address_line1 / city MUST have fontSize >= 26. Tiny body type is illegible.
+       FIX: bump fontSize to at least 26.
+
+  HR7. HERO PHOTO SUBJECT — the photo's box must contain the subject per the
+       composition brief's \`subject_position\`:
+       • center → photo.left ≤ canvas.width * 0.15 AND photo.left+width ≥ canvas.width * 0.85
+       • left   → photo.left ≤ canvas.width * 0.05 AND photo.left+width ≥ canvas.width * 0.40
+       • right  → photo.left ≤ canvas.width * 0.60 AND photo.left+width ≥ canvas.width * 0.95
+       (full-bleed photos covering >= 98% of canvas width skip this check.)
+       FIX: widen or shift the hero_photo layer's box so the subject is inside it.
+
+  HR8. ADDRESS PRESENCE — at least one text layer MUST bind to address_line1 OR city.
+       FIX: add a text layer with boundField='address_line1' or 'city'.
+
+  HR9. PRICE PRESENCE — for just_listed / price_reduction: at least one text layer
+       MUST bind to \`price\`. For just_sold: \`price\` OR \`close_price\`.
+       FIX: add the appropriate bound text layer.
+
+═══════════════════════════════════════════════════════════════════════════
+DETECTED-VIOLATIONS CONTRACT (CRITICAL)
+═══════════════════════════════════════════════════════════════════════════
+
+If the user message contains a section labeled \`DETECTED VIOLATIONS (must be
+fixed in revised plan)\`, the listed items are not opinions — they are
+deterministically computed by a code-side checker. You MUST:
+
+  • Return \`passed: false\` whenever the section is non-empty.
+  • Return a \`revised\` LayoutPlan that fixes EVERY listed violation. Not
+    "close enough" — every single one. The next pass of the deterministic
+    checker will re-evaluate your revised plan against the same rules.
+  • The "revise UP TO TWO ISSUES" cap from older prompts does NOT apply to
+    DETECTED VIOLATIONS. Fix them all. The cap still applies for soft style
+    issues you discover on your own.
+  • Apply the \`FIX\` hint exactly as written. If a hint says "set fontSize
+    to at least 280", do not set it to 200 because you think 200 is enough.
+
+═══════════════════════════════════════════════════════════════════════════
+SOFT DESIGN CHECKS (your own observations, not pre-detected)
+═══════════════════════════════════════════════════════════════════════════
+
   1. Hierarchy clarity — does ONE element dominate the eye? If three things compete, FAIL.
   2. Readability — is every text element legible? Check small type, low-contrast pairings (gold on warm photo), text over busy photo zones.
   3. Brand consistency — only brand fonts? Only brand colors? Tone matches mood?
@@ -386,25 +432,28 @@ CHECKLIST:
   7. Price-band match — does the visual treatment match the listing's price tier? A $350K layout should NOT look like a $3M layout, and vice versa.
   8. Emotional register — does the mood match the status (Just Sold = celebration energy, Price Reduction = measured)?
 
-When you revise to fix a HARD RULE violation, the revision is mandatory —
-"close enough" doesn't pass HR1-HR5. Strip non-compliant layers, add
-missing required layers, resize fonts up to the minimum, etc.
+For soft-check issues you flag yourself: revise UP TO TWO at a time. Note any
+additional items in \`issues\` so a human can review.
 
-If everything passes, return:
+═══════════════════════════════════════════════════════════════════════════
+OUTPUT
+═══════════════════════════════════════════════════════════════════════════
+
+If DETECTED VIOLATIONS is empty AND everything passes the soft checks:
 {
   "passed": true,
   "issues": [],
   "notes": "<brief explanation of what's working>"
 }
 
-If something fails, return:
+If DETECTED VIOLATIONS is non-empty OR a soft check fails:
 {
   "passed": false,
-  "issues": ["<short description of issue 1>", "<short description of issue 2>"],
-  "revised": <LayoutPlan with the corrections — SAME shape as Pass 3's output>,
+  "issues": ["<short description of issue 1>", "<short description of issue 2>", ...],
+  "revised": <LayoutPlan with corrections — SAME shape as Pass 3's output>,
   "notes": "<what you changed and why>"
 }
 
-You may revise UP TO TWO ISSUES per critique. If there are more, focus on the worst two and note the others in \`issues\` so a human can review.
+You may NOT return passed: true while any DETECTED VIOLATION is present.
 
 ${JSON_CONTRACT_FOOTER}`;

@@ -3,6 +3,24 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Sparkles,
+  ChevronRight,
+  X,
+  Calendar,
+  Check,
+  AlertTriangle,
+  Edit3,
+  RotateCw,
+  Copy,
+  Camera,
+  ImagePlus,
+  Package,
+  Flag,
+  Download,
+  HelpCircle,
+  Film,
+} from "lucide-react";
 import type {
   AiDesignProvenance,
   CaptionsByPlatform,
@@ -3055,7 +3073,7 @@ export default function PostBuilderClient({
           and can't be changed here without re-rendering the entire
           carousel. The banner orients Larissa to what she's editing. */}
       {isMultiOHPost ? (
-        <div className="card p-4 bg-gold-50/40 ring-1 ring-gold-200">
+        <div className="rounded-xl p-4 bg-gold-50/40 ring-1 ring-gold-200">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="text-xs font-semibold uppercase tracking-[0.1em] text-gold-700 mb-0.5">
@@ -3074,9 +3092,9 @@ export default function PostBuilderClient({
             </div>
             <Link
               href="/post-builder/multi-oh"
-              className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-white px-3 py-1.5 text-xs font-medium text-gold-800 hover:bg-gold-100/50 transition"
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-white px-3 py-1.5 text-xs font-medium text-gold-800 hover:bg-gold-100/50 transition focus-ring"
             >
-              <span aria-hidden="true">↻</span>
+              <RotateCw size={14} aria-hidden="true" />
               Start a new Multi-OH
             </Link>
           </div>
@@ -3148,7 +3166,7 @@ export default function PostBuilderClient({
               where Larissa is already scanning open houses and deciding
               what to promote, so the affordance now sits right next to
               the list that drives the decision. */}
-          <div className="eyebrow mb-2">Step 1 · Pick a listing</div>
+          <div className="eyebrow mb-2">Listing</div>
           <input
             type="search"
             className="input mb-3"
@@ -3193,10 +3211,10 @@ export default function PostBuilderClient({
                       }
                     }}
                     className={[
-                      "w-full text-left rounded-lg border p-2.5 transition flex gap-3 items-start relative cursor-pointer",
+                      "w-full text-left rounded-lg p-2.5 transition flex gap-3 items-start cursor-pointer focus-ring",
                       active
-                        ? "border-gold-500 bg-gold-50/50 ring-2 ring-gold-500/30"
-                        : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50",
+                        ? "border-2 border-gold-500 bg-gold-50/50"
+                        : "border border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50",
                     ].join(" ")}
                   >
                     {l.hero_image_url ? (
@@ -3210,9 +3228,30 @@ export default function PostBuilderClient({
                     ) : (
                       <div className="w-14 h-14 rounded-md bg-neutral-100 flex-shrink-0" />
                     )}
-                    <div className="min-w-0 flex-1 pr-9">
-                      <div className="text-sm font-medium text-neutral-900 truncate">
-                        {l.address ?? l.mls_number}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium text-neutral-900 truncate min-w-0 flex-1">
+                          {l.address ?? l.mls_number}
+                        </div>
+                        {/* === AI Magic Design button (Phase C.1) ===
+                            why: moved inline into the title row so it doesn't
+                            need absolute positioning or a pr-9 workaround.
+                            stopPropagation on click keeps the parent's
+                            pickListing from firing — Magic Design has its own
+                            listing context and shouldn't change which listing
+                            is "selected" in the picker. */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMagicDesignListing(l);
+                          }}
+                          title="Magic Design — let AI pick the best post for this listing"
+                          aria-label={`Magic Design for ${l.address ?? l.mls_number}`}
+                          className="shrink-0 -mt-0.5 -mr-0.5 w-6 h-6 rounded-md text-gold-600 hover:bg-gold-100 hover:text-gold-700 flex items-center justify-center transition focus-ring"
+                        >
+                          <Sparkles size={14} aria-hidden="true" />
+                        </button>
                       </div>
                       <div className="text-xs text-neutral-600 truncate">
                         {[l.city, l.state].filter(Boolean).join(", ")}
@@ -3230,40 +3269,12 @@ export default function PostBuilderClient({
                         ) : null}
                       </div>
                       {postType === "open_house" && l.oh_start_at ? (
-                        <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-2 py-1 text-[11px] font-medium text-emerald-800 leading-tight">
-                          <span aria-hidden="true">🗓</span>
+                        <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-gold-50 border border-gold-200 px-2 py-1 text-[11px] font-medium text-gold-800 leading-tight">
+                          <Calendar size={12} aria-hidden="true" />
                           <span>{formatOhBadge(l.oh_start_at, l.oh_end_at ?? null)}</span>
                         </div>
                       ) : null}
                     </div>
-                    {/* === AI Magic Design ✨ button (Phase C.1) ===
-                        why: top-right corner so it's visible but doesn't
-                        compete with the card's primary action (selecting
-                        the listing). stopPropagation on click keeps the
-                        parent's pickListing from firing — Magic Design has
-                        its own listing context and shouldn't change which
-                        listing is "selected" in the picker. */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMagicDesignListing(l);
-                      }}
-                      title="Magic Design — let AI pick the best post for this listing"
-                      aria-label={`Magic Design for ${l.address ?? l.mls_number}`}
-                      className="absolute top-2 right-2 w-8 h-8 rounded-full bg-gold-50 text-gold-600 hover:bg-gold-100 hover:text-gold-700 ring-1 ring-gold-200/60 shadow-sm flex items-center justify-center transition focus:outline-none focus:ring-2 focus:ring-gold-500/40"
-                    >
-                      <svg
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                        aria-hidden="true"
-                        className="w-4 h-4"
-                      >
-                        <path d="M8 1.5l1.6 4.4 4.4 1.6-4.4 1.6L8 13.5l-1.6-4.4L2 7.5l4.4-1.6z" />
-                        <circle cx="13" cy="3" r="0.8" />
-                        <circle cx="3" cy="13" r="0.8" />
-                      </svg>
-                    </button>
                   </div>
                 );
               })}
@@ -3300,12 +3311,7 @@ export default function PostBuilderClient({
                     the API branches into renderDbTemplate(). */}
                 {!isMultiOHPost && dbTemplates.length > 0 ? (
                   <div>
-                    <div className="eyebrow mb-2">
-                      Admin templates{" "}
-                      <span className="text-neutral-400 font-normal normal-case tracking-normal">
-                        · authored in /admin/templates
-                      </span>
-                    </div>
+                    <div className="eyebrow mb-2">Templates</div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {dbTemplates.map((t) => {
                         const active = activeDbTemplateId === t.id;
@@ -3354,12 +3360,7 @@ export default function PostBuilderClient({
                     card variant was chosen in the wizard). */}
                 {!isMultiOHPost && mergedVariantCards.length > 0 ? (
                 <div>
-                  <div className="eyebrow mb-2">
-                    Step 3 · Variant{" "}
-                    <span className="text-neutral-400 font-normal normal-case tracking-normal">
-                      · live preview with this listing's photos
-                    </span>
-                  </div>
+                  <div className="eyebrow mb-2">Variant</div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {mergedVariantCards.map((v) => {
                       const isCustomCard = v.customTemplate !== null;
@@ -3432,7 +3433,7 @@ export default function PostBuilderClient({
                               : `Activate ${v.card_display_name}`
                           }
                           className={[
-                            "group text-left rounded-xl border p-2.5 transition relative flex flex-col",
+                            "group text-left rounded-xl border p-2 transition relative flex flex-col focus-ring",
                             disabled
                               ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
                               : active
@@ -3472,10 +3473,12 @@ export default function PostBuilderClient({
                             )}
                             {/* Custom indicator badge — top-left corner so it
                                 doesn't collide with the hover-Edit affordance
-                                (top-right). Gold pill matches the brand. */}
+                                (top-right). Switched to neutral pill so only
+                                ONE gold pill is visible on a card at a time
+                                (the hover-Edit pill keeps the gold treatment). */}
                             {isCustomCard ? (
                               <span
-                                className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-gold-500/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-900 shadow-md backdrop-blur-sm"
+                                className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-neutral-900/85 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-md backdrop-blur-sm"
                                 aria-label={
                                   v.customTemplate?.isDefault
                                     ? "Custom default template"
@@ -3487,15 +3490,7 @@ export default function PostBuilderClient({
                                     : "Custom template"
                                 }
                               >
-                                <svg
-                                  width="10"
-                                  height="10"
-                                  viewBox="0 0 24 24"
-                                  fill="currentColor"
-                                  aria-hidden="true"
-                                >
-                                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                                </svg>
+                                <Sparkles size={10} aria-hidden="true" />
                                 {v.customTemplate?.isDefault ? "Default" : "Custom"}
                               </span>
                             ) : null}
@@ -3524,20 +3519,7 @@ export default function PostBuilderClient({
                                 title={`Edit ${v.card_display_name} in Studio (skip caption)`}
                                 className="absolute top-2 right-2 inline-flex cursor-pointer items-center gap-1 rounded-full bg-gold-500/95 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-900 opacity-0 shadow-md backdrop-blur-sm transition-opacity duration-150 hover:bg-gold-500 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-500 group-hover:opacity-100"
                               >
-                                <svg
-                                  width="10"
-                                  height="10"
-                                  viewBox="0 0 16 16"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  aria-hidden="true"
-                                >
-                                  <path d="M11 2l3 3-9 9H2v-3l9-9z" />
-                                  <path d="M9.5 3.5l3 3" />
-                                </svg>
+                                <Edit3 size={10} aria-hidden="true" />
                                 Edit
                               </span>
                             ) : null}
@@ -3558,15 +3540,20 @@ export default function PostBuilderClient({
                             </div>
                             <span
                               className={[
-                                "text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
+                                "inline-flex items-center gap-0.5 text-[10px] font-mono px-1.5 py-px rounded-full flex-shrink-0",
                                 disabled
-                                  ? "bg-rose-100 text-rose-700"
+                                  ? "bg-neutral-100 text-neutral-700"
                                   : v.photo_count > 1
                                     ? "bg-gold-100 text-gold-800"
                                     : "bg-neutral-100 text-neutral-600",
                               ].join(" ")}
                             >
-                              {v.photo_count}📷
+                              {v.photo_count}
+                              <Camera
+                                size={12}
+                                aria-hidden="true"
+                                className={disabled ? "text-rose-600" : ""}
+                              />
                             </span>
                           </div>
                           <div
@@ -3595,7 +3582,7 @@ export default function PostBuilderClient({
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="eyebrow">
-                      {`Step 4 · ${photoCount === 1 ? "Hero photo" : `${photoCount} photos`}${
+                      {`Photos${
                         photoCount === 1
                           ? ` · ${selectedPhotoIndex + 1} of ${availablePhotos.length}`
                           : ` · slots ${(selectedPhotoIndex % availablePhotos.length) + 1}–${((selectedPhotoIndex + photoCount - 1) % availablePhotos.length) + 1}`
@@ -3622,12 +3609,12 @@ export default function PostBuilderClient({
                           type="button"
                           onClick={() => pickPhoto(i)}
                           className={[
-                            "relative shrink-0 rounded-lg overflow-hidden transition",
+                            "relative shrink-0 rounded-lg overflow-hidden transition focus-ring",
                             inSlot
                               ? isPrimary
-                                ? "ring-2 ring-gold-500 ring-offset-2 ring-offset-white"
-                                : "ring-2 ring-gold-300 ring-offset-1 ring-offset-white"
-                              : "ring-1 ring-neutral-200 hover:ring-neutral-400",
+                                ? "ring-2 ring-gold-500"
+                                : "ring-2 ring-gold-300"
+                              : "hover:ring-1 hover:ring-neutral-300",
                           ].join(" ")}
                           title={
                             inSlot
@@ -3672,32 +3659,25 @@ export default function PostBuilderClient({
               {!isMultiOHPost ? (
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
-                  <div className="eyebrow mb-1">
-                    Step {availablePhotos.length > 1 ? "5" : "4"} · Generate
-                  </div>
+                  <div className="eyebrow mb-1">Generate</div>
                   <h2 className="text-lg font-semibold text-neutral-900">
                     {selectedListing.address ?? selectedListing.mls_number}
                   </h2>
-                  <div className="text-sm text-neutral-600">
-                    {POST_TYPES.find((p) => p.id === postType)?.label} ·{" "}
-                    {formatMeta[format].display_name} ({formatMeta[format].aspect}) ·{" "}
-                    {variants.find((v) => v.variant === variantId)?.display_name}
-                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {/* Phase 2 AI Design — sits next to Generate. Slower
                       (~60-90s) and pricier ($0.30-1.00) than Generate,
                       so it's a deliberate second action, not the
-                      default. Disabled together with Generate while
-                      either is in flight. */}
+                      default. Demoted to a quieter icon-led button so it
+                      reads as "alternative" rather than peer to Generate. */}
                   <button
                     type="button"
                     onClick={runAiDesign}
                     disabled={generating}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-gold-500 bg-white px-3 py-2 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gold-700 transition-colors hover:bg-gold-50 hover:border-gold-500 disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
                     title="Let Claude design this post from the photo + listing data (~60-90s)"
                   >
-                    <span aria-hidden>✨</span>
+                    <Sparkles size={14} aria-hidden="true" />
                     <span>AI Design</span>
                   </button>
                   <button
@@ -3712,13 +3692,19 @@ export default function PostBuilderClient({
               </div>
               ) : null}
 
+              {/* Banner stack — consolidated to TWO variants:
+                  • info (neutral border + gold accent + Sparkles): AI
+                    pipeline progress + other "system is working" status.
+                  • error (rose): ALL failures (render errors AND AI
+                    errors); the amber AI-error variant was retired. */}
               {error ? (
                 <div
                   ref={errorBannerRef}
                   role="alert"
-                  className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
+                  className="mb-3 inline-flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
                 >
-                  {error}
+                  <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+                  <span>{error}</span>
                 </div>
               ) : null}
 
@@ -3729,9 +3715,9 @@ export default function PostBuilderClient({
               {aiProgress ? (
                 <div
                   role="status"
-                  className="mb-3 inline-flex items-center gap-2 rounded-lg border border-gold-200 bg-gold-50 px-3 py-2 text-sm text-gold-900"
+                  className="mb-3 inline-flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800"
                 >
-                  <span aria-hidden>✨</span>
+                  <Sparkles size={14} aria-hidden="true" className="text-gold-600" />
                   <span>{aiProgress}</span>
                 </div>
               ) : null}
@@ -3739,9 +3725,10 @@ export default function PostBuilderClient({
               {aiError ? (
                 <div
                   role="alert"
-                  className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                  className="mb-3 inline-flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
                 >
-                  {aiError}
+                  <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+                  <span>{aiError}</span>
                 </div>
               ) : null}
 
@@ -3768,7 +3755,7 @@ export default function PostBuilderClient({
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500 px-6 text-center">
-                        Click Generate Post to render.
+                        Click Generate to preview.
                       </div>
                     )}
                     {/* Cycle hero button — overlay on the preview when
@@ -3779,48 +3766,34 @@ export default function PostBuilderClient({
                       <button
                         type="button"
                         onClick={cyclePhoto}
-                        className="absolute top-2 right-2 rounded-full bg-black/65 hover:bg-black/80 text-white text-xs font-medium px-3 py-1.5 backdrop-blur-sm transition"
+                        className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-black/65 hover:bg-black/80 text-white text-xs font-medium px-3 py-1.5 backdrop-blur-sm transition focus-ring-dark"
                         title="Cycle to next photo"
                       >
-                        Next photo →
+                        <span>Next photo</span>
+                        <ChevronRight size={14} aria-hidden="true" />
                       </button>
                     ) : null}
                   </div>
                   {renderResult ? (
-                    <div className="mt-3 flex gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={downloadPng}
-                        disabled={downloadSaving}
-                        className="btn-primary flex-1 min-w-[120px]"
-                      >
-                        {downloadSaving ? "Saving…" : "Download PNG"}
-                      </button>
-                      {/* === Canvas Editor (Path C) — Edit in Studio on the preview screen ===
-                          why: replaces the old V1 Customize button that lived here. Only shows
-                          when a canvas template exists for the current (postType, variantId,
-                          format) tuple AND a listing is selected. */}
+                    /* Post-render button cluster — reordered so that the
+                       Studio + Publish actions read as the primary path
+                       and Download PNG is demoted to a small icon-only
+                       button on the right edge. */
+                    <div className="mt-3 flex gap-2 flex-wrap items-stretch">
+                      {/* === Canvas Editor (Path C) — Edit in Studio (primary) ===
+                          why: replaces the old V1 Customize button. Only shows
+                          when a canvas template exists for the current
+                          (postType, variantId, format) tuple AND a listing
+                          is selected. Promoted to primary gold because Studio
+                          is the most likely next step after a generate. */}
                       {studioTemplate && selectedListing ? (
                         <button
                           type="button"
                           onClick={openStudio}
-                          className="flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-lg border border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+                          className="btn-primary flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5"
                           title="Open this post in the Studio editor for fine-tuning"
                         >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
-                          >
-                            <path d="M11 2l3 3-9 9H2v-3l9-9z" />
-                            <path d="M9.5 3.5l3 3" />
-                          </svg>
+                          <Edit3 size={14} aria-hidden="true" />
                           Edit in Studio
                         </button>
                       ) : null}
@@ -3828,12 +3801,27 @@ export default function PostBuilderClient({
                         <button
                           type="button"
                           onClick={openPostNow}
-                          className="btn-secondary flex-1 min-w-[120px]"
+                          className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
                           title="Publish directly to Facebook + Instagram"
                         >
-                          Post Now →
+                          Post Now
+                          <ChevronRight size={14} aria-hidden="true" />
                         </button>
                       ) : null}
+                      <button
+                        type="button"
+                        onClick={downloadPng}
+                        disabled={downloadSaving}
+                        className="shrink-0 inline-flex items-center justify-center rounded-lg border border-neutral-300 bg-white w-10 h-10 text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 transition focus-ring"
+                        title="Download PNG"
+                        aria-label="Download PNG"
+                      >
+                        {downloadSaving ? (
+                          <span className="text-[10px] font-semibold">…</span>
+                        ) : (
+                          <Download size={16} aria-hidden="true" />
+                        )}
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -3848,17 +3836,31 @@ export default function PostBuilderClient({
                           type="button"
                           onClick={regenerateCaption}
                           disabled={regeneratingCaption}
-                          className="text-xs text-neutral-600 font-medium hover:text-neutral-900 disabled:opacity-50"
+                          className="inline-flex items-center gap-1 text-xs text-neutral-600 font-medium hover:text-neutral-900 disabled:opacity-50 focus-ring rounded"
                           title="Re-write all three platform captions with AI (keeps the image)"
                         >
-                          {regeneratingCaption ? "Rewriting…" : "↻ Regenerate all"}
+                          {regeneratingCaption ? (
+                            "Rewriting…"
+                          ) : (
+                            <>
+                              <RotateCw size={12} aria-hidden="true" />
+                              Regenerate all
+                            </>
+                          )}
                         </button>
                         <button
                           type="button"
                           onClick={copyCaption}
-                          className="text-xs text-gold-700 font-medium hover:text-gold-800"
+                          className="inline-flex items-center gap-1 text-xs text-gold-700 font-medium hover:text-gold-800 focus-ring rounded"
                         >
-                          {copyState === "copied" ? "✓ Copied" : "Copy all"}
+                          {copyState === "copied" ? (
+                            <>
+                              <Check size={12} aria-hidden="true" />
+                              Copied
+                            </>
+                          ) : (
+                            "Copy all"
+                          )}
                         </button>
                       </div>
                     ) : null}
@@ -3895,7 +3897,7 @@ export default function PostBuilderClient({
                   </div>
 
                   <textarea
-                    className="input flex-1 min-h-[260px] font-mono text-[13px] leading-relaxed resize-y"
+                    className="input flex-1 min-h-[260px] font-sans text-sm leading-relaxed resize-y"
                     placeholder={
                       generating
                         ? "Generating caption…"
@@ -3924,21 +3926,26 @@ export default function PostBuilderClient({
                           [activeCaptionPlatform]: prev.instagram,
                         }))
                       }
-                      className="mt-2 self-start text-[11px] font-medium text-neutral-500 hover:text-gold-700"
+                      className="mt-2 self-start inline-flex items-center gap-1 text-[11px] font-medium text-neutral-500 hover:text-gold-700 focus-ring rounded"
                     >
-                      ← Copy from Instagram
+                      <Copy size={12} aria-hidden="true" />
+                      Copy from Instagram
                     </button>
                   ) : null}
 
                   {captionResult ? (
-                    <div className="mt-3 text-xs text-neutral-500 leading-relaxed">
-                      The MLS hashtag{" "}
-                      <code className="font-mono text-neutral-700 bg-neutral-100 px-1 rounded">
+                    <div className="mt-3 inline-flex items-center gap-1.5 text-xs text-neutral-500">
+                      <span>Auto-linker hashtag:</span>
+                      <code className="font-mono text-xs text-neutral-700 bg-neutral-100 px-1 rounded">
                         {captionResult.mls_hashtag}
-                      </code>{" "}
-                      is baked into every platform tab so once Larissa
-                      posts, the auto-linker ties it back to this listing
-                      automatically.
+                      </code>
+                      <span
+                        className="inline-flex text-neutral-400 hover:text-neutral-600 cursor-help"
+                        title="Baked into every platform tab — once Larissa posts, the auto-linker ties it back to this listing automatically."
+                        aria-label="Auto-linker hashtag explanation"
+                      >
+                        <HelpCircle size={12} aria-hidden="true" />
+                      </span>
                     </div>
                   ) : null}
                 </div>
@@ -4433,12 +4440,14 @@ function PostNowModal(props: PostNowModalProps) {
           <div className="flex items-start justify-between gap-3">
             <div>
               {testMode ? (
-                <div className="eyebrow text-amber-700 mb-1">
-                  ⚑ Test mode · drafts only
+                <div className="eyebrow text-amber-700 mb-1 inline-flex items-center gap-1">
+                  <Flag size={12} aria-hidden="true" />
+                  Test mode · drafts only
                 </div>
               ) : (
-                <div className="eyebrow text-rose-700 mb-1">
-                  ⚠ Live publish · admin only
+                <div className="eyebrow text-rose-700 mb-1 inline-flex items-center gap-1">
+                  <AlertTriangle size={12} aria-hidden="true" />
+                  Live publish · admin only
                 </div>
               )}
               <h3 className="text-lg font-bold text-neutral-900">Post Now</h3>
@@ -4452,10 +4461,10 @@ function PostNowModal(props: PostNowModalProps) {
               type="button"
               onClick={onCancel}
               disabled={sending}
-              className="text-neutral-400 hover:text-neutral-700 text-xl font-light disabled:opacity-40 flex-shrink-0"
+              className="text-neutral-400 hover:text-neutral-700 disabled:opacity-40 flex-shrink-0 focus-ring rounded"
               aria-label="Close"
             >
-              ✕
+              <X size={16} aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -4531,8 +4540,8 @@ function PostNowModal(props: PostNowModalProps) {
                 className="w-16 h-16 rounded-md object-cover bg-neutral-100 flex-shrink-0"
               />
             ) : (
-              <div className="w-16 h-16 rounded-md bg-gradient-to-br from-gold-100 to-gold-200 flex items-center justify-center flex-shrink-0">
-                <span className="text-2xl">📦</span>
+              <div className="w-16 h-16 rounded-md bg-gradient-to-br from-gold-100 to-gold-200 flex items-center justify-center flex-shrink-0 text-gold-700">
+                <Package size={20} aria-hidden="true" />
               </div>
             )}
             <div className="min-w-0 flex-1">
@@ -4764,8 +4773,13 @@ function PostNowModal(props: PostNowModalProps) {
                       : "bg-rose-50 ring-rose-200 text-rose-900",
                   ].join(" ")}
                 >
-                  <div className="font-semibold capitalize">
-                    {r.ok ? "✓" : "✗"} {r.platform}
+                  <div className="font-semibold capitalize inline-flex items-center gap-1.5">
+                    {r.ok ? (
+                      <Check size={14} aria-hidden="true" />
+                    ) : (
+                      <X size={14} aria-hidden="true" />
+                    )}
+                    {r.platform}
                   </div>
                   {r.ok ? (
                     r.permalink ? (
@@ -4773,9 +4787,10 @@ function PostNowModal(props: PostNowModalProps) {
                         href={r.permalink}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs underline text-emerald-800 hover:text-emerald-900"
+                        className="text-xs inline-flex items-center gap-1 underline text-emerald-800 hover:text-emerald-900"
                       >
-                        View post →
+                        View post
+                        <ChevronRight size={12} aria-hidden="true" />
                       </a>
                     ) : (
                       <div className="text-xs text-emerald-800">
@@ -5027,20 +5042,7 @@ function MakeReelPromptModal(props: MakeReelPromptModalProps) {
         <div className="mb-4 flex items-center gap-3">
           {/* Film/play glyph — visual cue that we're talking about Reels. */}
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold-100 text-gold-700">
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-              <path d="M7 6.5l3 1.5-3 1.5z" fill="currentColor" />
-            </svg>
+            <Film size={20} aria-hidden="true" />
           </span>
           <div>
             <h3
@@ -5080,31 +5082,12 @@ function MakeReelPromptModal(props: MakeReelPromptModalProps) {
 function EmptyPreview() {
   return (
     <div className="h-full min-h-[560px] flex flex-col items-center justify-center text-center px-8">
-      <div className="w-14 h-14 rounded-2xl bg-gold-50 ring-1 ring-gold-200 flex items-center justify-center mb-4">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          className="w-7 h-7 text-gold-700"
-          aria-hidden="true"
-        >
-          <rect
-            x="3.5"
-            y="3.5"
-            width="17"
-            height="17"
-            rx="2.5"
-            stroke="currentColor"
-            strokeWidth="1.5"
-          />
-          <path
-            d="M3.5 16l4.5-4.5 3.5 3.5 3-3 6 6"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-          />
-          <circle cx="16" cy="8.5" r="1.6" stroke="currentColor" strokeWidth="1.5" />
-        </svg>
-      </div>
+      <ImagePlus
+        size={48}
+        aria-hidden="true"
+        className="text-neutral-400 mb-4"
+        strokeWidth={1.5}
+      />
       <h3 className="text-base font-semibold text-neutral-900 mb-1">
         Pick a listing to start
       </h3>
@@ -5121,10 +5104,10 @@ function PreviewSkeleton() {
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-neutral-100 to-neutral-200">
       <div className="w-10 h-10 rounded-full border-2 border-gold-500 border-t-transparent animate-spin" />
       <div className="text-sm text-neutral-700 font-medium">
-        Spinning up Chromium…
+        Rendering your post…
       </div>
       <div className="text-xs text-neutral-500 max-w-[280px] text-center">
-        First render takes 6–10 seconds while the headless browser warms up.
+        First render takes a few seconds.
       </div>
     </div>
   );

@@ -1415,7 +1415,7 @@ function HeroSlideBody({
       <div className="flex items-center gap-1.5">
         <span
           aria-hidden="true"
-          className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+          className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
           style={{ width: isThumb ? 14 : 36, height: 2 }}
         />
         <span
@@ -1465,7 +1465,7 @@ function HeroSlideBody({
               >
                 <span
                   aria-hidden="true"
-                  className="shrink-0 rounded-full bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center w-[7px] h-[7px] text-[4px]"
+                  className="shrink-0 rounded-full bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center w-[7px] h-[7px] text-[4px]"
                 >
                   {i + 1}
                 </span>
@@ -1485,7 +1485,7 @@ function HeroSlideBody({
             >
               <span
                 aria-hidden="true"
-                className="shrink-0 mt-0.5 rounded-full bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center w-4 h-4 text-[9px]"
+                className="shrink-0 mt-0.5 rounded-full bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center w-4 h-4 text-[9px]"
               >
                 {i + 1}
               </span>
@@ -1501,7 +1501,7 @@ function HeroSlideBody({
                         {(cityState || idx > 0) ? (
                           <span
                             aria-hidden="true"
-                            className="inline-block w-1 h-1 rounded-full bg-[#C9A961] shrink-0"
+                            className="inline-block w-1 h-1 rounded-full bg-[#C9A84C] shrink-0"
                           />
                         ) : null}
                         <span className="truncate">{label}</span>
@@ -1531,13 +1531,13 @@ function HeroSlideBody({
         {/* gold accent on top edge */}
         <span
           aria-hidden="true"
-          className="absolute top-[-1px] left-0 bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+          className="absolute top-[-1px] left-0 bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
           style={{ width: isThumb ? 18 : 56, height: 2 }}
         />
         <div className="flex items-center justify-between">
           <div className={`flex items-center ${isThumb ? "gap-[3px]" : "gap-1.5"}`}>
             <span
-              className={`bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-5 h-5 text-[9px]"}`}
+              className={`bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-5 h-5 text-[9px]"}`}
             >
               21
             </span>
@@ -1615,11 +1615,11 @@ function PropertyV2Mock({ listing, hostingAgent, size }: VariantMockProps) {
         <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
           <span
             aria-hidden="true"
-            className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+            className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
             style={{ width: isThumb ? 12 : 32, height: 2 }}
           />
           <span
-            className={`font-bold uppercase tracking-[0.2em] text-[#C9A961] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
+            className={`font-bold uppercase tracking-[0.2em] text-[#C9A84C] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
             style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
           >
             Open House
@@ -1659,7 +1659,7 @@ function PropertyV2Mock({ listing, hostingAgent, size }: VariantMockProps) {
               </span>
             ) : null}
             {typeof listing.list_price === "number" ? (
-              <span className="text-[#C9A961] font-bold">
+              <span className="text-[#C9A84C] font-bold">
                 ${listing.list_price.toLocaleString()}
               </span>
             ) : null}
@@ -1668,11 +1668,11 @@ function PropertyV2Mock({ listing, hostingAgent, size }: VariantMockProps) {
           <div className="mt-1 flex gap-1 opacity-70">
             <span className="block w-3 h-1 rounded-sm bg-white/60" />
             <span className="block w-3 h-1 rounded-sm bg-white/60" />
-            <span className="block w-4 h-1 rounded-sm bg-[#C9A961]" />
+            <span className="block w-4 h-1 rounded-sm bg-[#C9A84C]" />
           </div>
         )}
         {!isThumb && listing.oh_start_at ? (
-          <div className="mt-1.5 text-[10px] text-[#C9A961] font-medium">
+          <div className="mt-1.5 text-[10px] text-[#C9A84C] font-medium">
             {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
           </div>
         ) : null}
@@ -1698,7 +1698,7 @@ function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
       {/* Gold trim border — subtle 1px gold rule on all four edges. */}
       <span
         aria-hidden="true"
-        className="absolute inset-0 pointer-events-none ring-1 ring-[#C9A961]/60 z-10"
+        className="absolute inset-0 pointer-events-none ring-1 ring-[#C9A84C]/60 z-10"
       />
       {/* photo dominant */}
       <div className="relative w-full bg-neutral-300" style={{ flexBasis: "62%" }}>
@@ -1755,7 +1755,7 @@ function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
         ) : null}
         {isThumb ? (
           <div className="flex gap-0.5 mt-auto">
-            <span className="block flex-1 h-0.5 bg-[#C9A961]" />
+            <span className="block flex-1 h-0.5 bg-[#C9A84C]" />
             <span className="block flex-1 h-0.5 bg-[#A68A4A]" />
           </div>
         ) : null}
@@ -1786,7 +1786,7 @@ function PropertyV6Mock({ listing, hostingAgent, size }: VariantMockProps) {
         <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
           <span
             aria-hidden="true"
-            className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+            className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
             style={{ width: isThumb ? 12 : 32, height: 2 }}
           />
           <span
@@ -1836,7 +1836,7 @@ function PropertyV6Mock({ listing, hostingAgent, size }: VariantMockProps) {
           <div className="mt-auto">
             <span
               aria-hidden="true"
-              className="block bg-gradient-to-r from-[#C9A961] to-[#A68A4A]"
+              className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
               style={{ width: 20, height: 1.5 }}
             />
           </div>
@@ -1868,7 +1868,7 @@ function PropertyV8Mock({ listing, hostingAgent, size }: VariantMockProps) {
         {/* C21 Alliance badge top-right */}
         <div className={`absolute top-1 right-1 flex items-center ${isThumb ? "gap-[2px]" : "gap-1"} bg-white/95 rounded ${isThumb ? "px-1 py-0.5" : "px-1.5 py-1"} shadow-sm`}>
           <span
-            className={`bg-gradient-to-br from-[#C9A961] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-4 h-4 text-[8px]"}`}
+            className={`bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-4 h-4 text-[8px]"}`}
           >
             21
           </span>
@@ -1904,7 +1904,7 @@ function PropertyV8Mock({ listing, hostingAgent, size }: VariantMockProps) {
             ) : null}
             <span
               aria-hidden="true"
-              className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A961]"
+              className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A84C]"
             />
             {typeof listing.bathrooms_full === "number" ? (
               <span>
@@ -1918,9 +1918,9 @@ function PropertyV8Mock({ listing, hostingAgent, size }: VariantMockProps) {
               <>
                 <span
                   aria-hidden="true"
-                  className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A961]"
+                  className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A84C]"
                 />
-                <span className="text-[#C9A961] font-bold">
+                <span className="text-[#C9A84C] font-bold">
                   ${listing.list_price.toLocaleString()}
                 </span>
               </>
@@ -1930,11 +1930,11 @@ function PropertyV8Mock({ listing, hostingAgent, size }: VariantMockProps) {
           <div className="mt-1 flex gap-0.5 opacity-70">
             <span className="block w-2 h-0.5 bg-white/60" />
             <span className="block w-2 h-0.5 bg-white/60" />
-            <span className="block w-3 h-0.5 bg-[#C9A961]" />
+            <span className="block w-3 h-0.5 bg-[#C9A84C]" />
           </div>
         )}
         {!isThumb && listing.oh_start_at ? (
-          <div className="mt-1 text-[10px] text-[#C9A961] font-medium">
+          <div className="mt-1 text-[10px] text-[#C9A84C] font-medium">
             {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
           </div>
         ) : null}

@@ -65,7 +65,7 @@ const CATEGORY_META: Record<CanvasTemplateCategory, CategoryMeta> = {
     label: "Just Listed",
     eyebrow: "JUST LISTED",
     // why: gold-500 on dark — matches the in-canvas eyebrow rule for these.
-    chipBg: "#C9A961",
+    chipBg: "#C9A84C",
     chipFg: "#18181B",
   },
   just_sold: {
@@ -89,7 +89,7 @@ const CATEGORY_META: Record<CanvasTemplateCategory, CategoryMeta> = {
     // already inside the template. Matches the gold-text-on-dark pattern used
     // by the in-canvas open-house line itself.
     chipBg: "#18181B",
-    chipFg: "#C9A961",
+    chipFg: "#C9A84C",
   },
   price_reduction: {
     label: "Price Reduced",

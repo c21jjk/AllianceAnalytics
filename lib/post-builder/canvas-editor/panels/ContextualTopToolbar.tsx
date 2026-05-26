@@ -32,6 +32,7 @@
 
 import { Textbox } from "fabric";
 import type { Canvas, FabricObject } from "fabric";
+import { Crop as LCrop, Maximize2 as LMaximize2 } from "lucide-react";
 import {
   type JSX,
   type ReactNode,
@@ -172,27 +173,9 @@ function ImageContextualControls(
           <button
             type="button"
             onClick={onActivateResize}
-            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+            className="focus-ring inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
           >
-            {/* Resize glyph — four arrows pointing to corners
-                (classic "expand" icon). Communicates "scale this
-                object." */}
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M2 6V2h4" />
-              <path d="M14 6V2h-4" />
-              <path d="M2 10v4h4" />
-              <path d="M14 10v4h-4" />
-            </svg>
+            <LMaximize2 size={14} />
             <span>Resize</span>
           </button>
         </Tooltip>
@@ -202,24 +185,9 @@ function ImageContextualControls(
           <button
             type="button"
             onClick={onEnterCropMode}
-            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+            className="focus-ring inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
           >
-            {/* Crop glyph — two perpendicular L-shapes, classic
-                crop-tool icon. */}
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M4 1v11h11" />
-              <path d="M1 4h11v11" />
-            </svg>
+            <LCrop size={14} />
             <span>Crop</span>
           </button>
         </Tooltip>
@@ -1348,7 +1316,7 @@ function EffectPreview(props: {
     splice: {
       color: "transparent",
       WebkitTextStroke: "1px #18181B",
-      textShadow: "2px 2px 0 #C9A961",
+      textShadow: "2px 2px 0 #C9A84C",
     },
   };
   return (

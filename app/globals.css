@@ -4,15 +4,17 @@
 
 :root {
   color-scheme: light;
+  --brand-gold: #C9A84C;
+  --brand-obsessed: #252526;
   --background: #FCFCFB;
   --surface: #FFFFFF;
   --border: #E5E5E2;
   --text-primary: #18181B;
   --text-secondary: #525250;
   --text-muted: #737370;
-  --accent: #C9A961;
-  --accent-hover: #B69552;
-  --accent-soft: #FBF7EE;
+  --accent: #C9A84C;
+  --accent-hover: #A88A3C;
+  --accent-soft: #FBF8EF;
   --danger: #B83C3C;
   --success: #2F8F5C;
 }
@@ -92,4 +94,27 @@ html, body {
     @apply h-0.5 bg-gradient-to-r from-gold-500/0 via-gold-500/60 to-gold-500/0;
   }
 
+}
+
+@layer utilities {
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white;
+  }
+  .focus-ring-dark {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-obsessed;
+  }
+
+  /* Canva-style soft radial gradient + faint dot grid for the canvas
+     surface in the Post Builder Studio. Extracted from an inline
+     style block on the wrapper around <canvas> so the data: SVG
+     isn't recomputed every render and the visual is one-line to
+     theme later. The dot color uses neutral-400 at 4% opacity —
+     visible enough to read as "designed surface", invisible enough
+     to never compete with content. */
+  .canvas-bg-pattern {
+    background-image:
+      radial-gradient(ellipse at center, #fafafa 0%, #f5f5f5 100%),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='1' cy='1' r='1' fill='%23a3a3a3' fill-opacity='0.04'/></svg>");
+    background-size: 100% 100%, 24px 24px;
+  }
 }

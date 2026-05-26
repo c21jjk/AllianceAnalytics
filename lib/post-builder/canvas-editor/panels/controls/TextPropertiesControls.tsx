@@ -621,7 +621,7 @@ export default function TextPropertiesControls(
             preview="Ag"
             previewStyle={{
               color: "#18181B",
-              textShadow: "3px 3px 0 #C9A961",
+              textShadow: "3px 3px 0 #C9A84C",
             }}
           />
         </div>

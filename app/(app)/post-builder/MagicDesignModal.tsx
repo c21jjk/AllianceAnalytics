@@ -19,6 +19,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Sparkles, RotateCw, X } from "lucide-react";
 import {
   triggerMagicDesignAction,
   type MagicDesignInput,
@@ -197,7 +198,7 @@ export default function MagicDesignModal({
         <div className="p-5 border-b border-neutral-200 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="eyebrow text-gold-700 mb-1 flex items-center gap-1.5">
-              <SparkleIcon className="w-3.5 h-3.5" />
+              <Sparkles size={14} aria-hidden="true" />
               <span>AI Magic Design</span>
             </div>
             <h3 id="magic-design-title" className="text-lg font-bold text-neutral-900">
@@ -211,10 +212,10 @@ export default function MagicDesignModal({
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="text-neutral-400 hover:text-neutral-700 text-xl font-light disabled:opacity-40 flex-shrink-0"
+            className="text-neutral-400 hover:text-neutral-700 disabled:opacity-40 flex-shrink-0 focus-ring rounded"
             aria-label="Close"
           >
-            ✕
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
 
@@ -223,7 +224,11 @@ export default function MagicDesignModal({
           {loading && !recommendation ? (
             <div className="py-12 flex flex-col items-center justify-center text-center">
               <div className="relative">
-                <SparkleIcon className="w-10 h-10 text-gold-500 animate-pulse" />
+                <Sparkles
+                  size={40}
+                  aria-hidden="true"
+                  className="text-gold-500 animate-pulse"
+                />
               </div>
               <div className="mt-4 text-sm font-medium text-neutral-900">
                 Designing your post…
@@ -351,7 +356,7 @@ export default function MagicDesignModal({
               disabled={loading}
               className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition disabled:opacity-50"
             >
-              <RerollIcon className="w-3.5 h-3.5" />
+              <RotateCw size={14} aria-hidden="true" />
               Re-roll
             </button>
             <div className="flex items-center gap-2">
@@ -370,7 +375,7 @@ export default function MagicDesignModal({
                 className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-4 py-2 text-sm font-bold text-gold-900 hover:bg-gold-400 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 Open in Studio
-                <SparkleIcon className="w-3.5 h-3.5" />
+                <Sparkles size={14} aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -381,42 +386,8 @@ export default function MagicDesignModal({
 }
 
 // ---------------------------------------------------------------------------
-// Local icons — keep inline so the modal is self-contained without pulling
-// in a new dependency. 16-viewbox SVGs at 1.5 stroke match the rest of the
-// post-builder iconography (see PageHeader actions in page.tsx).
+// Icons: now sourced from lucide-react (Sparkles, RotateCw, X). The prior
+// inline SVG SparkleIcon + RerollIcon helpers were retired during the
+// Preview-page Lucide migration so the modal stays consistent with the
+// rest of the post-builder surface.
 // ---------------------------------------------------------------------------
-
-function SparkleIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      {/* why: 4-pointed star with subtle drop-corner sparkles reads as
-          "AI magic" without leaning on a wand or emoji. */}
-      <path d="M8 1.5l1.6 4.4 4.4 1.6-4.4 1.6L8 13.5l-1.6-4.4L2 7.5l4.4-1.6z" />
-      <circle cx="13" cy="3" r="0.8" />
-      <circle cx="3" cy="13" r="0.8" />
-    </svg>
-  );
-}
-
-function RerollIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M14 8a6 6 0 1 1-1.76-4.24" />
-      <path d="M14 2v3h-3" />
-    </svg>
-  );
-}

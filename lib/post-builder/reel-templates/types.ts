@@ -118,7 +118,7 @@ export const REEL_POST_TYPE_META: Record<PostType, ReelPostTypeMeta> = {
   just_listed: {
     label: "Just Listed",
     eyebrow: "JUST LISTED",
-    chipBg: "#C9A961",
+    chipBg: "#C9A84C",
     chipFg: "#18181B",
   },
   just_sold: {
@@ -137,7 +137,7 @@ export const REEL_POST_TYPE_META: Record<PostType, ReelPostTypeMeta> = {
     label: "Open House",
     eyebrow: "OPEN HOUSE",
     chipBg: "#18181B",
-    chipFg: "#C9A961",
+    chipFg: "#C9A84C",
   },
   price_reduction: {
     label: "Price Reduced",

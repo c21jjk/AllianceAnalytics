@@ -655,6 +655,9 @@ export function validateLayoutPlan(raw: unknown): LayoutPlan | null {
 // CritiqueResult (Pass 4)
 // ===========================================================================
 
+// NOTE (Task #67, 2026-05-25): this validator enforces JSON SHAPE only. Brand
+// hard-rule content (logo size, eyebrow size, agent-field bans, etc.) is
+// enforced deterministically by `./hard-rule-checker.ts` — see that module.
 export function validateCritiqueResult(raw: unknown): CritiqueResult | null {
   const obj = asRecord(raw);
   if (!obj) return null;

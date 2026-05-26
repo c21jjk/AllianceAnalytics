@@ -289,6 +289,34 @@ export interface CritiqueResult {
 }
 
 // ===========================================================================
+// Hard-rule enforcement — Task #67 (2026-05-25)
+// ===========================================================================
+
+/**
+ * A single violation of an Alliance brand hard rule, detected by the
+ * deterministic checker in `hard-rule-checker.ts`.
+ *
+ * Why structured (not just a string): the pipeline injects these into
+ * Pass 4's critique prompt AND into a Pass 3 retry's layout prompt, so
+ * the LLM gets both human context (`detail`) and an executable hint
+ * (`fix_hint`). The `rule` field is a stable identifier for telemetry.
+ *
+ * Severity:
+ *   • "fail" — must be fixed; triggers retry-or-surface.
+ *   • "warn" — surfaces in `criticalIssues` for visibility, doesn't gate.
+ */
+export interface HardRuleViolation {
+  rule: string;
+  severity: "fail" | "warn";
+  /** When the violation is attributable to a specific layer, its id. */
+  layerId?: string;
+  /** Human-readable explanation suitable for an LLM prompt. */
+  detail: string;
+  /** Specific recipe for fixing — what value to set, what to add/strip. */
+  fix_hint: string;
+}
+
+// ===========================================================================
 // Progress events — emitted as the pipeline runs
 // ===========================================================================
 
@@ -300,6 +328,10 @@ export interface CritiqueResult {
  * Phase 1 emits these to the route's stream but the only consumer is a
  * manual test script. The shapes are stable so Phase 2 can plug in
  * without re-spec'ing this layer.
+ *
+ * Task #67 (2026-05-25) added `retry_triggered` — fired when the
+ * deterministic hard-rule check finds violations after Pass 4 and the
+ * pipeline kicks off a single retry of Pass 3 + Pass 4.
  */
 export type PipelineProgress =
   | { type: "started"; ts: number }
@@ -314,6 +346,12 @@ export type PipelineProgress =
       type: "pass_failed";
       pass: PipelinePass;
       error: string;
+      ts: number;
+    }
+  | {
+      type: "retry_triggered";
+      /** The unresolved fail-severity violations that triggered the retry. */
+      reason: ReadonlyArray<HardRuleViolation>;
       ts: number;
     }
   | {
@@ -352,6 +390,21 @@ export interface DesignPipelineOutput {
     input: number;
     output: number;
   };
+  /**
+   * Task #67 — Pass-4 + post-retry hard-rule violations that remain after
+   * the deterministic checker's final run on `plan`. Empty array means
+   * the design is clean. Non-empty means the pipeline shipped the best
+   * plan it could but the caller should treat the design as un-approved
+   * (UI may surface a warning chip; the renderer still runs).
+   */
+  criticalIssues: ReadonlyArray<HardRuleViolation>;
+  /**
+   * Task #67 — How many Pass-3+Pass-4 retries the pipeline performed.
+   * 0 on the happy path; 1 when the deterministic check after the first
+   * critique still found fail-severity violations. Capped at MAX_RETRIES
+   * (currently 1) inside `runDesignPipeline`.
+   */
+  retriesUsed: number;
 }
 
 /**

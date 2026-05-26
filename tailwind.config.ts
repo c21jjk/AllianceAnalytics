@@ -2,7 +2,7 @@ import type { Config } from "tailwindcss";
 
 /**
  * Alliance Social design system.
- * Light theme only. Refined gold accent. Inter typography.
+ * Light theme only. Relentless Gold accent + Obsessed Grey. Barlow typography.
  * No dark-mode classes anywhere.
  */
 const config: Config = {
@@ -15,28 +15,39 @@ const config: Config = {
     extend: {
       fontFamily: {
         sans: [
-          "Inter",
-          "ui-sans-serif",
+          "var(--font-barlow)",
+          "Barlow",
           "system-ui",
-          "-apple-system",
-          "Segoe UI",
-          "Roboto",
           "sans-serif",
         ],
       },
       colors: {
-        // Refined gold — accent for primary actions and highlights
+        // Relentless Gold — brand accent for primary actions and highlights
         gold: {
-          50:  "#FBF7EE",
-          100: "#F5EBCF",
-          200: "#EBD7A0",
-          300: "#E0C271",
-          400: "#D4B164",
-          500: "#C9A961", // base accent
-          600: "#B69552",
-          700: "#937843",
-          800: "#6F5A33",
-          900: "#4B3D24",
+          50:  "#FBF8EF",
+          100: "#F5EDD2",
+          200: "#EBDBA4",
+          300: "#E0C876",
+          400: "#D5B65B",
+          500: "#C9A84C",   // BRAND — Relentless Gold
+          600: "#A88A3C",
+          700: "#7E6829",
+          800: "#534517",
+          900: "#2A220B",
+        },
+        // Obsessed Grey — brand primary dark
+        obsessed: {
+          DEFAULT: "#252526",   // BRAND — Obsessed Grey
+          50:  "#F5F5F6",
+          100: "#E5E5E7",
+          200: "#C6C6CB",
+          300: "#A0A0A8",
+          400: "#5F5F66",
+          500: "#3D3D42",
+          600: "#2F2F33",
+          700: "#252526",
+          800: "#1A1A1C",
+          900: "#0F0F11",
         },
         // Neutral grays for text hierarchy + surfaces
         neutral: {

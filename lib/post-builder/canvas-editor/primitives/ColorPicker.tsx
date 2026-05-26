@@ -400,8 +400,8 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                     }}
                     placeholder={
                       allowTransparent
-                        ? '"transparent" or "#C9A961"'
-                        : '"#C9A961"'
+                        ? '"transparent" or "#C9A84C"'
+                        : '"#C9A84C"'
                     }
                     className="flex-1 bg-transparent text-sm font-mono uppercase text-neutral-800 placeholder:text-neutral-400 placeholder:font-sans placeholder:normal-case focus:outline-none"
                     maxLength={12}
@@ -432,7 +432,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                   </div>
                   <HsvPicker
                     value={
-                      value === "transparent" || value === "" ? "#C9A961" : value
+                      value === "transparent" || value === "" ? "#C9A84C" : value
                     }
                     onChange={commit}
                   />

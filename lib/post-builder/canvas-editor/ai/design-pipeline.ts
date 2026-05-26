@@ -38,6 +38,11 @@ import {
   STRATEGY_PROMPT,
 } from "./brand-prompt";
 import {
+  checkHardRules,
+  failsOnly,
+  formatViolationsForPrompt,
+} from "./hard-rule-checker";
+import {
   extractJson,
   validateCompositionBrief,
   validateCritiqueResult,
@@ -51,12 +56,28 @@ import type {
   DesignPipelineInput,
   DesignPipelineOutput,
   DesignPipelineResult,
+  HardRuleViolation,
   LayoutPlan,
   PipelinePass,
   PipelineProgress,
   StrategyBrief,
 } from "./types";
-import type { MLSListingPayload } from "../types";
+import type { CanvasTemplateSchema, MLSListingPayload } from "../types";
+
+// ===========================================================================
+// Retry budget — Task #67 (2026-05-25)
+// ===========================================================================
+
+/**
+ * Maximum number of Pass-3+Pass-4 retries the pipeline will perform when
+ * the deterministic hard-rule checker finds violations after the first
+ * critique. Hardcoded for now; bump to an env var only when we have data
+ * suggesting more retries actually help.
+ *
+ * Worst case with MAX_RETRIES=1: 2 Layout calls + 2 Critique calls per
+ * pipeline run. Still cheaper than shipping a brand-violating design.
+ */
+const MAX_RETRIES = 1;
 
 // ===========================================================================
 // Token-usage accumulator
@@ -257,7 +278,24 @@ async function runLayoutPass(
   brief: CompositionBrief,
   strategy: StrategyBrief,
   tally: TokenTally,
+  priorViolations: readonly HardRuleViolation[] = [],
 ): Promise<{ ok: true; plan: LayoutPlan } | { ok: false; error: string }> {
+  // why: when this is a retry (priorViolations non-empty), the previous
+  // attempt either landed a layout that the deterministic checker rejected
+  // OR the critique pass tried to revise and still left violations behind.
+  // Inject the unresolved violations into the user prompt so the new pass
+  // has explicit, actionable guidance rather than guessing what went wrong.
+  const retrySection =
+    priorViolations.length > 0
+      ? [
+          "",
+          "═══ PREVIOUS ATTEMPT FAILED HARD RULES — your new plan MUST fix: ═══",
+          formatViolationsForPrompt(priorViolations),
+          "═════════════════════════════════════════════════════════════════════",
+          "",
+        ].join("\n")
+      : "";
+
   const userPrompt = [
     "LISTING DATA",
     formatListingForPrompt(input.listing),
@@ -275,7 +313,7 @@ async function runLayoutPass(
     // strip clipPath data, raw Fabric metadata, etc., that aren't part
     // of the schema contract.
     JSON.stringify(input.currentSchema, null, 2),
-    "",
+    retrySection,
     "Produce a full_replacement LayoutPlan executing the strategy.",
   ].join("\n");
 
@@ -319,9 +357,26 @@ async function runCritiquePass(
   strategy: StrategyBrief,
   plan: LayoutPlan,
   tally: TokenTally,
+  detectedViolations: readonly HardRuleViolation[] = [],
 ): Promise<
   { ok: true; critique: CritiqueResult } | { ok: false; error: string }
 > {
+  // why: the deterministic checker's findings are non-negotiable. We
+  // forward them verbatim so the LLM's `revised` plan can target the
+  // exact violations a follow-up code check will look for.
+  const detectedSection =
+    detectedViolations.length > 0
+      ? [
+          "",
+          "═══ DETECTED VIOLATIONS (must be fixed in revised plan) ═══",
+          formatViolationsForPrompt(detectedViolations),
+          "═══════════════════════════════════════════════════════════",
+          "Per the system-prompt contract, you MUST return passed=false and a",
+          "revised LayoutPlan that resolves EVERY violation above.",
+          "",
+        ].join("\n")
+      : "";
+
   const userPrompt = [
     "STRATEGY BRIEF (Pass 2)",
     JSON.stringify(strategy, null, 2),
@@ -331,7 +386,7 @@ async function runCritiquePass(
     "",
     "LAYOUT PLAN (Pass 3 — your own output)",
     JSON.stringify(plan, null, 2),
-    "",
+    detectedSection,
     "Run the checklist from the system prompt and return your critique result.",
   ].join("\n");
 
@@ -450,102 +505,177 @@ export async function runDesignPipeline(
     ts: Date.now(),
   });
 
-  // ---- Pass 3: Layout ----
-  emit(onProgress, { type: "pass_started", pass: "layout", ts: Date.now() });
-  const passStart3 = Date.now();
-  const passRes3 = await runLayoutPass(
-    client,
-    input,
-    passRes1.brief,
-    passRes2.strategy,
-    tally,
-  );
-  if (!passRes3.ok) {
+  // ---- Pass 3 + Pass 4 + deterministic hard-rule check loop ----
+  //
+  // Task #67: each attempt runs Pass 3 (Layout) → deterministic checker →
+  // Pass 4 (Critique, with violations injected) → deterministic checker
+  // on the final plan. If fail-severity violations remain AND we haven't
+  // exhausted MAX_RETRIES, loop with the residual violations injected
+  // into the Layout pass's user prompt. Otherwise, accept the best plan
+  // we have and attach the unresolved fails as `criticalIssues`.
+  //
+  // Mutations-plan note: only `full_replacement` plans are checkable
+  // (the checker walks a schema). When/if the pipeline returns a
+  // `mutations` plan (Phase 3+ chat assistant), the deterministic
+  // check is skipped and the legacy critique-only flow holds.
+  let finalPlan: LayoutPlan | null = null;
+  let lastCritique: CritiqueResult | null = null;
+  let retriesUsed = 0;
+  /** Fail-severity violations remaining on the chosen finalPlan, if any. */
+  let unresolvedFails: HardRuleViolation[] = [];
+  /** Violations from the prior iteration to inject into the next Pass 3. */
+  let priorIterationFails: HardRuleViolation[] = [];
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // ---- Pass 3: Layout ----
+    emit(onProgress, { type: "pass_started", pass: "layout", ts: Date.now() });
+    const passStart3 = Date.now();
+    const passRes3 = await runLayoutPass(
+      client,
+      input,
+      passRes1.brief,
+      passRes2.strategy,
+      tally,
+      priorIterationFails,
+    );
+    if (!passRes3.ok) {
+      emit(onProgress, {
+        type: "pass_failed",
+        pass: "layout",
+        error: passRes3.error,
+        ts: Date.now(),
+      });
+      emit(onProgress, { type: "failed", error: passRes3.error, ts: Date.now() });
+      return {
+        ok: false,
+        failure: { failedAt: "layout", error: passRes3.error, partial },
+      };
+    }
+    partial.plan = passRes3.plan;
     emit(onProgress, {
-      type: "pass_failed",
+      type: "pass_completed",
       pass: "layout",
-      error: passRes3.error,
+      durationMs: Date.now() - passStart3,
       ts: Date.now(),
     });
-    emit(onProgress, { type: "failed", error: passRes3.error, ts: Date.now() });
+
+    // ---- Deterministic check on Pass 3's plan ----
+    // Only walk full_replacement schemas; mutations plans are out of
+    // scope for the checker (it needs a complete layer tree).
+    const layoutViolations = checkAndLogViolations(
+      passRes3.plan,
+      passRes1.brief,
+      "pass3_post_layout",
+      attempt,
+    );
+
+    // ---- Pass 4: Critique (with detected violations injected) ----
+    emit(onProgress, { type: "pass_started", pass: "critique", ts: Date.now() });
+    const passStart4 = Date.now();
+    const passRes4 = await runCritiquePass(
+      client,
+      passRes1.brief,
+      passRes2.strategy,
+      passRes3.plan,
+      tally,
+      layoutViolations,
+    );
+
+    let chosenPlan: LayoutPlan;
+    let critiqueForOutput: CritiqueResult;
+
+    if (!passRes4.ok) {
+      // Critique failure is recoverable — Pass 3's plan is still usable,
+      // just un-critiqued. We DO NOT retry on a critique-pass API failure
+      // because the failure mode is "Claude is unreachable", not "design
+      // is bad". Re-emit and proceed with Pass 3's plan.
+      emit(onProgress, {
+        type: "pass_failed",
+        pass: "critique",
+        error: passRes4.error,
+        ts: Date.now(),
+      });
+      critiqueForOutput = {
+        passed: true,
+        issues: [`critique_unavailable: ${passRes4.error}`],
+        notes: "Critique pass failed; layout used as-is.",
+      };
+      chosenPlan = passRes3.plan;
+    } else {
+      emit(onProgress, {
+        type: "pass_completed",
+        pass: "critique",
+        durationMs: Date.now() - passStart4,
+        ts: Date.now(),
+      });
+      critiqueForOutput = passRes4.critique;
+      // why: when critique returns passed=false with a revised plan, that's
+      // the canonical plan. Pass 3's original is discarded.
+      chosenPlan = passRes4.critique.passed
+        ? passRes3.plan
+        : passRes4.critique.revised ?? passRes3.plan;
+    }
+
+    // ---- Deterministic check on the post-critique plan ----
+    const postCritiqueViolations = checkAndLogViolations(
+      chosenPlan,
+      passRes1.brief,
+      "pass4_post_critique",
+      attempt,
+    );
+    const postCritiqueFails = failsOnly(postCritiqueViolations);
+
+    // Save state before deciding to retry/exit.
+    finalPlan = chosenPlan;
+    lastCritique = critiqueForOutput;
+    // Surface ALL violations (fail + warn) on the chosen plan as the
+    // running criticalIssues. If we exit the loop with this still
+    // non-empty, it propagates to the caller.
+    unresolvedFails = postCritiqueViolations.slice();
+
+    // ---- Decide: retry or done? ----
+    if (postCritiqueFails.length === 0) {
+      // Clean (or only warnings). Done.
+      break;
+    }
+    if (retriesUsed >= MAX_RETRIES) {
+      // Out of retries — accept best plan + surface fails.
+      break;
+    }
+
+    // Trigger a retry. Forward only the failing violations into the next
+    // iteration; warnings don't compel a do-over.
+    retriesUsed += 1;
+    priorIterationFails = postCritiqueFails;
+    emit(onProgress, {
+      type: "retry_triggered",
+      reason: postCritiqueFails,
+      ts: Date.now(),
+    });
+  }
+
+  // Defensive — the loop runs at least once, so finalPlan/lastCritique
+  // must be set. TypeScript can't see that invariant; assert here so the
+  // type narrows for the output object.
+  if (!finalPlan || !lastCritique) {
+    const error = "design pipeline loop exited without setting finalPlan";
+    emit(onProgress, { type: "failed", error, ts: Date.now() });
     return {
       ok: false,
-      failure: { failedAt: "layout", error: passRes3.error, partial },
+      failure: { failedAt: "layout", error, partial },
     };
   }
-  partial.plan = passRes3.plan;
-  emit(onProgress, {
-    type: "pass_completed",
-    pass: "layout",
-    durationMs: Date.now() - passStart3,
-    ts: Date.now(),
-  });
-
-  // ---- Pass 4: Critique ----
-  emit(onProgress, { type: "pass_started", pass: "critique", ts: Date.now() });
-  const passStart4 = Date.now();
-  const passRes4 = await runCritiquePass(
-    client,
-    passRes1.brief,
-    passRes2.strategy,
-    passRes3.plan,
-    tally,
-  );
-  if (!passRes4.ok) {
-    // why: critique failure is recoverable — the layout from Pass 3 is
-    // still valid, just un-critiqued. Surface the issue but proceed.
-    emit(onProgress, {
-      type: "pass_failed",
-      pass: "critique",
-      error: passRes4.error,
-      ts: Date.now(),
-    });
-    // Build a degenerate "critique passed with no notes" result so the
-    // pipeline output stays well-typed.
-    const fallbackCritique: CritiqueResult = {
-      passed: true,
-      issues: [`critique_unavailable: ${passRes4.error}`],
-      notes: "Critique pass failed; layout used as-is.",
-    };
-    const totalDurationMs = Date.now() - startTs;
-    const output: DesignPipelineOutput = {
-      composition: passRes1.brief,
-      strategy: passRes2.strategy,
-      plan: passRes3.plan,
-      critique: fallbackCritique,
-      totalDurationMs,
-      tokensUsed: tally,
-    };
-    emit(onProgress, {
-      type: "completed",
-      result: output,
-      durationMs: totalDurationMs,
-      ts: Date.now(),
-    });
-    return { ok: true, output };
-  }
-  emit(onProgress, {
-    type: "pass_completed",
-    pass: "critique",
-    durationMs: Date.now() - passStart4,
-    ts: Date.now(),
-  });
-
-  // ---- Compose final output ----
-  // why: when critique returns passed=false with a revised plan, that's
-  // the canonical plan. Pass 3's original is discarded.
-  const finalPlan: LayoutPlan = passRes4.critique.passed
-    ? passRes3.plan
-    : passRes4.critique.revised ?? passRes3.plan;
 
   const totalDurationMs = Date.now() - startTs;
   const output: DesignPipelineOutput = {
     composition: passRes1.brief,
     strategy: passRes2.strategy,
     plan: finalPlan,
-    critique: passRes4.critique,
+    critique: lastCritique,
     totalDurationMs,
     tokensUsed: tally,
+    criticalIssues: unresolvedFails,
+    retriesUsed,
   };
   emit(onProgress, {
     type: "completed",
@@ -555,6 +685,52 @@ export async function runDesignPipeline(
   });
 
   return { ok: true, output };
+}
+
+// ===========================================================================
+// Deterministic check helper — runs `checkHardRules` and logs each finding.
+// ===========================================================================
+
+/**
+ * Run the deterministic hard-rule check on a LayoutPlan and emit one
+ * structured log line per violation. Returns the raw violations array
+ * (callers filter to `fail` severity when they need gating logic).
+ *
+ * When the plan is a `mutations` plan (Phase 3+), there's nothing to
+ * walk — return an empty array so the pipeline's retry decisions don't
+ * trip on something they can't fix.
+ *
+ * Telemetry shape (one line per violation):
+ *   { event: "ai_hard_rule_violation", rule, retry, schemaCategory,
+ *     severity, stage, layerId? }
+ * Stage is "pass3_post_layout" or "pass4_post_critique" to distinguish
+ * where in the pipeline the violation was caught.
+ */
+function checkAndLogViolations(
+  plan: LayoutPlan,
+  brief: CompositionBrief,
+  stage: "pass3_post_layout" | "pass4_post_critique",
+  retry: number,
+): HardRuleViolation[] {
+  if (plan.kind !== "full_replacement") return [];
+  const schema: CanvasTemplateSchema = plan.schema;
+  const violations = checkHardRules(schema, brief);
+  for (const v of violations) {
+    // why: JSON-line format so Vercel log queries can grep + parse.
+    // Keep the keys stable for downstream dashboards.
+    console.log(
+      JSON.stringify({
+        event: "ai_hard_rule_violation",
+        rule: v.rule,
+        severity: v.severity,
+        retry,
+        stage,
+        schemaCategory: schema.category,
+        layerId: v.layerId ?? null,
+      }),
+    );
+  }
+  return violations;
 }
 
 // Re-export for convenience so consumers can import everything from one

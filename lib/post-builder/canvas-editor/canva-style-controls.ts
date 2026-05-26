@@ -29,6 +29,12 @@ import { Control, controlsUtils } from "fabric";
 /** Canva-matched violet for borders + control fills. */
 export const CANVA_VIOLET = "#8B5CF6";
 
+/** Brand — Relentless Gold. Single source of truth for the gold accent. */
+export const BRAND_GOLD = "#C9A84C";
+
+/** Brand — Obsessed Grey. Single source of truth for the brand dark. */
+export const BRAND_OBSESSED = "#252526";
+
 /** Diameter (px) of corner circles in canvas-space, post-zoom. */
 const CORNER_SIZE = 16;
 /** Width of side capsule pills along their thin axis (px). */

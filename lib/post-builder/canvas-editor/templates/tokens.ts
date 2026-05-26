@@ -26,7 +26,8 @@
  */
 export const ALLIANCE_COLORS = {
   // Refined gold — accent for primary callouts (price, eyebrow rule)
-  gold500: "#C9A961",
+  // 2026-05-25 — aligned with brand standards: Relentless Gold #C9A84C
+  gold500: "#C9A84C",
   gold600: "#B69552",
   gold100: "#F5EBCF",
   // Obsessed grey — primary text on light surfaces

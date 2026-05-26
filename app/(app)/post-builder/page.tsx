@@ -14,6 +14,7 @@ import type { TemplateMeta } from "@/lib/template-builder";
 import { fetchCreatedPostResume } from "@/lib/data/created-posts-db";
 import { loadSystemConfig } from "@/lib/data/system-config";
 import Link from "next/link";
+import { FileText } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import PostBuilderClient from "./PostBuilderClient";
 import type {
@@ -219,22 +220,9 @@ export default async function PostBuilderPage({
                 Open House. See PostBuilderClient.tsx. */}
             <Link
               href="/saved-posts"
-              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
+              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition focus-ring"
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
-                <path d="M5.5 6.5h5M5.5 9h3" />
-              </svg>
+              <FileText size={14} aria-hidden="true" />
               Saved posts
             </Link>
           </div>

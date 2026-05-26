@@ -156,8 +156,8 @@ function pickEmitter(
 // hero photo carries the surface.
 
 const BRAND = {
-  gold: "#C9A961",
-  goldDark: "#A68A4A",
+  gold: "#C9A84C",
+  goldDark: "#A88A3C",
   /** Page background — warm off-white, slightly creamier than pure #FCFCFB. */
   surface: "#FBF7EE",
   /** Card / row background, very faint contrast against the surface. */
