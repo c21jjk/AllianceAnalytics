@@ -41,21 +41,11 @@ import {
 } from "fabric";
 import {
   AlertTriangle as LAlertTriangle,
-  AlignCenter as LAlignCenter,
-  AlignHorizontalDistributeCenter as LDistributeHorizontal,
-  AlignLeft as LAlignLeft,
-  AlignRight as LAlignRight,
-  AlignVerticalDistributeCenter as LDistributeVertical,
-  AlignVerticalJustifyCenter as LAlignMiddle,
-  AlignVerticalJustifyEnd as LAlignBottom,
-  AlignVerticalJustifyStart as LAlignTop,
   BookmarkPlus as LBookmarkPlus,
-  BringToFront as LBringToFront,
   Check as LCheck,
   ChevronsLeft as LChevronsLeft,
   ChevronsRight as LChevronsRight,
   Clock as LClock,
-  Copy as LCopy,
   Eye as LEye,
   EyeOff as LEyeOff,
   FileText as LFileText,
@@ -64,15 +54,12 @@ import {
   LayoutGrid as LLayoutGrid,
   Layers as LLayers,
   Loader2 as LLoader2,
-  Lock as LLock,
   Maximize2 as LMaximize2,
   PencilRuler as LPencilRuler,
   Redo2 as LRedo2,
   Save as LSave,
-  SendToBack as LSendToBack,
   Shapes as LShapes,
   Square as LSquare,
-  Trash2 as LTrash2,
   Type as LType,
   Undo2 as LUndo2,
   User as LUser,
@@ -151,7 +138,7 @@ import {
 import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
-import ContextualTopToolbar from "./panels/ContextualTopToolbar";
+import FloatingToolbar from "./panels/FloatingToolbar";
 import ColorPickerPanel, { type ColorTarget } from "./panels/ColorPickerPanel";
 import EffectsPanel from "./panels/EffectsPanel";
 import FontPickerPanel from "./panels/FontPickerPanel";
@@ -438,7 +425,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [fontPickerOpen, setFontPickerOpen] = useState<boolean>(false);
   // why: Canva-style Effects panel (2026-05-26). Mirrors the FontPickerPanel
   // pattern — single boolean owned at editor scope because triggers live in
-  // ContextualTopToolbar AND TextPropertiesControls and both flip the same
+  // FloatingToolbar AND TextPropertiesControls and both flip the same
   // canonical panel. Mutually exclusive with `fontPickerOpen` (both occupy
   // the same left:64px slot) — see the effect below that enforces that.
   const [effectsPanelOpen, setEffectsPanelOpen] = useState<boolean>(false);
@@ -455,7 +442,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   >(null);
   // why: ref the editor passes to FontPickerPanel so focus can return to
   // the trigger pill on close. Updated via a callback ref because the
-  // trigger itself is rendered inside ContextualTopToolbar — we hand the
+  // trigger itself is rendered inside FloatingToolbar — we hand the
   // ref to the toolbar via context-free prop drilling would be heavy;
   // instead we update this ref imperatively when the toolbar mounts.
   // Simplest path: skip ref-restoration. The Esc handler still closes and
@@ -1857,7 +1844,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   //
   // Mirrors what the mouse:dblclick handler does, but reads the
   // currently-active object instead of an event target. Wired into
-  // ContextualTopToolbar's `onEnterCropMode` prop so users have two
+  // FloatingToolbar's `onEnterCropMode` prop so users have two
   // ways to enter crop mode: double-click the image OR click the
   // Crop button in the floating toolbar.
   const enterCropModeForActive = useCallback((): void => {
@@ -2024,9 +2011,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   //   re-create the ActiveSelection so the user's selection is preserved.
 
   /**
-   * The 8 directions the footer can dispatch. Single-object alignment uses
-   * canvas bounds; multi uses the selection bounding box; distribute is
-   * multi-only and rejects when fewer than 3 objects are selected.
+   * The 6 alignment directions the FloatingToolbar can dispatch.
+   * Single-object alignment uses canvas bounds; multi uses the selection
+   * bounding box.
+   *
+   * 2026-05-26 — `distribute_horizontal` / `distribute_vertical` retired
+   * with the floating-toolbar consolidation. Distribute buttons were
+   * removed from both the footer and the new pill.
    */
   type AlignDirection =
     | "left"
@@ -2034,9 +2025,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     | "right"
     | "top"
     | "middle"
-    | "bottom"
-    | "distribute_horizontal"
-    | "distribute_vertical";
+    | "bottom";
 
   const handleAlign = useCallback(
     (direction: AlignDirection): void => {
@@ -2045,21 +2034,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const objs = canvas.getActiveObjects();
       if (objs.length === 0) return;
 
-      const isDistribute =
-        direction === "distribute_horizontal" ||
-        direction === "distribute_vertical";
-
-      // Distribute requires 3 objects to be meaningful — guard here so a
-      // stale click doesn't shuffle a 2-object selection unexpectedly.
-      if (isDistribute && objs.length < 3) return;
-
       const canvasW = currentTemplate.width;
       const canvasH = currentTemplate.height;
 
       // ---- Single-object alignment — align to canvas bounds ------------
       if (objs.length === 1) {
         const obj = objs[0]!;
-        if (isDistribute) return; // Distribute is multi-only.
         const bb = obj.getBoundingRect();
         let dx = 0;
         let dy = 0;
@@ -2104,83 +2084,43 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
       const boxes = objs.map((o) => ({ obj: o, bb: o.getBoundingRect() }));
 
-      if (isDistribute) {
-        const axis = direction === "distribute_horizontal" ? "x" : "y";
-        // Sort by leading edge along the distribution axis.
-        const sorted = boxes
-          .slice()
-          .sort((a, b) =>
-            axis === "x" ? a.bb.left - b.bb.left : a.bb.top - b.bb.top,
-          );
-        const first = sorted[0]!;
-        const last = sorted[sorted.length - 1]!;
-        // Total free space = (last leading edge) - (first trailing edge)
-        // minus the sum of the interior objects' span on the axis.
-        const firstTrailing =
-          axis === "x" ? first.bb.left + first.bb.width : first.bb.top + first.bb.height;
-        const lastLeading = axis === "x" ? last.bb.left : last.bb.top;
-        const interior = sorted.slice(1, -1);
-        const interiorSpan = interior.reduce(
-          (sum, item) => sum + (axis === "x" ? item.bb.width : item.bb.height),
-          0,
-        );
-        const totalGap = lastLeading - firstTrailing - interiorSpan;
-        // why: clamp negative gaps to 0 — if the interior objects overlap
-        // the leading/trailing edges, distribute degrades gracefully to
-        // a tight packing rather than producing nonsense placement.
-        const gap = Math.max(0, totalGap / (interior.length + 1));
-        let cursor = firstTrailing + gap;
-        interior.forEach((item) => {
-          const targetLeading = cursor;
-          const currentLeading = axis === "x" ? item.bb.left : item.bb.top;
-          const delta = targetLeading - currentLeading;
-          if (axis === "x") {
-            item.obj.set({ left: (item.obj.left ?? 0) + delta });
-          } else {
-            item.obj.set({ top: (item.obj.top ?? 0) + delta });
-          }
-          item.obj.setCoords();
-          cursor += (axis === "x" ? item.bb.width : item.bb.height) + gap;
-        });
-      } else {
-        // Align within the selection bounding box (union of all child bbs).
-        const minLeft = Math.min(...boxes.map((b) => b.bb.left));
-        const maxRight = Math.max(...boxes.map((b) => b.bb.left + b.bb.width));
-        const minTop = Math.min(...boxes.map((b) => b.bb.top));
-        const maxBottom = Math.max(...boxes.map((b) => b.bb.top + b.bb.height));
-        const selW = maxRight - minLeft;
-        const selH = maxBottom - minTop;
+      // Align within the selection bounding box (union of all child bbs).
+      const minLeft = Math.min(...boxes.map((b) => b.bb.left));
+      const maxRight = Math.max(...boxes.map((b) => b.bb.left + b.bb.width));
+      const minTop = Math.min(...boxes.map((b) => b.bb.top));
+      const maxBottom = Math.max(...boxes.map((b) => b.bb.top + b.bb.height));
+      const selW = maxRight - minLeft;
+      const selH = maxBottom - minTop;
 
-        boxes.forEach(({ obj, bb }) => {
-          let dx = 0;
-          let dy = 0;
-          switch (direction) {
-            case "left":
-              dx = minLeft - bb.left;
-              break;
-            case "center":
-              dx = minLeft + (selW - bb.width) / 2 - bb.left;
-              break;
-            case "right":
-              dx = minLeft + selW - bb.width - bb.left;
-              break;
-            case "top":
-              dy = minTop - bb.top;
-              break;
-            case "middle":
-              dy = minTop + (selH - bb.height) / 2 - bb.top;
-              break;
-            case "bottom":
-              dy = minTop + selH - bb.height - bb.top;
-              break;
-          }
-          obj.set({
-            left: (obj.left ?? 0) + dx,
-            top: (obj.top ?? 0) + dy,
-          });
-          obj.setCoords();
+      boxes.forEach(({ obj, bb }) => {
+        let dx = 0;
+        let dy = 0;
+        switch (direction) {
+          case "left":
+            dx = minLeft - bb.left;
+            break;
+          case "center":
+            dx = minLeft + (selW - bb.width) / 2 - bb.left;
+            break;
+          case "right":
+            dx = minLeft + selW - bb.width - bb.left;
+            break;
+          case "top":
+            dy = minTop - bb.top;
+            break;
+          case "middle":
+            dy = minTop + (selH - bb.height) / 2 - bb.top;
+            break;
+          case "bottom":
+            dy = minTop + selH - bb.height - bb.top;
+            break;
+        }
+        obj.set({
+          left: (obj.left ?? 0) + dx,
+          top: (obj.top ?? 0) + dy,
         });
-      }
+        obj.setCoords();
+      });
 
       // Step 2: recreate the ActiveSelection so the user's selection is
       // preserved after the alignment lands.
@@ -3850,59 +3790,49 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 Paragraph) now live in the Tools panel's "Add" section in the
                 left rail. Keyboard shortcuts (T/R/O/L) still work and route
                 through the spawn factories re-exported by ToolsPanel. */}
-            {/* Phase B.2 — floating chrome above the canvas. Two stacked
-                bars: contextual content controls (top) + structural ops
-                (bottom). The wrapper owns positioning so both bars share
-                the same horizontal anchor; either child can be null
-                (image mode hides the contextual row; multi mode hides
-                the structural row since there's no single layer-name to
-                display). */}
-            {(selectedEntry && !selectedEntry.locked) ||
-            (selection.isMulti && selection.count > 0) ? (
+            {/* 2026-05-26 — unified floating toolbar. One pill above the
+                canvas with three groups: type-specific content controls
+                (font/color/etc), alignment (6 directions, single+multi),
+                and layer actions (forward/back/dupe/transparency/lock/
+                delete). Replaces the prior two-stacked pill setup
+                (ContextualTopToolbar + SelectionToolbar). Hidden in crop
+                mode to keep the photo surface fully focused. */}
+            {((selectedEntry && !selectedEntry.locked) ||
+              (selection.isMulti && selection.count > 0)) &&
+            fabricRef.current &&
+            !cropMode ? (
               <div className="absolute top-6 z-10 flex flex-col items-center gap-1">
-                {(selectionMode === "text" ||
-                  selectionMode === "shape" ||
-                  selectionMode === "multi" ||
-                  selectionMode === "image") &&
-                fabricRef.current &&
-                !cropMode ? (
-                  /* 2026-05-25 — hide the contextual toolbar in crop
-                     mode. Matches Canva — the toolbar disappears
-                     while cropping so the surface is fully focused
-                     on the photo manipulation. Re-appears on Done. */
-                  <ContextualTopToolbar
-                    canvas={fabricRef.current}
-                    mode={selectionMode}
-                    selectionVersion={layerVersion}
-                    selectionCount={selection.count}
-                    onCanvasMutated={() => setLayerVersion((v) => v + 1)}
-                    recordHistory={history.record}
-                    onAlign={handleAlign}
-                    onEnterCropMode={enterCropModeForActive}
-                    onActivateResize={activateResizeForActive}
-                    onOpenFontPicker={openFontPicker}
-                    fontPickerOpen={fontPickerOpen}
-                    onOpenEffectsPanel={openEffectsPanel}
-                    effectsPanelOpen={effectsPanelOpen}
-                    onOpenColorPicker={openColorPicker}
-                    colorPickerOpenTarget={colorPickerPanel?.target ?? null}
-                  />
-                ) : null}
-                {selectedEntry && !selectedEntry.locked ? (
-                  <SelectionToolbar
-                    onDelete={handleDeleteSelection}
-                    onBringForward={handleBringForward}
-                    onSendBackward={handleSendBackward}
-                    onToggleLock={handleToggleLock}
-                    onDuplicate={() => void handleDuplicateSelection()}
-                    layerName={selectedEntry.name}
-                    layerKind={selectedEntry.kind}
-                    canvas={fabricRef.current}
-                    selectionVersion={layerVersion}
-                    onOpacityCommit={history.record}
-                    onCanvasMutated={() => setLayerVersion((v) => v + 1)}
-                  />
-                ) : null}
+                <FloatingToolbar
+                  canvas={fabricRef.current}
+                  mode={selectionMode === "none" ? "multi" : selectionMode}
+                  selectionVersion={layerVersion}
+                  selectionCount={selection.count}
+                  selectedEntry={
+                    selectedEntry
+                      ? {
+                          kind: selectedEntry.kind,
+                          locked: selectedEntry.locked,
+                        }
+                      : null
+                  }
+                  onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+                  recordHistory={history.record}
+                  onAlign={handleAlign}
+                  onEnterCropMode={enterCropModeForActive}
+                  onActivateResize={activateResizeForActive}
+                  onOpenFontPicker={openFontPicker}
+                  fontPickerOpen={fontPickerOpen}
+                  onOpenEffectsPanel={openEffectsPanel}
+                  effectsPanelOpen={effectsPanelOpen}
+                  onOpenColorPicker={openColorPicker}
+                  colorPickerOpenTarget={colorPickerPanel?.target ?? null}
+                  onBringForward={handleBringForward}
+                  onSendBackward={handleSendBackward}
+                  onDuplicate={() => void handleDuplicateSelection()}
+                  onToggleLock={handleToggleLock}
+                  onDelete={handleDeleteSelection}
+                  onOpacityCommit={history.record}
+                />
               </div>
             ) : null}
 
@@ -4043,21 +3973,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             </div>
           </div>
 
-          {/* === Canvas footer — alignment / zoom / undo+redo === */}
+          {/* === Canvas footer — zoom / background swatch ===
+              2026-05-26 — alignment + distribute moved out of the footer
+              and into the unified FloatingToolbar (alignment as a permanent
+              group; distribute was retired). Footer is now zoom-only +
+              background swatch. */}
           <CanvasFooter
-            // why: Phase B.1 — alignment is live. Show the cluster whenever
-            // any selection exists (single OR multi). A locked single
-            // object still hides alignment because moving a locked layer
-            // would silently violate the lock contract. Multi-selection
-            // shows the cluster even if individual children are locked;
-            // Fabric's per-object lockMovement guards prevent those rows
-            // from moving during the multi-align pass.
-            showAlignment={
-              selection.count > 0 &&
-              (selection.isMulti || (selectedEntry !== null && !selectedEntry.locked))
-            }
-            canDistribute={selection.count >= 3}
-            onAlign={handleAlign}
             zoom={zoom}
             onZoomIn={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
             onZoomOut={() =>
@@ -4118,10 +4039,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 {/* why (2026-05-23, Canva-parity text toolbar): when a TEXT
                     layer is selected, the right panel reverts to the layer
                     list. ALL text editing now lives in the floating top
-                    toolbar (ContextualTopToolbar TEXT cluster), matching
-                    Canva exactly. The right-panel TextPropertiesControls
-                    file is intentionally kept on disk as a fallback /
-                    future reference but is no longer reachable from the
+                    toolbar (FloatingToolbar text controls), matching Canva
+                    exactly. The right-panel TextPropertiesControls file is
+                    intentionally kept on disk as a fallback / future
+                    reference but is no longer reachable from the
                     orchestrator. */}
                 {selectionMode === "none" || selectionMode === "text" ? (
                   <LayerListPanel
@@ -4277,294 +4198,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 // SECTION 4 — Subcomponents
 // ===========================================================================
 
-interface SelectionToolbarProps {
-  onDelete: () => void;
-  onBringForward: () => void;
-  onSendBackward: () => void;
-  onToggleLock: () => void;
-  onDuplicate: () => void;
-  layerName: string;
-  layerKind: CanvasLayer["kind"];
-  /** Canvas instance — used by the Transparency popover to read/write opacity. */
-  canvas: Canvas | null;
-  /** Forces the transparency popover to re-read opacity when the parent's selection state changes. */
-  selectionVersion: number;
-  /** Called once after the user releases the opacity slider so the undo stack captures one entry instead of dozens. */
-  onOpacityCommit?: () => void;
-  /** Called whenever opacity mutates so the layer panel / version counter refresh. */
-  onCanvasMutated?: () => void;
-}
+// 2026-05-26 — SelectionToolbar / TransparencyButton / TransparencyIcon /
+// IconButton were consolidated into ./panels/FloatingToolbar.tsx as a single
+// unified pill (type-specific group + alignment group + layer-actions group).
+// The deleted blocks lived here previously.
 
-function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
-  // why: Phase B.2 — positioning moved to a parent wrapper that stacks
-  // SelectionToolbar below ContextualTopToolbar. This element is now a
-  // plain inline-flex bar; the wrapper handles top-6 / centering / z-10.
-  return (
-    <div className="flex items-center gap-1 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
-      <span className="ml-2 mr-3 truncate text-xs font-medium text-white">
-        {props.layerName}
-      </span>
-      <span className="h-5 w-px bg-[var(--studio-border)]" />
-      <IconButton label="Bring forward" onClick={props.onBringForward}>
-        <LBringToFront size={14} />
-      </IconButton>
-      <IconButton label="Send backward" onClick={props.onSendBackward}>
-        <LSendToBack size={14} />
-      </IconButton>
-      <span className="h-5 w-px bg-[var(--studio-border)]" />
-      <IconButton label="Duplicate" onClick={props.onDuplicate}>
-        <LCopy size={14} />
-      </IconButton>
-      {/* === Transparency — opens a portaled popover with an opacity slider.
-          why: matches Canva's selection-toolbar pattern; quick access without
-          having to navigate into the right-side properties panel. */}
-      <TransparencyButton
-        canvas={props.canvas}
-        selectionVersion={props.selectionVersion}
-        onCanvasMutated={props.onCanvasMutated}
-        onCommit={props.onOpacityCommit}
-      />
-      <IconButton label="Lock" onClick={props.onToggleLock}>
-        <LLock size={14} />
-      </IconButton>
-      <span className="h-5 w-px bg-[var(--studio-border)]" />
-      <IconButton label="Delete" onClick={props.onDelete} variant="danger">
-        <LTrash2 size={14} />
-      </IconButton>
-    </div>
-  );
-}
-
-// ===========================================================================
-// TransparencyButton — toolbar trigger + portaled popover with opacity slider
-// ===========================================================================
-//
-// Why a separate subcomponent rather than inline:
-//   • Owns the open/close state + the popover's getBoundingClientRect math
-//     locally; SelectionToolbar stays presentational.
-//   • Uses the same Portal + position:fixed pattern as the ColorPicker —
-//     escapes the canvas's transform-stacking context so the popover paints
-//     above the canvas instead of behind it.
-//
-// Fabric's opacity is a 0..1 float. The UI works in 0..100 (percent) because
-// that's how Canva does it and how the user thinks about it.
-
-interface TransparencyButtonProps {
-  canvas: Canvas | null;
-  selectionVersion: number;
-  onCanvasMutated?: () => void;
-  onCommit?: () => void;
-}
-
-function TransparencyButton(
-  props: TransparencyButtonProps,
-): JSX.Element {
-  const { canvas, selectionVersion, onCanvasMutated, onCommit } = props;
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
-  const [open, setOpen] = useState<boolean>(false);
-  const [popoverPos, setPopoverPos] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
-
-  // why: read the active object's opacity each time the selection or version
-  // changes. If the user changes selection while the popover is open, the
-  // slider snaps to the new layer's value instead of stale state.
-  const initialOpacity = useMemo<number>(() => {
-    if (!canvas) return 100;
-    const active = canvas.getActiveObject();
-    if (!active) return 100;
-    const raw = active.opacity;
-    if (typeof raw !== "number") return 100;
-    return Math.round(raw * 100);
-  }, [canvas, selectionVersion, open]);
-
-  const [opacityPct, setOpacityPct] = useState<number>(initialOpacity);
-  useEffect(() => {
-    setOpacityPct(initialOpacity);
-  }, [initialOpacity]);
-
-  // Position popover under the trigger button — viewport-clamped.
-  useLayoutEffect(() => {
-    if (!open || !triggerRef.current) {
-      setPopoverPos(null);
-      return;
-    }
-    const POPOVER_WIDTH = 240;
-    const GAP = 8;
-    const rect = triggerRef.current.getBoundingClientRect();
-    const top = rect.bottom + GAP;
-    // Center the popover horizontally on the trigger button.
-    let left =
-      rect.left + rect.width / 2 - POPOVER_WIDTH / 2;
-    if (left < GAP) left = GAP;
-    const maxLeft = window.innerWidth - POPOVER_WIDTH - GAP;
-    if (left > maxLeft) left = maxLeft;
-    setPopoverPos({ top, left });
-  }, [open]);
-
-  // Outside-click close.
-  useEffect(() => {
-    if (!open) return;
-    const onMouseDown = (e: MouseEvent): void => {
-      const target = e.target as Node;
-      if (popoverRef.current?.contains(target)) return;
-      if (triggerRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    window.addEventListener("mousedown", onMouseDown);
-    return () => window.removeEventListener("mousedown", onMouseDown);
-  }, [open]);
-
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const pct = Number(e.target.value);
-    if (!Number.isFinite(pct)) return;
-    setOpacityPct(pct);
-    const active = canvas?.getActiveObject();
-    if (!active) return;
-    // why: write through directly on every tick for live preview. The
-    // history snapshot fires onMouseUp via onCommit — keeps undo stack
-    // clean (one entry per gesture, not 100 per slider drag).
-    active.set({ opacity: pct / 100 });
-    canvas?.requestRenderAll();
-    onCanvasMutated?.();
-  };
-
-  const handleSliderCommit = (): void => {
-    onCommit?.();
-  };
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-label="Transparency"
-        title="Transparency"
-        className={`rounded-md p-1.5 transition-colors ${
-          open
-            ? "bg-[var(--studio-hover)] text-gold-400"
-            : "text-white hover:bg-[var(--studio-hover)]"
-        }`}
-      >
-        <TransparencyIcon />
-      </button>
-      {open && popoverPos
-        ? createPortal(
-            <div
-              ref={popoverRef}
-              style={{
-                position: "fixed",
-                top: popoverPos.top,
-                left: popoverPos.left,
-                width: 240,
-              }}
-              className="z-[100] rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] p-3 shadow-2xl shadow-black/60 animate-fade-in-up text-white"
-              role="dialog"
-              aria-label="Transparency"
-            >
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
-                  Transparency
-                </span>
-                <span className="font-mono text-xs text-white">
-                  {opacityPct}
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={opacityPct}
-                onChange={handleSliderChange}
-                onMouseUp={handleSliderCommit}
-                onTouchEnd={handleSliderCommit}
-                onKeyUp={handleSliderCommit}
-                className="w-full accent-gold-500"
-                aria-label="Opacity 0 to 100 percent"
-              />
-              <div className="mt-1 flex justify-between text-[10px] text-[var(--studio-text-faint)]">
-                <span>0</span>
-                <span>50</span>
-                <span>100</span>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
-  );
-}
-
-function TransparencyIcon(): JSX.Element {
-  // why: classic checkerboard pattern signifying "transparency" — same
-  // visual language as Canva, Figma, Photoshop's transparency indicator.
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden="true"
-    >
-      <rect
-        x="1.5"
-        y="1.5"
-        width="13"
-        height="13"
-        rx="2"
-        stroke="currentColor"
-        strokeWidth="1.25"
-      />
-      <rect x="3" y="3" width="2.5" height="2.5" fill="currentColor" />
-      <rect x="8" y="3" width="2.5" height="2.5" fill="currentColor" />
-      <rect x="5.5" y="5.5" width="2.5" height="2.5" fill="currentColor" />
-      <rect x="10.5" y="5.5" width="2.5" height="2.5" fill="currentColor" />
-      <rect x="3" y="8" width="2.5" height="2.5" fill="currentColor" />
-      <rect x="8" y="8" width="2.5" height="2.5" fill="currentColor" />
-      <rect x="5.5" y="10.5" width="2.5" height="2.5" fill="currentColor" />
-      <rect x="10.5" y="10.5" width="2.5" height="2.5" fill="currentColor" />
-    </svg>
-  );
-}
-
-// why: the inline LayerPanel was removed in Phase 2 — replaced by
-// ./panels/LayerListPanel.tsx (Agent C) which adds drag-to-reorder via
-// @dnd-kit/sortable while preserving all the original row interactions.
-
-interface IconButtonProps {
-  label: string;
-  onClick: () => void;
-  variant?: "default" | "danger";
-  children: React.ReactNode;
-}
-
-function IconButton(props: IconButtonProps): JSX.Element {
-  const danger = props.variant === "danger";
-  // why: SelectionToolbar floats just above the canvas (top toolbar) but
-  // also appears at the top of the canvas area — pill below the trigger
-  // works in both cases.
-  return (
-    <Tooltip label={props.label}>
-      <button
-        type="button"
-        onClick={props.onClick}
-        aria-label={props.label}
-        title={props.label}
-        className={`rounded-md p-1.5 transition-colors ${
-          danger
-            ? "text-rose-300 hover:bg-rose-500/20 hover:text-rose-200"
-            : "text-white hover:bg-[var(--studio-hover)]"
-        }`}
-      >
-        {props.children}
-      </button>
-    </Tooltip>
-  );
-}
 
 function LayerKindIcon({ kind }: { kind: CanvasLayer["kind"] }): JSX.Element {
   // why: visual cue in the layer panel so the user can scan kind at a glance.
@@ -4692,42 +4330,17 @@ function SidebarRailButton(props: SidebarRailButtonProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// CanvasFooter — 40px bottom bar with alignment / zoom / undo + redo
+// CanvasFooter — 40px bottom bar with zoom + slide background
 // ---------------------------------------------------------------------------
 //
-// Layout: three-cluster flex row. Left = alignment (UI-only for now —
-// per Phase A.4 spec, wiring the alignment math is Phase B work).
-// Center = zoom controls ([-] 100% [+] Fit). Right = undo / redo wired
-// to the existing useUndoRedoHistory hook.
-//
-// Buttons are 28×28 square, icon-only, hover:bg-neutral-100. Tooltips
-// via title attribute (matches existing IconButton convention).
+// 2026-05-26 — alignment + distribute clusters retired from the footer.
+// Alignment now lives in the unified FloatingToolbar above the canvas;
+// distribute was removed entirely. Footer is now centered zoom controls +
+// a right-side background swatch, with an empty left slot kept narrow so
+// the zoom group reads as visually centered.
 // ---------------------------------------------------------------------------
-
-/**
- * Direction tokens the alignment + distribute buttons dispatch. Matches
- * the `AlignDirection` union inside `CanvasEditor.handleAlign` — kept
- * loose-string here so the footer doesn't have to import the inner
- * function-scoped type.
- */
-type FooterAlignDirection =
-  | "left"
-  | "center"
-  | "right"
-  | "top"
-  | "middle"
-  | "bottom"
-  | "distribute_horizontal"
-  | "distribute_vertical";
 
 interface CanvasFooterProps {
-  showAlignment: boolean;
-  /** Enables the two Distribute buttons. True when ≥3 objects selected. */
-  canDistribute: boolean;
-  /** Phase B.1 — invoked from each alignment button. No-op when nothing
-   *  is selected (parent guards) or for unsupported single-object
-   *  distribute calls. */
-  onAlign: (direction: FooterAlignDirection) => void;
   zoom: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -4753,83 +4366,17 @@ interface CanvasFooterProps {
 }
 
 /**
- * Canvas footer — alignment / zoom / undo+redo. Renders below the canvas
- * area, above the carousel strip. 40px tall, white bg, top border.
+ * Canvas footer — zoom controls + background swatch. Renders below the
+ * canvas area, above the carousel strip. 40px tall, top border.
  */
 function CanvasFooter(props: CanvasFooterProps): JSX.Element {
   const zoomPct = Math.round(props.zoom * 100);
   return (
     <div className="flex h-10 shrink-0 items-center justify-between border-t border-[var(--studio-border)] bg-[var(--studio-bg)] px-3">
-      {/* === Left cluster — alignment + distribute (Phase B.1 — live) === */}
-      <div className="flex items-center gap-0.5">
-        {props.showAlignment ? (
-          <>
-            <FooterIconButton
-              label="Align left"
-              onClick={() => props.onAlign("left")}
-            >
-              <LAlignLeft size={14} />
-            </FooterIconButton>
-            <FooterIconButton
-              label="Align center"
-              onClick={() => props.onAlign("center")}
-            >
-              <LAlignCenter size={14} />
-            </FooterIconButton>
-            <FooterIconButton
-              label="Align right"
-              onClick={() => props.onAlign("right")}
-            >
-              <LAlignRight size={14} />
-            </FooterIconButton>
-            <span className="mx-1 h-4 w-px bg-[var(--studio-border)]" />
-            <FooterIconButton
-              label="Align top"
-              onClick={() => props.onAlign("top")}
-            >
-              <LAlignTop size={14} />
-            </FooterIconButton>
-            <FooterIconButton
-              label="Align middle"
-              onClick={() => props.onAlign("middle")}
-            >
-              <LAlignMiddle size={14} />
-            </FooterIconButton>
-            <FooterIconButton
-              label="Align bottom"
-              onClick={() => props.onAlign("bottom")}
-            >
-              <LAlignBottom size={14} />
-            </FooterIconButton>
-            <span className="mx-1 h-4 w-px bg-[var(--studio-border)]" />
-            {/* Distribute — needs ≥3 objects. Disabled chip stays visible
-                so users can discover the feature; the tooltip explains
-                the threshold. */}
-            <FooterIconButton
-              label={
-                props.canDistribute
-                  ? "Distribute horizontally"
-                  : "Distribute horizontally (needs 3+ objects)"
-              }
-              onClick={() => props.onAlign("distribute_horizontal")}
-              disabled={!props.canDistribute}
-            >
-              <LDistributeHorizontal size={14} />
-            </FooterIconButton>
-            <FooterIconButton
-              label={
-                props.canDistribute
-                  ? "Distribute vertically"
-                  : "Distribute vertically (needs 3+ objects)"
-              }
-              onClick={() => props.onAlign("distribute_vertical")}
-              disabled={!props.canDistribute}
-            >
-              <LDistributeVertical size={14} />
-            </FooterIconButton>
-          </>
-        ) : null}
-      </div>
+      {/* why: empty left slot balances the right-side background-swatch
+          cluster so the zoom group in the middle reads as visually
+          centered. Width matches the right cluster (`w-20`). */}
+      <div className="w-20" aria-hidden="true" />
 
       {/* === Center cluster — zoom controls (Canva-style slider) ===
           Layout: [-] [slider track] [+] 100% Fit
