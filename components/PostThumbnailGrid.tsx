@@ -2,14 +2,24 @@ import clsx from "clsx";
 import type { Post } from "@/lib/types/post";
 import { formatCompactNumber } from "@/lib/format";
 import PlatformBadge from "./PlatformBadge";
+import PortalMetricsStrip from "./portal-metrics/PortalMetricsStrip";
+import type { PortalStrip } from "@/lib/data/portal-metrics-db";
 
 interface PostThumbnailGridProps {
   posts: Post[];
+  /**
+   * Property-level portal strip — same data on every tile because ListTrac
+   * counts portal traffic at listing grain, not per-post. Passed in from
+   * the parent (the property detail page) so we make one DB call instead of
+   * one-per-tile.
+   */
+  portalStrip?: PortalStrip | null;
   className?: string;
 }
 
 export default function PostThumbnailGrid({
   posts,
+  portalStrip,
   className,
 }: PostThumbnailGridProps) {
   if (posts.length === 0) {
@@ -91,6 +101,19 @@ export default function PostThumbnailGrid({
                   {formatCompactNumber(totalEngagements)}
                 </span>
               </div>
+
+              {/* Listing-level portal strip — same data on every tile. The
+                  white-on-dark color scheme inside the hover overlay clashes
+                  with the brand-colored chips, so we render a black-glass
+                  panel underneath to keep the brand colors readable. */}
+              {portalStrip?.has_data ? (
+                <div className="mt-1.5 rounded-md bg-black/40 backdrop-blur-sm px-1.5 py-1">
+                  <PortalMetricsStrip
+                    strip={portalStrip}
+                    variant="compact"
+                  />
+                </div>
+              ) : null}
             </div>
           </a>
         );

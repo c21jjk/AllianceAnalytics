@@ -12,6 +12,8 @@ import OwnerStoryAdminCard from "@/components/OwnerStoryAdminCard";
 import NullAgentEmailWarning from "@/components/NullAgentEmailWarning";
 import CreatedPostsStrip from "@/components/CreatedPostsStrip";
 import PortalTrafficSection from "@/components/PortalTrafficSection";
+import PortalMetricsStrip from "@/components/portal-metrics/PortalMetricsStrip";
+import { fetchPortalStrip } from "@/lib/data/portal-metrics-db";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 import {
   fetchOwnerStoryViewStats,
@@ -77,6 +79,25 @@ export default async function LivePropertyDetail({
   // saved for this MLS, drafts + posted alike, so Larissa can resume editing
   // anything she started without leaving the property detail page.
   const createdPosts = await fetchCreatedPostsByMls(property.mls_number);
+
+  // Portal strip for the small per-post tiles below. Same data for every
+  // tile (the portal traffic is property-scoped, not per-post — ListTrac
+  // doesn't attribute portal views to individual social posts). We render
+  // it as a compact "listing exposure" footer on each tile rather than
+  // showing it once at the section level, so the viewer sees the portal
+  // context as they scan each post.
+  let postTilePortalStrip = null;
+  if (property.source_mls === "cmc" || property.source_mls === "sjsr") {
+    try {
+      postTilePortalStrip = await fetchPortalStrip(
+        property.mls_number,
+        property.source_mls,
+        { since: property.listing_date ?? undefined },
+      );
+    } catch (e) {
+      console.warn("post-tile portal strip fetch failed:", (e as Error).message);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -353,6 +374,15 @@ export default async function LivePropertyDetail({
                         eng
                       </span>
                     </div>
+                    {postTilePortalStrip?.has_data ? (
+                      <div className="pt-1.5 mt-1.5 border-t border-neutral-100">
+                        <PortalMetricsStrip
+                          strip={postTilePortalStrip}
+                          variant="compact"
+                          caption="Listing exposure"
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </Link>
               </li>

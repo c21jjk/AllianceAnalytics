@@ -374,7 +374,7 @@ async function runWithConcurrency<T, R>(
   return results;
 }
 
-async function syncListtrac(): Promise<SyncResult> {
+async function syncListtrac(lookbackDays: number = LOOKBACK_DAYS): Promise<SyncResult> {
   const start = Date.now();
   const result: SyncResult = {
     ok: false,
@@ -394,7 +394,7 @@ async function syncListtrac(): Promise<SyncResult> {
     // Date window: lookback + 1 day on either side for safety.
     const end = new Date();
     const startDate = new Date();
-    startDate.setUTCDate(startDate.getUTCDate() - LOOKBACK_DAYS);
+    startDate.setUTCDate(startDate.getUTCDate() - lookbackDays);
     const startYmd = ymd(startDate);
     const endYmd = ymd(end);
 
@@ -463,8 +463,23 @@ async function syncListtrac(): Promise<SyncResult> {
 }
 
 // @ts-expect-error - Deno runtime
-Deno.serve(async (_req: Request) => {
-  const out = await syncListtrac();
+Deno.serve(async (req: Request) => {
+  // Optional body override: { lookback_days: 365 } lets one-off backfill
+  // runs pull a wider window than the daily cron default. Bounded at
+  // [1, 730] to prevent absurd values from hammering ListTrac.
+  let lookbackDays = LOOKBACK_DAYS;
+  try {
+    if (req.headers.get("content-type")?.includes("application/json")) {
+      const body = await req.json() as { lookback_days?: unknown };
+      if (typeof body.lookback_days === "number" && Number.isFinite(body.lookback_days)) {
+        lookbackDays = Math.min(730, Math.max(1, Math.round(body.lookback_days)));
+      }
+    }
+  } catch (_e) {
+    // No body or non-JSON body — fall through to default.
+  }
+
+  const out = await syncListtrac(lookbackDays);
   return new Response(JSON.stringify(out), {
     headers: { "Content-Type": "application/json" },
     status: out.ok ? 200 : 500,
