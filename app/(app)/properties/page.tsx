@@ -12,7 +12,12 @@ import {
   normalizeOfficeName,
   type PropertySortKey,
 } from "@/lib/data/properties-db";
+import {
+  fetchPortalStripsForListings,
+  type PortalStrip,
+} from "@/lib/data/portal-metrics-db";
 import PageHeader from "@/components/PageHeader";
+import PortalMetricsStrip from "@/components/portal-metrics/PortalMetricsStrip";
 import PropertySortDropdown from "@/components/PropertySortDropdown";
 import PropertyOfficeFilter from "@/components/PropertyOfficeFilter";
 import PropertySearchBox from "@/components/PropertySearchBox";
@@ -72,6 +77,30 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
         return haystack.includes(queryLower);
       });
 
+  // Batch-fetch the 5-portal strip for every listing on screen. Single
+  // round-trip against v_listing_portal_metrics_unified — avoids N+1.
+  // Window defaults to "since listing_date" per project policy: sellers
+  // care about lifetime exposure of the listing, not a rolling window.
+  const stripCandidates = properties
+    .filter(
+      (p): p is typeof p & { source_mls: "cmc" | "sjsr" } =>
+        p.source_mls === "cmc" || p.source_mls === "sjsr",
+    )
+    .map((p) => ({
+      mls_number: p.mls_number,
+      source_mls: p.source_mls,
+      listing_date: p.listing_date ?? null,
+    }));
+
+  let portalStripsByKey: Map<string, PortalStrip> = new Map();
+  try {
+    portalStripsByKey = await fetchPortalStripsForListings(stripCandidates);
+  } catch (e) {
+    // Non-fatal — listings render without the strip rather than 500'ing
+    // the whole /properties view if the portal-metrics table is misbehaving.
+    console.warn("portal strips batch fetch failed:", (e as Error).message);
+  }
+
   return (
     <div>
       <PageHeader
@@ -122,7 +151,16 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
       ) : (
         <div className="space-y-2.5">
           {properties.map((p) => (
-            <PropertyCard key={p.mls_number} property={p} isAdmin={isAdmin} />
+            <PropertyCard
+              key={p.mls_number}
+              property={p}
+              isAdmin={isAdmin}
+              portalStrip={
+                p.source_mls === "cmc" || p.source_mls === "sjsr"
+                  ? portalStripsByKey.get(`${p.source_mls}|${p.mls_number}`) ?? null
+                  : null
+              }
+            />
           ))}
         </div>
       )}
@@ -141,6 +179,8 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
 interface PropertyCardProps {
   property: Awaited<ReturnType<typeof getProperties>>[number];
   isAdmin: boolean;
+  /** 5-slot portal strip data, or null when no ListTrac coverage. */
+  portalStrip: PortalStrip | null;
 }
 
 /**
@@ -151,7 +191,7 @@ interface PropertyCardProps {
  * The vertical height is roughly 2/3 of the previous design — exploits the
  * wider canvas (max-w-7xl) by going horizontal instead of stacking.
  */
-function PropertyCard({ property, isAdmin }: PropertyCardProps) {
+function PropertyCard({ property, isAdmin, portalStrip }: PropertyCardProps) {
   const synced = property.updated_at ? new Date(property.updated_at) : null;
   const syncedOk =
     synced && !Number.isNaN(synced.getTime()) && synced.getTime() > 0;
@@ -279,6 +319,16 @@ function PropertyCard({ property, isAdmin }: PropertyCardProps) {
                 {property.public_remarks}
               </div>
             </details>
+          ) : null}
+
+          {/* Portal strip — 5-slot views breakdown across Zillow / Realtor /
+              Trulia / Redfin / CIH. pointer-events-auto so the title-attribute
+              tooltips on each chip are reachable even though the card link
+              covers the article. */}
+          {portalStrip ? (
+            <div className="mt-2 pointer-events-auto">
+              <PortalMetricsStrip strip={portalStrip} variant="card" />
+            </div>
           ) : null}
 
           {/* Footer — stats inline + meta + open */}

@@ -337,6 +337,12 @@ export interface OwnerStoryPost {
 export interface OwnerStoryListing {
   id: string;
   mls_number: string;
+  /**
+   * "cmc" | "sjsr" | null. Drives ListTrac portal-strip lookups on the
+   * seller-facing story page; nullable for legacy/manual listings without
+   * a Paragon feed origin.
+   */
+  source_mls: "cmc" | "sjsr" | null;
   address: string | null;
   city: string | null;
   state: string | null;
@@ -443,7 +449,7 @@ export async function fetchOwnerStoryByToken(
   const { data: propRow, error: propErr } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, status, status_changed_at, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, agent_phone, listing_office_name",
+      "id, mls_number, source_mls, address, city, state, zip, list_price, listing_date, status, status_changed_at, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, agent_phone, listing_office_name",
     )
     .eq("id", reportRow.property_id)
     .maybeSingle();
@@ -656,6 +662,10 @@ export async function fetchOwnerStoryByToken(
     listing: {
       id: propRow.id,
       mls_number: propRow.mls_number,
+      source_mls:
+        typeof propRow.source_mls === "string"
+          ? (propRow.source_mls as OwnerStoryListing["source_mls"])
+          : null,
       address: propRow.address,
       city: propRow.city,
       state: propRow.state,

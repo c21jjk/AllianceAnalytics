@@ -15,6 +15,11 @@ import {
   type AllianceVitals,
 } from "@/lib/data/brand-logos";
 import {
+  fetchPortalStrip,
+  type PortalStrip,
+} from "@/lib/data/portal-metrics-db";
+import PortalMetricsStrip from "@/components/portal-metrics/PortalMetricsStrip";
+import {
   formatCompactNumber,
   formatCurrency,
   formatNumber,
@@ -116,8 +121,33 @@ export default async function OwnerStoryPage({ params }: PageProps) {
     // headers() can throw outside a request scope — never block render.
   }
 
+  // Portal traffic strip — Zillow/Realtor/Trulia/Redfin/CIH. Window =
+  // since listing_date so the seller-facing number is cumulative lifetime
+  // exposure, not a rolling slice. Non-fatal on error so the rest of the
+  // story still renders.
+  let portalStrip: PortalStrip | null = null;
+  if (
+    data.listing.source_mls === "cmc" ||
+    data.listing.source_mls === "sjsr"
+  ) {
+    try {
+      portalStrip = await fetchPortalStrip(
+        data.listing.mls_number,
+        data.listing.source_mls,
+        { since: data.listing.listing_date ?? undefined },
+      );
+    } catch (e) {
+      console.warn("owner-story portal strip fetch failed:", (e as Error).message);
+    }
+  }
+
   return (
-    <OwnerStoryView data={data} brandLogos={brandLogos} vitals={vitals} />
+    <OwnerStoryView
+      data={data}
+      brandLogos={brandLogos}
+      vitals={vitals}
+      portalStrip={portalStrip}
+    />
   );
 }
 
@@ -298,10 +328,13 @@ function OwnerStoryView({
   data,
   brandLogos,
   vitals,
+  portalStrip,
 }: {
   data: OwnerStoryData;
   brandLogos: OwnerStoryBrandLogos;
   vitals: AllianceVitals;
+  /** 5-slot portal-traffic strip; null when not available for this listing. */
+  portalStrip: PortalStrip | null;
 }) {
   const { listing, posts, highlights, totals, company } = data;
   const featuredPost = highlights[0] ?? posts[0] ?? null;
@@ -351,6 +384,16 @@ function OwnerStoryView({
           topPostReach={featuredPost?.reach ?? 0}
           campaignStartLabel={campaignStartLabel}
         />
+        {portalStrip ? (
+          <PortalReachSection
+            strip={portalStrip}
+            listingDateLabel={
+              listing.listing_date
+                ? formatShortDate(listing.listing_date)
+                : null
+            }
+          />
+        ) : null}
         <HelpSpreadTheWord
           campaigns={campaigns}
           topCampaignKey={topCampaignKey}
@@ -801,6 +844,46 @@ function StatTile({
  *  Position: between Marketing Snapshot and What This Means, so the        *
  *  seller sees the topline numbers, then is prompted to amplify.           *
  * ----------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------- *
+ *  Section: Where buyers are seeing your home (Portal traffic)             *
+ *                                                                          *
+ *  Sits between Marketing Snapshot and Help Spread the Word. Shows the     *
+ *  5 portal lockups (Zillow / Realtor / Trulia / Redfin / CIH) with        *
+ *  lifetime view counts since the listing went live. Hidden when no       *
+ *  ListTrac data exists for this listing (the strip component renders its  *
+ *  own empty state).                                                       *
+ * ----------------------------------------------------------------------- */
+
+function PortalReachSection({
+  strip,
+  listingDateLabel,
+}: {
+  strip: PortalStrip;
+  listingDateLabel: string | null;
+}) {
+  const totalViews = strip.total_views;
+  const headlineCopy = totalViews > 0
+    ? `Your home has been viewed ${totalViews.toLocaleString()} times across real-estate sites${listingDateLabel ? ` since you listed on ${listingDateLabel}` : ""}.`
+    : "Portal traffic is still catching up.";
+
+  return (
+    <section style={{ marginTop: 28 }}>
+      <SectionHeader title="Where buyers are seeing your home" />
+      <p
+        style={{
+          fontSize: 14,
+          color: INK_SOFT,
+          lineHeight: 1.55,
+          margin: "0 0 14px",
+        }}
+      >
+        {headlineCopy}
+      </p>
+      <PortalMetricsStrip strip={strip} variant="story" />
+    </section>
+  );
+}
 
 function HelpSpreadTheWord({
   campaigns,

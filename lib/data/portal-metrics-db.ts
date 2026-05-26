@@ -325,3 +325,384 @@ export async function fetchPortalTrafficForListing(
     window_days: windowDays,
   };
 }
+
+// ---------------------------------------------------------------------------
+//  Portal Strip — 5 fixed slots: Zillow / Realtor.com / Trulia / Redfin / CIH
+// ---------------------------------------------------------------------------
+//
+// Used by the post card, main property card, and Owner Story. Always returns
+// all 5 slots so the UI never has to handle a "portal didn't come back" case
+// — missing portals just render as zero/empty.
+
+/** Stable keys used by the UI to pick logos + colors. */
+export type PortalStripKey = "zillow" | "realtor" | "trulia" | "redfin" | "cih";
+
+export interface PortalStripSlot {
+  /** Stable identity for the UI (logo lookup, sort order). */
+  key: PortalStripKey;
+  /** Display name shown to humans. */
+  display_name: string;
+  views: number;
+  /** Number of saves, or null when the portal doesn't report saves at all. */
+  saves: number | null;
+  /** True only if we have any non-zero metric for this slot in window. */
+  has_data: boolean;
+  /**
+   * Whether saves are *trackable* for this portal. Zillow/Realtor/Trulia
+   * and Redfin never pass saves through ListTrac; only certain IDX/MLS
+   * sources do. UI uses this to render "—" + tooltip instead of "0".
+   */
+  saves_trackable: boolean;
+}
+
+export interface PortalStrip {
+  canonical_mls: string;
+  /** True if ANY slot has data. */
+  has_data: boolean;
+  total_views: number;
+  total_saves: number;
+  /** Date range actually observed in window (may be narrower than asked). */
+  first_date: string | null;
+  last_date: string | null;
+  /** Number of days requested in the window. */
+  window_days: number;
+  slots: PortalStripSlot[];
+}
+
+/**
+ * Mapping of strip slot → set of `portal_name` values in
+ * listing_portal_metrics. Multiple sitenames roll up into the same slot
+ * (e.g., RE/MAX.com + REMAX.com → other; centric for CIH is the bundle).
+ *
+ * Slot order here is the order shown in the UI.
+ */
+const STRIP_PORTAL_MAP: Array<{
+  key: PortalStripKey;
+  display_name: string;
+  /** Member portals (matched against listing_portal_metrics.portal_name). */
+  members: string[];
+  /** Whether ListTrac historically reports saves for any of these portals. */
+  saves_trackable: boolean;
+}> = [
+  {
+    key: "zillow",
+    display_name: "Zillow",
+    members: ["Zillow.com", "Zillow", "zillow.com"],
+    saves_trackable: false,
+  },
+  {
+    key: "realtor",
+    display_name: "Realtor.com",
+    members: ["Realtor.com", "realtor.com"],
+    saves_trackable: false,
+  },
+  {
+    key: "trulia",
+    display_name: "Trulia",
+    members: ["Trulia", "trulia.com"],
+    saves_trackable: false,
+  },
+  {
+    key: "redfin",
+    display_name: "Redfin",
+    members: ["Redfin", "redfin.com"],
+    saves_trackable: false,
+  },
+  {
+    key: "cih",
+    display_name: "CIH brand network",
+    // CIH membership is data-driven via portal_bundles, but for the strip
+    // we duplicate the allowlist inline to keep this a single DB round-trip.
+    // Stays in sync with the seed in 20260526_001 — update both if the
+    // bundle changes.
+    members: [
+      "century21.com",
+      "century21global.com",
+      "Coldwell Banker",
+      "coldwellbanker.com",
+      "coldwellbankerhomes.com",
+      "CBCworldwide.com",
+      "sothebysrealty.com",
+      "sir.com",
+      "BHGRE.com",
+      "bhgre.com",
+      "Corcoran.com",
+      "corcoran.com",
+      "era.com",
+      "ERA.com",
+      "compass.com",
+      "Compass",
+      "NRT",
+    ],
+    saves_trackable: true,
+  },
+];
+
+export interface PortalStripWindow {
+  /** Trailing N days from now. Mutually exclusive with `since`. */
+  trailing_days?: number;
+  /**
+   * ISO date string. Window is [since, today]. Overrides trailing_days.
+   * Used by Owner Story + Main Property Card (since-listing).
+   */
+  since?: string | null;
+}
+
+/**
+ * Fetch the 5-slot portal strip for one listing. Always returns all 5
+ * slots; zero-data slots render empty.
+ */
+export async function fetchPortalStrip(
+  mlsNumber: string,
+  sourceMls: "cmc" | "sjsr",
+  window: PortalStripWindow = {},
+): Promise<PortalStrip> {
+  const supabase = getUntypedClient();
+  const canonical = await resolveCanonicalMls(mlsNumber, sourceMls);
+
+  const now = new Date();
+  let startIso: string;
+  let trailingDays: number;
+  if (window.since) {
+    startIso = window.since.slice(0, 10);
+    const startDate = new Date(window.since);
+    trailingDays = Math.max(
+      1,
+      Math.round((now.getTime() - startDate.getTime()) / 86_400_000),
+    );
+  } else {
+    const trailing = window.trailing_days ?? 30;
+    const startDate = new Date();
+    startDate.setUTCDate(startDate.getUTCDate() - trailing);
+    startIso = toIso(startDate);
+    trailingDays = trailing;
+  }
+  const endIso = toIso(now);
+
+  const { data: rowsRaw, error } = await supabase
+    .from("v_listing_portal_metrics_unified")
+    .select("portal_name, metric_date, views, favorites")
+    .eq("mls_number", canonical)
+    .gte("metric_date", startIso)
+    .lte("metric_date", endIso);
+
+  if (error) {
+    throw new Error(`portal strip read failed: ${error.message}`);
+  }
+
+  type StripRow = {
+    portal_name: string;
+    metric_date: string;
+    views: number | null;
+    favorites: number | null;
+  };
+  const rows = (rowsRaw ?? []) as StripRow[];
+
+  // Membership lookup
+  const memberToKey = new Map<string, PortalStripKey>();
+  for (const def of STRIP_PORTAL_MAP) {
+    for (const m of def.members) memberToKey.set(m, def.key);
+  }
+
+  // Sum per slot
+  const sums = new Map<PortalStripKey, { views: number; saves: number }>();
+  let totalViews = 0;
+  let totalSaves = 0;
+  let minDate: string | null = null;
+  let maxDate: string | null = null;
+
+  for (const r of rows) {
+    const key = memberToKey.get(r.portal_name);
+    if (!key) continue;
+    const v = Number(r.views) || 0;
+    const s = Number(r.favorites) || 0;
+    let entry = sums.get(key);
+    if (!entry) {
+      entry = { views: 0, saves: 0 };
+      sums.set(key, entry);
+    }
+    entry.views += v;
+    entry.saves += s;
+    totalViews += v;
+    totalSaves += s;
+    if (!minDate || r.metric_date < minDate) minDate = r.metric_date;
+    if (!maxDate || r.metric_date > maxDate) maxDate = r.metric_date;
+  }
+
+  const slots: PortalStripSlot[] = STRIP_PORTAL_MAP.map((def) => {
+    const got = sums.get(def.key) ?? { views: 0, saves: 0 };
+    return {
+      key: def.key,
+      display_name: def.display_name,
+      views: got.views,
+      saves: def.saves_trackable ? got.saves : null,
+      has_data: got.views > 0 || got.saves > 0,
+      saves_trackable: def.saves_trackable,
+    };
+  });
+
+  return {
+    canonical_mls: canonical,
+    has_data: totalViews > 0 || totalSaves > 0,
+    total_views: totalViews,
+    total_saves: totalSaves,
+    first_date: minDate,
+    last_date: maxDate,
+    window_days: trailingDays,
+    slots,
+  };
+}
+
+/**
+ * Convenience: fetch portal strips for many listings in one round-trip
+ * (used by /properties list view to avoid N+1).
+ */
+export async function fetchPortalStripsForListings(
+  listings: Array<{ mls_number: string; source_mls: "cmc" | "sjsr"; listing_date?: string | null }>,
+): Promise<Map<string, PortalStrip>> {
+  const supabase = getUntypedClient();
+  if (listings.length === 0) return new Map();
+
+  // Resolve canonical MLS for each input
+  // Pull canonical map in one query
+  const { data: canonRaw } = await supabase
+    .from("v_listing_canonical_mls")
+    .select("mls_number, source_mls, canonical_mls")
+    .in(
+      "mls_number",
+      listings.map((l) => l.mls_number),
+    );
+  type CanonRow = { mls_number: string; source_mls: string; canonical_mls: string };
+  const canonRows = (canonRaw ?? []) as CanonRow[];
+  const canonMap = new Map<string, string>();
+  for (const c of canonRows) {
+    canonMap.set(`${c.source_mls}|${c.mls_number}`, c.canonical_mls);
+  }
+
+  // Build input → canonical lookup; default to own MLS#
+  const inputs = listings.map((l) => {
+    const canonical =
+      canonMap.get(`${l.source_mls}|${l.mls_number}`) ?? l.mls_number;
+    return {
+      input_key: `${l.source_mls}|${l.mls_number}`,
+      mls_number: l.mls_number,
+      source_mls: l.source_mls,
+      listing_date: l.listing_date ?? null,
+      canonical,
+    };
+  });
+
+  const canonSet = Array.from(new Set(inputs.map((i) => i.canonical)));
+
+  // Default window: 1-year cap for performance (sellers rarely listed >1yr)
+  const start = new Date();
+  start.setUTCDate(start.getUTCDate() - 365);
+  const startIso = toIso(start);
+  const endIso = toIso(new Date());
+
+  const { data: rowsRaw } = await supabase
+    .from("v_listing_portal_metrics_unified")
+    .select("mls_number, portal_name, metric_date, views, favorites")
+    .in("mls_number", canonSet)
+    .gte("metric_date", startIso)
+    .lte("metric_date", endIso);
+
+  type BatchRow = {
+    mls_number: string;
+    portal_name: string;
+    metric_date: string;
+    views: number | null;
+    favorites: number | null;
+  };
+  const rows = (rowsRaw ?? []) as BatchRow[];
+
+  const memberToKey = new Map<string, PortalStripKey>();
+  for (const def of STRIP_PORTAL_MAP) {
+    for (const m of def.members) memberToKey.set(m, def.key);
+  }
+
+  // Bucket rows by canonical MLS#
+  type Bucket = {
+    rows: BatchRow[];
+    minDate: string | null;
+    maxDate: string | null;
+  };
+  const byCanonical = new Map<string, Bucket>();
+  for (const r of rows) {
+    let b = byCanonical.get(r.mls_number);
+    if (!b) {
+      b = { rows: [], minDate: null, maxDate: null };
+      byCanonical.set(r.mls_number, b);
+    }
+    b.rows.push(r);
+    if (!b.minDate || r.metric_date < b.minDate) b.minDate = r.metric_date;
+    if (!b.maxDate || r.metric_date > b.maxDate) b.maxDate = r.metric_date;
+  }
+
+  const result = new Map<string, PortalStrip>();
+  for (const inp of inputs) {
+    // Effective window: listing_date (if present) → today, else 365.
+    const windowStart = inp.listing_date
+      ? new Date(inp.listing_date)
+      : new Date(startIso);
+    const windowStartIso = toIso(windowStart);
+
+    const bucket = byCanonical.get(inp.canonical);
+    const filtered = (bucket?.rows ?? []).filter(
+      (r) => r.metric_date >= windowStartIso,
+    );
+
+    const sums = new Map<PortalStripKey, { views: number; saves: number }>();
+    let totalViews = 0;
+    let totalSaves = 0;
+    let minDate: string | null = null;
+    let maxDate: string | null = null;
+    for (const r of filtered) {
+      const key = memberToKey.get(r.portal_name);
+      if (!key) continue;
+      const v = Number(r.views) || 0;
+      const s = Number(r.favorites) || 0;
+      let entry = sums.get(key);
+      if (!entry) {
+        entry = { views: 0, saves: 0 };
+        sums.set(key, entry);
+      }
+      entry.views += v;
+      entry.saves += s;
+      totalViews += v;
+      totalSaves += s;
+      if (!minDate || r.metric_date < minDate) minDate = r.metric_date;
+      if (!maxDate || r.metric_date > maxDate) maxDate = r.metric_date;
+    }
+
+    const slots: PortalStripSlot[] = STRIP_PORTAL_MAP.map((def) => {
+      const got = sums.get(def.key) ?? { views: 0, saves: 0 };
+      return {
+        key: def.key,
+        display_name: def.display_name,
+        views: got.views,
+        saves: def.saves_trackable ? got.saves : null,
+        has_data: got.views > 0 || got.saves > 0,
+        saves_trackable: def.saves_trackable,
+      };
+    });
+
+    const trailingDays = Math.max(
+      1,
+      Math.round((Date.now() - windowStart.getTime()) / 86_400_000),
+    );
+
+    result.set(inp.input_key, {
+      canonical_mls: inp.canonical,
+      has_data: totalViews > 0 || totalSaves > 0,
+      total_views: totalViews,
+      total_saves: totalSaves,
+      first_date: minDate,
+      last_date: maxDate,
+      window_days: trailingDays,
+      slots,
+    });
+  }
+
+  return result;
+}
