@@ -108,15 +108,15 @@ export default function AgentPanel(props: AgentPanelProps): JSX.Element {
   const syncFailed: boolean = props.syncStatus?.lastSyncError != null;
 
   return (
-    <aside className="flex h-full min-h-0 w-72 flex-col border-l border-neutral-200 bg-white">
-      <header className="border-b border-neutral-200 px-4 py-3">
+    <aside className="flex h-full min-h-0 w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]">
+      <header className="border-b border-[var(--studio-border)] px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
               Agents
             </h2>
             {!props.isLoading ? (
-              <span className="text-xs text-neutral-400">({filtered.length})</span>
+              <span className="text-xs text-[var(--studio-text-faint)]">({filtered.length})</span>
             ) : null}
           </div>
           {props.onSync ? (
@@ -175,7 +175,7 @@ function OfficeChipRow(props: OfficeChipRowProps): JSX.Element {
   // overengineered for 8 offices. Plain flex-wrap with gap-1.5 lets all
   // chips be reachable on first paint at the cost of a 2nd row when needed.
   return (
-    <div className="border-b border-neutral-200 px-3 py-2">
+    <div className="border-b border-[var(--studio-border)] px-3 py-2">
       <div className="flex flex-wrap gap-1.5">
         <Chip
           label="All offices"
@@ -209,7 +209,7 @@ function Chip(props: ChipProps): JSX.Element {
     "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500";
   const stateClass = props.isActive
     ? "bg-gold-500 text-white"
-    : "border border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50";
+    : "border border-[var(--studio-border)] bg-transparent text-[var(--studio-text-muted)] hover:border-gold-400 hover:text-white";
   return (
     <button
       type="button"
@@ -240,11 +240,11 @@ function AgentThumb(props: AgentThumbProps): JSX.Element {
     <button
       type="button"
       onClick={() => props.onAssetPicked(props.asset)}
-      className="group flex flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+      className="group flex flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-[var(--studio-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
       aria-label={`Insert headshot of ${props.asset.label}`}
     >
       <div
-        className="overflow-hidden rounded-full border border-neutral-200 bg-neutral-100 transition-colors group-hover:border-gold-500"
+        className="overflow-hidden rounded-full border border-[var(--studio-border)] bg-neutral-100 transition-colors group-hover:border-gold-500"
         style={{ width: TILE_PX, height: TILE_PX }}
       >
         <img
@@ -255,7 +255,7 @@ function AgentThumb(props: AgentThumbProps): JSX.Element {
           className="h-full w-full object-cover"
         />
       </div>
-      <span className="line-clamp-1 w-full truncate text-center text-[10px] text-neutral-600">
+      <span className="line-clamp-1 w-full truncate text-center text-[10px] text-[var(--studio-text-muted)]">
         {props.asset.label}
       </span>
     </button>
@@ -278,10 +278,10 @@ function SkeletonGrid(): JSX.Element {
           className="flex flex-col items-center gap-1 rounded-md p-1"
         >
           <div
-            className="animate-pulse rounded-full bg-neutral-200"
+            className="animate-pulse rounded-full bg-[var(--studio-hover)]"
             style={{ width: TILE_PX, height: TILE_PX }}
           />
-          <div className="h-2 w-14 animate-pulse rounded bg-neutral-200" />
+          <div className="h-2 w-14 animate-pulse rounded bg-[var(--studio-hover)]" />
         </div>
       ))}
     </div>
@@ -293,14 +293,14 @@ function EmptyState({ officeName }: { officeName: string }): JSX.Element {
   // so the message can point Larissa at the exact gap ("no headshots for
   // Mainland yet") rather than a generic "nothing here".
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gold-500/50 bg-gold-50/30 px-3 py-8 text-center">
-      <div className="mb-2 text-gold-600">
+    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gold-500/30 bg-gold-500/5 px-3 py-8 text-center">
+      <div className="mb-2 text-gold-400">
         <PersonPlaceholderIcon />
       </div>
-      <p className="text-xs font-medium text-neutral-700">
+      <p className="text-xs font-medium text-white">
         No headshots for {officeName} yet.
       </p>
-      <p className="mt-1 text-[11px] leading-snug text-neutral-500">
+      <p className="mt-1 text-[11px] leading-snug text-[var(--studio-text-muted)]">
         Admins can sync from Google Drive.
       </p>
     </div>
@@ -361,8 +361,8 @@ function SyncButton({ onSync, highlight = false }: SyncButtonProps): JSX.Element
   }
 
   const buttonClass = highlight
-    ? "inline-flex items-center justify-center rounded-md border border-rose-300 bg-rose-50 px-1.5 py-1 text-rose-700 transition-colors hover:bg-rose-100 hover:text-rose-800 disabled:opacity-60 disabled:cursor-not-allowed"
-    : "inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800 disabled:opacity-60 disabled:cursor-not-allowed";
+    ? "inline-flex items-center justify-center rounded-md border border-rose-500/40 bg-rose-950/40 px-1.5 py-1 text-rose-200 transition-colors hover:bg-rose-900/40 hover:text-rose-100 disabled:opacity-60 disabled:cursor-not-allowed"
+    : "inline-flex items-center justify-center rounded-md border border-[var(--studio-border)] bg-transparent px-1.5 py-1 text-[var(--studio-text-muted)] transition-colors hover:border-gold-400 hover:text-gold-300 disabled:opacity-60 disabled:cursor-not-allowed";
 
   return (
     <div className="relative">

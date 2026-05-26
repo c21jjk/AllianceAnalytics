@@ -227,9 +227,10 @@ export default function CanvasEditorOverlay(
       <div
         role="dialog"
         aria-modal="true"
+        data-theme="dark"
         className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/80"
       >
-        <div className="rounded-xl border border-neutral-200 bg-white px-6 py-4 text-sm text-neutral-700 shadow-elevated">
+        <div className="rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-6 py-4 text-sm text-white shadow-elevated">
           Loading editor…
         </div>
       </div>
@@ -251,7 +252,8 @@ export default function CanvasEditorOverlay(
           props.onClose();
         }
       }}
-      className="fixed inset-0 z-50 flex items-stretch justify-stretch bg-neutral-900/80 backdrop-blur-sm animate-fade-in-up"
+      data-theme="dark"
+      className="fixed inset-0 z-50 flex items-stretch justify-stretch bg-neutral-900/80 backdrop-blur-sm animate-fade-in-up text-[var(--studio-text)]"
     >
       {/* why: clicking inside this inner div should NEVER close — stopPropagation
           on mousedown prevents the bubble from reaching the backdrop handler. */}
@@ -313,7 +315,7 @@ export default function CanvasEditorOverlay(
           {badgeMenuOpen ? (
             <div
               role="menu"
-              className="pointer-events-auto absolute left-0 top-full mt-1 min-w-[220px] rounded-lg border border-neutral-200 bg-white py-1 shadow-elevated"
+              className="pointer-events-auto absolute left-0 top-full mt-1 min-w-[220px] rounded-lg border border-[var(--studio-border)] bg-[var(--studio-popover)] py-1 shadow-xl shadow-black/60"
             >
               <button
                 type="button"
@@ -322,7 +324,7 @@ export default function CanvasEditorOverlay(
                   setBadgeMenuOpen(false);
                   setRevertConfirmOpen(true);
                 }}
-                className="focus-ring block w-full px-3 py-2 text-left text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                className="focus-ring-dark block w-full px-3 py-2 text-left text-xs font-medium text-white hover:bg-[var(--studio-hover)]"
               >
                 Revert to template default
               </button>
@@ -344,11 +346,11 @@ export default function CanvasEditorOverlay(
             }
           }}
         >
-          <div className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 shadow-elevated">
-            <h2 className="text-base font-semibold text-neutral-900">
+          <div className="w-full max-w-md rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] p-6 shadow-2xl shadow-black/60 text-white">
+            <h2 className="text-base font-semibold text-white">
               Revert to template default?
             </h2>
-            <p className="mt-2 text-sm text-neutral-600">
+            <p className="mt-2 text-sm text-[var(--studio-text-muted)]">
               This drops the Claude design and reloads the factory template the
               next time you open Studio for this post. The current AI-designed
               image stays in your library until you save a fresh render.
@@ -358,7 +360,7 @@ export default function CanvasEditorOverlay(
                 type="button"
                 onClick={() => setRevertConfirmOpen(false)}
                 disabled={reverting}
-                className="focus-ring rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                className="focus-ring-dark rounded-lg border border-[var(--studio-border)] bg-transparent px-4 py-2 text-sm font-medium text-white hover:bg-[var(--studio-hover)] disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -378,7 +380,7 @@ export default function CanvasEditorOverlay(
                   }
                 }}
                 disabled={reverting}
-                className="focus-ring rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-white hover:bg-gold-600 disabled:opacity-50"
+                className="focus-ring-dark rounded-lg bg-gold-500 px-4 py-2 text-sm font-semibold text-white hover:bg-gold-600 disabled:opacity-50"
               >
                 {reverting ? "Reverting…" : "Revert"}
               </button>

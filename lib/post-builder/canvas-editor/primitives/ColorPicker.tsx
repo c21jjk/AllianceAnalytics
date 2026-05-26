@@ -332,7 +332,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
   return (
     <div className="relative">
       {label ? (
-        <label className="mb-1 block text-xs font-medium text-neutral-600">
+        <label className="mb-1 block text-xs font-medium text-white">
           {label}
         </label>
       ) : null}
@@ -341,7 +341,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
         type="button"
         onClick={() => !disabled && setOpen((o) => !o)}
         disabled={disabled}
-        className={`${triggerSize} flex-shrink-0 rounded-md border border-neutral-300 shadow-card transition-colors hover:border-neutral-400 disabled:cursor-not-allowed disabled:opacity-50`}
+        className={`${triggerSize} flex-shrink-0 rounded-md border border-[var(--studio-border)] shadow-lg shadow-black/40 transition-colors hover:border-white/30 disabled:cursor-not-allowed disabled:opacity-50`}
         style={{
           // why: render checkerboard pattern when transparent so the user
           // can distinguish "no fill" from "white fill" at a glance.
@@ -363,7 +363,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                 width: 340,
                 maxHeight: "min(640px, calc(100vh - 80px))",
               }}
-              className="z-[100] flex flex-col rounded-xl border border-neutral-200 bg-white shadow-elevated animate-fade-in-up"
+              className="z-[100] flex flex-col rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] shadow-2xl shadow-black/60 animate-fade-in-up text-white"
               role="dialog"
               aria-label="Color picker"
             >
@@ -372,8 +372,8 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                   most powerful affordance (type anything) is at the top
                   where the eye lands first. Hex / 3-digit hex / "transparent"
                   all accepted. */}
-              <div className="border-b border-neutral-100 p-3">
-                <div className="flex items-center gap-2 rounded-md border border-neutral-300 bg-white px-2 py-1.5 focus-within:border-gold-500 focus-within:ring-1 focus-within:ring-gold-500/40">
+              <div className="border-b border-[var(--studio-border)] p-3">
+                <div className="flex items-center gap-2 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 focus-within:border-gold-500 focus-within:ring-1 focus-within:ring-gold-500/40">
                   <svg
                     width="14"
                     height="14"
@@ -381,7 +381,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="1.5"
-                    className="flex-shrink-0 text-neutral-400"
+                    className="flex-shrink-0 text-[var(--studio-text-muted)]"
                     aria-hidden="true"
                   >
                     <circle cx="7" cy="7" r="4.5" />
@@ -403,7 +403,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                         ? '"transparent" or "#C9A84C"'
                         : '"#C9A84C"'
                     }
-                    className="flex-1 bg-transparent text-sm font-mono uppercase text-neutral-800 placeholder:text-neutral-400 placeholder:font-sans placeholder:normal-case focus:outline-none"
+                    className="flex-1 bg-transparent text-sm font-mono uppercase text-white placeholder:text-[var(--studio-input-placeholder)] placeholder:font-sans placeholder:normal-case focus:outline-none"
                     maxLength={12}
                     spellCheck={false}
                   />
@@ -427,7 +427,7 @@ export default function ColorPicker(props: ColorPickerProps): JSX.Element {
                     and the eyedropper button (Chrome 95+) samples on-screen
                     pixels. */}
                 <div className="mb-3">
-                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
                     Custom
                   </div>
                   <HsvPicker
@@ -523,7 +523,7 @@ interface SwatchRowProps {
 function SwatchRow(props: SwatchRowProps): JSX.Element {
   return (
     <div className="mb-2">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
         {props.title}
       </div>
       <div className="grid grid-cols-9 gap-1">
@@ -538,7 +538,7 @@ function SwatchRow(props: SwatchRowProps): JSX.Element {
               className={`h-5 w-5 rounded border transition-transform hover:scale-110 ${
                 isSelected
                   ? "border-gold-500 ring-2 ring-gold-500/40"
-                  : "border-neutral-300"
+                  : "border-[var(--studio-border)]"
               }`}
               style={{
                 background: isTransparent

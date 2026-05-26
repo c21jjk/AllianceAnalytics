@@ -689,15 +689,15 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
                   aria-label={`Brush color ${c}`}
                   className={`h-6 w-6 rounded-full border transition-transform hover:scale-110 ${
                     brushState.color.toLowerCase() === c.toLowerCase()
-                      ? "border-gold-500 ring-2 ring-gold-300"
-                      : "border-neutral-300"
+                      ? "border-gold-500 ring-2 ring-gold-400/40"
+                      : "border-[var(--studio-border)]"
                   }`}
                   style={{ background: c }}
                 />
               ))}
               {/* Native color picker for custom hex */}
               <label
-                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-dashed border-neutral-400 text-[10px] text-neutral-500 hover:border-gold-500 hover:text-gold-600"
+                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-dashed border-[var(--studio-text-muted)] text-[10px] text-[var(--studio-text-muted)] hover:border-gold-400 hover:text-gold-300"
                 title="Custom color"
               >
                 +
@@ -721,7 +721,7 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
           <div>
             <div className="flex items-center justify-between">
               <Label>Size</Label>
-              <span className="text-[11px] tabular-nums text-neutral-500">
+              <span className="text-[11px] tabular-nums text-[var(--studio-text-muted)]">
                 {brushState.width}px
               </span>
             </div>
@@ -779,7 +779,7 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
             icon={<SpeechBubbleGlyph />}
           />
         </div>
-        <p className="mt-2 text-[10px] leading-tight text-neutral-400">
+        <p className="mt-2 text-[10px] leading-tight text-[var(--studio-text-muted)]">
           Square, circle, and straight line live in the top toolbar.
         </p>
       </Section>
@@ -805,7 +805,7 @@ export default function ToolsPanel(props: ToolsPanelProps): JSX.Element {
         <button
           type="button"
           onClick={handleSpawnText}
-          className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-3 text-left text-sm font-semibold text-neutral-800 transition-colors hover:border-gold-500 hover:bg-gold-50 hover:text-gold-700"
+          className="w-full rounded-lg border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-3 py-3 text-left text-sm font-semibold text-white transition-colors hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
         >
           + Add a paragraph
         </button>
@@ -839,7 +839,7 @@ function Section(props: {
 }): JSX.Element {
   return (
     <section>
-      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
         {props.title}
       </h3>
       {props.children}
@@ -849,7 +849,7 @@ function Section(props: {
 
 function Label(props: { children: React.ReactNode }): JSX.Element {
   return (
-    <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+    <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--studio-text-muted)]">
       {props.children}
     </span>
   );
@@ -889,8 +889,8 @@ function BrushButton(props: {
       aria-pressed={props.active}
       className={`flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border transition-colors ${
         props.active
-          ? "border-gold-500 bg-gold-50 text-gold-700"
-          : "border-neutral-200 bg-white text-neutral-600 hover:border-gold-300 hover:bg-gold-50"
+          ? "border-gold-500 bg-[var(--studio-active)] text-gold-300"
+          : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
       }`}
     >
       <Icon />
@@ -915,7 +915,7 @@ function ShapeButton(props: {
         onClick={props.onClick}
         title={props.label}
         aria-label={props.label}
-        className="flex aspect-square w-full items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-gold-500 hover:bg-gold-50 hover:text-gold-700"
+        className="flex aspect-square w-full items-center justify-center rounded-lg border border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white transition-colors hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
       >
         {props.icon}
       </button>

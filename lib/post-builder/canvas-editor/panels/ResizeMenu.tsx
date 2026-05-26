@@ -137,7 +137,7 @@ export default function ResizeMenu(props: ResizeMenuProps): JSX.Element {
       <button
         type="button"
         onClick={() => setOpen((s) => !s)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800"
+        className="focus-ring-dark inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3 text-[13px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300"
         aria-haspopup="menu"
         aria-expanded={open}
         title="Make a version of this design at another aspect ratio"
@@ -151,13 +151,13 @@ export default function ResizeMenu(props: ResizeMenuProps): JSX.Element {
         <div
           role="menu"
           aria-label="Resize to format"
-          className="absolute right-0 z-40 mt-1.5 w-64 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-elevated"
+          className="absolute right-0 z-40 mt-1.5 w-64 overflow-hidden rounded-lg border border-[var(--studio-border)] bg-[var(--studio-popover)] shadow-2xl shadow-black/60"
         >
-          <div className="border-b border-neutral-100 px-3 py-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+          <div className="border-b border-[var(--studio-border)] px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
               Resize to
             </div>
-            <div className="mt-0.5 text-[11px] text-neutral-500">
+            <div className="mt-0.5 text-[11px] text-[var(--studio-text-muted)]">
               Creates a sibling post at the new aspect ratio. Your current
               version stays as is.
             </div>
@@ -179,7 +179,7 @@ export default function ResizeMenu(props: ResizeMenuProps): JSX.Element {
                     className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
                       disabled
                         ? "cursor-not-allowed opacity-50"
-                        : "hover:bg-gold-50/50"
+                        : "hover:bg-[var(--studio-hover)]"
                     }`}
                     title={
                       disabled
@@ -193,10 +193,10 @@ export default function ResizeMenu(props: ResizeMenuProps): JSX.Element {
                       height={meta.aspectStyle.height}
                     />
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-neutral-900">
+                      <div className="text-sm font-semibold text-white">
                         {meta.label}
                       </div>
-                      <div className="text-[11px] text-neutral-500">
+                      <div className="text-[11px] text-[var(--studio-text-muted)]">
                         {meta.platformHint}
                       </div>
                     </div>
@@ -267,7 +267,7 @@ function AspectGlyph(props: { width: number; height: number }): JSX.Element {
       aria-hidden="true"
     >
       <span
-        className="block rounded-sm border border-neutral-300 bg-neutral-100"
+        className="block rounded-sm border border-[var(--studio-border)] bg-[var(--studio-hover)]"
         style={{
           width: props.width,
           height: props.height,

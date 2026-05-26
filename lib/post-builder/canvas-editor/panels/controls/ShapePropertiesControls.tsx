@@ -205,7 +205,7 @@ export default function ShapePropertiesControls(
 
   if (!state) {
     return (
-      <div className="px-4 py-6 text-sm text-neutral-400">
+      <div className="px-4 py-6 text-sm text-[var(--studio-text-muted)]">
         Select a shape layer to edit its properties.
       </div>
     );
@@ -230,7 +230,7 @@ export default function ShapePropertiesControls(
               allowTransparent
               canvas={canvas}
             />
-            <span className="font-mono text-xs uppercase text-neutral-500">
+            <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
               {state.fill || "transparent"}
             </span>
           </div>
@@ -247,7 +247,7 @@ export default function ShapePropertiesControls(
             allowTransparent
             canvas={canvas}
           />
-          <span className="font-mono text-xs uppercase text-neutral-500">
+          <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
             {state.stroke || "transparent"}
           </span>
         </div>
@@ -263,7 +263,7 @@ export default function ShapePropertiesControls(
             max={50}
             onChange={handleStrokeWidthChange}
             onBlur={handleCommit}
-            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+            className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           />
           <input
             type="range"
@@ -289,7 +289,7 @@ export default function ShapePropertiesControls(
               max={200}
               onChange={handleCornerRadiusChange}
               onBlur={handleCommit}
-              className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+              className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
             />
             <input
               type="range"
@@ -315,7 +315,7 @@ export default function ShapePropertiesControls(
             max={100}
             onChange={handleOpacityChange}
             onBlur={handleCommit}
-            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+            className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           />
           <input
             type="range"
@@ -327,7 +327,7 @@ export default function ShapePropertiesControls(
             onTouchEnd={handleCommit}
             className="flex-1 accent-gold-500"
           />
-          <span className="w-8 text-right text-xs text-neutral-500">
+          <span className="w-8 text-right text-xs text-[var(--studio-text-muted)]">
             {Math.round(state.opacity * 100)}%
           </span>
         </div>
@@ -348,7 +348,7 @@ interface SectionProps {
 function Section(props: SectionProps): JSX.Element {
   return (
     <div>
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
         {props.title}
       </div>
       {props.children}

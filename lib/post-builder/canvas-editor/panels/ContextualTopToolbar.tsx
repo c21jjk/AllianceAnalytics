@@ -167,13 +167,13 @@ function ImageContextualControls(
   // Hide the whole toolbar if no actions are wired.
   if (!onEnterCropMode && !onActivateResize) return null;
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-white px-1 py-1 shadow-sm">
+    <div className="flex items-center gap-1 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-popover)] px-1 py-1 shadow-2xl shadow-black/60">
       {onActivateResize ? (
         <Tooltip label="Resize photo — drag handles to scale">
           <button
             type="button"
             onClick={onActivateResize}
-            className="focus-ring inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+            className="focus-ring-dark inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-white hover:bg-[var(--studio-hover)]"
           >
             <LMaximize2 size={14} />
             <span>Resize</span>
@@ -185,7 +185,7 @@ function ImageContextualControls(
           <button
             type="button"
             onClick={onEnterCropMode}
-            className="focus-ring inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+            className="focus-ring-dark inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-white hover:bg-[var(--studio-hover)]"
           >
             <LCrop size={14} />
             <span>Crop</span>
@@ -407,7 +407,7 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
   };
 
   return (
-    <div className="flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1.5 shadow-elevated animate-fade-in-up">
+    <div className="flex items-center gap-1 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
       {/* === 1. Font family === */}
       <div className="w-36">
         <FontPicker
@@ -419,7 +419,7 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
       <Divider />
 
       {/* === 2. Font size — Canva-style [−] value [+] stepper === */}
-      <div className="flex items-center gap-0.5 rounded-md border border-neutral-200 bg-white px-1">
+      <div className="flex items-center gap-0.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-1">
         <StepperButton label="Decrease font size" onClick={() => handleSizeStep(-1)}>
           −
         </StepperButton>
@@ -431,7 +431,7 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
           value={Math.round(state.fontSize)}
           onChange={(e) => handleFontSize(Number(e.target.value))}
           aria-label="Font size"
-          className="h-6 w-10 border-0 bg-transparent p-0 text-center text-[12px] font-medium text-neutral-800 focus:outline-none [&::-webkit-inner-spin-button]:hidden [&::-webkit-outer-spin-button]:hidden"
+          className="h-6 w-10 border-0 bg-transparent p-0 text-center text-[12px] font-medium text-white focus:outline-none [&::-webkit-inner-spin-button]:hidden [&::-webkit-outer-spin-button]:hidden"
         />
         <StepperButton label="Increase font size" onClick={() => handleSizeStep(+1)}>
           +
@@ -553,7 +553,7 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
                   handleEffectPicked(kind);
                   close();
                 }}
-                className="flex h-14 w-16 flex-col items-center justify-center gap-1 rounded-md border border-neutral-200 bg-white text-[10px] font-medium text-neutral-700 transition-colors hover:border-gold-500 hover:bg-gold-50 hover:text-gold-700"
+                className="flex h-14 w-16 flex-col items-center justify-center gap-1 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-[10px] font-medium text-white transition-colors hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300"
                 title={`Effect: ${kind}`}
               >
                 <EffectPreview kind={kind} />
@@ -588,7 +588,7 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
                   {glyph}
                 </PopoverIconButton>
               ))}
-              <span className="mx-1 h-4 w-px bg-neutral-200" />
+              <span className="mx-1 h-4 w-px bg-[var(--studio-border)]" />
               {(
                 [
                   ["top", <AlignTopGlyph key="t" />],
@@ -728,9 +728,9 @@ function ShapeContextualControls(
   };
 
   return (
-    <div className="flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 shadow-elevated animate-fade-in-up">
+    <div className="flex items-center gap-1.5 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2.5 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
       <div className="flex items-center gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
           Fill
         </span>
         <ColorPicker
@@ -745,9 +745,9 @@ function ShapeContextualControls(
           canvas={canvas}
         />
       </div>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <div className="flex items-center gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
           Stroke
         </span>
         <ColorPicker
@@ -762,9 +762,9 @@ function ShapeContextualControls(
           canvas={canvas}
         />
       </div>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <div className="flex items-center gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
           Width
         </span>
         <input
@@ -784,7 +784,7 @@ function ShapeContextualControls(
             onCanvasMutated?.();
           }}
           aria-label="Stroke width"
-          className="h-7 w-12 rounded-md border border-neutral-200 bg-white px-1.5 text-center text-[12px] font-medium text-neutral-800 focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-300"
+          className="h-7 w-12 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-1.5 text-center text-[12px] font-medium text-white focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-400/40"
         />
       </div>
     </div>
@@ -806,11 +806,11 @@ function MultiContextualControls(
   };
 
   return (
-    <div className="flex items-center gap-0.5 rounded-xl border border-neutral-200 bg-white px-2 py-1.5 shadow-elevated animate-fade-in-up">
-      <span className="ml-1 mr-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+    <div className="flex items-center gap-0.5 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
+      <span className="ml-1 mr-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
         {selectionCount} selected
       </span>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <IconBtn label="Align left" onClick={() => fire("left")}>
         <AlignLeftGlyph />
       </IconBtn>
@@ -820,7 +820,7 @@ function MultiContextualControls(
       <IconBtn label="Align right" onClick={() => fire("right")}>
         <AlignRightGlyph />
       </IconBtn>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <IconBtn label="Align top" onClick={() => fire("top")}>
         <AlignTopGlyph />
       </IconBtn>
@@ -830,7 +830,7 @@ function MultiContextualControls(
       <IconBtn label="Align bottom" onClick={() => fire("bottom")}>
         <AlignBottomGlyph />
       </IconBtn>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <IconBtn
         label={
           canDistribute
@@ -878,7 +878,7 @@ function ToggleIconButton(props: {
         className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
           props.active
             ? "bg-neutral-900 text-white"
-            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+            : "text-white hover:bg-[var(--studio-hover)]"
         }`}
       >
         {props.children}
@@ -901,7 +901,7 @@ function IconBtn(props: {
         disabled={props.disabled}
         aria-label={props.label}
         title={props.label}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-white transition-colors hover:bg-[var(--studio-hover)] disabled:cursor-not-allowed disabled:text-[var(--studio-text-faint)] disabled:hover:bg-transparent"
       >
         {props.children}
       </button>
@@ -1065,7 +1065,7 @@ function DistributeVerticalGlyph(): JSX.Element {
 // ---------------------------------------------------------------------------
 
 function Divider(): JSX.Element {
-  return <span className="mx-0.5 h-5 w-px bg-neutral-200" />;
+  return <span className="mx-0.5 h-5 w-px bg-[var(--studio-border)]" />;
 }
 
 function StepperButton(props: {
@@ -1080,7 +1080,7 @@ function StepperButton(props: {
         onClick={props.onClick}
         aria-label={props.label}
         title={props.label}
-        className="flex h-6 w-5 items-center justify-center rounded text-[14px] font-medium leading-none text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+        className="flex h-6 w-5 items-center justify-center rounded text-[14px] font-medium leading-none text-white transition-colors hover:bg-[var(--studio-hover)]"
       >
         {props.children}
       </button>
@@ -1137,7 +1137,7 @@ function Popover(props: {
           className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
             open
               ? "bg-neutral-900 text-white"
-              : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+              : "text-white hover:bg-[var(--studio-hover)]"
           }`}
         >
           {props.trigger}
@@ -1149,7 +1149,7 @@ function Popover(props: {
           // canvas — opening downward would put the panel ON the canvas
           // and obscure the user's selection. `top-full` would do that;
           // `bottom-full` opens up.
-          className="absolute right-0 top-full z-20 mt-1 rounded-lg border border-neutral-200 bg-white shadow-elevated"
+          className="absolute right-0 top-full z-20 mt-1 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-popover)] shadow-2xl shadow-black/60"
         >
           {props.children(() => setOpen(false))}
         </div>
@@ -1175,7 +1175,7 @@ function PopoverIconButton(props: {
         className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
           props.active
             ? "bg-neutral-900 text-white"
-            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+            : "text-white hover:bg-[var(--studio-hover)]"
         }`}
       >
         {props.children}
@@ -1195,10 +1195,10 @@ function SpacingSlider(props: {
   onCommit: () => void;
 }): JSX.Element {
   return (
-    <label className="block text-[11px] font-medium text-neutral-700">
+    <label className="block text-[11px] font-medium text-white">
       <div className="mb-0.5 flex items-center justify-between">
         <span>{props.label}</span>
-        <span className="tabular-nums text-neutral-500">
+        <span className="tabular-nums text-[var(--studio-text-muted)]">
           {props.format(props.value)}
         </span>
       </div>

@@ -258,7 +258,7 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
         type="button"
         onClick={() => !disabled && setOpen((o) => !o)}
         disabled={disabled}
-        className={`flex w-full items-center justify-between gap-2 rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-left text-sm transition-colors hover:border-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40 disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`flex w-full items-center justify-between gap-2 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-left text-sm transition-colors hover:border-white/20 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40 disabled:cursor-not-allowed disabled:opacity-50 ${
           open ? "border-gold-500 ring-1 ring-gold-500/40" : ""
         }`}
         aria-haspopup="listbox"
@@ -268,7 +268,7 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
         {/* why: render the active label in its own font family so the
             trigger itself is a font preview. Truncate long labels. */}
         <span
-          className="truncate text-neutral-800"
+          className="truncate text-white"
           style={{ fontFamily: value }}
         >
           {activeLabel}
@@ -282,7 +282,7 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
           strokeWidth="1.5"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="flex-shrink-0 text-neutral-400"
+          className="flex-shrink-0 text-[var(--studio-text-muted)]"
           aria-hidden="true"
         >
           <path d="M4 6l4 4 4-4" />
@@ -300,7 +300,7 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
                 width: popoverPos.width,
                 maxHeight: 400,
               }}
-              className="z-[100] flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-elevated animate-fade-in-up"
+              className="z-[100] flex flex-col overflow-hidden rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] shadow-2xl shadow-black/60 animate-fade-in-up text-white"
               role="listbox"
               aria-label="Font family options"
             >
@@ -308,9 +308,9 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
                 {grouped.map((group, gIdx) => (
                   <div
                     key={group.label}
-                    className={gIdx > 0 ? "mt-1 border-t border-neutral-100 pt-1" : ""}
+                    className={gIdx > 0 ? "mt-1 border-t border-[var(--studio-border)] pt-1" : ""}
                   >
-                    <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                    <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
                       {group.label}
                     </div>
                     {group.options.map((opt) => {
@@ -326,7 +326,7 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
                         <div
                           key={opt.value}
                           className={`flex w-full items-center gap-1 transition-colors ${
-                            isActive ? "bg-gold-50" : "hover:bg-neutral-50"
+                            isActive ? "bg-[var(--studio-active)]" : "hover:bg-[var(--studio-hover)]"
                           }`}
                         >
                           <button
@@ -335,7 +335,7 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
                             aria-selected={isActive}
                             onClick={() => handlePick(opt.value)}
                             className={`flex flex-1 items-center justify-between gap-2 px-3 py-2 text-left ${
-                              isActive ? "text-gold-900" : "text-neutral-800"
+                              isActive ? "text-gold-300" : "text-white"
                             }`}
                           >
                             {/* why: render the LABEL in its own font and at
@@ -388,7 +388,7 @@ export default function FontPicker(props: FontPickerProps): JSX.Element {
                             className={`flex-shrink-0 rounded p-2 transition-colors ${
                               isFavorited
                                 ? "text-gold-600 hover:text-gold-700"
-                                : "text-neutral-300 hover:text-neutral-500"
+                                : "text-[var(--studio-text-faint)] hover:text-white"
                             }`}
                           >
                             {/* Filled star when favorited, outline when not.

@@ -541,7 +541,7 @@ export default function ImagePropertiesControls(
 
   if (!state) {
     return (
-      <div className="px-4 py-6 text-sm text-neutral-400">
+      <div className="px-4 py-6 text-sm text-[var(--studio-text-muted)]">
         Select an image layer to edit its properties.
       </div>
     );
@@ -557,11 +557,11 @@ export default function ImagePropertiesControls(
       {/* ===== Swap photo ===== */}
       <Section title="Swap Photo">
         {!hasListing ? (
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-[var(--studio-text-muted)]">
             No listing attached — photo swap unavailable.
           </p>
         ) : photoOptions.length === 0 ? (
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-[var(--studio-text-muted)]">
             This listing has no photos.
           </p>
         ) : (
@@ -579,7 +579,7 @@ export default function ImagePropertiesControls(
                   className={`group relative aspect-square overflow-hidden rounded-md border transition-all disabled:opacity-50 ${
                     isCurrent
                       ? "border-gold-500 ring-2 ring-gold-500/40"
-                      : "border-neutral-300 hover:border-neutral-400"
+                      : "border-[var(--studio-border)] hover:border-white/30"
                   }`}
                 >
                   {/*
@@ -605,7 +605,7 @@ export default function ImagePropertiesControls(
           </div>
         )}
         {isSwapping ? (
-          <p className="mt-2 text-[10px] text-neutral-400">
+          <p className="mt-2 text-[10px] text-[var(--studio-text-muted)]">
             Swapping photo…
           </p>
         ) : null}
@@ -623,8 +623,8 @@ export default function ImagePropertiesControls(
                 onClick={() => handleFitChange(opt.value)}
                 className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
                   isActive
-                    ? "border-gold-500 bg-gold-50 text-gold-600"
-                    : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                    ? "border-gold-500 bg-[var(--studio-active)] text-gold-300"
+                    : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)]"
                 }`}
               >
                 {opt.label}
@@ -658,8 +658,8 @@ export default function ImagePropertiesControls(
                 aria-pressed={isActive}
                 className={`flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
                   isActive
-                    ? "border-gold-500 bg-gold-50 text-gold-700"
-                    : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+                    ? "border-gold-500 bg-[var(--studio-active)] text-gold-300"
+                    : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)]"
                 }`}
               >
                 {opt.value === "circle" ? <CircleGlyph /> : <RectGlyph />}
@@ -680,7 +680,7 @@ export default function ImagePropertiesControls(
             max={200}
             onChange={handleCornerRadiusChange}
             onBlur={handleCornerRadiusCommit}
-            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+            className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           />
           <input
             type="range"
@@ -705,7 +705,7 @@ export default function ImagePropertiesControls(
             max={100}
             onChange={handleOpacityChange}
             onBlur={handleOpacityCommit}
-            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+            className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           />
           <input
             type="range"
@@ -717,7 +717,7 @@ export default function ImagePropertiesControls(
             onTouchEnd={handleOpacityCommit}
             className="flex-1 accent-gold-500"
           />
-          <span className="w-8 text-right text-xs text-neutral-500">
+          <span className="w-8 text-right text-xs text-[var(--studio-text-muted)]">
             {Math.round(state.opacity * 100)}%
           </span>
         </div>
@@ -738,7 +738,7 @@ interface SectionProps {
 function Section(props: SectionProps): JSX.Element {
   return (
     <div>
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
         {props.title}
       </div>
       {props.children}

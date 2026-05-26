@@ -3020,7 +3020,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const effectiveSaving = isSaving || isLocalSaving;
 
   return (
-    <div className="flex h-full w-full flex-col bg-neutral-50">
+    <div className="flex h-full w-full flex-col bg-[var(--studio-bg)] text-[var(--studio-text)]">
       {/* ----- Header — Canva-style 48px translucent compact bar -----
           why: drop from the prior ~56-72px chunky header to a tight 48px
           bar that feels closer to the Canva editor chrome. Title +
@@ -3028,25 +3028,25 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           right cluster condenses to Resize / Save / Close with tighter
           gaps. Translucent (bg-white/95 + backdrop-blur) gives a hint of
           depth without competing with the canvas as the focal point. */}
-      <header className="relative flex h-12 shrink-0 items-center justify-between border-b border-neutral-200 bg-white/95 px-4 backdrop-blur-sm">
+      <header className="relative flex h-12 shrink-0 items-center justify-between border-b border-[var(--studio-border)] bg-[var(--studio-bg)] px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {/* why: small file-icon glyph anchors the title block — same visual
               affordance Canva uses at the leftmost edge of its top bar. */}
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-neutral-500">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--studio-hover)] text-[var(--studio-text-muted)]">
             <LFileText size={14} />
           </span>
-          <span className="truncate text-[13px] font-semibold text-neutral-900">
+          <span className="truncate text-[13px] font-semibold text-white">
             {template.name}
           </span>
           {/* why: 4px dot separator (Canva's pattern). The dot is neutral-300
               so it reads as a passive separator, not a brand accent. */}
           <span
             aria-hidden="true"
-            className="inline-block h-1 w-1 shrink-0 rounded-full bg-neutral-300"
+            className="inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--studio-text-faint)]"
           />
-          <span className="truncate text-[11px] text-neutral-500">
+          <span className="truncate text-[11px] text-[var(--studio-text-muted)]">
             {listing.addressLine1 ?? listing.mlsNumber}
-            <span className="mx-1.5 text-neutral-300">·</span>
+            <span className="mx-1.5 text-[var(--studio-text-faint)]">·</span>
             {template.width}×{template.height}
           </span>
           {/* 2026-05-25 — Undo / Redo moved here from the canvas footer to
@@ -3054,14 +3054,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               both sides isolates the pair from the title cluster and the
               spacer that follows. Cmd+Z / Cmd+Shift+Z shortcuts remain
               wired in keyboard-shortcuts.ts → handlePhase2KeyDown. */}
-          <span aria-hidden="true" className="h-5 w-px bg-neutral-200 mx-1" />
+          <span aria-hidden="true" className="h-5 w-px bg-[var(--studio-border)] mx-1" />
           <button
             type="button"
             onClick={() => history.undo()}
             disabled={!history.canUndo}
             aria-label="Undo"
             title="Undo (Cmd+Z)"
-            className="focus-ring flex h-8 w-8 items-center justify-center rounded-md text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+            className="focus-ring-dark flex h-8 w-8 items-center justify-center rounded-md text-white transition-colors hover:bg-[var(--studio-hover)] disabled:cursor-not-allowed disabled:text-[var(--studio-text-faint)] disabled:hover:bg-transparent"
           >
             <LUndo2 size={16} />
           </button>
@@ -3071,11 +3071,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             disabled={!history.canRedo}
             aria-label="Redo"
             title="Redo (Cmd+Shift+Z)"
-            className="focus-ring flex h-8 w-8 items-center justify-center rounded-md text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:hover:bg-transparent"
+            className="focus-ring-dark flex h-8 w-8 items-center justify-center rounded-md text-white transition-colors hover:bg-[var(--studio-hover)] disabled:cursor-not-allowed disabled:text-[var(--studio-text-faint)] disabled:hover:bg-transparent"
           >
             <LRedo2 size={16} />
           </button>
-          <span aria-hidden="true" className="h-5 w-px bg-neutral-200 mx-1" />
+          <span aria-hidden="true" className="h-5 w-px bg-[var(--studio-border)] mx-1" />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {/* Phase 4 — Smart Resize. Sits left of Save so the reading order
@@ -3105,7 +3105,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               disabled={effectiveSaving}
               aria-label="Make a Reel from this listing"
               title="Open Reel Studio for this listing"
-              className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="focus-ring-dark inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3 text-[13px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <LFilm size={14} />
               + Reel
@@ -3132,7 +3132,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   ? `Update “${customTemplate.name}”`
                   : "Save as Template"
               }
-              className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-[13px] font-medium text-neutral-800 shadow-sm transition-colors hover:border-gold-400 hover:bg-gold-50 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="focus-ring-dark inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3 text-[13px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <LBookmarkPlus size={14} />
               {customTemplate ? "Update template" : "Save as Template"}
@@ -3142,7 +3142,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             type="button"
             onClick={handleExport}
             disabled={effectiveSaving || dimensionWarning !== null}
-            className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md bg-gold-500 px-3 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
+            className="focus-ring-dark inline-flex h-8 items-center gap-1.5 rounded-md bg-gold-500 px-3 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {effectiveSaving ? (
               <span className="flex items-center gap-1.5">
@@ -3162,7 +3162,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               onClick={onClose}
               aria-label="Close editor"
               title="Close editor"
-              className="focus-ring ml-0.5 flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              className="focus-ring-dark ml-0.5 flex h-8 w-8 items-center justify-center rounded-md text-white transition-colors hover:bg-[var(--studio-hover)]"
             >
               <LX size={16} />
             </button>
@@ -3173,7 +3173,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             area. Pure decorative span absolutely positioned at the bottom. */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-b from-transparent to-black/[0.04]"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[var(--studio-border)]"
         />
       </header>
 
@@ -3187,13 +3187,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             principle: one decision per screen — the rail stays as the
             navigation anchor, the panel content swaps without changing
             the rest of the page. */}
-        <aside className="flex shrink-0 border-r border-neutral-200 bg-white">
+        <aside className="flex shrink-0 border-r border-[var(--studio-border)] bg-[var(--studio-bg)]">
           {/* Icon rail — 64px wide, always visible. why: a constant
               spatial anchor lets the user predict where their nav lives
               regardless of which panel happens to be open or collapsed. */}
           <nav
             aria-label="Editor sidebar"
-            className="flex w-16 shrink-0 flex-col items-stretch border-r border-neutral-200 bg-white py-2"
+            className="flex w-16 shrink-0 flex-col items-stretch border-r border-[var(--studio-border)] bg-[var(--studio-bg)] py-2"
           >
             <SidebarRailButton
               label="Templates"
@@ -3275,14 +3275,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               AgentPanel / PhotosPanel) render unmodified inside this
               container — they were already authored for ~280px width. */}
           {sidebarExpanded ? (
-            <div className="flex w-[280px] shrink-0 flex-col bg-white">
+            <div className="flex w-[280px] shrink-0 flex-col bg-[var(--studio-panel)]">
               {/* Collapse cap — title of the active tab + « collapse button.
                   why: the panel title doubles as a sense-of-place label
                   for users who collapse + re-expand frequently. The «
                   affordance mirrors the » on the right panel for
                   symmetry. */}
-              <div className="flex h-10 shrink-0 items-center justify-between border-b border-neutral-200 px-3">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+              <div className="flex h-10 shrink-0 items-center justify-between border-b border-[var(--studio-border)] px-3">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
                   {sidebarTab === "templates"
                     ? "Templates"
                     : sidebarTab === "brand"
@@ -3298,7 +3298,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   onClick={() => setSidebarExpanded(false)}
                   aria-label="Collapse panel"
                   title="Collapse panel"
-                  className="focus-ring flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+                  className="focus-ring-dark flex h-6 w-6 items-center justify-center rounded-md text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-hover)] hover:text-white"
                 >
                   <LChevronsLeft size={12} />
                 </button>
@@ -3380,7 +3380,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 shown above the AddLayerToolbar so it's noticeable but not
                 in the canvas chrome. */}
             {pendingAutosave && !autosaveBannerDismissed ? (
-              <div className="mb-3 flex w-full max-w-2xl items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900 shadow-sm">
+              <div className="mb-3 flex w-full max-w-2xl items-center justify-between rounded-lg border border-amber-500/30 bg-[var(--studio-popover)] px-3 py-2 text-[12px] text-white shadow-lg shadow-black/40">
                 <div className="flex min-w-0 items-center gap-2">
                   <LClock size={16} className="shrink-0" />
                   <span className="truncate">
@@ -3399,14 +3399,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   <button
                     type="button"
                     onClick={handleRestoreAutosave}
-                    className="focus-ring rounded-md bg-neutral-800 px-2 py-1 text-[11px] font-semibold text-white hover:bg-neutral-900"
+                    className="focus-ring-dark rounded-md bg-gold-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gold-600"
                   >
                     Restore
                   </button>
                   <button
                     type="button"
                     onClick={handleDiscardAutosave}
-                    className="focus-ring rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                    className="focus-ring-dark rounded-md border border-[var(--studio-border)] bg-transparent px-2 py-1 text-[11px] font-medium text-white hover:bg-[var(--studio-hover)]"
                   >
                     Discard
                   </button>
@@ -3479,7 +3479,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 2026-05-25 — unified to the rose-50/rose-200/rose-800 palette
                 shared with the non-blocking error toast below. */}
             {dimensionWarning ? (
-              <div className="absolute left-1/2 top-6 z-20 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800 shadow-card">
+              <div className="absolute left-1/2 top-6 z-20 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/40 px-4 py-2 text-sm text-rose-200 shadow-lg shadow-black/40">
                 <LAlertTriangle size={16} className="shrink-0" />
                 <span>{dimensionWarning}</span>
               </div>
@@ -3489,7 +3489,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 2026-05-25 — unified palette with dimensionWarning (rose-*)
                 and AlertTriangle icon swapped in for visual parity. */}
             {editorError ? (
-              <div className="absolute bottom-6 left-1/2 z-20 max-w-[80%] -translate-x-1/2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 shadow-elevated">
+              <div className="absolute bottom-6 left-1/2 z-20 max-w-[80%] -translate-x-1/2 rounded-lg border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-sm text-rose-200 shadow-2xl shadow-black/60">
                 <div className="flex items-start gap-3">
                   <LAlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <span className="font-semibold uppercase tracking-wide">
@@ -3500,7 +3500,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     type="button"
                     onClick={() => setEditorError(null)}
                     aria-label="Dismiss error"
-                    className="focus-ring text-rose-400 hover:text-rose-700"
+                    className="focus-ring-dark text-rose-300 hover:text-rose-200"
                   >
                     <LX size={16} />
                   </button>
@@ -3527,7 +3527,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               className={
                 cropMode
                   ? "relative bg-transparent"
-                  : "relative bg-white shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+                  : "relative bg-white shadow-2xl shadow-black/60"
               }
               style={{
                 width:
@@ -3566,7 +3566,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                    visual chrome — border, bg, padding, shadow — is now
                    utility-classed for theme consistency. */
                 <div
-                  className="absolute z-50 flex gap-2 rounded-lg border border-neutral-200 bg-white px-1.5 py-1 shadow-elevated"
+                  className="absolute z-50 flex gap-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-popover)] px-1.5 py-1 shadow-2xl shadow-black/60"
                   style={{
                     // why: position tracks the LIVE frame rect
                     // (currentClipRect), so the bar follows every
@@ -3594,7 +3594,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   <button
                     type="button"
                     onClick={() => exitCropModeRef.current?.(false)}
-                    className="focus-ring inline-flex items-center gap-1 rounded-md bg-gold-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-gold-600"
+                    className="focus-ring-dark inline-flex items-center gap-1 rounded-md bg-gold-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-gold-600"
                   >
                     <LCheck size={12} />
                     Done
@@ -3602,7 +3602,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   <button
                     type="button"
                     onClick={() => exitCropModeRef.current?.(true)}
-                    className="focus-ring inline-flex items-center gap-1 rounded-md border border-neutral-200 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+                    className="focus-ring-dark inline-flex items-center gap-1 rounded-md border border-[var(--studio-border)] bg-transparent px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--studio-hover)]"
                   >
                     <LX size={12} />
                     Cancel
@@ -3654,9 +3654,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             is unchanged from before — we only wrap their <aside> shell
             with the collapse affordance + width adjustment. */}
         {layersExpanded ? (
-          <div className="flex w-[280px] shrink-0 flex-col border-l border-neutral-200 bg-white">
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-neutral-200 px-3">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+          <div className="flex w-[280px] shrink-0 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]">
+            <div className="flex h-10 shrink-0 items-center justify-between border-b border-[var(--studio-border)] px-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
                 {selectionMode === "none" ? "Layers" : "Properties"}
               </span>
               <button
@@ -3664,7 +3664,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 onClick={() => setLayersExpanded(false)}
                 aria-label="Collapse layers panel"
                 title="Collapse layers panel"
-                className="focus-ring flex h-6 w-6 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+                className="focus-ring-dark flex h-6 w-6 items-center justify-center rounded-md text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-hover)] hover:text-white"
               >
                 <LChevronsRight size={12} />
               </button>
@@ -3716,13 +3716,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           // so the rail still reads as "Layers" when collapsed, no
           // hover required. Matches the labeled-rail pattern in the
           // left sidebar.
-          <div className="flex w-12 shrink-0 flex-col border-l border-neutral-200 bg-white">
+          <div className="flex w-12 shrink-0 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-bg)]">
             <button
               type="button"
               onClick={() => setLayersExpanded(true)}
               aria-label="Expand layers panel"
               title="Expand layers panel"
-              className="focus-ring group flex h-28 w-full flex-col items-center justify-center gap-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              className="focus-ring-dark group flex h-28 w-full flex-col items-center justify-center gap-1.5 text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-hover)] hover:text-white"
             >
               <LLayers size={18} />
               <span
@@ -3849,18 +3849,18 @@ function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
   // SelectionToolbar below ContextualTopToolbar. This element is now a
   // plain inline-flex bar; the wrapper handles top-6 / centering / z-10.
   return (
-    <div className="flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-2 py-1.5 shadow-elevated animate-fade-in-up">
-      <span className="ml-2 mr-3 truncate text-xs font-medium text-neutral-600">
+    <div className="flex items-center gap-1 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
+      <span className="ml-2 mr-3 truncate text-xs font-medium text-white">
         {props.layerName}
       </span>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <IconButton label="Bring forward" onClick={props.onBringForward}>
         <LBringToFront size={14} />
       </IconButton>
       <IconButton label="Send backward" onClick={props.onSendBackward}>
         <LSendToBack size={14} />
       </IconButton>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <IconButton label="Duplicate" onClick={props.onDuplicate}>
         <LCopy size={14} />
       </IconButton>
@@ -3876,7 +3876,7 @@ function SelectionToolbar(props: SelectionToolbarProps): JSX.Element {
       <IconButton label="Lock" onClick={props.onToggleLock}>
         <LLock size={14} />
       </IconButton>
-      <span className="h-5 w-px bg-neutral-200" />
+      <span className="h-5 w-px bg-[var(--studio-border)]" />
       <IconButton label="Delete" onClick={props.onDelete} variant="danger">
         <LTrash2 size={14} />
       </IconButton>
@@ -3994,8 +3994,8 @@ function TransparencyButton(
         title="Transparency"
         className={`rounded-md p-1.5 transition-colors ${
           open
-            ? "bg-gold-50 text-gold-700"
-            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+            ? "bg-[var(--studio-hover)] text-gold-400"
+            : "text-white hover:bg-[var(--studio-hover)]"
         }`}
       >
         <TransparencyIcon />
@@ -4010,15 +4010,15 @@ function TransparencyButton(
                 left: popoverPos.left,
                 width: 240,
               }}
-              className="z-[100] rounded-xl border border-neutral-200 bg-white p-3 shadow-elevated animate-fade-in-up"
+              className="z-[100] rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] p-3 shadow-2xl shadow-black/60 animate-fade-in-up text-white"
               role="dialog"
               aria-label="Transparency"
             >
               <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
                   Transparency
                 </span>
-                <span className="font-mono text-xs text-neutral-700">
+                <span className="font-mono text-xs text-white">
                   {opacityPct}
                 </span>
               </div>
@@ -4035,7 +4035,7 @@ function TransparencyButton(
                 className="w-full accent-gold-500"
                 aria-label="Opacity 0 to 100 percent"
               />
-              <div className="mt-1 flex justify-between text-[10px] text-neutral-400">
+              <div className="mt-1 flex justify-between text-[10px] text-[var(--studio-text-faint)]">
                 <span>0</span>
                 <span>50</span>
                 <span>100</span>
@@ -4105,8 +4105,8 @@ function IconButton(props: IconButtonProps): JSX.Element {
         title={props.label}
         className={`rounded-md p-1.5 transition-colors ${
           danger
-            ? "text-red-500 hover:bg-red-50"
-            : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+            ? "text-rose-300 hover:bg-rose-500/20 hover:text-rose-200"
+            : "text-white hover:bg-[var(--studio-hover)]"
         }`}
       >
         {props.children}
@@ -4212,10 +4212,10 @@ function SidebarRailButton(props: SidebarRailButtonProps): JSX.Element {
       onClick={onClick}
       aria-pressed={active}
       title={label}
-      className={`focus-ring relative flex h-14 w-full flex-col items-center justify-center gap-0.5 transition-colors ${
+      className={`focus-ring-dark relative flex h-14 w-full flex-col items-center justify-center gap-0.5 transition-colors ${
         active
-          ? "bg-gold-50 text-gold-700"
-          : "text-neutral-600 hover:bg-neutral-100"
+          ? "bg-[var(--studio-active)] text-gold-400"
+          : "text-[var(--studio-text-muted)] hover:bg-[var(--studio-hover)] hover:text-white"
       }`}
     >
       {/* why: 3px gold-500 stripe pinned to the LEFT edge of the rail
@@ -4300,7 +4300,7 @@ interface CanvasFooterProps {
 function CanvasFooter(props: CanvasFooterProps): JSX.Element {
   const zoomPct = Math.round(props.zoom * 100);
   return (
-    <div className="flex h-10 shrink-0 items-center justify-between border-t border-neutral-200 bg-white px-3">
+    <div className="flex h-10 shrink-0 items-center justify-between border-t border-[var(--studio-border)] bg-[var(--studio-bg)] px-3">
       {/* === Left cluster — alignment + distribute (Phase B.1 — live) === */}
       <div className="flex items-center gap-0.5">
         {props.showAlignment ? (
@@ -4323,7 +4323,7 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
             >
               <LAlignRight size={14} />
             </FooterIconButton>
-            <span className="mx-1 h-4 w-px bg-neutral-200" />
+            <span className="mx-1 h-4 w-px bg-[var(--studio-border)]" />
             <FooterIconButton
               label="Align top"
               onClick={() => props.onAlign("top")}
@@ -4342,7 +4342,7 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
             >
               <LAlignBottom size={14} />
             </FooterIconButton>
-            <span className="mx-1 h-4 w-px bg-neutral-200" />
+            <span className="mx-1 h-4 w-px bg-[var(--studio-border)]" />
             {/* Distribute — needs ≥3 objects. Disabled chip stays visible
                 so users can discover the feature; the tooltip explains
                 the threshold. */}
@@ -4394,21 +4394,21 @@ function CanvasFooter(props: CanvasFooterProps): JSX.Element {
           onChange={(e) => props.onZoomChange(Number(e.target.value))}
           aria-label="Canvas zoom"
           title={`Zoom — ${zoomPct}%`}
-          className="cwk-zoom-slider h-1 w-[120px] cursor-pointer appearance-none rounded-full bg-neutral-200 accent-gold-500"
+          className="cwk-zoom-slider h-1 w-[120px] cursor-pointer appearance-none rounded-full bg-[var(--studio-border)] accent-gold-500"
         />
         <FooterIconButton label="Zoom in" onClick={props.onZoomIn}>
           <LZoomIn size={14} />
         </FooterIconButton>
-        <span className="min-w-[36px] text-center font-mono text-[11px] tabular-nums text-neutral-600">
+        <span className="min-w-[36px] text-center font-mono text-[11px] tabular-nums text-[var(--studio-text-muted)]">
           {zoomPct}%
         </span>
-        <span className="mx-0.5 h-4 w-px bg-neutral-200" />
+        <span className="mx-0.5 h-4 w-px bg-[var(--studio-border)]" />
         <Tooltip label="Fit to viewport" placement="top">
           <button
             type="button"
             onClick={props.onZoomFit}
             title="Fit to viewport"
-            className="focus-ring inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+            className="focus-ring-dark inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)]"
           >
             <LMaximize2 size={12} />
             Fit
@@ -4453,7 +4453,7 @@ function FooterIconButton(props: FooterIconButtonProps): JSX.Element {
         disabled={props.disabled}
         aria-label={props.label}
         title={props.label}
-        className="focus-ring flex h-7 w-7 items-center justify-center rounded-md text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-400 disabled:hover:bg-transparent"
+        className="focus-ring-dark flex h-7 w-7 items-center justify-center rounded-md text-white transition-colors hover:bg-[var(--studio-hover)] disabled:cursor-not-allowed disabled:text-[var(--studio-text-faint)] disabled:hover:bg-transparent"
       >
         {props.children}
       </button>

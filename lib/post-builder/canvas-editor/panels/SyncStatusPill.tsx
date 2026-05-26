@@ -93,7 +93,7 @@ export default function SyncStatusPill(props: SyncStatusPillProps): JSX.Element 
   if (!status.lastSyncedAt) {
     return (
       <span
-        className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600"
+        className="inline-flex items-center rounded-full bg-[var(--studio-hover)] px-2 py-0.5 text-[10px] font-medium text-[var(--studio-text-muted)]"
         title="No sync has run yet. Click the refresh icon to run one now."
       >
         Never synced
@@ -109,7 +109,7 @@ export default function SyncStatusPill(props: SyncStatusPillProps): JSX.Element 
     // hover for the stack trace without us making the pill itself wider.
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700"
+        className="inline-flex items-center gap-1 rounded-full bg-rose-950/40 px-2 py-0.5 text-[10px] font-medium text-rose-200"
         title={`Last sync failed: ${status.lastSyncError}`}
       >
         <FailureDot />
@@ -124,7 +124,7 @@ export default function SyncStatusPill(props: SyncStatusPillProps): JSX.Element 
   return (
     <span className="inline-flex items-center gap-1">
       <span
-        className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800"
+        className="inline-flex items-center gap-1 rounded-full bg-emerald-950/40 px-2 py-0.5 text-[10px] font-medium text-emerald-200"
         title={`Last successful sync at ${new Date(status.lastSyncedAt).toLocaleString()}`}
       >
         <SuccessDot />
@@ -132,7 +132,7 @@ export default function SyncStatusPill(props: SyncStatusPillProps): JSX.Element 
       </span>
       {isStale ? (
         <span
-          className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800"
+          className="inline-flex items-center rounded-full bg-amber-950/40 px-2 py-0.5 text-[10px] font-medium text-amber-200"
           title="Last sync is over 24 hours old. Click refresh to pull the latest from Drive."
         >
           Could be out of date

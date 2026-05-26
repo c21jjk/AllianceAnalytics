@@ -205,12 +205,12 @@ export default function TemplatesPanel(
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Filter row — format toggle on the left, category chips below */}
-      <div className="flex flex-col gap-2 border-b border-neutral-200 px-3 py-3">
+      <div className="flex flex-col gap-2 border-b border-[var(--studio-border)] px-3 py-3">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
             Templates
           </span>
-          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-neutral-600 hover:text-neutral-900">
+          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-[var(--studio-text-muted)] hover:text-white">
             <input
               type="checkbox"
               checked={filter.currentFormatOnly}
@@ -220,7 +220,7 @@ export default function TemplatesPanel(
                   currentFormatOnly: e.target.checked,
                 }))
               }
-              className="h-3.5 w-3.5 cursor-pointer rounded border-neutral-300 text-gold-500 focus:ring-gold-500"
+              className="h-3.5 w-3.5 cursor-pointer rounded border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-gold-500 focus:ring-gold-500"
             />
             {FORMAT_META[currentFormat].label} only
           </label>
@@ -251,7 +251,7 @@ export default function TemplatesPanel(
       {/* Grid */}
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {visibleTemplates.length === 0 ? (
-          <p className="px-1 py-6 text-center text-xs text-neutral-500">
+          <p className="px-1 py-6 text-center text-xs text-[var(--studio-text-muted)]">
             No templates match the current filter. Toggle off "
             {FORMAT_META[currentFormat].label} only" to see all formats, or
             switch the category filter.
@@ -289,7 +289,7 @@ function CategoryChip(props: {
       className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
         props.active
           ? "bg-gold-500 text-neutral-900 shadow-sm"
-          : "border border-neutral-200 bg-white text-neutral-600 hover:border-gold-300 hover:text-gold-800"
+          : "border border-[var(--studio-border)] bg-transparent text-[var(--studio-text-muted)] hover:border-gold-400 hover:text-gold-300"
       }`}
     >
       {props.label}
@@ -324,8 +324,8 @@ function TemplateCard(props: {
       onClick={onClick}
       className={`group relative flex flex-col gap-1.5 rounded-md border bg-white p-1.5 text-left transition-all ${
         isCurrent
-          ? "border-gold-500 ring-2 ring-gold-200"
-          : "border-neutral-200 hover:border-gold-300 hover:shadow-sm"
+          ? "border-gold-500 ring-2 ring-gold-400/40"
+          : "border-[var(--studio-border)] hover:border-gold-400 hover:shadow-lg hover:shadow-black/40"
       }`}
       aria-label={`Switch to ${template.name}`}
     >
@@ -363,7 +363,7 @@ function TemplateCard(props: {
         >
           {template.name}
         </div>
-        <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-neutral-500">
+        <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-neutral-600">
           {fmtMeta.label}
         </div>
       </div>

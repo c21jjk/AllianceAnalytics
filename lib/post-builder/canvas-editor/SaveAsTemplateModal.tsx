@@ -179,7 +179,8 @@ export default function SaveAsTemplateModal(
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+      data-theme="dark"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 text-[var(--studio-text)]"
       // why: z-[60] sits ABOVE the CanvasEditorOverlay (z-50). The modal
       // launches from inside the editor, so it MUST render on top of the
       // editor chrome — otherwise the canvas captures the click first.
@@ -192,14 +193,14 @@ export default function SaveAsTemplateModal(
       <form
         onSubmit={handleSubmit}
         onMouseDown={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+        className="w-full max-w-md rounded-2xl border border-[var(--studio-border)] bg-[var(--studio-popover)] p-5 shadow-2xl shadow-black/60 text-white"
       >
         <div className="mb-3">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-gold-700">
             Custom template
           </div>
-          <h3 className="text-base font-bold text-neutral-900">{titleLabel}</h3>
-          <p className="mt-0.5 text-xs text-neutral-500">
+          <h3 className="text-base font-bold text-white">{titleLabel}</h3>
+          <p className="mt-0.5 text-xs text-[var(--studio-text-muted)]">
             {isUpdate
               ? "Update the name + default behavior for this saved template. The current canvas replaces the saved design."
               : "Save the current canvas as a reusable template based on " +
@@ -208,7 +209,7 @@ export default function SaveAsTemplateModal(
           </p>
         </div>
 
-        <label className="block text-xs font-medium text-neutral-700">
+        <label className="block text-xs font-medium text-white">
           Template name
           <input
             ref={nameInputRef}
@@ -218,7 +219,7 @@ export default function SaveAsTemplateModal(
             disabled={submitting}
             maxLength={80}
             placeholder={`e.g. ${props.variantDisplayName} — Larissa edit`}
-            className="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20 disabled:bg-neutral-50 disabled:text-neutral-500"
+            className="mt-1 block w-full rounded-lg border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-3 py-2 text-sm text-white placeholder:text-[var(--studio-input-placeholder)] focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/20 disabled:opacity-50"
           />
         </label>
 
@@ -228,13 +229,13 @@ export default function SaveAsTemplateModal(
             checked={makeDefault}
             onChange={(e) => setMakeDefault(e.target.checked)}
             disabled={submitting}
-            className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-gold-600 focus:ring-gold-500"
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] text-gold-500 focus:ring-gold-500"
           />
-          <span className="text-xs text-neutral-700">
-            <span className="font-semibold text-neutral-900">
+          <span className="text-xs text-[var(--studio-text-muted)]">
+            <span className="font-semibold text-white">
               Make this the new default for {props.variantDisplayName}
             </span>
-            <span className="mt-0.5 block text-[11px] text-neutral-500">
+            <span className="mt-0.5 block text-[11px] text-[var(--studio-text-muted)]">
               When enabled, this template will replace{" "}
               {props.variantDisplayName} for new {props.postTypeDisplayName}{" "}
               posts at the {props.formatDisplayName} size.
@@ -243,7 +244,7 @@ export default function SaveAsTemplateModal(
         </label>
 
         {error ? (
-          <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-200">
             {error}
           </div>
         ) : null}
@@ -253,7 +254,7 @@ export default function SaveAsTemplateModal(
             type="button"
             onClick={props.onClose}
             disabled={submitting}
-            className="inline-flex h-9 items-center rounded-md border border-neutral-300 bg-white px-3 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-9 items-center rounded-md border border-[var(--studio-border)] bg-transparent px-3 text-sm font-medium text-white transition hover:bg-[var(--studio-hover)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
           </button>

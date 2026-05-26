@@ -230,11 +230,11 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
     <section
       role="region"
       aria-label="Carousel slides"
-      className="flex w-full flex-col gap-2 border-t border-neutral-200 bg-white px-4 py-2.5"
+      className="flex w-full flex-col gap-2 border-t border-[var(--studio-border)] bg-[var(--studio-bg)] px-4 py-2.5"
     >
       <header className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
             Carousel
           </span>
           <CountBadge
@@ -252,8 +252,8 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
             className={[
               "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150",
               previewDisabled
-                ? "cursor-not-allowed border-neutral-200 bg-neutral-50 text-neutral-400"
-                : "border-neutral-200 bg-white text-neutral-700 hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800",
+                ? "cursor-not-allowed border-[var(--studio-border)] bg-transparent text-[var(--studio-text-faint)]"
+                : "border-[var(--studio-border)] bg-transparent text-white hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300",
             ].join(" ")}
             title={
               previewDisabled
@@ -272,8 +272,8 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
             className={[
               "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150",
               addDisabled
-                ? "cursor-not-allowed bg-neutral-100 text-neutral-400"
-                : "bg-gold-500 text-neutral-900 hover:bg-gold-400 active:bg-gold-600",
+                ? "cursor-not-allowed bg-[var(--studio-hover)] text-[var(--studio-text-faint)]"
+                : "bg-gold-500 text-white hover:bg-gold-600 active:bg-gold-700",
             ].join(" ")}
             title={
               addDisabled
@@ -345,7 +345,7 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
             <button
               type="button"
               onClick={onAddSlideClick}
-              className="ml-1 flex flex-shrink-0 flex-col items-center justify-center gap-0.5 rounded-md border-2 border-dashed border-neutral-300 bg-neutral-50 text-neutral-500 transition-all duration-150 hover:border-gold-400 hover:bg-gold-50/50 hover:text-gold-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+              className="ml-1 flex flex-shrink-0 flex-col items-center justify-center gap-0.5 rounded-md border-2 border-dashed border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-[var(--studio-text-muted)] transition-all duration-150 hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
               style={{ width: thumbWidthPx, height: THUMB_HEIGHT_PX }}
               aria-label="Add slide"
               title="Add a supporting photo to the carousel"
@@ -390,7 +390,7 @@ function CountBadge(props: {
           ? "bg-amber-100 text-amber-800"
           : nearMax
             ? "bg-amber-50 text-amber-700"
-            : "bg-neutral-100 text-neutral-600",
+            : "bg-[var(--studio-hover)] text-[var(--studio-text-muted)]",
       ].join(" ")}
     >
       {label}
@@ -490,7 +490,7 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
       aria-label={ariaLabel}
       title={onEdit ? `Edit slide ${visibleSlideNumber} in Studio` : undefined}
       className={[
-        "group relative flex-shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100 transition-all duration-150",
+        "group relative flex-shrink-0 overflow-hidden rounded-md border border-[var(--studio-border)] bg-[var(--studio-hover)] transition-all duration-150",
         "hover:border-gold-400 hover:shadow-sm",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500",
         isDragging ? "opacity-50" : "opacity-100",
@@ -536,7 +536,7 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
           // pattern was undiscoverable and people thought slides weren't
           // editable at all. The X stays hover-reveal because removal is
           // destructive and shouldn't compete for attention.
-          className="absolute right-7 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-gold-500 text-neutral-900 shadow transition-colors duration-150 hover:bg-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-300"
+          className="absolute right-7 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-gold-500 text-white shadow transition-colors duration-150 hover:bg-gold-600 focus:outline-none focus:ring-2 focus:ring-gold-400/40"
           aria-label={`Edit slide ${visibleSlideNumber} in Studio`}
           title={`Edit slide ${visibleSlideNumber} in Studio`}
         >
@@ -555,7 +555,7 @@ function SlideThumb(props: SlideThumbProps): JSX.Element {
         }}
         // why: pointer-events on the button itself stay enabled (so hover
         // reveals work and clicks land); only the visual state changes.
-        className="absolute right-1 top-1 inline-flex h-5 w-5 translate-y-[-2px] items-center justify-center rounded-full bg-neutral-900/80 text-white opacity-0 shadow transition-all duration-150 hover:bg-neutral-900 group-hover:translate-y-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gold-400"
+        className="absolute right-1 top-1 inline-flex h-5 w-5 translate-y-[-2px] items-center justify-center rounded-full bg-black/70 text-white opacity-0 shadow transition-all duration-150 hover:bg-black group-hover:translate-y-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gold-400"
         aria-label={`Remove slide ${visibleSlideNumber}`}
         title={`Remove slide ${visibleSlideNumber}`}
       >
@@ -593,14 +593,14 @@ function EmptyState(props: {
       <button
         type="button"
         onClick={props.onAddSlideClick}
-        className="flex flex-shrink-0 flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-neutral-300 bg-neutral-50 px-3 text-neutral-600 transition-all duration-150 hover:border-gold-400 hover:bg-gold-50/50 hover:text-gold-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+        className="flex flex-shrink-0 flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-3 text-white transition-all duration-150 hover:border-gold-400 hover:bg-[var(--studio-hover)] hover:text-gold-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
         style={{ width: tileWidth, height: tileHeight }}
         aria-label="Add your first slide"
       >
         <PlusIcon />
         <span className="text-[11px] font-semibold">Add your first slide</span>
       </button>
-      <p className="max-w-md text-[11px] leading-snug text-neutral-500">
+      <p className="max-w-md text-[11px] leading-snug text-[var(--studio-text-muted)]">
         Add up to 9 more photos for an Instagram carousel. Photos appear in
         order — viewers swipe through left to right.
       </p>

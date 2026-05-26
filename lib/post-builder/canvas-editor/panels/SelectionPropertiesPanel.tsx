@@ -79,13 +79,13 @@ export default function SelectionPropertiesPanel(
   const modeLabel = getModeLabel(props.mode);
 
   return (
-    <aside className="flex w-72 flex-col border-l border-neutral-200 bg-white">
+    <aside className="flex w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]">
       {/* ----- Header with Back button + selected-layer name ----- */}
-      <header className="border-b border-neutral-200 px-3 py-3">
+      <header className="border-b border-[var(--studio-border)] px-3 py-3">
         <button
           type="button"
           onClick={props.onClearSelection}
-          className="mb-2 inline-flex items-center gap-1 rounded text-xs font-medium text-neutral-600 hover:text-neutral-900"
+          className="mb-2 inline-flex items-center gap-1 rounded text-xs font-medium text-[var(--studio-text-muted)] hover:text-white"
         >
           {/* why: inline SVG arrow — see CanvasEditor.tsx note on no lucide-react. */}
           <svg
@@ -105,12 +105,12 @@ export default function SelectionPropertiesPanel(
         </button>
         <div className="flex items-center gap-2">
           {modeLabel ? (
-            <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+            <span className="inline-flex items-center rounded bg-[var(--studio-hover)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
               {modeLabel}
             </span>
           ) : null}
           {layerName ? (
-            <span className="truncate text-sm font-semibold text-neutral-900">
+            <span className="truncate text-sm font-semibold text-white">
               {layerName}
             </span>
           ) : null}
@@ -155,7 +155,7 @@ export default function SelectionPropertiesPanel(
         {props.mode === "none" ? (
           // why: "none" should never reach this panel — orchestrator renders
           // LayerListPanel instead. Keep an empty fallback for safety.
-          <div className="px-4 py-6 text-center text-sm text-neutral-400">
+          <div className="px-4 py-6 text-center text-sm text-[var(--studio-text-muted)]">
             No selection
           </div>
         ) : null}

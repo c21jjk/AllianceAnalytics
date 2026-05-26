@@ -363,7 +363,7 @@ export default function HsvPicker(props: HsvPickerProps): JSX.Element {
         onTouchStart={handlePadTouchStart}
         role="application"
         aria-label="Saturation and brightness picker"
-        className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-md border border-neutral-200 select-none"
+        className="relative h-32 w-full cursor-crosshair overflow-hidden rounded-md border border-[var(--studio-border)] select-none"
         style={padBackground}
       >
         {/* Position indicator — small circle showing current (S, V). */}
@@ -396,7 +396,7 @@ export default function HsvPicker(props: HsvPickerProps): JSX.Element {
       {/* ===== Hex input + Eyedropper ===== */}
       <div className="flex items-center gap-2">
         <div
-          className="h-7 w-7 flex-shrink-0 rounded-md border border-neutral-300"
+          className="h-7 w-7 flex-shrink-0 rounded-md border border-[var(--studio-border)]"
           style={{ backgroundColor: currentHex }}
           aria-label="Current color preview"
         />
@@ -411,7 +411,7 @@ export default function HsvPicker(props: HsvPickerProps): JSX.Element {
               handleHexCommit();
             }
           }}
-          className="flex-1 rounded-md border border-neutral-300 px-2 py-1 text-sm font-mono uppercase text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+          className="flex-1 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm font-mono uppercase text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           maxLength={9}
           spellCheck={false}
         />
@@ -419,7 +419,7 @@ export default function HsvPicker(props: HsvPickerProps): JSX.Element {
           <button
             type="button"
             onClick={() => void handleEyedropper()}
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-neutral-300 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-[var(--studio-border)] text-white hover:bg-[var(--studio-hover)]"
             aria-label="Pick color from screen (eyedropper)"
             title="Pick color from screen"
           >

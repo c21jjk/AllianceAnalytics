@@ -142,15 +142,15 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
   >(null);
 
   return (
-    <aside className="flex h-full min-h-0 w-72 flex-col border-l border-neutral-200 bg-white">
-      <header className="border-b border-neutral-200 px-4 py-3">
+    <aside className="flex h-full min-h-0 w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]">
+      <header className="border-b border-[var(--studio-border)] px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
               Brand
             </h2>
             {!props.isLoading && !isEmpty ? (
-              <span className="text-xs text-neutral-400">
+              <span className="text-xs text-[var(--studio-text-faint)]">
                 ({totalLogos + totalPartners})
               </span>
             ) : null}
@@ -173,15 +173,15 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
         ) : (
           <>
             <section className="mb-4">
-              <div className="mb-2 flex items-center justify-between gap-2 border-b border-neutral-100 pb-1">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+              <div className="mb-2 flex items-center justify-between gap-2 border-b border-[var(--studio-border)] pb-1">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-white">
                   C21 Logos
                 </h3>
                 {props.isAdmin && props.onUploadAsset ? (
                   <button
                     type="button"
                     onClick={() => setUploadKind("logo")}
-                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-700 transition-colors hover:bg-gold-50"
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-400 transition-colors hover:bg-[var(--studio-hover)] hover:text-gold-300"
                     aria-label="Add a new logo"
                   >
                     <span aria-hidden>+</span>
@@ -190,7 +190,7 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
                 ) : null}
               </div>
               {totalLogos === 0 ? (
-                <p className="px-1 py-2 text-xs text-neutral-400">
+                <p className="px-1 py-2 text-xs text-[var(--studio-text-faint)]">
                   {props.isAdmin
                     ? "Empty. Click + Add asset to upload your first logo."
                     : "No logos uploaded yet."}
@@ -211,15 +211,15 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
             </section>
 
             <section>
-              <div className="mb-2 flex items-center justify-between gap-2 border-b border-neutral-100 pb-1">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+              <div className="mb-2 flex items-center justify-between gap-2 border-b border-[var(--studio-border)] pb-1">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-white">
                   Partners &amp; Co-brand
                 </h3>
                 {props.isAdmin && props.onUploadAsset ? (
                   <button
                     type="button"
                     onClick={() => setUploadKind("partner_logo")}
-                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-700 transition-colors hover:bg-gold-50"
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold-400 transition-colors hover:bg-[var(--studio-hover)] hover:text-gold-300"
                     aria-label="Add a new partner logo"
                   >
                     <span aria-hidden>+</span>
@@ -228,7 +228,7 @@ export default function BrandPanel(props: BrandPanelProps): JSX.Element {
                 ) : null}
               </div>
               {totalPartners === 0 ? (
-                <p className="px-1 py-2 text-xs text-neutral-400">
+                <p className="px-1 py-2 text-xs text-[var(--studio-text-faint)]">
                   {props.isAdmin
                     ? "Empty. Click + Add asset to upload a co-brand mark."
                     : "No partner logos uploaded yet."}
@@ -272,8 +272,8 @@ function SectionHeader({ label }: { label: string }): JSX.Element {
   // treatment. The thin bottom border separates the section title from its
   // grid cells without needing a heavyweight divider.
   return (
-    <div className="mb-2 flex items-center gap-2 border-b border-neutral-100 pb-1">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-600">
+    <div className="mb-2 flex items-center gap-2 border-b border-[var(--studio-border)] pb-1">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-white">
         {label}
       </h3>
     </div>
@@ -299,7 +299,7 @@ function LogoCategoryBlock(props: LogoCategoryBlockProps): JSX.Element {
   return (
     <div className="mb-3">
       {props.showCategoryHeading ? (
-        <div className="mb-1 mt-2 px-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+        <div className="mb-1 mt-2 px-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--studio-text-muted)]">
           {props.category}
         </div>
       ) : null}
@@ -372,11 +372,11 @@ function BrandThumb(props: BrandThumbProps): JSX.Element {
         type="button"
         onClick={() => props.onAssetPicked(props.asset)}
         disabled={archiving}
-        className="flex w-full flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex w-full flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-[var(--studio-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50 disabled:cursor-not-allowed"
         aria-label={`Insert ${props.asset.label}`}
       >
         <div
-          className="flex items-center justify-center overflow-hidden rounded-md border border-neutral-200 bg-white transition-colors group-hover:border-gold-500"
+          className="flex items-center justify-center overflow-hidden rounded-md border border-[var(--studio-border)] bg-white transition-colors group-hover:border-gold-500"
           style={{ width: TILE_PX, height: TILE_PX }}
         >
           {/* why: object-contain (not cover) preserves the wordmark's aspect
@@ -391,7 +391,7 @@ function BrandThumb(props: BrandThumbProps): JSX.Element {
             className="max-h-full max-w-full object-contain"
           />
         </div>
-        <span className="line-clamp-1 w-full truncate text-center text-[10px] text-neutral-600">
+        <span className="line-clamp-1 w-full truncate text-center text-[10px] text-[var(--studio-text-muted)]">
           {props.asset.label}
         </span>
       </button>
@@ -400,7 +400,7 @@ function BrandThumb(props: BrandThumbProps): JSX.Element {
           type="button"
           onClick={handleArchiveClick}
           disabled={archiving}
-          className="absolute right-0.5 top-0.5 hidden h-5 w-5 items-center justify-center rounded-full bg-white text-rose-600 shadow-md ring-1 ring-rose-200 transition-colors hover:bg-rose-50 hover:text-rose-700 group-hover:flex disabled:opacity-50 disabled:cursor-not-allowed"
+          className="absolute right-0.5 top-0.5 hidden h-5 w-5 items-center justify-center rounded-full bg-[var(--studio-popover)] text-rose-300 shadow-md ring-1 ring-rose-500/40 transition-colors hover:bg-rose-900/40 hover:text-rose-200 group-hover:flex disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label={`Remove ${props.asset.label} from the brand library`}
           title="Remove from library"
         >
@@ -438,10 +438,10 @@ function SkeletonGrid(): JSX.Element {
           className="flex flex-col items-center gap-1 rounded-md p-1"
         >
           <div
-            className="animate-pulse rounded-md bg-neutral-200"
+            className="animate-pulse rounded-md bg-[var(--studio-hover)]"
             style={{ width: TILE_PX, height: TILE_PX }}
           />
-          <div className="h-2 w-12 animate-pulse rounded bg-neutral-200" />
+          <div className="h-2 w-12 animate-pulse rounded bg-[var(--studio-hover)]" />
         </div>
       ))}
     </div>
@@ -454,12 +454,12 @@ function EmptyState(): JSX.Element {
   // the editor's empty state feels familiar rather than broken. Copy
   // surfaces who can fix it (admins) without sounding like a stack trace.
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gold-500/50 bg-gold-50/30 px-3 py-8 text-center">
+    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gold-500/30 bg-gold-500/5 px-3 py-8 text-center">
       <div className="mb-2 text-gold-600">
         <LogoPlaceholderIcon />
       </div>
-      <p className="text-xs font-medium text-neutral-700">No logos synced yet</p>
-      <p className="mt-1 text-[11px] leading-snug text-neutral-500">
+      <p className="text-xs font-medium text-white">No logos synced yet</p>
+      <p className="mt-1 text-[11px] leading-snug text-[var(--studio-text-muted)]">
         Admins can sync from Google Drive.
       </p>
     </div>
@@ -522,8 +522,8 @@ function SyncButton({ onSync, highlight = false }: SyncButtonProps): JSX.Element
   // cleanly with the hover/disabled states. Rose is the project's standard
   // error palette; we use the 50/200/700 triple to match the toast.
   const buttonClass = highlight
-    ? "inline-flex items-center justify-center rounded-md border border-rose-300 bg-rose-50 px-1.5 py-1 text-rose-700 transition-colors hover:bg-rose-100 hover:text-rose-800 disabled:opacity-60 disabled:cursor-not-allowed"
-    : "inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 transition-colors hover:border-gold-300 hover:bg-gold-50/40 hover:text-gold-800 disabled:opacity-60 disabled:cursor-not-allowed";
+    ? "inline-flex items-center justify-center rounded-md border border-rose-500/40 bg-rose-950/40 px-1.5 py-1 text-rose-200 transition-colors hover:bg-rose-900/40 hover:text-rose-100 disabled:opacity-60 disabled:cursor-not-allowed"
+    : "inline-flex items-center justify-center rounded-md border border-[var(--studio-border)] bg-transparent px-1.5 py-1 text-[var(--studio-text-muted)] transition-colors hover:border-gold-400 hover:text-gold-300 disabled:opacity-60 disabled:cursor-not-allowed";
 
   return (
     <div className="relative">
@@ -548,8 +548,8 @@ function SyncButton({ onSync, highlight = false }: SyncButtonProps): JSX.Element
           role="status"
           className={`absolute right-0 top-full z-20 mt-1 w-60 rounded-md border px-2.5 py-1.5 text-[11px] leading-snug shadow-md ${
             result.ok
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-rose-200 bg-rose-50 text-rose-900"
+              ? "border-emerald-500/40 bg-emerald-950/40 text-emerald-200"
+              : "border-rose-500/40 bg-rose-950/40 text-rose-200"
           }`}
         >
           {result.summary}
@@ -778,17 +778,17 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
     >
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"
+        className="w-full max-w-lg rounded-2xl border border-[var(--studio-border)] bg-[var(--studio-popover)] p-5 shadow-2xl shadow-black/60 text-white"
       >
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider text-gold-700">
               Brand library
             </div>
-            <h3 className="text-base font-bold text-neutral-900">
+            <h3 className="text-base font-bold text-white">
               {titleLabel}
             </h3>
-            <p className="mt-0.5 text-xs text-neutral-500">
+            <p className="mt-0.5 text-xs text-[var(--studio-text-muted)]">
               Pick one or more files. Each upload uses the filename as the
               label — you can rename them later if needed.
             </p>
@@ -797,7 +797,7 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
             type="button"
             onClick={props.onClose}
             disabled={busy}
-            className="text-neutral-400 hover:text-neutral-700 disabled:opacity-40"
+            className="text-[var(--studio-text-muted)] hover:text-white disabled:opacity-40"
             aria-label="Close"
           >
             ✕
@@ -807,9 +807,9 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
         <div className="space-y-3">
           {props.kind === "logo" ? (
             <label className="block">
-              <span className="text-xs font-medium text-neutral-700">
+              <span className="text-xs font-medium text-white">
                 Category{" "}
-                <span className="text-neutral-400">
+                <span className="text-[var(--studio-text-muted)]">
                   (optional; applies to all selected files)
                 </span>
               </span>
@@ -819,13 +819,13 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
                 onChange={(e) => setCategory(e.target.value)}
                 disabled={busy}
                 placeholder="e.g. Horizontal, Stacked, Seal"
-                className="mt-1 block w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500"
+                className="mt-1 block w-full rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500"
               />
             </label>
           ) : null}
 
           <label className="block">
-            <span className="text-xs font-medium text-neutral-700">
+            <span className="text-xs font-medium text-white">
               Files <span className="text-rose-600">*</span>
             </span>
             <input
@@ -834,16 +834,16 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
               multiple
               onChange={(e) => handleFilesPicked(e.target.files)}
               disabled={busy}
-              className="mt-1 block w-full text-xs text-neutral-600 file:mr-2 file:rounded-md file:border-0 file:bg-gold-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-gold-700 hover:file:bg-gold-100"
+              className="mt-1 block w-full text-xs text-[var(--studio-text-muted)] file:mr-2 file:rounded-md file:border-0 file:bg-gold-500 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-gold-600"
             />
-            <span className="mt-1 block text-[10px] text-neutral-500">
+            <span className="mt-1 block text-[10px] text-[var(--studio-text-muted)]">
               PNG, JPG, WEBP, or SVG. Max {BRAND_FILE_MAX_MB} MB per file.
             </span>
           </label>
 
           {items.length > 0 ? (
-            <div className="rounded-md border border-neutral-200 bg-neutral-50">
-              <div className="border-b border-neutral-200 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+            <div className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)]">
+              <div className="border-b border-[var(--studio-border)] px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
                 {items.length} file{items.length === 1 ? "" : "s"} queued
               </div>
               <ul className="max-h-60 divide-y divide-neutral-200 overflow-y-auto">
@@ -854,10 +854,10 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
                   >
                     <UploadStatusGlyph status={it.status} />
                     <span className="flex-1 truncate">
-                      <span className="font-medium text-neutral-900">
+                      <span className="font-medium text-white">
                         {it.label}
                       </span>{" "}
-                      <span className="text-neutral-500">
+                      <span className="text-[var(--studio-text-muted)]">
                         ({it.file.name})
                       </span>
                       {it.error ? (
@@ -871,7 +871,7 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
                         type="button"
                         onClick={() => handleRemoveItem(it.id)}
                         disabled={busy}
-                        className="rounded p-0.5 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700 disabled:opacity-40"
+                        className="rounded p-0.5 text-[var(--studio-text-muted)] hover:bg-[var(--studio-hover)] hover:text-white disabled:opacity-40"
                         aria-label={`Remove ${it.file.name} from the upload queue`}
                       >
                         ✕
@@ -884,7 +884,7 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
           ) : null}
 
           {topError ? (
-            <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs text-rose-800">
+            <div className="rounded-md border border-rose-500/40 bg-rose-950/40 px-2 py-1.5 text-xs text-rose-200">
               {topError}
             </div>
           ) : null}
@@ -895,14 +895,14 @@ function UploadAssetModal(props: UploadAssetModalProps): JSX.Element {
             type="button"
             onClick={props.onClose}
             disabled={busy}
-            className="rounded-md px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+            className="rounded-md px-3 py-1.5 text-sm text-white hover:bg-[var(--studio-hover)] disabled:opacity-50"
           >
             {allDone ? "Done" : "Cancel"}
           </button>
           <button
             type="submit"
             disabled={busy || items.length === 0 || allDone}
-            className="rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-neutral-900 hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy
               ? "Uploading…"
@@ -962,7 +962,7 @@ function UploadStatusGlyph({
   // queued
   return (
     <span
-      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-neutral-300 text-[10px] text-neutral-400"
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[var(--studio-border)] text-[10px] text-[var(--studio-text-muted)]"
       aria-label="Queued"
     >
       <span className="h-1 w-1 rounded-full bg-neutral-400" />

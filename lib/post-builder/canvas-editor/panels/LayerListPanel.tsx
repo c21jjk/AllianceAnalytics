@@ -98,13 +98,13 @@ export default function LayerListPanel(
   const layerCount = props.entries.length;
 
   return (
-    <aside className="flex w-72 flex-col border-l border-neutral-200 bg-white">
-      <header className="border-b border-neutral-200 px-4 py-3">
+    <aside className="flex w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]">
+      <header className="border-b border-[var(--studio-border)] px-4 py-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
             Layers
           </h2>
-          <span className="text-xs text-neutral-400">
+          <span className="text-xs text-[var(--studio-text-faint)]">
             ({layerCount} {layerCount === 1 ? "layer" : "layers"})
           </span>
           {/* why: tiny "?" help affordance — surface drag affordance without
@@ -112,7 +112,7 @@ export default function LayerListPanel(
           <span
             title="Drag the grip to reorder. Click a row to select."
             aria-label="Drag the grip to reorder. Click a row to select."
-            className="ml-auto inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-neutral-300 text-[10px] font-semibold text-neutral-400 hover:border-neutral-400 hover:text-neutral-600"
+            className="ml-auto inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-[var(--studio-border)] text-[10px] font-semibold text-[var(--studio-text-muted)] hover:border-[var(--studio-text-muted)] hover:text-white"
           >
             ?
           </span>
@@ -120,7 +120,7 @@ export default function LayerListPanel(
       </header>
       <ul className="flex-1 overflow-y-auto px-2 py-2">
         {layerCount === 0 ? (
-          <li className="px-2 py-6 text-center text-sm text-neutral-400">
+          <li className="px-2 py-6 text-center text-sm text-[var(--studio-text-muted)]">
             No layers yet
           </li>
         ) : (
@@ -195,10 +195,10 @@ function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
   const rowClass = [
     "group relative mb-1 flex items-center gap-2 rounded-lg px-2 py-2 transition-colors",
     props.isSelected
-      ? "bg-gold-50 ring-1 ring-gold-200"
-      : "hover:bg-neutral-50",
+      ? "bg-gold-500/10 border-l-2 border-l-gold-500 text-white"
+      : "hover:bg-[var(--studio-hover)]",
     isDragging
-      ? "scale-[1.02] bg-white shadow-lg ring-1 ring-gold-500"
+      ? "scale-[1.02] bg-[var(--studio-popover)] shadow-2xl shadow-black/60 ring-1 ring-gold-500"
       : "",
     isOver && !isDragging ? "border-t-2 border-gold-500" : "",
   ]
@@ -229,7 +229,7 @@ function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
         {...attributes}
         {...listeners}
         aria-label={`Reorder ${props.entry.name}`}
-        className={`flex h-6 w-3.5 shrink-0 items-center justify-center text-neutral-300 opacity-0 transition-opacity hover:text-neutral-500 focus:outline-none focus-visible:text-neutral-600 focus-visible:opacity-100 group-hover:opacity-100 ${
+        className={`flex h-6 w-3.5 shrink-0 items-center justify-center text-[var(--studio-text-faint)] opacity-0 transition-opacity hover:text-[var(--studio-text-muted)] focus:outline-none focus-visible:text-white focus-visible:opacity-100 group-hover:opacity-100 ${
           isDragging ? "cursor-grabbing opacity-100" : "cursor-grab"
         }`}
       >
@@ -244,14 +244,14 @@ function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
         <span
           className={`truncate text-sm ${
             props.entry.visible
-              ? "text-neutral-800"
-              : "text-neutral-400 line-through"
+              ? "text-white"
+              : "text-[var(--studio-text-faint)] line-through"
           }`}
         >
           {props.entry.name}
         </span>
         {props.entry.locked ? (
-          <span className="text-neutral-400">
+          <span className="text-[var(--studio-text-muted)]">
             <LockIcon />
           </span>
         ) : null}
@@ -260,7 +260,7 @@ function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
         type="button"
         onClick={() => props.onToggleVisibility(props.entry.id)}
         aria-label={props.entry.visible ? "Hide layer" : "Show layer"}
-        className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+        className="rounded p-1 text-[var(--studio-text-muted)] hover:bg-[var(--studio-hover)] hover:text-white"
       >
         {props.entry.visible ? <EyeIcon /> : <EyeOffIcon />}
       </button>
@@ -268,7 +268,7 @@ function SortableLayerRow(props: SortableLayerRowProps): JSX.Element {
         type="button"
         onClick={() => props.onDelete(props.entry.id)}
         aria-label="Delete layer"
-        className="rounded p-1 text-neutral-300 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
+        className="rounded p-1 text-[var(--studio-text-faint)] opacity-0 transition-opacity hover:bg-rose-500/20 hover:text-rose-200 group-hover:opacity-100"
       >
         <TrashIcon />
       </button>

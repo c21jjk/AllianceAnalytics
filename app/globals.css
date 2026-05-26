@@ -19,6 +19,26 @@
   --success: #2F8F5C;
 }
 
+/* Studio dark theme — scoped to elements with data-theme="dark"
+   (set on the CanvasEditorOverlay root). All Studio chrome reads
+   from these vars; the Preview page outside the overlay is
+   unaffected. */
+[data-theme="dark"] {
+  --studio-bg: #252526;          /* obsessed-700 — top header, left rail, footer */
+  --studio-panel: #1C1C1D;       /* darker — expanded sidebars + canvas surround */
+  --studio-popover: #2F2F33;     /* lighter — floats above (popovers, modals, dropdowns) */
+  --studio-text: #FFFFFF;
+  --studio-text-muted: rgba(255, 255, 255, 0.6);
+  --studio-text-faint: rgba(255, 255, 255, 0.4);
+  --studio-border: rgba(255, 255, 255, 0.1);
+  --studio-hover: rgba(255, 255, 255, 0.05);
+  --studio-active: rgba(255, 255, 255, 0.1);
+  --studio-input-bg: rgba(255, 255, 255, 0.05);
+  --studio-input-border: rgba(255, 255, 255, 0.1);
+  --studio-input-text: #FFFFFF;
+  --studio-input-placeholder: rgba(255, 255, 255, 0.4);
+}
+
 html, body {
   background: var(--background);
   color: var(--text-primary);
@@ -104,17 +124,11 @@ html, body {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-obsessed;
   }
 
-  /* Canva-style soft radial gradient + faint dot grid for the canvas
-     surface in the Post Builder Studio. Extracted from an inline
-     style block on the wrapper around <canvas> so the data: SVG
-     isn't recomputed every render and the visual is one-line to
-     theme later. The dot color uses neutral-400 at 4% opacity —
-     visible enough to read as "designed surface", invisible enough
-     to never compete with content. */
+  /* Canvas surround for Post Builder Studio. Per John's direction
+     2026-05-25: plain dark, no pattern (Canva is plain dark too).
+     The slide itself sits on this surface with a strong drop shadow
+     to lift it off the background. */
   .canvas-bg-pattern {
-    background-image:
-      radial-gradient(ellipse at center, #fafafa 0%, #f5f5f5 100%),
-      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='1' cy='1' r='1' fill='%23a3a3a3' fill-opacity='0.04'/></svg>");
-    background-size: 100% 100%, 24px 24px;
+    background-color: var(--studio-panel);
   }
 }

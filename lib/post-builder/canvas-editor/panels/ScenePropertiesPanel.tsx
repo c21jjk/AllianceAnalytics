@@ -366,7 +366,7 @@ function Section({ title, rightSlot, children }: SectionProps): JSX.Element {
   return (
     <section className="px-4 py-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
           {title}
         </h3>
         {rightSlot ?? null}
@@ -397,7 +397,7 @@ export default function ScenePropertiesPanel(
   if (scene === null) {
     return (
       <aside
-        className="flex w-72 flex-col border-l border-neutral-200 bg-white"
+        className="flex w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]"
         aria-label="Scene properties"
       >
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
@@ -413,11 +413,11 @@ export default function ScenePropertiesPanel(
             strokeLinecap="round"
             strokeLinejoin="round"
             aria-hidden="true"
-            className="mb-3 text-neutral-300"
+            className="mb-3 text-[var(--studio-text-faint)]"
           >
             <path d="M6 9l6 6 6-6" />
           </svg>
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-[var(--studio-text-muted)]">
             Pick a scene on the timeline to edit it.
           </p>
         </div>
@@ -458,15 +458,15 @@ export default function ScenePropertiesPanel(
 
   return (
     <aside
-      className="flex w-72 flex-col border-l border-neutral-200 bg-white"
+      className="flex w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]"
       aria-label="Scene properties"
     >
       {/* ----- Header --------------------------------------------------- */}
-      <header className="border-b border-neutral-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-neutral-900">
+      <header className="border-b border-[var(--studio-border)] px-4 py-3">
+        <h2 className="text-sm font-semibold text-white">
           Scene properties
         </h2>
-        <p className="mt-0.5 text-xs text-neutral-500">{headerSubline}</p>
+        <p className="mt-0.5 text-xs text-[var(--studio-text-muted)]">{headerSubline}</p>
       </header>
 
       {/* ----- Sections (scrollable) ----------------------------------- */}
@@ -477,7 +477,7 @@ export default function ScenePropertiesPanel(
             title="Motion"
             rightSlot={
               activePreset === null ? (
-                <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                <span className="inline-flex items-center rounded bg-[var(--studio-hover)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
                   Custom
                 </span>
               ) : null
@@ -502,8 +502,8 @@ export default function ScenePropertiesPanel(
                     className={[
                       "flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs font-medium transition-colors",
                       isActive
-                        ? "border-gold-500 bg-gold-500 text-neutral-900"
-                        : "border-neutral-200 bg-white text-neutral-700 hover:bg-gold-50 hover:border-gold-200",
+                        ? "border-gold-500 bg-gold-500 text-white"
+                        : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)] hover:border-gold-400",
                     ].join(" ")}
                   >
                     {presetIcon(preset)}
@@ -535,7 +535,7 @@ export default function ScenePropertiesPanel(
               aria-valuetext={formatSeconds(scene.durationMs)}
               className="flex-1 accent-gold-500"
             />
-            <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-neutral-900">
+            <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-white">
               {formatSeconds(scene.durationMs)}
             </span>
           </div>
@@ -553,8 +553,8 @@ export default function ScenePropertiesPanel(
                   className={[
                     "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
                     isActive
-                      ? "bg-gold-500 text-neutral-900"
-                      : "bg-neutral-100 text-neutral-600 hover:bg-gold-50 hover:text-neutral-900",
+                      ? "bg-gold-500 text-white"
+                      : "bg-[var(--studio-hover)] text-[var(--studio-text-muted)] hover:bg-[var(--studio-active)] hover:text-white",
                   ].join(" ")}
                   aria-pressed={isActive}
                 >
@@ -588,8 +588,8 @@ export default function ScenePropertiesPanel(
                   className={[
                     "inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition-colors",
                     isActive
-                      ? "border-gold-500 bg-gold-500 text-neutral-900"
-                      : "border-neutral-200 bg-white text-neutral-700 hover:bg-gold-50 hover:border-gold-200",
+                      ? "border-gold-500 bg-gold-500 text-white"
+                      : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)] hover:border-gold-400",
                   ].join(" ")}
                 >
                   {transitionIconSmall(t)}
@@ -620,11 +620,11 @@ export default function ScenePropertiesPanel(
                 aria-valuetext={formatSeconds(scene.transitionMs)}
                 className="flex-1 accent-gold-500"
               />
-              <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-neutral-900">
+              <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-white">
                 {formatSeconds(scene.transitionMs)}
               </span>
             </div>
-            <p className="mt-2 text-[11px] leading-snug text-neutral-500">
+            <p className="mt-2 text-[11px] leading-snug text-[var(--studio-text-muted)]">
               Most reels use 0.2-0.4s for natural pacing.
             </p>
           </Section>

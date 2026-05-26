@@ -365,7 +365,7 @@ export default function TextPropertiesControls(
   // isn't actually a Textbox), render an empty hint instead of crashing.
   if (!state) {
     return (
-      <div className="px-4 py-6 text-sm text-neutral-400">
+      <div className="px-4 py-6 text-sm text-[var(--studio-text-muted)]">
         Select a text layer to edit its properties.
       </div>
     );
@@ -396,7 +396,7 @@ export default function TextPropertiesControls(
             max={200}
             onChange={handleFontSizeChange}
             onBlur={handleFontSizeCommit}
-            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+            className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           />
           <input
             type="range"
@@ -412,7 +412,7 @@ export default function TextPropertiesControls(
         <select
           value={state.fontWeight}
           onChange={handleFontWeightChange}
-          className="mt-2 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+          className="mt-2 w-full rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
         >
           {WEIGHT_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -470,8 +470,8 @@ export default function TextPropertiesControls(
                 title={opt.label}
                 className={`flex items-center justify-center rounded-md border px-2 py-1.5 transition-colors ${
                   isActive
-                    ? "border-gold-500 bg-gold-50 text-gold-600"
-                    : "border-neutral-300 bg-white text-neutral-600 hover:bg-neutral-50"
+                    ? "border-gold-500 bg-[var(--studio-active)] text-gold-300"
+                    : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)]"
                 }`}
               >
                 <AlignIcon align={opt.value} />
@@ -493,7 +493,7 @@ export default function TextPropertiesControls(
               allowTransparent={false}
               canvas={canvas}
             />
-            <span className="font-mono text-xs uppercase text-neutral-500">
+            <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
               Text · {state.fill}
             </span>
           </div>
@@ -509,7 +509,7 @@ export default function TextPropertiesControls(
               allowTransparent={true}
               canvas={canvas}
             />
-            <span className="font-mono text-xs uppercase text-neutral-500">
+            <span className="font-mono text-xs uppercase text-[var(--studio-text-muted)]">
               Highlight ·{" "}
               {state.backgroundColor ? state.backgroundColor : "none"}
             </span>
@@ -528,7 +528,7 @@ export default function TextPropertiesControls(
             step={0.05}
             onChange={handleLineHeightChange}
             onBlur={handleFontSizeCommit}
-            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+            className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           />
           <input
             type="range"
@@ -555,7 +555,7 @@ export default function TextPropertiesControls(
             step={5}
             onChange={handleCharSpacingChange}
             onBlur={handleFontSizeCommit}
-            className="w-20 rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-800 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+            className="w-20 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
           />
           <input
             type="range"
@@ -569,7 +569,7 @@ export default function TextPropertiesControls(
             className="flex-1 accent-gold-500"
           />
         </div>
-        <p className="mt-1 text-[10px] text-neutral-400">
+        <p className="mt-1 text-[10px] text-[var(--studio-text-muted)]">
           Fabric units (1/1000 em). 100 ≈ 0.1em.
         </p>
       </Section>
@@ -625,7 +625,7 @@ export default function TextPropertiesControls(
             }}
           />
         </div>
-        <p className="mt-1.5 text-[10px] leading-tight text-neutral-400">
+        <p className="mt-1.5 text-[10px] leading-tight text-[var(--studio-text-muted)]">
           {effectKind === "none"
             ? "No effect — plain text."
             : effectKind === "shadow"
@@ -653,7 +653,7 @@ interface SectionProps {
 function Section(props: SectionProps): JSX.Element {
   return (
     <div>
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
         {props.title}
       </div>
       {props.children}
@@ -679,8 +679,8 @@ function StyleToggle(props: StyleToggleProps): JSX.Element {
       aria-pressed={props.active}
       className={`flex h-8 w-8 items-center justify-center rounded-md border text-sm transition-colors ${
         props.active
-          ? "border-gold-500 bg-gold-50 text-gold-600"
-          : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+          ? "border-gold-500 bg-[var(--studio-active)] text-gold-300"
+          : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)]"
       }`}
     >
       <span className={props.extraClass}>{props.label}</span>
@@ -708,8 +708,8 @@ function EffectChip(props: EffectChipProps): JSX.Element {
       title={props.label}
       className={`flex h-14 flex-col items-center justify-center gap-0.5 rounded-md border transition-colors ${
         props.active
-          ? "border-gold-500 bg-gold-50"
-          : "border-neutral-300 bg-white hover:border-gold-300 hover:bg-neutral-50"
+          ? "border-gold-500 bg-[var(--studio-active)]"
+          : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] hover:border-gold-400 hover:bg-[var(--studio-hover)]"
       }`}
     >
       <span
@@ -718,7 +718,7 @@ function EffectChip(props: EffectChipProps): JSX.Element {
       >
         {props.preview}
       </span>
-      <span className="text-[9px] font-medium uppercase tracking-wider text-neutral-500">
+      <span className="text-[9px] font-medium uppercase tracking-wider text-[var(--studio-text-muted)]">
         {props.label}
       </span>
     </button>

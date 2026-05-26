@@ -289,7 +289,7 @@ export function AddLayerToolbar(props: AddLayerToolbarProps): JSX.Element {
 
   return (
     <div
-      className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2 py-1.5 shadow-card"
+      className="flex items-center gap-1 rounded-full border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2 py-1.5 shadow-2xl shadow-black/60"
       role="toolbar"
       aria-label="Add layer toolbar"
     >
@@ -301,7 +301,7 @@ export function AddLayerToolbar(props: AddLayerToolbarProps): JSX.Element {
           disabled={canvas === null}
           aria-label={b.label}
           title={b.label}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-neutral-600 transition-colors hover:bg-gold-50 hover:text-gold-600 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-white transition-colors hover:bg-[var(--studio-hover)] hover:text-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {b.icon}
         </button>

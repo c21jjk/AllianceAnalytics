@@ -44,14 +44,14 @@ const SKELETON_COUNT = 6;
 
 export default function PhotosPanel(props: PhotosPanelProps): JSX.Element {
   return (
-    <aside className="flex h-full min-h-0 w-72 flex-col border-l border-neutral-200 bg-white">
-      <header className="border-b border-neutral-200 px-4 py-3">
+    <aside className="flex h-full min-h-0 w-72 flex-col border-l border-[var(--studio-border)] bg-[var(--studio-panel)]">
+      <header className="border-b border-[var(--studio-border)] px-4 py-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
             Photos
           </h2>
           {!props.isLoading ? (
-            <span className="text-xs text-neutral-400">({props.photos.length})</span>
+            <span className="text-xs text-[var(--studio-text-faint)]">({props.photos.length})</span>
           ) : null}
         </div>
       </header>
@@ -105,12 +105,12 @@ function PhotoThumb({
     <button
       type="button"
       onClick={() => onPhotoPicked(photo)}
-      className="group flex flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+      className="group flex flex-col items-center gap-1 rounded-md p-1 transition-colors hover:bg-[var(--studio-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
       aria-label={`Insert photo ${slotNumber}${isHero ? " (hero)" : ""}`}
       title={isHero ? "Hero photo · click to add a copy to the canvas" : `Photo ${slotNumber} · click to add to the canvas`}
     >
       <div
-        className="relative overflow-hidden rounded-md border border-neutral-200 bg-neutral-100 transition-colors group-hover:border-gold-500"
+        className="relative overflow-hidden rounded-md border border-[var(--studio-border)] bg-neutral-100 transition-colors group-hover:border-gold-500"
         style={{ width: TILE_PX, height: TILE_PX }}
       >
         <img
@@ -135,7 +135,7 @@ function PhotoThumb({
           {slotNumber}
         </span>
       </div>
-      <span className="text-[10px] text-neutral-600">
+      <span className="text-[10px] text-[var(--studio-text-muted)]">
         {isHero ? "Hero" : `Photo ${slotNumber}`}
       </span>
     </button>
@@ -155,10 +155,10 @@ function SkeletonGrid(): JSX.Element {
           className="flex flex-col items-center gap-1 rounded-md p-1"
         >
           <div
-            className="animate-pulse rounded-md bg-neutral-200"
+            className="animate-pulse rounded-md bg-[var(--studio-hover)]"
             style={{ width: TILE_PX, height: TILE_PX }}
           />
-          <div className="h-2 w-12 animate-pulse rounded bg-neutral-200" />
+          <div className="h-2 w-12 animate-pulse rounded bg-[var(--studio-hover)]" />
         </div>
       ))}
     </div>
@@ -170,12 +170,12 @@ function EmptyState(): JSX.Element {
   // so the three tabs feel consistent. Copy points at the upstream source
   // (MLS photos) since this isn't something the user fixes inside Studio.
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gold-500/50 bg-gold-50/30 px-3 py-8 text-center">
-      <div className="mb-2 text-gold-600">
+    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gold-500/30 bg-gold-500/5 px-3 py-8 text-center">
+      <div className="mb-2 text-gold-400">
         <PhotoPlaceholderIcon />
       </div>
-      <p className="text-xs font-medium text-neutral-700">No listing photos</p>
-      <p className="mt-1 text-[11px] leading-snug text-neutral-500">
+      <p className="text-xs font-medium text-white">No listing photos</p>
+      <p className="mt-1 text-[11px] leading-snug text-[var(--studio-text-muted)]">
         This listing has no photos in the MLS feed yet. Check back after the
         next RETS sync, or upload one manually from the property page.
       </p>

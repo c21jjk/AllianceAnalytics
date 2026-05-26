@@ -69,11 +69,11 @@ export default function MultiSelectionControls(
 
   return (
     <div className="flex flex-col gap-4 px-3 py-3">
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2.5">
-        <div className="text-sm font-semibold text-neutral-800">
+      <div className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-3 py-2.5">
+        <div className="text-sm font-semibold text-white">
           {count} {count === 1 ? "layer" : "layers"} selected
         </div>
-        <p className="mt-0.5 text-xs text-neutral-500">
+        <p className="mt-0.5 text-xs text-[var(--studio-text-muted)]">
           Multi-edit ships in Phase 3. For now, you can delete all or group
           them once that lands.
         </p>
@@ -84,7 +84,7 @@ export default function MultiSelectionControls(
           type="button"
           onClick={handleDeleteAll}
           disabled={count === 0}
-          className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-500/40 bg-transparent px-3 py-2 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/20 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {/* why: inline trash SVG — mirrors CanvasEditor.tsx's TrashIcon for visual consistency. */}
           <svg
@@ -108,7 +108,7 @@ export default function MultiSelectionControls(
           disabled
           title="Coming in Phase 3"
           aria-label="Group (coming in Phase 3)"
-          className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-medium text-neutral-400"
+          className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-3 py-2 text-sm font-medium text-[var(--studio-text-faint)]"
         >
           {/* why: inline group SVG — two overlapping squares hints at the group concept. */}
           <svg
@@ -125,13 +125,13 @@ export default function MultiSelectionControls(
             <rect x="6" y="6" width="8" height="8" rx="1" />
           </svg>
           Group
-          <span className="ml-1 rounded bg-neutral-200 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-neutral-500">
+          <span className="ml-1 rounded bg-[var(--studio-hover)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[var(--studio-text-muted)]">
             Phase 3
           </span>
         </button>
       </div>
 
-      <p className="text-[11px] leading-relaxed text-neutral-500">
+      <p className="text-[11px] leading-relaxed text-[var(--studio-text-muted)]">
         Tip: click an empty area of the canvas to clear the selection, then
         click a single layer to access full type, color, and image controls.
       </p>
