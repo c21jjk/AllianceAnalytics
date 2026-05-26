@@ -93,9 +93,93 @@ export interface FontPickerProps {
   options: ReadonlyArray<FontPickerOption>;
   /** When true, the picker is disabled. */
   disabled?: boolean;
+  /**
+   * 2026-05-26 — when true, the component renders ONLY the trigger pill and
+   * delegates open/close + option-list rendering to an external panel
+   * (see `FontPickerPanel.tsx`). Used by the floating ContextualTopToolbar
+   * where a left-rail panel beats an inline portaled dropdown for browseability.
+   *
+   * Default is `false` so existing callers (TextPropertiesControls in the
+   * right panel) keep the dropdown behavior they already shipped with.
+   */
+  panelMode?: boolean;
+  /** Required when `panelMode` is true. Fired on trigger click. */
+  onOpenPanel?: () => void;
+  /** When `panelMode` is true, drives the trigger's active styling + aria-expanded. */
+  panelOpen?: boolean;
 }
 
+/**
+ * 2026-05-26 — public entrypoint. Branches on `panelMode` to one of two
+ * sibling components that DON'T share hook state (so neither runs the
+ * other's hooks). Keeps both behaviors visible in this file while
+ * satisfying rules-of-hooks.
+ */
 export default function FontPicker(props: FontPickerProps): JSX.Element {
+  if (props.panelMode) {
+    return <FontPickerTrigger {...props} />;
+  }
+  return <FontPickerDropdown {...props} />;
+}
+
+/**
+ * 2026-05-26 — trigger-only render path for `panelMode`. Renders the
+ * font-name + chevron pill; the panel itself lives elsewhere (mounted at
+ * the editor overlay root) and reads / writes the active font value via
+ * the same selection-state mechanism the floating toolbar uses.
+ */
+function FontPickerTrigger(props: FontPickerProps): JSX.Element {
+  const {
+    value,
+    options,
+    disabled = false,
+    onOpenPanel,
+    panelOpen = false,
+  } = props;
+  const activeOption = options.find((o) => o.value === value) ?? null;
+  const activeLabel = activeOption?.label ?? value;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (disabled) return;
+        onOpenPanel?.();
+      }}
+      disabled={disabled}
+      className={`flex w-full items-center justify-between gap-2 rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-left text-sm transition-colors hover:border-white/20 focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40 disabled:cursor-not-allowed disabled:opacity-50 ${
+        panelOpen ? "border-gold-500 ring-1 ring-gold-500/40" : ""
+      }`}
+      aria-haspopup="dialog"
+      aria-expanded={panelOpen}
+      aria-label="Font family"
+    >
+      <span className="truncate text-white" style={{ fontFamily: value }}>
+        {activeLabel}
+      </span>
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="flex-shrink-0 text-[var(--studio-text-muted)]"
+        aria-hidden="true"
+      >
+        <path d="M4 6l4 4 4-4" />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * Legacy popover-dropdown render path. Used by TextPropertiesControls in
+ * the right panel where a portaled dropdown is the right affordance
+ * (small surface, focused single-property edit).
+ */
+function FontPickerDropdown(props: FontPickerProps): JSX.Element {
   const { value, onChange, options, disabled = false } = props;
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);

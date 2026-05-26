@@ -106,6 +106,16 @@ interface ContextualTopToolbarProps {
    * orchestrator routes both to the same handler.
    */
   onAlign?: (direction: ContextualAlignDirection) => void;
+  /**
+   * 2026-05-26 — Canva-style FontPickerPanel wiring. Text mode only.
+   * When the parent provides `onOpenFontPicker`, the font-name pill switches
+   * from the legacy popover-dropdown to a trigger that opens the left-rail
+   * panel. `fontPickerOpen` drives the trigger's active styling +
+   * aria-expanded. Both are optional so any caller that omits them keeps
+   * the legacy dropdown behavior (defensive — but the editor passes them).
+   */
+  onOpenFontPicker?: () => void;
+  fontPickerOpen?: boolean;
 }
 
 // FONT_OPTIONS now lives in primitives/font-options.ts as the single source
@@ -201,8 +211,15 @@ function ImageContextualControls(
 // ===========================================================================
 
 function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
-  const { canvas, selectionVersion, onCanvasMutated, recordHistory, onAlign } =
-    props;
+  const {
+    canvas,
+    selectionVersion,
+    onCanvasMutated,
+    recordHistory,
+    onAlign,
+    onOpenFontPicker,
+    fontPickerOpen = false,
+  } = props;
 
   // Local mirror state — written through to Fabric on every input. Pattern
   // matches TextPropertiesControls; see that file's comment for the
@@ -408,12 +425,21 @@ function TextContextualControls(props: ContextualTopToolbarProps): JSX.Element {
 
   return (
     <div className="flex items-center gap-1 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-popover)] px-2 py-1.5 shadow-2xl shadow-black/60 animate-fade-in-up">
-      {/* === 1. Font family === */}
+      {/* === 1. Font family ===
+          2026-05-26 — when the editor wires `onOpenFontPicker`, the pill
+          becomes a trigger for the Canva-style left-rail panel. The
+          callback receives focus/keyboard handling at the panel; here we
+          just opt in via panelMode. Fallback path (no `onOpenFontPicker`)
+          keeps the legacy in-toolbar popover so the toolbar is still
+          usable in isolation (Storybook etc.). */}
       <div className="w-36">
         <FontPicker
           value={state.fontFamily}
           onChange={handleFontFamily}
           options={FONT_OPTIONS}
+          panelMode={Boolean(onOpenFontPicker)}
+          onOpenPanel={onOpenFontPicker}
+          panelOpen={fontPickerOpen}
         />
       </div>
       <Divider />

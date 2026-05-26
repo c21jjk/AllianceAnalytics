@@ -158,7 +158,9 @@ import AddLayerToolbar, {
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
 import ContextualTopToolbar from "./panels/ContextualTopToolbar";
+import FontPickerPanel from "./panels/FontPickerPanel";
 import LayerListPanel from "./panels/LayerListPanel";
+import { FONT_OPTIONS } from "./primitives/font-options";
 import PhotosPanel from "./panels/PhotosPanel";
 import ToolsPanel, { type ToolMode } from "./panels/ToolsPanel";
 import Tooltip from "./primitives/Tooltip";
@@ -421,6 +423,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // why: right-side Layers/properties panel mirror — collapses to a 48px
   // vertical rail showing a single Layers icon. Stays expanded by default.
   const [layersExpanded, setLayersExpanded] = useState<boolean>(true);
+  // why: Canva-style Font picker panel (2026-05-26). Lives at editor scope
+  // because the trigger (text-toolbar font pill) and the panel (left-rail
+  // overlay) are separate components that both need read/write access.
+  // Closing the panel when text selection clears is handled in the
+  // selection effect below.
+  const [fontPickerOpen, setFontPickerOpen] = useState<boolean>(false);
+  // why: ref the editor passes to FontPickerPanel so focus can return to
+  // the trigger pill on close. Updated via a callback ref because the
+  // trigger itself is rendered inside ContextualTopToolbar — we hand the
+  // ref to the toolbar via context-free prop drilling would be heavy;
+  // instead we update this ref imperatively when the toolbar mounts.
+  // Simplest path: skip ref-restoration. The Esc handler still closes and
+  // the user can Tab back to wherever they need — focus on the input box
+  // inside the panel is the bigger win we DO want to deliver.
+  // Keeping the ref slot here in case a future revision wires it.
+  const fontPickerTriggerRef = useRef<HTMLElement | null>(null);
   // why: user-driven zoom on top of the fit-to-viewport `displayScale`. Range
   // 0.25-2.0 mirrors Canva's bottom-bar zoom. "Fit" resets to 1 which means
   // "use displayScale as-is" — the canvas always fits the viewport at zoom=1.
@@ -3015,6 +3033,70 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   }, [selection.isMulti, selectedEntry]);
 
   // -------------------------------------------------------------------------
+  // 2026-05-26 — FontPickerPanel selection wiring
+  // -------------------------------------------------------------------------
+  // why: keep the panel locally coherent with the selected text object —
+  // reading fontFamily off the active Fabric object so the panel highlights
+  // the current font, and snapping the panel closed when the user
+  // deselects (no point in an open panel with no text to apply to).
+  const activeFontFamily = useMemo<string>(() => {
+    if (selectionMode !== "text") return "";
+    const canvas = fabricRef.current;
+    const active = canvas?.getActiveObject();
+    if (!(active instanceof Textbox)) return "";
+    return String(active.fontFamily ?? "");
+    // why: layerVersion bumps on any mutation; selection.layerId flips on
+    // selection changes. Together they catch every case where the font
+    // could have changed without us reading it.
+  }, [selectionMode, selection.layerId, layerVersion]);
+
+  // why: every distinct fontFamily currently on the canvas. Used by the
+  // "Document fonts" section of the panel. We walk getObjects() once per
+  // layerVersion bump (which fires on add/remove/modify) so the section
+  // reflects the live state without polling.
+  const documentFontValues = useMemo<ReadonlyArray<string>>(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const obj of canvas.getObjects()) {
+      if (!(obj instanceof Textbox)) continue;
+      const fam = String(obj.fontFamily ?? "");
+      if (!fam || seen.has(fam)) continue;
+      seen.add(fam);
+      result.push(fam);
+    }
+    return result;
+  }, [layerVersion]);
+
+  // why: close the panel when text selection clears. Without this, the
+  // user could leave the panel open and clicking a font would do nothing
+  // (no Textbox is active to receive the change). Canva snaps closed in
+  // the same situation.
+  useEffect(() => {
+    if (selectionMode !== "text" && fontPickerOpen) {
+      setFontPickerOpen(false);
+    }
+  }, [selectionMode, fontPickerOpen]);
+
+  // why: apply a font from the panel by reaching directly into the active
+  // text object — same mechanism the floating toolbar uses. Record history
+  // so each font swap is its own undo step (matches Canva's behavior:
+  // every distinct font change is undoable).
+  const applyFontFromPanel = useCallback(
+    (next: string): void => {
+      const canvas = fabricRef.current;
+      const active = canvas?.getActiveObject();
+      if (!(active instanceof Textbox)) return;
+      active.set({ fontFamily: next });
+      canvas?.requestRenderAll();
+      setLayerVersion((v) => v + 1);
+      history.record();
+    },
+    [history],
+  );
+
+  // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
   const effectiveSaving = isSaving || isLocalSaving;
@@ -3360,6 +3442,24 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           ) : null}
         </aside>
 
+        {/* === 2026-05-26 — FontPickerPanel — Canva-style font browser ===
+            Overlays the left sidebar at left:64px (same column as the
+            expanded panel) so it temporarily covers whichever tab is
+            active. Mounted as a sibling of the aside; positioned with
+            `fixed` so it escapes the flex layout and sits at editor
+            viewport coordinates. Z-index 30 stacks above the expanded
+            panel (z-index default within the aside flow) without
+            competing with modal dialogs (z-50 on the overlay backdrop). */}
+        <FontPickerPanel
+          open={fontPickerOpen}
+          onClose={() => setFontPickerOpen(false)}
+          value={activeFontFamily}
+          options={FONT_OPTIONS}
+          onApply={applyFontFromPanel}
+          documentFontValues={documentFontValues}
+          triggerRef={fontPickerTriggerRef}
+        />
+
         {/* === Center column — canvas area + footer ===
             why: stacked into its own flex-col so the canvas footer
             (zoom + undo/redo + alignment) sits inside the same column
@@ -3455,6 +3555,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onAlign={handleAlign}
                     onEnterCropMode={enterCropModeForActive}
                     onActivateResize={activateResizeForActive}
+                    onOpenFontPicker={() => setFontPickerOpen((v) => !v)}
+                    fontPickerOpen={fontPickerOpen}
                   />
                 ) : null}
                 {selectedEntry && !selectedEntry.locked ? (
