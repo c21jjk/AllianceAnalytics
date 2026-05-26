@@ -83,6 +83,15 @@ interface ContextualTopToolbarProps {
    */
   onEnterCropMode?: () => void;
   /**
+   * 2026-05-25 — image-mode "Resize" handler. Companion to
+   * onEnterCropMode — clicking Resize ensures the photo is the
+   * active selection with handles visible. The handles do the same
+   * thing they always did (scale the photo + clipPath together),
+   * but having an explicit toolbar button gives the user a clear
+   * counterpart to Crop. When omitted, the Resize button is hidden.
+   */
+  onActivateResize?: () => void;
+  /**
    * Multi-mode only — used to enable Distribute (requires ≥3 objects).
    * Ignored for single-object modes.
    */
@@ -153,35 +162,68 @@ export default function ContextualTopToolbar(
 function ImageContextualControls(
   props: ContextualTopToolbarProps,
 ): JSX.Element | null {
-  const { onEnterCropMode } = props;
-  if (!onEnterCropMode) return null;
+  const { onEnterCropMode, onActivateResize } = props;
+  // Hide the whole toolbar if no actions are wired.
+  if (!onEnterCropMode && !onActivateResize) return null;
   return (
     <div className="flex items-center gap-1 rounded-lg border border-neutral-200 bg-white px-1 py-1 shadow-sm">
-      <Tooltip label="Crop / reposition photo">
-        <button
-          type="button"
-          onClick={onEnterCropMode}
-          className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
-        >
-          {/* Inline crop glyph — two perpendicular L-shapes, classic
-              crop-tool icon. Sized to match the rest of the toolbar. */}
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
+      {onActivateResize ? (
+        <Tooltip label="Resize photo — drag handles to scale">
+          <button
+            type="button"
+            onClick={onActivateResize}
+            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
           >
-            <path d="M4 1v11h11" />
-            <path d="M1 4h11v11" />
-          </svg>
-          <span>Crop</span>
-        </button>
-      </Tooltip>
+            {/* Resize glyph — four arrows pointing to corners
+                (classic "expand" icon). Communicates "scale this
+                object." */}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M2 6V2h4" />
+              <path d="M14 6V2h-4" />
+              <path d="M2 10v4h4" />
+              <path d="M14 10v4h-4" />
+            </svg>
+            <span>Resize</span>
+          </button>
+        </Tooltip>
+      ) : null}
+      {onEnterCropMode ? (
+        <Tooltip label="Crop / reposition photo">
+          <button
+            type="button"
+            onClick={onEnterCropMode}
+            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+          >
+            {/* Crop glyph — two perpendicular L-shapes, classic
+                crop-tool icon. */}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 1v11h11" />
+              <path d="M1 4h11v11" />
+            </svg>
+            <span>Crop</span>
+          </button>
+        </Tooltip>
+      ) : null}
     </div>
   );
 }

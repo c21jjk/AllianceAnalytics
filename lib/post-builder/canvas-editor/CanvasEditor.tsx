@@ -279,18 +279,36 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   useEffect(() => {
     cropModeRef.current = cropMode;
   }, [cropMode]);
+  // 2026-05-25 — Live frame rect during crop mode. Updates as the
+  // user drags the frame's handles. Drives Done bar positioning +
+  // the clipPath re-apply on Done. Ref shadows state for stable
+  // closure access inside the exit handler.
+  const [currentClipRect, setCurrentClipRect] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const currentClipRectRef = useRef<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  useEffect(() => {
+    currentClipRectRef.current = currentClipRect;
+  }, [currentClipRect]);
+
   // 2026-05-25 — Visual overlay objects for crop mode.
   //
-  // Canva-style model (refactored): the FRAME stays static throughout
-  // crop mode — only the PHOTO is manipulated. So we only need the
-  // dimmer rects (covering the area outside the original frame) and
-  // a single violet border outline. Neither is interactive — both
-  // exist solely for visual feedback. The user manipulates the photo
-  // directly via its standard Fabric selection handles.
+  // The FRAME is interactive — it has 8 handles for resizing the
+  // visible window (the "crop" operation). The PHOTO is below,
+  // draggable from anywhere inside the frame thanks to the frame's
+  // perPixelTargetFind. Dimmers cover the matboard area outside
+  // the frame to communicate what's being cropped.
   //
   // Stored on a ref so the enter/exit handlers can add+remove them
-  // without going through a React render cycle — they're not part of
-  // the layer tree.
+  // without going through a React render cycle.
   const cropOverlayRef = useRef<{
     border: Rect | null;
     dimmers: Rect[];
@@ -1349,15 +1367,17 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     const savedClipPath = targetImage.clipPath;
     targetImage.clipPath = undefined;
 
-    // 2 — make the target the active selection. All 8 handles
-    // remain visible:
-    //   • Corners (tl/tr/bl/br) — uniform scale via the
-    //     `scalingEqually` action handler in canva-style-controls.ts.
-    //   • Side pills (ml/mr/mt/mb) — single-axis scale. Lets the
-    //     user shrink the photo on one axis only ("squeeze") to
-    //     control aspect mismatch with the frame. Matches Canva.
-    //   • Rotation (mtr) — hidden in crop mode to keep the surface
-    //     focused on cropping.
+    // 2 — configure the target image's interaction.
+    //
+    // In crop mode, the PHOTO's own handles are HIDDEN. The frame
+    // border (created below) is what the user manipulates to CROP.
+    // The photo is interactive only for repositioning — drag the
+    // body to slide the photo around inside the frame.
+    //
+    // Hiding handles via setControlsVisibility (not removing the
+    // controls map) is the right call because we want to restore
+    // the photo's normal handles on exit. Visibility flags toggle
+    // per-instance without touching the underlying controls object.
     canvas.setActiveObject(targetImage);
     const priorControlsVisibility = {
       tl: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("tl") ?? true,
@@ -1375,18 +1395,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         setControlsVisibility: (v: Record<string, boolean>) => void;
       }
     ).setControlsVisibility({
-      tl: true,
-      tr: true,
-      bl: true,
-      br: true,
-      // 2026-05-25 — Canva-match: side pills enabled in crop mode
-      // so the user can do single-axis photo scaling (their ask).
-      ml: true,
-      mr: true,
-      mt: true,
-      mb: true,
+      tl: false,
+      tr: false,
+      bl: false,
+      br: false,
+      ml: false,
+      mr: false,
+      mt: false,
+      mb: false,
       mtr: false,
     });
+    // why: also hide the selection bounding box on the photo. With
+    // no handles AND no border, the photo doesn't compete visually
+    // with the frame chrome. The frame border is what the user sees
+    // and grabs.
+    const priorHasBorders = targetImage.hasBorders ?? true;
+    targetImage.set({ hasBorders: false });
 
     // 2026-05-25 — Canva-style matboard: extend the canvas to 2×
     // template dimensions and center the template inside. This makes
@@ -1447,14 +1471,34 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       height,
       fill: "transparent",
       stroke: "#8B5CF6",
-      strokeWidth: 2,
+      strokeWidth: 3,
       strokeUniform: true,
-      selectable: false,
-      evented: false,
+      selectable: true,
+      evented: true,
       excludeFromExport: true,
       originX: "left",
       originY: "top",
+      cornerStyle: "circle",
+      cornerSize: 16,
+      transparentCorners: false,
+      borderColor: "#8B5CF6",
+      cornerColor: "#8B5CF6",
+      borderScaleFactor: 2,
+      hasControls: true,
+      lockRotation: true,
+      // 2026-05-25 — perPixelTargetFind so only the 3px violet
+      // STROKE hit-tests. Clicks inside the body (transparent
+      // pixels) fall through to the photo below for dragging.
+      perPixelTargetFind: true,
     });
+    // 8 Canva-style handles for cropping the frame.
+    (
+      border as unknown as { controls: Record<string, unknown> }
+    ).controls = createCanvaStyleControls();
+    // Tag for click-outside detection.
+    (
+      border as unknown as { data: Record<string, unknown> }
+    ).data = { isCropFrameBorder: true };
     // Dimmer bounds: cover the entire VISIBLE SCENE AREA outside the
     // template frame. Visible scene now spans (-tx, -ty) to
     // (template.width + tx, template.height + ty) thanks to the
@@ -1521,10 +1565,92 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     canvas.add(border);
     cropOverlayRef.current = { border, dimmers };
 
-    // Re-assert image as active selection AFTER adding overlays
-    // (canvas.add() can clear the active selection in some flows).
+    // Re-assert image as active selection so its body-drag works
+    // immediately. The border is interactive but only its STROKE
+    // and HANDLES respond to clicks (perPixelTargetFind = true).
     canvas.setActiveObject(targetImage);
     canvas.requestRenderAll();
+
+    // 2026-05-25 — seed currentClipRect. Drives the Done bar
+    // position + the clipPath re-apply on Done. Updated below as
+    // the user drags the frame's handles.
+    setCurrentClipRect({ left, top, width, height });
+
+    // 3b — wire scaling/moving handlers on the frame border. Every
+    // tick: normalize scaleX/scaleY → width/height (so the next
+    // transform starts clean), clamp to matboard bounds, and
+    // update the dimmers + currentClipRect React state so the
+    // Done bar follows.
+    const syncFrameFromBorder = (): void => {
+      const rawW = (border.width ?? 0) * (border.scaleX ?? 1);
+      const rawH = (border.height ?? 0) * (border.scaleY ?? 1);
+      const newLeft = border.left ?? 0;
+      const newTop = border.top ?? 0;
+      const MIN = 40;
+      // Matboard bounds (scene coords).
+      const matMinX = -tx;
+      const matMinY = -ty;
+      const matMaxX = template.width + tx;
+      const matMaxY = template.height + ty;
+      const clampedW = Math.max(MIN, Math.min(rawW, matMaxX - newLeft));
+      const clampedH = Math.max(MIN, Math.min(rawH, matMaxY - newTop));
+      const clampedLeft = Math.max(
+        matMinX,
+        Math.min(newLeft, matMaxX - clampedW),
+      );
+      const clampedTop = Math.max(
+        matMinY,
+        Math.min(newTop, matMaxY - clampedH),
+      );
+      border.set({
+        left: clampedLeft,
+        top: clampedTop,
+        width: clampedW,
+        height: clampedH,
+        scaleX: 1,
+        scaleY: 1,
+      });
+      // Update dimmers — reposition all four around the new frame.
+      const matLeftV = matMinX;
+      const matTopV = matMinY;
+      const matWidthV = template.width + 2 * tx;
+      const matHeightV = template.height + 2 * ty;
+      const [dTop, dBottom, dLeft, dRight] = dimmers;
+      dTop.set({
+        left: matLeftV,
+        top: matTopV,
+        width: matWidthV,
+        height: clampedTop - matTopV,
+      });
+      dBottom.set({
+        left: matLeftV,
+        top: clampedTop + clampedH,
+        width: matWidthV,
+        height: matTopV + matHeightV - (clampedTop + clampedH),
+      });
+      dLeft.set({
+        left: matLeftV,
+        top: clampedTop,
+        width: clampedLeft - matLeftV,
+        height: clampedH,
+      });
+      dRight.set({
+        left: clampedLeft + clampedW,
+        top: clampedTop,
+        width: matLeftV + matWidthV - (clampedLeft + clampedW),
+        height: clampedH,
+      });
+      // React state for Done bar positioning.
+      setCurrentClipRect({
+        left: clampedLeft,
+        top: clampedTop,
+        width: clampedW,
+        height: clampedH,
+      });
+      canvas.requestRenderAll();
+    };
+    border.on("scaling", syncFrameFromBorder);
+    border.on("moving", syncFrameFromBorder);
 
     // 4 — define the exit function. Cancel=true restores image pose
     // AND clipPath rect; cancel=false commits both.
@@ -1533,12 +1659,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (!c) return;
       // 2026-05-25 — re-apply the image's clipPath now that we're
       // leaving crop mode. Cover the appropriate rect:
-      // The frame is fixed throughout crop mode, so the clipPath
-      // re-applies at the ORIGINAL rect for both commit and cancel.
-      // Only difference: cancel additionally restores the image's
-      // pre-crop pose. Preserve corner radius from the saved
-      // clipPath so rounded photo frames stay rounded.
-      const targetRect = cropMode.originalClipRect;
+      // The user can resize the frame during crop. On Done, use
+      // the live frame rect (currentClipRectRef). On Cancel, snap
+      // back to the original. Preserve corner radius from the
+      // saved clipPath so rounded photo frames stay rounded.
+      const targetRect = cancel
+        ? cropMode.originalClipRect
+        : currentClipRectRef.current ?? cropMode.originalClipRect;
       const priorClipRx =
         savedClipPath instanceof Rect &&
         typeof (savedClipPath as unknown as { rx?: number }).rx === "number"
@@ -1573,13 +1700,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // (we extended them on entry for the matboard view).
       c.setDimensions({ width: savedCanvasW, height: savedCanvasH });
       c.setViewportTransform(savedViewportTransform);
-      // Restore the target image's control visibility to whatever
-      // it was before crop mode.
+      // Restore the target image's control visibility AND
+      // hasBorders flag to what they were before crop mode.
       (
         targetImage as unknown as {
           setControlsVisibility: (v: Record<string, boolean>) => void;
         }
       ).setControlsVisibility(priorControlsVisibility);
+      targetImage.set({ hasBorders: priorHasBorders });
       // Restore other layers' interactivity.
       for (const r of restoreList) {
         r.obj.set({ selectable: r.selectable, evented: r.evented });
@@ -1591,6 +1719,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         c.fire("object:modified", { target: targetImage });
       }
       c.requestRenderAll();
+      setCurrentClipRect(null);
       setCropMode(null);
     };
     exitCropModeRef.current = exitFn;
@@ -1610,14 +1739,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     };
     document.addEventListener("keydown", onKey);
 
-    // 6 — click-outside handler. If the user clicks anywhere that
-    // ISN'T the photo (e.g. another layer, or canvas background),
-    // commit + exit. The border and dimmers are non-evented so they
-    // can't be click targets; clicks pass through them.
+    // 6 — click-outside handler. Clicks on the photo OR the frame
+    // border stay in crop mode (those are the two interactive crop
+    // surfaces). Clicks on the matboard / canvas background commit
+    // + exit.
     const onCanvasClick = (e: {
       target?: import("fabric").FabricObject | null;
     }): void => {
       if (e.target === targetImage) return;
+      // Click on the frame border itself (or its handles) stays in
+      // crop mode — user is engaging the frame controls.
+      const borderData = e.target
+        ? (
+            e.target as unknown as { data?: { isCropFrameBorder?: boolean } }
+          ).data
+        : null;
+      if (borderData?.isCropFrameBorder) return;
       exitFn(false);
     };
     canvas.on("mouse:down", onCanvasClick);
@@ -1668,6 +1805,41 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         height: clipH,
       },
     });
+  }, []);
+
+  // 2026-05-25 — Companion to enterCropModeForActive. Resize is the
+  // photo's DEFAULT selection behavior — handles attached to the
+  // image scale photo + clipPath together via the object:modified
+  // handler. This callback just ensures the photo IS the active
+  // selection (so its handles appear). Most clicks already land
+  // there, but exposing a dedicated toolbar button alongside Crop
+  // makes the two operations visibly symmetric to the user.
+  const activateResizeForActive = useCallback((): void => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const active = canvas.getActiveObject();
+    if (!(active instanceof FabricImage)) return;
+    // Make sure handles are visible — if anything turned them off
+    // (e.g., a prior crop-mode exit that didn't restore), force
+    // them back to the schema default of all-8-on.
+    (
+      active as unknown as {
+        setControlsVisibility: (v: Record<string, boolean>) => void;
+      }
+    ).setControlsVisibility({
+      tl: true,
+      tr: true,
+      bl: true,
+      br: true,
+      ml: true,
+      mr: true,
+      mt: true,
+      mb: true,
+      mtr: true,
+    });
+    active.set({ hasBorders: true });
+    canvas.setActiveObject(active);
+    canvas.requestRenderAll();
   }, []);
 
   // -------------------------------------------------------------------------
@@ -3256,6 +3428,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     recordHistory={history.record}
                     onAlign={handleAlign}
                     onEnterCropMode={enterCropModeForActive}
+                    onActivateResize={activateResizeForActive}
                   />
                 ) : null}
                 {selectedEntry && !selectedEntry.locked ? (
@@ -3354,13 +3527,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                   scaled together with the canvas by the parent
                   transform — so it tracks the frame regardless of
                   user zoom level. */}
-              {cropMode ? (
+              {cropMode && currentClipRect ? (
                 <div
                   style={{
                     position: "absolute",
-                    // 2026-05-25 (Canva-match refactor) — frame is
-                    // fixed during crop, so read directly from the
-                    // entry snapshot.
+                    // 2026-05-25 — Position tracks the LIVE frame
+                    // rect (currentClipRect), so the bar follows
+                    // every frame-handle drag.
                     //
                     // Offset by (template.width/2, template.height/2)
                     // because the canvas was extended 2× and viewport
@@ -3369,13 +3542,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     // CSS space (canvas pixel space) so we need that
                     // translate baked in.
                     left:
-                      (cropMode.originalClipRect.left + template.width / 2) *
+                      (currentClipRect.left + template.width / 2) *
                       displayScale *
                       zoom,
                     top:
                       Math.max(
                         0,
-                        cropMode.originalClipRect.top +
+                        currentClipRect.top +
                           template.height / 2 -
                           48 / (displayScale * zoom),
                       ) *
