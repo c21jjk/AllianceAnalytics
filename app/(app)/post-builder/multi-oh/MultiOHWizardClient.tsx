@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Check, Loader2 } from "lucide-react";
 import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 import {
   MULTI_OH_MAX_PROPERTIES,
@@ -997,8 +997,16 @@ export default function MultiOHWizardClient({
         generating={generating}
       />
 
-      {generating ? (
-        <GeneratingOverlay statusText={statusText} />
+      {generating || partialResult ? (
+        <GeneratingOverlay
+          statusText={statusText}
+          heroTile={heroTile}
+          slideTiles={slideTiles}
+          partialResult={partialResult}
+          generating={generating}
+          onRetryFailed={retryFailedSlides}
+          onContinuePartial={continueWithPartial}
+        />
       ) : null}
     </div>
   );
@@ -2791,27 +2799,202 @@ function StickyFooter({
 
 interface GeneratingOverlayProps {
   statusText: string;
+  heroTile: SlideTile;
+  slideTiles: readonly SlideTile[];
+  partialResult: PartialResult | null;
+  /** True while a stream is in flight. Used to disable the retry button so
+   *  the user can't double-fire while a retry is mid-stream. */
+  generating: boolean;
+  onRetryFailed: () => void;
+  onContinuePartial: () => void;
 }
 
-function GeneratingOverlay({ statusText }: GeneratingOverlayProps) {
+/**
+ * Visual progress overlay for the multi-OH generate flow.
+ *
+ * Layout: hero tile centered above an N-tile grid of slide thumbnails.
+ * Each tile shows skeleton / image / red-fail state driven by the NDJSON
+ * event stream. When the stream finishes with one or more `slide_failed`
+ * events, a partial-progress footer appears with Retry / Continue actions.
+ *
+ * The overlay stays mounted while `partialResult` is non-null (even
+ * though `generating` has flipped false) so the user can act on the
+ * failures without the modal disappearing.
+ */
+function GeneratingOverlay({
+  statusText,
+  heroTile,
+  slideTiles,
+  partialResult,
+  generating,
+  onRetryFailed,
+  onContinuePartial,
+}: GeneratingOverlayProps) {
+  const successCount =
+    slideTiles.length === 0
+      ? 0
+      : slideTiles.filter((t) => t.state === "done").length;
+  const totalCount = slideTiles.length;
+
+  // Cap failure list at 4 lines + an "and N others" tail so a many-fail
+  // run doesn't blow up the modal height past viewport.
+  const visibleFailures = partialResult?.failedDetails.slice(0, 4) ?? [];
+  const extraFailures = partialResult
+    ? Math.max(0, partialResult.failedDetails.length - visibleFailures.length)
+    : 0;
+
   return (
     <div
       className="fixed inset-0 z-40 bg-neutral-900/50 backdrop-blur-sm flex items-center justify-center"
       role="status"
       aria-live="polite"
     >
-      <div className="bg-white rounded-xl shadow-xl px-8 py-6 max-w-sm w-full mx-4 text-center">
-        <Spinner />
-        <div className="mt-4 text-sm font-semibold text-neutral-900">
-          Building your carousel
+      <div className="bg-white rounded-xl shadow-xl px-6 py-6 max-w-2xl w-full mx-4">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          {generating ? <Spinner /> : null}
+          <div>
+            <div className="text-sm font-semibold text-neutral-900">
+              {partialResult
+                ? "Carousel built with some gaps"
+                : "Building your carousel"}
+            </div>
+            <div className="mt-0.5 text-sm text-neutral-600">{statusText}</div>
+          </div>
         </div>
-        <div className="mt-1 text-sm text-neutral-600">{statusText}</div>
-        <div className="mt-3 text-xs text-neutral-500">
-          This usually takes 20-40 seconds. Hang tight — we&apos;ll redirect you when it&apos;s ready.
+
+        {/* Hero tile — stacked above the slide grid. */}
+        <div className="mt-5 flex flex-col items-center">
+          <TileShell
+            tile={heroTile}
+            sizeClass="w-[180px] h-[180px]"
+            failLabel="Hero"
+          />
+          <div className="mt-1.5 text-xs font-medium uppercase tracking-wider text-neutral-500">
+            Hero
+          </div>
         </div>
+
+        {/* Per-slide grid (suppressed before `started` event arrives). */}
+        {slideTiles.length > 0 ? (
+          <div
+            className="mt-5 grid gap-3"
+            style={{
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(0, 120px))",
+              justifyContent: "center",
+            }}
+          >
+            {slideTiles.map((tile, idx) => (
+              <div key={idx} className="flex flex-col items-center">
+                <TileShell
+                  tile={tile}
+                  sizeClass="w-[120px] h-[120px]"
+                  failLabel={`Slide ${idx + 1}`}
+                />
+                {tile.address ? (
+                  <div
+                    className="mt-1 text-[10px] text-neutral-500 text-center leading-tight max-w-[120px] truncate"
+                    title={tile.address}
+                  >
+                    {tile.address}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {/* Partial-progress footer — only when the stream completed with
+            at least one slide failure. */}
+        {partialResult ? (
+          <div className="mt-4 pt-4 border-t border-neutral-200">
+            <div className="text-sm font-semibold text-neutral-900">
+              Hero + {successCount} of {totalCount} slides ready
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {visibleFailures.map((f) => (
+                <li
+                  key={f.index}
+                  className="text-xs text-neutral-600"
+                >
+                  Slide {f.index + 1} — {f.address ?? "address unknown"} couldn&apos;t render
+                </li>
+              ))}
+              {extraFailures > 0 ? (
+                <li className="text-xs text-neutral-500 italic">
+                  and {extraFailures} other{extraFailures === 1 ? "" : "s"}
+                </li>
+              ) : null}
+            </ul>
+            <div className="mt-3 flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={onContinuePartial}
+                disabled={generating}
+                className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                Continue with what rendered
+              </button>
+              <button
+                type="button"
+                onClick={onRetryFailed}
+                disabled={generating}
+                className="rounded-md bg-[#C9A84C] hover:bg-[#B89540] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {generating ? "Retrying…" : "Retry failed slides"}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
+}
+
+/**
+ * Single-tile visual shell used by both the hero and per-slide grid. The
+ * three states (skeleton / image / fail) all use the same outer dimensions
+ * so the layout doesn't shift as tiles resolve.
+ *
+ * why: extracted to keep the GeneratingOverlay JSX flat. Both call sites
+ * use slightly different sizes (180×180 hero vs 120×120 grid) and fail
+ * labels (`"Hero"` vs `"Slide N"`), so size + label are props.
+ */
+interface TileShellProps {
+  tile: SlideTile;
+  /** Tailwind sizing classes — `"w-[180px] h-[180px]"` etc. */
+  sizeClass: string;
+  /** Label shown inside the failed-state tile under the warning icon. */
+  failLabel: string;
+}
+
+function TileShell({ tile, sizeClass, failLabel }: TileShellProps) {
+  const base = `${sizeClass} rounded-md overflow-hidden`;
+  if (tile.state === "failed") {
+    return (
+      <div
+        className={`${base} bg-red-50 border border-red-200 flex flex-col items-center justify-center gap-1`}
+      >
+        <AlertTriangle className="w-5 h-5 text-red-600" />
+        <div className="text-xs text-red-700 font-medium">{failLabel}</div>
+      </div>
+    );
+  }
+  if (tile.state === "done" && tile.url) {
+    return (
+      <div className={base}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={tile.url}
+          alt={tile.address ?? failLabel}
+          className="object-cover w-full h-full"
+        />
+      </div>
+    );
+  }
+  // pending / rendering → skeleton
+  return <div className={`${base} bg-neutral-200 animate-pulse`} />;
 }
 
 function Spinner() {
