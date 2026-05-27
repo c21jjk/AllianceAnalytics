@@ -6,10 +6,16 @@
  *
  * Idempotent: a phone that's already formatted round-trips unchanged.
  *
- *   "6095551234"        → "(609) 555-1234"
- *   "(609) 555-1234"    → "(609) 555-1234"
- *   "+16095551234"      → "(609) 555-1234"
- *   "609.555.1234 x42"  → "(609) 555-1234" (extension stripped)
+ *   "6095551234"        → "609-555-1234"
+ *   "609-555-1234"      → "609-555-1234"
+ *   "+16095551234"      → "609-555-1234"
+ *   "(609) 555-1234"    → "609-555-1234" (re-formatted to dash style)
+ *   "609.555.1234 x42"  → "609-555-1234" (extension stripped)
+ *
+ * 2026-05-27 — output style switched from "(NNN) NNN-NNNN" to dash-only
+ * "NNN-NNNN-NNNN" per Larissa's brand reference on the Open House posts
+ * (pic 1 spec). All downstream consumers use the formatter's output
+ * verbatim so a single change here updates every surface.
  *
  * Returns null when:
  *   • input is null / undefined / empty
@@ -31,5 +37,5 @@ export function formatPhone(
     digits.length === 11 && digits.startsWith("1")
       ? digits.slice(1)
       : digits.slice(-10);
-  return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
+  return `${ten.slice(0, 3)}-${ten.slice(3, 6)}-${ten.slice(6)}`;
 }

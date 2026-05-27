@@ -343,6 +343,26 @@ export interface ImageLayer extends CanvasLayerBase {
   /** Optional border. When width is 0, no border drawn. */
   borderColor: string;
   borderWidth: number;
+  /**
+   * When true, the image layer is excluded from the canvas entirely if
+   * its `boundField` resolves to null/empty (or `src` is null when no
+   * bound field is set). Used by hosting-agent-block to degrade gracefully
+   * when a host's headshot isn't in `brand_assets` — without this flag the
+   * editor would render a gold dashed placeholder rect where the missing
+   * image was supposed to be, and the headless renderer would log a
+   * warning but still drop nothing visible.
+   *
+   * Default: false (layer renders even on empty src, falling back to the
+   * placeholder treatment in the editor or being dropped silently in the
+   * headless renderer — both of which were the pre-2026-05-27 behavior).
+   *
+   * Why a schema flag (not a fabric-side prop): the decision to skip the
+   * layer happens BEFORE the Fabric image is constructed, so the field
+   * only needs to live in the schema layer, not on the Fabric object.
+   * `canvas.loadFromJSON()` round-trips an already-built Fabric canvas
+   * (no layer-creation step), so no Fabric-side preservation is needed.
+   */
+  hideIfEmpty?: boolean;
 }
 
 /**

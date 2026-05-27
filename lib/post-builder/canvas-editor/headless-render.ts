@@ -139,6 +139,12 @@ export async function renderSchemaHeadless(
       const outcome = await createFabricImage(layer, resolvedSrc);
       if (outcome.ok) {
         canvas.add(outcome.image);
+      } else if (outcome.reason === "hidden") {
+        // why: layer opted out via `hideIfEmpty` — drop without a warning.
+        // This is the expected path when the hosting-agent block's
+        // photo has no `brand_assets` match; the block degrades to a
+        // text-only attribution and the headless render should be quiet
+        // about it.
       } else {
         warnings.push(`image ${layer.id}: ${outcome.message}`);
         // Drop the layer rather than emit a placeholder — the render path

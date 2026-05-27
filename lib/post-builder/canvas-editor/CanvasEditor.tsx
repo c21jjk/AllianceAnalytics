@@ -1260,6 +1260,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           if (cancelled || !fabricRef.current) return;
           if (outcome.ok) {
             fabricRef.current.add(outcome.image);
+          } else if (outcome.reason === "hidden") {
+            // why: layer opted out via `hideIfEmpty` — drop it entirely,
+            // no placeholder. Used by the hosting-agent block's photo
+            // so a missing host headshot leaves the block as text-only
+            // instead of a dashed-outline placeholder rect.
           } else {
             // why: image load failed — add a placeholder Rect with a dashed
             // outline at the layer's intended position, so the user sees

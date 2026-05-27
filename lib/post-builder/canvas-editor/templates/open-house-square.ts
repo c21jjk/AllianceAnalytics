@@ -64,13 +64,11 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     borderWidth: 0,
   });
 
-  // ---- z=20: date/time bar at top ----
-  // Reference shows "SATURDAY MAY 23RD 11-1" in Livvic 28pt across the
-  // top. We bind to open_house_date + open_house_time via two adjacent
-  // text layers (the bound resolver returns pre-formatted strings).
-  // For simplicity we use a single text layer with literal placeholder
-  // text — Larissa fills this in via Studio if the bound fields aren't
-  // populated.
+  // ---- z=20: date/time bar — top-LEFT half ----
+  // 2026-05-27 — moved from centered to the left half so the C21
+  // ALLIANCE logo can occupy the top-right. Width = half the canvas
+  // minus the left inset; text remains center-aligned within that
+  // narrower column so it reads as its own block.
   layers.push({
     id: id("date_time"),
     name: "Open House date + time",
@@ -78,8 +76,8 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     locked: false,
     visible: true,
     left: 60,
-    top: 88,
-    width: W - 120,
+    top: 90,
+    width: W / 2 - 60,
     height: 36,
     angle: 0,
     opacity: 1,
@@ -163,7 +161,10 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     editable: true,
   });
 
-  // ---- z=40: address line below photo, street + city centered ----
+  // ---- z=40: address line below photo, street + city bottom-LEFT ----
+  // 2026-05-27 — moved from centered to bottom-LEFT to mirror Larissa's
+  // reference: the hosting-agent block now occupies the bottom-right
+  // half of the slide, so address text gets the bottom-left half.
   layers.push({
     id: id("address_street"),
     name: "Street address",
@@ -172,7 +173,7 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     visible: true,
     left: 60,
     top: photoTop + photoHeight + 50,
-    width: W - 120,
+    width: 500,
     height: 38,
     angle: 0,
     opacity: 1,
@@ -184,7 +185,7 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     fontWeight: 600,
     fontStyle: "normal",
     fill: ALLIANCE_COLORS.ink900,
-    textAlign: "center",
+    textAlign: "left",
     lineHeight: 1.0,
     charSpacing: 100,
     underline: false,
@@ -192,7 +193,7 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     editable: true,
   });
 
-  // ---- z=41: city centered, smaller ----
+  // ---- z=41: city, bottom-LEFT under street ----
   layers.push({
     id: id("address_city"),
     name: "City",
@@ -200,8 +201,8 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     locked: false,
     visible: true,
     left: 60,
-    top: photoTop + photoHeight + 92,
-    width: W - 120,
+    top: 952,
+    width: 500,
     height: 30,
     angle: 0,
     opacity: 1,
@@ -213,7 +214,7 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     fontWeight: 400,
     fontStyle: "normal",
     fill: ALLIANCE_COLORS.ink900,
-    textAlign: "center",
+    textAlign: "left",
     lineHeight: 1.0,
     charSpacing: 50,
     underline: false,
@@ -221,21 +222,24 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     editable: true,
   });
 
-  // ---- z=50: C21 ALLIANCE logo at bottom of canvas ----
+  // ---- z=50: C21 ALLIANCE logo — TOP-RIGHT ----
+  // 2026-05-27 — moved from bottom-center to top-right so the bottom-
+  // right corner is reserved for the hosting-agent block. Width
+  // shrinks slightly to fit alongside the date/time bar on the left.
   // Reference uses the dark-text version since the background is white.
   // Our brand-logos.ts only exports the white-on-dark lockup at the
   // C21_ALLIANCE_WHITE_LOGO export. The Grey variant exists at
   // C21_ALLIANCE_GREY_LOGO — use that for light-background templates.
-  const logoWidth = 280;
-  const logoHeight = 56;
+  const logoWidth = 260;
+  const logoHeight = 52;
   layers.push({
     id: id("brokerage_logo"),
     name: "C21 ALLIANCE logo",
     kind: "image",
     locked: false,
     visible: true,
-    left: (W - logoWidth) / 2,
-    top: H - 110,
+    left: W - logoWidth - 50,
+    top: 80,
     width: logoWidth,
     height: logoHeight,
     angle: 0,

@@ -249,10 +249,15 @@ export function resolveTextBoundField(
       // why: hosting_agent.phone is already formatted by the multi-OH route
       // (via `formatPhone` in lib/data/alliance-dash-agents.ts). The fallback
       // path runs `formatPhone()` on the listing agent's stored phone so
-      // both paths produce the same "(NNN) NNN-NNNN" shape.
+      // both paths produce the same "NNN-NNN-NNNN" shape.
+      //
+      // 2026-05-27 — append " (cell)" suffix when the phone is non-empty,
+      // matching Larissa's brand reference (pic 1: "609-374-0505 (cell)").
+      // Only on the hosting resolver; the generic `agent_phone` field
+      // remains unchanged for non-OH templates.
       const hostPhone = listing.hosting_agent?.phone?.trim();
-      if (hostPhone) return hostPhone;
-      return formatPhone(listing.agentPhone) ?? "";
+      const resolved = hostPhone || formatPhone(listing.agentPhone) || "";
+      return resolved ? `${resolved} (cell)` : "";
     }
     default: {
       // why: exhaustive-check fallback. If a new TextBoundField member is
@@ -474,7 +479,7 @@ interface ImageLoadResult {
 }
 interface ImageLoadFailure {
   ok: false;
-  reason: "no_src" | "load_error" | "cors_blocked";
+  reason: "no_src" | "load_error" | "cors_blocked" | "hidden";
   message: string;
 }
 export type ImageLoadOutcome = ImageLoadResult | ImageLoadFailure;
@@ -488,7 +493,23 @@ export async function createFabricImage(
   // rect rather than erroring — that's handled by the caller, which falls
   // through to a ShapeLayer-style placeholder when this returns ok:false.
   const src = resolvedSrc || layer.src;
-  if (!src) return { ok: false, reason: "no_src", message: "No image URL" };
+  if (!src) {
+    // why: `hideIfEmpty` opts the layer OUT of the placeholder treatment
+    // entirely. Surfaces with this flag (the hosting-agent block's photo)
+    // prefer to disappear gracefully rather than show a dashed-outline
+    // placeholder rect where a missing host headshot would have been.
+    // Emit a console warning so a future demo's name-mismatch is visible
+    // in Vercel runtime logs without taking the render down.
+    if (layer.hideIfEmpty) {
+      if (layer.boundField === "hosting_agent_photo") {
+        console.warn(
+          `[hosting-agent] no headshot for host '${layer.name}' — block degrades to text-only`,
+        );
+      }
+      return { ok: false, reason: "hidden", message: "Hidden (empty src)" };
+    }
+    return { ok: false, reason: "no_src", message: "No image URL" };
+  }
 
   try {
     // why: `crossOrigin: "anonymous"` is the single most important setting

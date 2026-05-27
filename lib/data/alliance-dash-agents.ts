@@ -91,25 +91,30 @@ function normalizeAgentName(raw: string): string | null {
 /**
  * Resolve an agent's phone number against the Alliance Dash roster.
  *
- * Three-pass strategy (mirrors the photo matcher's spirit):
+ * 2026-05-27 — REWRITTEN to query `cmc_active_agents` + `sjsr_active_agents`
+ * in parallel. The previous implementation hit the `agents` table whose
+ * `.phone` column is 0/259 populated in production. The active-feed tables
+ * carry the real data (CMC: 2007/2088 phone1 populated; SJSR: 2655/3321).
  *
- *   1. EXACT — query `agents` where `is_active = true` and `full_name`
- *      matches the trimmed input case-insensitively. Handles the common
- *      case where Darwin's `full_name` matches the MLS feed verbatim.
+ * Three-pass strategy (per table, in parallel union semantics — return
+ * the first non-null phone1 from any pass):
  *
- *   2. LAST-NAME — `ilike full_name '%${last}%'` limit 50, then
- *      normalize-compare each result against the input. Catches
- *      "John J. Koch" ↔ "John Koch" style mismatches.
+ *   1. EXACT first+last — `LOWER(first_name) ILIKE first` AND
+ *      `LOWER(last_name) ILIKE last`. Handles the common case where
+ *      Darwin's split-name columns match the MLS feed verbatim.
  *
- *   3. SINGLE-RESULT — if the last-name query returned exactly 1 row,
- *      accept it as a best-effort match. Handles minor first-name
- *      mismatches like "Bob" / "Robert" where the last name is unique
- *      enough to confirm identity. Mirrors the photo matcher's
- *      `data.length === 1` branch.
+ *   2. LAST-NAME fallback — `LOWER(last_name) ILIKE '%${last}%'` limit 50
+ *      then normalize-compare each row's `first_name + last_name` against
+ *      the input. Catches "John J. Koch" ↔ "John Koch" style mismatches.
  *
- * Returns the raw phone string from Darwin as-stored — formatting is the
- * caller's responsibility via `formatPhone()`. Returns null when no match
- * or any failure (network blip, missing env vars, etc.).
+ *   3. SINGLE-RESULT — if exactly one row matched the last-name LIKE
+ *      across both tables combined, accept it as a best-effort match.
+ *      Handles minor first-name mismatches like "Bob" / "Robert" where
+ *      the last name is unique enough to confirm identity.
+ *
+ * Returns the raw phone1 string as stored — formatting is the caller's
+ * responsibility via `formatPhone()`. Returns null when no match or any
+ * failure (network blip, missing env vars, etc.).
  */
 export async function fetchAgentPhone(
   agentName: string,
@@ -122,51 +127,88 @@ export async function fetchAgentPhone(
   const supabase = getAllianceDashClient();
   if (!supabase) return null;
 
-  // 1) Exact match — Darwin frequently stores the same canonical name MLS uses.
+  // why: a tiny helper to extract a trimmed phone1 string from a row,
+  // returning "" when the column is null/undefined/non-string. Used
+  // throughout all three passes to keep the branching readable.
+  const pickPhone = (
+    row: { phone1: string | null } | null | undefined,
+  ): string => {
+    if (!row) return "";
+    return typeof row.phone1 === "string" ? row.phone1.trim() : "";
+  };
+
+  const lastNeedle = last ?? first;
+
+  // ---- Pass 1: EXACT first+last across both tables, parallel ----
   try {
-    const { data: exactRow } = await supabase
-      .from("agents")
-      .select("phone")
-      .eq("is_active", true)
-      .ilike("full_name", agentName.trim())
-      .limit(1)
-      .maybeSingle();
-    const exactPhone =
-      typeof exactRow?.phone === "string" ? exactRow.phone.trim() : "";
-    if (exactPhone) return exactPhone;
+    const [cmcExact, sjsrExact] = await Promise.all([
+      supabase
+        .from("cmc_active_agents")
+        .select("phone1")
+        .ilike("first_name", first)
+        .ilike("last_name", lastNeedle)
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("sjsr_active_agents")
+        .select("phone1")
+        .ilike("first_name", first)
+        .ilike("last_name", lastNeedle)
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    const cmcPhone = pickPhone(
+      cmcExact.data as { phone1: string | null } | null,
+    );
+    if (cmcPhone) return cmcPhone;
+    const sjsrPhone = pickPhone(
+      sjsrExact.data as { phone1: string | null } | null,
+    );
+    if (sjsrPhone) return sjsrPhone;
   } catch {
     // Fall through to the last-name fallback path on any failure.
   }
 
-  // 2) Last-name fallback — fetch up to 50 candidates and normalize-match in memory.
+  // ---- Pass 2 + 3: LAST-NAME fallback + single-result tiebreaker ----
   try {
-    const lastNeedle = last ?? first;
-    const { data, error } = await supabase
-      .from("agents")
-      .select("full_name, phone")
-      .eq("is_active", true)
-      .ilike("full_name", `%${lastNeedle}%`)
-      .limit(50);
-    if (error || !data) return null;
+    const [cmcRes, sjsrRes] = await Promise.all([
+      supabase
+        .from("cmc_active_agents")
+        .select("first_name, last_name, phone1")
+        .ilike("last_name", `%${lastNeedle}%`)
+        .limit(50),
+      supabase
+        .from("sjsr_active_agents")
+        .select("first_name, last_name, phone1")
+        .ilike("last_name", `%${lastNeedle}%`)
+        .limit(50),
+    ]);
 
-    for (const row of data as Array<{
-      full_name: string | null;
-      phone: string | null;
-    }>) {
-      if (!row.full_name) continue;
-      const rowNorm = normalizeAgentName(row.full_name);
+    type AgentRow = {
+      first_name: string | null;
+      last_name: string | null;
+      phone1: string | null;
+    };
+    const cmcRows: AgentRow[] = (cmcRes.data as AgentRow[] | null) ?? [];
+    const sjsrRows: AgentRow[] = (sjsrRes.data as AgentRow[] | null) ?? [];
+    const combined: AgentRow[] = [...cmcRows, ...sjsrRows];
+
+    // Pass 2 — normalize-compare each result's first+last against input.
+    for (const row of combined) {
+      const full = `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim();
+      if (!full) continue;
+      const rowNorm = normalizeAgentName(full);
       if (!rowNorm) continue;
       if (rowNorm === norm) {
-        const p = typeof row.phone === "string" ? row.phone.trim() : "";
+        const p = pickPhone(row);
         if (p) return p;
       }
     }
 
-    // 3) Single-result — if exactly one row's last name hit, accept it as
-    //    a best-effort match. Same spirit as the photo matcher's tail branch.
-    if (data.length === 1) {
-      const only = data[0] as { phone: string | null };
-      const p = typeof only.phone === "string" ? only.phone.trim() : "";
+    // Pass 3 — single-result tiebreaker. If exactly one row across BOTH
+    // tables matched the last-name LIKE, accept it as best-effort.
+    if (combined.length === 1) {
+      const p = pickPhone(combined[0]);
       if (p) return p;
     }
     return null;
