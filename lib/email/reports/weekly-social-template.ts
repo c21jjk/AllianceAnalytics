@@ -87,6 +87,7 @@ function renderHtml(d: WeeklySocialReportData, aiTakeaway: string): string {
             <tr><td>${renderHeadline(d)}</td></tr>
             <tr><td>${renderPlatformRow(d)}</td></tr>
             <tr><td>${renderTopCampaigns(d)}</td></tr>
+            <tr><td>${renderPortalTraffic(d)}</td></tr>
             <tr><td>${renderYtd(d)}</td></tr>
             <tr><td>${renderOfficeSpotlight(d)}</td></tr>
             <tr><td>${renderAgentLeaderboard(d)}</td></tr>
@@ -276,6 +277,116 @@ function topCampaignRow(campaign: WeeklyTopCampaign, rank: number): string {
       </td>
     </tr>
   </table>`;
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Portal traffic — ListTrac-powered, current week only                    *
+ *                                                                          *
+ *  Three blocks:                                                           *
+ *    1. Hero tile — single weekly total across all listings + portals      *
+ *    2. Per-portal stripe — Zillow / Realtor / Trulia / Redfin / CIH mini  *
+ *    3. Top 5 listings table — address + per-portal mini split             *
+ *                                                                          *
+ *  Suppressed entirely when has_data=false (avoids empty box on first      *
+ *  send before ListTrac data has flowed in).                               *
+ * ----------------------------------------------------------------------- */
+
+// Tier-1 portal brand colors (mirrors components/portal-metrics/PortalMark.tsx).
+const PORTAL_COLOR: Record<
+  "zillow" | "realtor" | "trulia" | "redfin" | "cih",
+  string
+> = {
+  zillow: "#006AFF",
+  realtor: "#D92228",
+  trulia: "#00A35C",
+  redfin: "#A02021",
+  cih: "#C9A84C",
+};
+
+function renderPortalTraffic(d: WeeklySocialReportData): string {
+  const pt = d.portalTraffic;
+  if (!pt || !pt.has_data || pt.total_views === 0) return "";
+
+  // Top stripe — 5 chips with per-portal weekly totals.
+  const stripeCells = pt.by_slot
+    .map((slot) => {
+      const color = PORTAL_COLOR[slot.key];
+      return `<td style="width:20%;padding:0 4px;vertical-align:top;" align="center">
+        <div style="border:1px solid #eeeeee;border-radius:10px;padding:12px 8px;background:#fafafa;text-align:center;">
+          <div style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;color:#ffffff;background:${color};letter-spacing:0.04em;">
+            ${escapeHtml(slot.display_name)}
+          </div>
+          <div style="font-size:18px;font-weight:700;color:${BRAND_GREY};margin-top:8px;line-height:1;">
+            ${slot.views > 0 ? formatNumber(slot.views) : "&mdash;"}
+          </div>
+          <div style="font-size:10px;color:#71717a;margin-top:4px;letter-spacing:0.04em;text-transform:uppercase;">
+            ${slot.views === 1 ? "view" : "views"}
+          </div>
+        </div>
+      </td>`;
+    })
+    .join("");
+
+  const stripeTable = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin-top:14px;">
+    <tr>${stripeCells}</tr>
+  </table>`;
+
+  // Top 5 listings table
+  let topTableHtml = "";
+  if (pt.top_listings.length > 0) {
+    const rows = pt.top_listings
+      .map((l) => {
+        // Compact per-portal mini-chips inside each row — shows which portals
+        // contributed to this listing's weekly total.
+        const chips = pt.by_slot
+          .map((slot) => {
+            const v = l.by_slot[slot.key];
+            if (v <= 0) return "";
+            const color = PORTAL_COLOR[slot.key];
+            return `<span style="display:inline-block;padding:1px 6px;margin-right:4px;border-radius:4px;font-size:10px;font-weight:600;color:#ffffff;background:${color};">${escapeHtml(slot.display_name)} ${formatNumber(v)}</span>`;
+          })
+          .join("");
+
+        const addressLine = l.address ?? "Address unavailable";
+        const cityLine = l.city ? `<div style="font-size:11px;color:#71717a;margin-top:2px;">${escapeHtml(l.city)}</div>` : "";
+        return `<tr>
+          <td style="padding:10px 0;border-bottom:1px solid #f0f0f0;vertical-align:top;">
+            <div style="font-size:13px;font-weight:600;color:${BRAND_GREY};line-height:1.3;">
+              ${escapeHtml(addressLine)}
+            </div>
+            ${cityLine}
+            <div style="margin-top:6px;">${chips}</div>
+          </td>
+          <td style="padding:10px 0;border-bottom:1px solid #f0f0f0;vertical-align:top;text-align:right;white-space:nowrap;width:80px;">
+            <div style="font-size:18px;font-weight:700;color:${BRAND_GREY};line-height:1;">${formatNumber(l.total_views)}</div>
+            <div style="font-size:10px;color:#71717a;margin-top:3px;letter-spacing:0.04em;text-transform:uppercase;">views</div>
+          </td>
+        </tr>`;
+      })
+      .join("");
+    topTableHtml = `<div style="margin-top:18px;">
+      <div style="font-size:11px;color:#71717a;letter-spacing:0.06em;text-transform:uppercase;font-weight:600;margin-bottom:6px;">
+        Top listings by portal views this week
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
+        ${rows}
+      </table>
+    </div>`;
+  }
+
+  return `<div style="padding:20px 28px;border-bottom:1px solid #f0f0f0;">
+    <div style="font-size:11px;color:#71717a;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;">
+      Portal traffic · This week
+    </div>
+    <div style="font-size:36px;font-weight:700;color:${BRAND_GREY};margin-top:4px;line-height:1;">
+      ${formatNumber(pt.total_views)}
+    </div>
+    <div style="margin-top:6px;font-size:13px;color:#3f3f46;line-height:1.4;">
+      Buyers viewed Alliance listings ${formatNumber(pt.total_views)} ${pluralize(pt.total_views, "time")} across the Zillow, Realtor.com, Trulia, Redfin, and CIH brand network this week.
+    </div>
+    ${stripeTable}
+    ${topTableHtml}
+  </div>`;
 }
 
 function renderYtd(d: WeeklySocialReportData): string {

@@ -553,6 +553,198 @@ export async function fetchPortalStrip(
   };
 }
 
+// ---------------------------------------------------------------------------
+//  Building rollup — combine portal traffic across all units of a building
+// ---------------------------------------------------------------------------
+
+export interface BuildingMember {
+  mls_number: string;
+  source_mls: "cmc" | "sjsr" | null;
+  status: string;
+  address: string | null;
+  list_price: number | null;
+  listing_date: string | null;
+  /** This unit's individual view contribution to the building total. */
+  views: number;
+}
+
+export interface BuildingRollup {
+  /** Stable key (normalized address). */
+  building_key: string;
+  display_address: string;
+  display_city: string | null;
+  member_count: number;
+  active_count: number;
+  pending_count: number;
+  sold_count: number;
+  /** Combined portal strip across every unit. */
+  strip: PortalStrip;
+  /** Per-unit breakdown for the UI table. */
+  members: BuildingMember[];
+}
+
+interface BuildingViewRow {
+  building_key: string;
+  display_address: string;
+  display_city: string | null;
+  member_count: number;
+  active_count: number;
+  pending_count: number;
+  sold_count: number;
+  primary_mls: string;
+  members: Array<{
+    mls_number: string;
+    source_mls: "cmc" | "sjsr" | null;
+    address: string | null;
+    status: string;
+    list_price: number | null;
+    listing_date: string | null;
+  }>;
+}
+
+/**
+ * Look up the building (if any) that contains a given MLS#. Returns null
+ * when the listing isn't part of a 2+-unit building.
+ */
+async function findBuildingForMls(
+  mlsNumber: string,
+): Promise<BuildingViewRow | null> {
+  const supabase = getUntypedClient();
+  // v_listing_buildings.members is jsonb[] with mls_number embedded. We
+  // filter using a containment check on the jsonb array.
+  const { data, error } = await supabase
+    .from("v_listing_buildings")
+    .select(
+      "building_key, display_address, display_city, member_count, active_count, pending_count, sold_count, primary_mls, members",
+    );
+  if (error || !data) return null;
+  for (const row of data as BuildingViewRow[]) {
+    if (row.members.some((m) => m.mls_number === mlsNumber)) return row;
+  }
+  return null;
+}
+
+/**
+ * Fetch the portal-traffic rollup for the building that contains the given
+ * listing. Returns null when the listing isn't part of a multi-unit
+ * building. Window defaults to "since the earliest listing_date among
+ * members" so the rollup tells the building's full lifetime story.
+ */
+export async function fetchBuildingPortalTraffic(
+  mlsNumber: string,
+): Promise<BuildingRollup | null> {
+  const building = await findBuildingForMls(mlsNumber);
+  if (!building) return null;
+
+  // Earliest listing_date among members = window start. Falls back to 365
+  // days if nothing parseable.
+  const memberDates = building.members
+    .map((m) => (m.listing_date ? new Date(m.listing_date).getTime() : NaN))
+    .filter((t) => Number.isFinite(t));
+  const windowStart =
+    memberDates.length > 0
+      ? new Date(Math.min(...memberDates))
+      : (() => {
+          const d = new Date();
+          d.setUTCDate(d.getUTCDate() - 365);
+          return d;
+        })();
+
+  // Pull each member's strip in one batched call against the dedupe view.
+  const memberStripInputs = building.members
+    .filter(
+      (m): m is typeof m & { source_mls: "cmc" | "sjsr" } =>
+        m.source_mls === "cmc" || m.source_mls === "sjsr",
+    )
+    .map((m) => ({
+      mls_number: m.mls_number,
+      source_mls: m.source_mls,
+      listing_date: windowStart.toISOString().slice(0, 10),
+    }));
+
+  const strips = await fetchPortalStripsForListings(memberStripInputs);
+
+  // Combine per-member strips into one building strip.
+  const combinedSlots: Record<PortalStripKey, { views: number; saves: number; saves_trackable: boolean }> = {
+    zillow:  { views: 0, saves: 0, saves_trackable: false },
+    realtor: { views: 0, saves: 0, saves_trackable: false },
+    trulia:  { views: 0, saves: 0, saves_trackable: false },
+    redfin:  { views: 0, saves: 0, saves_trackable: false },
+    cih:     { views: 0, saves: 0, saves_trackable: true },
+  };
+  let totalViews = 0;
+  let totalSaves = 0;
+  const memberRows: BuildingMember[] = [];
+  for (const m of building.members) {
+    const key =
+      m.source_mls === "cmc" || m.source_mls === "sjsr"
+        ? `${m.source_mls}|${m.mls_number}`
+        : null;
+    const memberStrip = key ? strips.get(key) : null;
+    let memberViews = 0;
+    if (memberStrip) {
+      for (const slot of memberStrip.slots) {
+        combinedSlots[slot.key].views += slot.views;
+        if (slot.saves !== null) {
+          combinedSlots[slot.key].saves += slot.saves;
+          combinedSlots[slot.key].saves_trackable = true;
+        }
+        memberViews += slot.views;
+      }
+      totalViews += memberStrip.total_views;
+      totalSaves += memberStrip.total_saves;
+    }
+    memberRows.push({
+      mls_number: m.mls_number,
+      source_mls: m.source_mls,
+      status: m.status,
+      address: m.address,
+      list_price: m.list_price,
+      listing_date: m.listing_date,
+      views: memberViews,
+    });
+  }
+
+  const slotOrder: PortalStripKey[] = ["zillow", "realtor", "trulia", "redfin", "cih"];
+  const slots = slotOrder.map((k) => ({
+    key: k,
+    display_name:
+      k === "realtor" ? "Realtor.com" :
+      k === "cih"     ? "CIH brand network" :
+      k.charAt(0).toUpperCase() + k.slice(1),
+    views: combinedSlots[k].views,
+    saves: combinedSlots[k].saves_trackable ? combinedSlots[k].saves : null,
+    has_data: combinedSlots[k].views > 0 || combinedSlots[k].saves > 0,
+    saves_trackable: combinedSlots[k].saves_trackable,
+  }));
+
+  const strip: PortalStrip = {
+    canonical_mls: building.primary_mls,
+    has_data: totalViews > 0 || totalSaves > 0,
+    total_views: totalViews,
+    total_saves: totalSaves,
+    first_date: null,
+    last_date: null,
+    window_days: Math.max(
+      1,
+      Math.round((Date.now() - windowStart.getTime()) / 86_400_000),
+    ),
+    slots,
+  };
+
+  return {
+    building_key: building.building_key,
+    display_address: building.display_address,
+    display_city: building.display_city,
+    member_count: building.member_count,
+    active_count: building.active_count,
+    pending_count: building.pending_count,
+    sold_count: building.sold_count,
+    strip,
+    members: memberRows.sort((a, b) => b.views - a.views),
+  };
+}
+
 /**
  * Convenience: fetch portal strips for many listings in one round-trip
  * (used by /properties list view to avoid N+1).

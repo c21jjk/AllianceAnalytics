@@ -31,6 +31,66 @@ export type WeeklyPlatform = "facebook" | "instagram" | "tiktok";
 
 const PLATFORMS: WeeklyPlatform[] = ["facebook", "instagram", "tiktok"];
 
+/** Portal slot keys mirror lib/data/portal-metrics-db.ts. */
+export type WeeklyPortalKey = "zillow" | "realtor" | "trulia" | "redfin" | "cih";
+
+const PORTAL_STRIP_DEFS: Array<{
+  key: WeeklyPortalKey;
+  display_name: string;
+  members: string[];
+}> = [
+  { key: "zillow",  display_name: "Zillow",        members: ["Zillow.com","Zillow","zillow.com"] },
+  { key: "realtor", display_name: "Realtor.com",   members: ["Realtor.com","realtor.com"] },
+  { key: "trulia",  display_name: "Trulia",        members: ["Trulia","trulia.com"] },
+  { key: "redfin",  display_name: "Redfin",        members: ["Redfin","redfin.com"] },
+  { key: "cih",     display_name: "CIH",
+    members: [
+      "century21.com","century21global.com","Coldwell Banker","coldwellbanker.com","coldwellbankerhomes.com",
+      "CBCworldwide.com","sothebysrealty.com","sir.com","BHGRE.com","bhgre.com",
+      "Corcoran.com","corcoran.com","era.com","ERA.com","compass.com","Compass","NRT",
+    ],
+  },
+];
+
+export interface WeeklyPortalSlot {
+  key: WeeklyPortalKey;
+  display_name: string;
+  views: number;
+}
+
+export interface WeeklyPortalListing {
+  mls_number: string;
+  address: string | null;
+  city: string | null;
+  hero_image_url: string | null;
+  total_views: number;
+  by_slot: Record<WeeklyPortalKey, number>;
+}
+
+export interface WeeklyPortalTraffic {
+  /** True if the week had any portal views at all. False → section is hidden. */
+  has_data: boolean;
+  /** Org-wide total across every listing + every portal in the window. */
+  total_views: number;
+  /** Always-5-entries breakdown (Zillow, Realtor, Trulia, Redfin, CIH). */
+  by_slot: WeeklyPortalSlot[];
+  /** Top 5 listings by total views in the window. */
+  top_listings: WeeklyPortalListing[];
+}
+
+function emptyPortalTraffic(): WeeklyPortalTraffic {
+  return {
+    has_data: false,
+    total_views: 0,
+    by_slot: PORTAL_STRIP_DEFS.map((d) => ({
+      key: d.key,
+      display_name: d.display_name,
+      views: 0,
+    })),
+    top_listings: [],
+  };
+}
+
 export interface WeeklyPlatformStats {
   posts: number;
   reach: number;
@@ -129,6 +189,9 @@ export interface WeeklySocialReportData {
   listingsTotal: number;
   officeSpotlight: WeeklyOfficeSpotlight | null;
   agentLeaderboard: WeeklyAgentLeader[];
+
+  /* ---- portal traffic (ListTrac) — current week ---- */
+  portalTraffic: WeeklyPortalTraffic;
 }
 
 /* --------------------------------------------------------------------- */
@@ -367,6 +430,7 @@ export async function loadWeeklySocialReportData(
     listingsTotal: 0,
     officeSpotlight: null,
     agentLeaderboard: [],
+    portalTraffic: emptyPortalTraffic(),
   };
 
   try {
@@ -636,6 +700,20 @@ export async function loadWeeklySocialReportData(
           }
         : null;
 
+    // Portal traffic — ListTrac-powered, scoped to the current week window.
+    // Defensive: fetch failures fall back to empty so a syncing issue can't
+    // block the email send pipeline.
+    let portalTraffic: WeeklyPortalTraffic = emptyPortalTraffic();
+    try {
+      portalTraffic = await loadWeeklyPortalTraffic(
+        supabase,
+        win.weekStartIso,
+        win.weekEndIso,
+      );
+    } catch (e) {
+      console.warn("weekly portal traffic load failed:", (e as Error).message);
+    }
+
     return {
       ...win,
       totals,
@@ -651,8 +729,129 @@ export async function loadWeeklySocialReportData(
       listingsTotal: listingCounts.size,
       officeSpotlight,
       agentLeaderboard,
+      portalTraffic,
     };
   } catch {
     return empty;
   }
+}
+
+/* --------------------------------------------------------------------- */
+/* Portal traffic (ListTrac) loader                                      */
+/* --------------------------------------------------------------------- */
+
+/**
+ * Pull the week's portal-traffic stats from listing_portal_metrics joined
+ * to the dedupe view + properties. Returns the org-wide-by-portal totals
+ * AND the top 5 listings by total views.
+ *
+ * NOTE: The new tables/views aren't yet in the generated Database type,
+ * so we cast the client through unknown. Regenerate Supabase types after
+ * this lands to drop the casts.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadWeeklyPortalTraffic(
+  supabase: any,
+  weekStartIso: string,
+  weekEndIso: string,
+): Promise<WeeklyPortalTraffic> {
+  const startDate = weekStartIso.slice(0, 10);
+  // weekEndIso is the EXCLUSIVE Mon-Sun upper bound (Mon 00:00 the following
+  // week). For a date-only column we want metric_date < that Monday.
+  const endDateExclusive = weekEndIso.slice(0, 10);
+
+  const { data: rowsRaw, error } = await supabase
+    .from("v_listing_portal_metrics_unified")
+    .select("mls_number, portal_name, metric_date, views")
+    .gte("metric_date", startDate)
+    .lt("metric_date", endDateExclusive);
+  if (error || !rowsRaw) return emptyPortalTraffic();
+
+  type Row = { mls_number: string; portal_name: string; metric_date: string; views: number | null };
+  const rows = rowsRaw as Row[];
+  if (rows.length === 0) return emptyPortalTraffic();
+
+  // Membership map: portal_name → slot key
+  const memberToSlot = new Map<string, WeeklyPortalKey>();
+  for (const def of PORTAL_STRIP_DEFS) {
+    for (const m of def.members) memberToSlot.set(m, def.key);
+  }
+
+  // Aggregate per slot (org total) and per listing.
+  type ListingAgg = {
+    mls_number: string;
+    total_views: number;
+    by_slot: Record<WeeklyPortalKey, number>;
+  };
+  const slotTotals: Record<WeeklyPortalKey, number> = {
+    zillow: 0, realtor: 0, trulia: 0, redfin: 0, cih: 0,
+  };
+  const perListing = new Map<string, ListingAgg>();
+  let grandTotal = 0;
+
+  for (const r of rows) {
+    const v = Number(r.views) || 0;
+    if (v <= 0) continue;
+    const slot = memberToSlot.get(r.portal_name);
+    if (!slot) continue;
+    slotTotals[slot] += v;
+    grandTotal += v;
+    let entry = perListing.get(r.mls_number);
+    if (!entry) {
+      entry = {
+        mls_number: r.mls_number,
+        total_views: 0,
+        by_slot: { zillow: 0, realtor: 0, trulia: 0, redfin: 0, cih: 0 },
+      };
+      perListing.set(r.mls_number, entry);
+    }
+    entry.total_views += v;
+    entry.by_slot[slot] += v;
+  }
+
+  if (grandTotal === 0) return emptyPortalTraffic();
+
+  // Top 5 listings — fetch property metadata for them in one round trip.
+  const topListings = Array.from(perListing.values())
+    .sort((a, b) => b.total_views - a.total_views)
+    .slice(0, 5);
+
+  const topMlsNumbers = topListings.map((l) => l.mls_number);
+  type PropRow = {
+    mls_number: string;
+    address: string | null;
+    city: string | null;
+    hero_image_url: string | null;
+  };
+  const { data: propsRaw } = await supabase
+    .from("properties")
+    .select("mls_number, address, city, hero_image_url")
+    .in("mls_number", topMlsNumbers);
+  const propsByMls = new Map<string, PropRow>();
+  for (const p of (propsRaw ?? []) as PropRow[]) {
+    propsByMls.set(p.mls_number, p);
+  }
+
+  const enrichedListings: WeeklyPortalListing[] = topListings.map((l) => {
+    const meta = propsByMls.get(l.mls_number);
+    return {
+      mls_number: l.mls_number,
+      address: meta?.address ?? null,
+      city: meta?.city ?? null,
+      hero_image_url: meta?.hero_image_url ?? null,
+      total_views: l.total_views,
+      by_slot: l.by_slot,
+    };
+  });
+
+  return {
+    has_data: true,
+    total_views: grandTotal,
+    by_slot: PORTAL_STRIP_DEFS.map((d) => ({
+      key: d.key,
+      display_name: d.display_name,
+      views: slotTotals[d.key],
+    })),
+    top_listings: enrichedListings,
+  };
 }

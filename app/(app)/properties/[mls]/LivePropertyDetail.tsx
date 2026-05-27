@@ -13,7 +13,11 @@ import NullAgentEmailWarning from "@/components/NullAgentEmailWarning";
 import CreatedPostsStrip from "@/components/CreatedPostsStrip";
 import PortalTrafficSection from "@/components/PortalTrafficSection";
 import PortalMetricsStrip from "@/components/portal-metrics/PortalMetricsStrip";
-import { fetchPortalStrip } from "@/lib/data/portal-metrics-db";
+import BuildingRollupCard from "@/components/BuildingRollupCard";
+import {
+  fetchPortalStrip,
+  fetchBuildingPortalTraffic,
+} from "@/lib/data/portal-metrics-db";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 import {
   fetchOwnerStoryViewStats,
@@ -97,6 +101,17 @@ export default async function LivePropertyDetail({
     } catch (e) {
       console.warn("post-tile portal strip fetch failed:", (e as Error).message);
     }
+  }
+
+  // Building rollup — renders the "Building total" card when this listing
+  // is part of a 2+-unit building (e.g., 511 E 11th Ave's condo break-up).
+  // Returns null for single-unit listings, so the card simply doesn't
+  // render. Non-fatal on error.
+  let buildingRollup = null;
+  try {
+    buildingRollup = await fetchBuildingPortalTraffic(property.mls_number);
+  } catch (e) {
+    console.warn("building rollup fetch failed:", (e as Error).message);
   }
 
   return (
@@ -256,6 +271,16 @@ export default async function LivePropertyDetail({
           syncs, it&rsquo;ll appear here automatically.
         </section>
       )}
+
+      {/* Building rollup — shown only when this listing is part of a 2+-
+          unit building (511 E 11th Ave-style condo break-ups). Helper
+          returns null otherwise, so single-unit listings simply skip it. */}
+      {buildingRollup ? (
+        <BuildingRollupCard
+          rollup={buildingRollup}
+          currentMls={property.mls_number}
+        />
+      ) : null}
 
       {/* Portal traffic — ListTrac syndication counts (Zillow / Realtor /
           Trulia / CIH brand network). Renders both with-data and empty
