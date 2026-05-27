@@ -124,7 +124,15 @@ export type TextBoundField =
   | "agent_title" // "Broker / Co-Owner"
   | "office_name" // "Century 21 Alliance"
   | "open_house_date" // "Friday, April 3"
-  | "open_house_time"; // "11:30 AM – 1:30 PM"
+  | "open_house_time" // "11:30 AM – 1:30 PM"
+  // why: hosting-agent fields are distinct from the listing-agent fields
+  // above. On a multi-OH carousel, each slide's "hosted by" corner block
+  // attributes the agent who'll be AT that specific open house — which
+  // may not be the listing agent. Single-listing OH templates can bind
+  // these too; the resolvers fall back to the listing-agent fields when
+  // hosting is null/empty so the same template "just works" in both flows.
+  | "hosting_agent_name" // "Larissa Stevenson" (host of THIS slide's OH)
+  | "hosting_agent_phone"; // "(609) 555-1234" (formatted from Alliance Dash)
 
 export type ImageBoundField =
   | "hero_photo" // primary listing photo (cover)
@@ -133,6 +141,7 @@ export type ImageBoundField =
   | "photo_4" // fourth listing photo
   | "photo_5" // fifth listing photo
   | "agent_photo" // headshot URL (from agents table, future)
+  | "hosting_agent_photo" // headshot URL of the slide's OH host (fallback: agent_photo)
   | "office_logo" // C21 Alliance lockup (static for now)
   | "brokerage_logo"; // generic "Century 21" mark (static for now)
 
@@ -633,6 +642,24 @@ export interface MLSListingPayload {
   agentTitle: string | null;
   /** Agent headshot URL. Null if not configured for this agent. */
   agentPhotoUrl: string | null;
+
+  // --- hosting agent (Open House only) ---
+  /**
+   * Resolved hosting-agent attribution for an Open House slide. Set by the
+   * multi-OH generate route (per-property) and the single-listing OH render
+   * route. Carries the host's name, formatted phone, and headshot URL — all
+   * three are read by the `hosting_agent_*` bound-field resolvers in
+   * `fabric-factory.ts`, which fall back to the listing-agent fields above
+   * when this is null or any individual field is empty.
+   *
+   * Null on non-OH posts (just_listed, just_sold, etc.) — those templates
+   * never bind to hosting_agent_* fields, so the field stays undefined.
+   */
+  hosting_agent?: {
+    name: string;
+    phone: string | null;
+    photo_url: string | null;
+  } | null;
 
   // --- office (optional, defaults baked in by editor if null) ---
   officeName: string | null;

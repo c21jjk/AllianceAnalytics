@@ -35,6 +35,7 @@
  */
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
 import { C21_ALLIANCE_WHITE_LOGO } from "./brand-logos";
+import { buildHostingAgentBlock } from "./hosting-agent-block";
 import type {
   CanvasLayer,
   CanvasTemplateSchema,
@@ -337,6 +338,24 @@ function buildPlaceholderTemplate(
     editable: true,
   };
   layers.push(placeholderStamp);
+
+  // ---- Hosting-agent block (Open House only, 2026-05-27 policy override) ----
+  // OH posts now carry a hosting-agent attribution block (photo + name +
+  // phone) in the bottom-right corner. Resolver falls back to listing
+  // agent when no hosting override is set, so retail OH "just works" and
+  // multi-OH carousel slides honor their per-slide host. JL/SOLD/UC/PR
+  // remain agent-free per Larissa's rules.
+  if (post_type === "open_house") {
+    layers.push(
+      ...buildHostingAgentBlock({
+        canvasWidth: dims.width,
+        canvasHeight: dims.height,
+        idPrefix: `placeholder_${post_type}_${format}`,
+        baseZ: 60,
+        format,
+      }),
+    );
+  }
 
   // why: cast suppresses unused-var lint on isSquare; reserved for
   // future square-vs-story specific tweaks (e.g., taller info band on

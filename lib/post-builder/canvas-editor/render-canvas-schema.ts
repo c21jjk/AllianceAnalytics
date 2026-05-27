@@ -67,6 +67,16 @@ export interface RenderCanvasSchemaInput {
   /** Optional log label forwarded to screenshotHtml for diagnostic
    *  tracing in Vercel logs. Falls back to the schema id. */
   logLabel?: string;
+  /**
+   * Hosting-agent attribution for Open House renders. When set, these
+   * fields ride the render token through to the headless render page,
+   * which attaches them to the MLSListingPayload's `hosting_agent` field
+   * so the `hosting_agent_*` bound-field resolvers in fabric-factory.ts
+   * can read them. Optional — non-OH renders leave these unset.
+   */
+  hostingAgentName?: string | null;
+  hostingAgentPhone?: string | null;
+  hostingAgentPhotoUrl?: string | null;
 }
 
 export interface RenderCanvasSchemaOk {
@@ -138,6 +148,13 @@ export async function renderCanvasSchema(
       listing_id: input.listingId,
       format: input.format,
       ai_schema_cache_id: cacheRow.id,
+      // Open House attribution — the render page picks these off the
+      // token payload and stamps them onto the MLSListingPayload's
+      // `hosting_agent` field before hydration. Nulls are harmless;
+      // non-OH renders simply leave the field unused.
+      hosting_agent_name: input.hostingAgentName ?? null,
+      hosting_agent_phone: input.hostingAgentPhone ?? null,
+      hosting_agent_photo_url: input.hostingAgentPhotoUrl ?? null,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

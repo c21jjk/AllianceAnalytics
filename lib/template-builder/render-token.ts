@@ -52,6 +52,20 @@ export interface RenderTokenPayload {
   format: PostFormat;
   /** Hosting agent override (Open House posts). Optional. */
   hosting_agent_name?: string | null;
+  /**
+   * Pre-formatted hosting-agent phone — already passed through
+   * `formatPhone()` server-side. Carried in the token so the render page
+   * can attach it to the MLSListingPayload's `hosting_agent` field
+   * without a second cross-project DB lookup at render time.
+   */
+  hosting_agent_phone?: string | null;
+  /**
+   * Hosting-agent headshot URL resolved server-side from `brand_assets`
+   * (via the existing `fetchAgentHeadshotUrl` helper). Same rationale as
+   * the phone field — token carries the resolved value so the render
+   * page doesn't repeat the lookup.
+   */
+  hosting_agent_photo_url?: string | null;
   /** Pre-formatted OH window label. Optional. */
   oh_window?: string | null;
   /**

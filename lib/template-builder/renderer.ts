@@ -68,6 +68,20 @@ export interface RenderInput {
   /** Hosting agent override for Open House posts. Forwarded to the
    *  render-page route via the token payload. */
   hosting_agent_name?: string | null;
+  /**
+   * Pre-formatted hosting-agent phone — resolved upstream against the
+   * Alliance Dash roster and formatted via `formatPhone`. Forwarded to
+   * the render-page route via the token payload so the canvas
+   * MLSListingPayload's `hosting_agent.phone` field is populated.
+   */
+  hosting_agent_phone?: string | null;
+  /**
+   * Hosting-agent headshot URL — resolved upstream via
+   * `fetchAgentHeadshotUrl`. Forwarded to the render-page route via the
+   * token payload so the canvas MLSListingPayload's `hosting_agent.photo_url`
+   * field is populated.
+   */
+  hosting_agent_photo_url?: string | null;
   /** Pre-formatted OH window label. Forwarded to the render-page route. */
   oh_window?: string | null;
 }
@@ -111,6 +125,8 @@ export async function renderDbTemplate(
       listing_id: input.listing.id,
       format: input.format,
       hosting_agent_name: input.hosting_agent_name ?? null,
+      hosting_agent_phone: input.hosting_agent_phone ?? null,
+      hosting_agent_photo_url: input.hosting_agent_photo_url ?? null,
       oh_window: input.oh_window ?? null,
     });
   } catch (e) {

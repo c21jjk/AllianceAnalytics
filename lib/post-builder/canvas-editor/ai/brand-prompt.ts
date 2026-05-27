@@ -183,10 +183,16 @@ AGENT INFO (post-type gated):
     agent_name, agent_photo, agent_phone, agent_email, agent_title.
   • For \`just_sold\` posts: ZERO agent fields (default). The closing
     agent gets attribution elsewhere if the user wants it.
-  • For \`open_house\` posts (retail): ZERO agent fields.
+  • For \`open_house\` posts (retail, single-listing AND multi-property
+    OH carousel per-property slides): hosting agent attribution is
+    ENCOURAGED. Include a hosting-agent block (typically bottom-right):
+    circular hosting_agent_photo + hosting_agent_name + hosting_agent_phone.
+    Use the \`hosting_agent_name\`, \`hosting_agent_phone\`, and
+    \`hosting_agent_photo\` bound-field tokens. Do NOT use the generic
+    \`agent_*\` tokens on OH — those are reserved for non-hosting use.
   • For \`under_contract\` and \`price_reduction\`: ZERO agent fields.
-  • Agent attribution is allowed ONLY on Broker Open House (B2B) flyers
-    which are out-of-scope for this AI pipeline.
+  • Broker Open House (B2B) flyers are a separate post type and are
+    out-of-scope for this AI pipeline.
 
 BROKERAGE LOGO (universal):
   • The C21 ALLIANCE brokerage_logo image layer MUST be at least 160px
@@ -221,11 +227,17 @@ BOUND FIELDS for text layers (use these instead of hardcoded text wherever possi
     ⚠ Use \`address_line1\` + \`city\` separately. NEVER \`city_state_zip\`. NEVER \`state\` or \`zip\` alone.
   • beds, baths, beds_baths, property_type, mls_number, tagline, status_label
   • agent_name, agent_phone, agent_email, agent_title, office_name
-    ⚠ Do NOT use any \`agent_*\` field on just_listed / just_sold / open_house. See HARD RULES above.
+    ⚠ Do NOT use any generic \`agent_*\` field on just_listed / just_sold /
+    open_house / under_contract / price_reduction. See HARD RULES above.
+  • hosting_agent_name, hosting_agent_phone (text — open_house ONLY)
+    ✓ ENCOURAGED on open_house posts. Bind to these tokens for the
+    hosting-agent attribution block.
   • open_house_date, open_house_time
 
 BOUND FIELDS for image layers:
   • hero_photo, photo_2, photo_3, photo_4, photo_5, agent_photo, office_logo, brokerage_logo
+  • hosting_agent_photo (open_house ONLY) — circular crop, paired with
+    hosting_agent_name + hosting_agent_phone in the OH attribution block.
 
 LAYOUT DECISIONS:
   • RESPECT THE SAFE TEXT ZONES from Pass 1. Place text overlays ONLY in zones the composition pass marked as safe, OR use a scrim/framed treatment.
@@ -302,7 +314,16 @@ ADDRESS: "address_line1, city" below the photo, Livvic ~28pt,
   center-aligned, dark.
 LOGO: brokerage_logo at the bottom of the canvas, gold "C21" +
   dark "ALLIANCE". Width >= 240px.
-NO AGENT FIELDS.
+HOSTING AGENT BLOCK: include a hosting-agent attribution group,
+  typically anchored bottom-right. Compose three layers:
+  • hosting_agent_photo — image layer, circular (cornerRadius equal to
+    half the width), ~120px square, bound to \`hosting_agent_photo\`.
+  • hosting_agent_name — text layer, Livvic Bold ~26pt, dark, bound to
+    \`hosting_agent_name\`. Placed right of the photo or directly below it.
+  • hosting_agent_phone — text layer, Livvic Regular ~22pt, dark, bound
+    to \`hosting_agent_phone\`. Stacked under the name.
+  Keep the block compact so it reads as attribution, not a headshot
+  takeover — the property remains the hero.
 
 ──── RECIPE: under_contract ────
 No reference yet. Use a tasteful interpretation of the brand: Obsessed
@@ -361,10 +382,16 @@ ALLIANCE BRAND HARD RULES — NUMERIC THRESHOLDS
        or \`"state"\` or \`"zip"\`. Address is street (address_line1) + city only.
        FIX: remove the layer OR rebind to address_line1 / city.
 
-  HR2. AGENT FIELDS on just_listed / just_sold / open_house / under_contract / price_reduction —
+  HR2. AGENT FIELDS on just_listed / just_sold / under_contract / price_reduction —
        no text or image layer may reference agent_name, agent_photo, agent_phone,
        agent_email, agent_title.
        FIX: strip every offending layer entirely.
+       EXCEPTION — open_house: hosting agent attribution is ALLOWED (and
+       encouraged). On open_house posts, layers bound to
+       \`hosting_agent_name\`, \`hosting_agent_phone\`, or
+       \`hosting_agent_photo\` are permitted. The generic \`agent_*\`
+       tokens are still NOT permitted on open_house — use the
+       hosting_agent_* tokens instead.
 
   HR3. BROKERAGE LOGO — image layer with \`boundField: "brokerage_logo"\` MUST exist
        and its width MUST be >= 160px (recipe target 280px for just_listed).

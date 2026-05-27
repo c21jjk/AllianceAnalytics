@@ -29,6 +29,10 @@ import { getTemplate } from "@/lib/post-builder/templates/registry";
 import { renderDbTemplate } from "@/lib/template-builder";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
+import {
+  getAgentAttribution,
+  type AgentAttribution,
+} from "@/lib/data/alliance-dash-agents";
 import type {
   PostBuilderListing,
   PostCustomizations,
@@ -66,6 +70,33 @@ function looksLikeUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     s,
   );
+}
+
+/**
+ * Resolve hosting-agent attribution for a single-listing Open House render.
+ * Used by the DB-template and factory-canvas branches below.
+ *
+ * Decision tree:
+ *   • post_type != "open_house"     → return null (skip the lookup entirely)
+ *   • explicit body.hosting_agent_name set → use that
+ *   • otherwise → use listing.agent_name (single-listing OH where the host
+ *     IS the listing agent — the common case)
+ *   • no usable name on either path → return null
+ *
+ * Failures (missing Alliance Dash creds, network blip, etc.) yield a
+ * partial attribution — the bound-field resolvers fall back to the
+ * listing-agent fields, so a missed phone or photo never breaks the
+ * render. This mirrors the multi-OH route's behavior.
+ */
+async function maybeResolveHostingAttribution(
+  postType: PostType | undefined,
+  listing: PostBuilderListing,
+  explicitName: string | null | undefined,
+): Promise<AgentAttribution | null> {
+  if (postType !== "open_house") return null;
+  const name = (explicitName ?? listing.agent_name ?? "").trim();
+  if (!name) return null;
+  return getAgentAttribution(name);
 }
 
 export async function POST(request: Request) {
@@ -137,11 +168,21 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    // Resolve hosting-agent attribution for OH renders. On non-OH posts
+    // this is a no-op (returns null) so we don't pay the Alliance Dash
+    // round-trip on every just-listed render.
+    const hosting = await maybeResolveHostingAttribution(
+      body.post_type,
+      body.listing,
+      body.hosting_agent_name,
+    );
     const dbResult = await renderDbTemplate({
       template_id: body.template_id,
       listing: body.listing,
       format: body.format,
-      hosting_agent_name: body.hosting_agent_name ?? null,
+      hosting_agent_name: hosting?.name ?? body.hosting_agent_name ?? null,
+      hosting_agent_phone: hosting?.phone ?? null,
+      hosting_agent_photo_url: hosting?.photo_url ?? null,
       oh_window: body.oh_window ?? null,
     });
     if (!dbResult.ok) {
@@ -184,12 +225,23 @@ export async function POST(request: Request) {
     );
   }
 
+  // Same OH attribution path as the DB-template branch above. On non-OH
+  // post types this returns null and the render runs unchanged.
+  const factoryHosting = await maybeResolveHostingAttribution(
+    body.post_type,
+    body.listing,
+    body.hosting_agent_name,
+  );
   const rendered = await renderCanvasSchema({
     schema,
     listingId: body.listing.id,
     mlsNumber: body.listing.mls_number,
     format: body.format,
     logLabel: `factory:${schema.id}`,
+    hostingAgentName:
+      factoryHosting?.name ?? body.hosting_agent_name ?? null,
+    hostingAgentPhone: factoryHosting?.phone ?? null,
+    hostingAgentPhotoUrl: factoryHosting?.photo_url ?? null,
   });
 
   if (!rendered.ok) {

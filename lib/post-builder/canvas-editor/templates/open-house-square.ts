@@ -23,6 +23,7 @@
  */
 import { ALLIANCE_COLORS, ALLIANCE_FONTS } from "./tokens";
 import { C21_ALLIANCE_WHITE_LOGO } from "./brand-logos";
+import { buildHostingAgentBlock } from "./hosting-agent-block";
 import type { CanvasLayer, CanvasTemplateSchema } from "../types";
 import type { PostVariant } from "@/lib/post-builder/types";
 
@@ -254,6 +255,23 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
   });
 
   void C21_ALLIANCE_WHITE_LOGO;
+
+  // ---- z=60+: hosting-agent corner block (bottom-right) ----
+  // Added 2026-05-27 per John's policy override: OH posts (single + multi)
+  // now carry a hosting-agent attribution block. The block resolves to the
+  // listing agent when no hosting override is set, so this single template
+  // covers both retail OH (host = listing agent) and multi-OH carousel
+  // per-property slides (host varies per slide). Block lives above the
+  // logo's z=50 so it draws on top if positions ever overlap.
+  layers.push(
+    ...buildHostingAgentBlock({
+      canvasWidth: W,
+      canvasHeight: H,
+      idPrefix: "oh_sq",
+      baseZ: 60,
+      format: "square_1x1",
+    }),
+  );
 
   return {
     id: "open_house_square_v1",

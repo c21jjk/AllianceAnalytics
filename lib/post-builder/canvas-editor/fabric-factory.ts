@@ -66,6 +66,7 @@ import {
   EXCELLENCE_COLLECTION_LOGO,
 } from "./templates/brand-logos";
 import { EXCELLENCE_PRICE_THRESHOLD } from "../excellence-collection";
+import { formatPhone } from "@/lib/data/phone-format";
 import {
   CANVA_VIOLET,
   createCanvaStyleControls,
@@ -236,6 +237,23 @@ export function resolveTextBoundField(
         listing.openHouseStartUtc,
         listing.openHouseEndUtc,
       );
+    case "hosting_agent_name": {
+      // why: the slide's OH host wins; fall back to the listing agent when
+      // the wizard didn't override (single-listing OH where host == listing
+      // agent). Empty string makes the layer-text fallback fire downstream.
+      const host = listing.hosting_agent?.name?.trim();
+      if (host) return host;
+      return listing.agentName ?? "";
+    }
+    case "hosting_agent_phone": {
+      // why: hosting_agent.phone is already formatted by the multi-OH route
+      // (via `formatPhone` in lib/data/alliance-dash-agents.ts). The fallback
+      // path runs `formatPhone()` on the listing agent's stored phone so
+      // both paths produce the same "(NNN) NNN-NNNN" shape.
+      const hostPhone = listing.hosting_agent?.phone?.trim();
+      if (hostPhone) return hostPhone;
+      return formatPhone(listing.agentPhone) ?? "";
+    }
     default: {
       // why: exhaustive-check fallback. If a new TextBoundField member is
       // added to the union and this switch isn't updated, `_exhaustive` will
@@ -267,6 +285,15 @@ export function resolveImageBoundField(
       return listing.photos[4] ?? null;
     case "agent_photo":
       return listing.agentPhotoUrl;
+    case "hosting_agent_photo": {
+      // why: hosting host's headshot wins on a multi-OH slide; fall back to
+      // the listing agent's headshot when the wizard didn't override (single-
+      // listing OH where host == listing agent). Same fallback shape as the
+      // text resolvers above so the corner block stays consistent.
+      const hostPhoto = listing.hosting_agent?.photo_url ?? null;
+      if (hostPhoto) return hostPhoto;
+      return listing.agentPhotoUrl;
+    }
     case "office_logo":
       // why: office_logo falls back to a brand lockup when the listing
       // doesn't carry a per-office override. The brand-logos.ts module

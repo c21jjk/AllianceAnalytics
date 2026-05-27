@@ -86,6 +86,10 @@ import {
   type SourceMls,
 } from "@/lib/post-builder/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  getAgentAttribution,
+  type AgentAttribution,
+} from "@/lib/data/alliance-dash-agents";
 import type { Json } from "@/lib/supabase/types";
 
 // why: the V1 render pipeline launches headless Chromium, which only runs on
@@ -591,6 +595,81 @@ interface PerPropertyRenderFailure {
 }
 
 /**
+ * Normalize a hosting-agent name into the same key shape we use to dedupe
+ * attribution lookups. Empty / whitespace-only / unparseable names return
+ * null so the caller treats them as "no host" and skips the lookup.
+ *
+ * Mirrors the matching logic in `lib/data/alliance-dash-agents.ts` so the
+ * map key is consistent between where it's written (the resolver loop) and
+ * where it's read (each per-property render dispatch).
+ */
+function normalizeForAttributionKey(
+  raw: string | null | undefined,
+): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return null;
+  const parts = trimmed
+    .split(/\s+/)
+    .map((p) => p.replace(/[^a-z'-]/g, ""))
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Resolve hosting-agent attribution (name + phone + photo) for every
+ * distinct host across the consolidated property list. Runs all lookups
+ * in parallel via Promise.all and uses an in-request cache passed into
+ * `getAgentAttribution` so duplicate names only hit the DB once.
+ *
+ * Returns a Map keyed by the normalized hosting name; each value is the
+ * fully resolved AgentAttribution (phone formatted, photo resolved). The
+ * map is then handed to renderPerPropertyCards which threads the entry
+ * into the renderDbTemplate call for each slide.
+ *
+ * Missing host names (null / empty) are skipped — those slides will
+ * resolve to the listing-agent fallback via the bound-field resolvers in
+ * fabric-factory.ts.
+ */
+async function buildHostingAttributionMap(
+  properties: readonly MultiOHEventProperty[],
+): Promise<Map<string, AgentAttribution>> {
+  const out = new Map<string, AgentAttribution>();
+  // Collect distinct (normalizedKey, originalName) pairs. The original
+  // name is what we hand to getAgentAttribution — the helper uses it for
+  // both the exact-match Supabase query AND the normalized last-name
+  // fallback, so we want to preserve casing / punctuation as the wizard
+  // captured it.
+  const distinct = new Map<string, string>();
+  for (const p of properties) {
+    const key = normalizeForAttributionKey(p.hosting_agent_name);
+    if (!key) continue;
+    if (!distinct.has(key)) {
+      distinct.set(key, p.hosting_agent_name as string);
+    }
+  }
+  if (distinct.size === 0) return out;
+
+  // In-request memo cache shared across all lookups so a single name
+  // never resolves twice even if the normalization upstream missed a
+  // dupe (e.g., "Larissa Stevenson" vs "Larissa  Stevenson").
+  const cache = new Map<string, Promise<AgentAttribution>>();
+
+  const entries = await Promise.all(
+    Array.from(distinct.entries()).map(async ([key, name]) => {
+      const attribution = await getAgentAttribution(name, cache);
+      return [key, attribution] as const;
+    }),
+  );
+  for (const [key, attribution] of entries) {
+    out.set(key, attribution);
+  }
+  return out;
+}
+
+/**
  * Render N per-property cards with bounded parallelism. Returns whichever
  * succeeded plus a list of failures — caller decides whether to fail the
  * whole flow or surface a partial-progress error.
@@ -610,6 +689,7 @@ interface PerPropertyRenderFailure {
 async function renderPerPropertyCards(
   input: MultiOHEventInput,
   listingByMls: Map<string, PropertyRow>,
+  hostingAttribution: Map<string, AgentAttribution>,
   callbacks: {
     onSlideStarted: (index: number, address: string | null) => void;
     onSlideDone: (index: number, url: string) => void;
@@ -676,11 +756,24 @@ async function renderPerPropertyCards(
         // template's binding context receives them.
         if (dbTemplateId) {
           const ohWindow = formatOhWindowLabel(prop);
+          // why: look up the pre-resolved hosting-agent attribution
+          // (phone + photo) for this slide. The map is keyed by the
+          // normalized hosting name; entries are built once before the
+          // per-property render loop so 9 slides sharing a host hit
+          // Alliance Dash + brand_assets just once. Missing entry =>
+          // host had no usable name; the corner-block bound fields fall
+          // back to the listing agent at render time.
+          const hostKey = normalizeForAttributionKey(prop.hosting_agent_name);
+          const hosting = hostKey
+            ? hostingAttribution.get(hostKey)
+            : undefined;
           const dbResult = await renderDbTemplate({
             template_id: dbTemplateId,
             listing,
             format: input.format,
             hosting_agent_name: prop.hosting_agent_name ?? null,
+            hosting_agent_phone: hosting?.phone ?? null,
+            hosting_agent_photo_url: hosting?.photo_url ?? null,
             oh_window: ohWindow,
           });
           if (!dbResult.ok) {
@@ -981,10 +1074,22 @@ export async function POST(request: Request): Promise<Response> {
       const mlsNumbers = input.properties.map((p) => p.mls_number);
       const listingByMls = await fetchListingRows(mlsNumbers);
 
+      // ---- Resolve hosting-agent attribution (phone + photo) ----
+      // why: build the (name → { name, phone, photo_url }) map ONCE before
+      // the per-property render loop kicks off. Lookups for the same agent
+      // (common — Larissa may host multiple OHs in a single event) collapse
+      // into one round-trip via the Map dedupe in buildHostingAttributionMap.
+      // The map is then threaded into renderPerPropertyCards which hands
+      // each slide its host's resolved attribution.
+      const hostingAttribution = await buildHostingAttributionMap(
+        input.properties,
+      );
+
       // ---- Render per-property cards (bounded parallelism + streaming events) ----
       const { successes, failures } = await renderPerPropertyCards(
         input,
         listingByMls,
+        hostingAttribution,
         {
           onSlideStarted: (index, address) => {
             void writeLine({ type: "slide_started", index, address });

@@ -102,8 +102,21 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
   // Inject hosting_agent / oh_window overrides from the token payload.
   // These come from the Multi-OH wizard's per-property context and only
   // apply on Open House renders.
+  //
+  // Legacy behavior (kept): when the token carries a hosting agent name,
+  // overwrite the listing-agent `agentName` so any template binding the
+  // older `agent_name` field still surfaces the host. New behavior: also
+  // build the structured `hosting_agent` field so the new
+  // `hosting_agent_*` bound fields in fabric-factory.ts can read name +
+  // phone + photo as a unit. Both shapes coexist; templates can bind to
+  // either and the corner-block-aware ones use the new fields.
   if (payload.hosting_agent_name) {
     mlsPayload.agentName = payload.hosting_agent_name;
+    mlsPayload.hosting_agent = {
+      name: payload.hosting_agent_name,
+      phone: payload.hosting_agent_phone ?? null,
+      photo_url: payload.hosting_agent_photo_url ?? null,
+    };
   }
 
   const dims = FORMAT_DIMS[payload.format];
