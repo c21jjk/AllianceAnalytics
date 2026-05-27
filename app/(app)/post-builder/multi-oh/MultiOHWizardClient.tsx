@@ -998,7 +998,7 @@ export default function MultiOHWizardClient({
       />
 
       {generating ? (
-        <GeneratingOverlay statusText={GENERATE_STATUSES[generateStatusIdx]} />
+        <GeneratingOverlay statusText={statusText} />
       ) : null}
     </div>
   );
