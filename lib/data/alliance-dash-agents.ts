@@ -4,6 +4,7 @@ import {
   type SupabaseClient,
 } from "@supabase/supabase-js";
 
+import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAgentHeadshotUrl } from "./owner-story-db";
 import { formatPhone } from "./phone-format";
 
@@ -123,6 +124,28 @@ export async function fetchAgentPhone(
   if (!norm) return null;
   const [first, last] = norm.split(" ");
   if (!first) return null;
+
+  // ---- Pass 0: mls_agents.phone_override (AllianceAnalytics-side) ----
+  // 2026-05-27 — an explicit override surface for agents whose phones
+  // aren't carried by the MLS feeds (CMC/SJSR `phone1` columns) but DO
+  // exist elsewhere (Darwin, manual entry, etc.). Checked first so it
+  // wins over MLS-sourced data when both exist. Mirrors the existing
+  // `headshot_label_override` pattern on the same table.
+  try {
+    const adminClient = createAdminClient();
+    const { data: overrideRow } = await adminClient
+      .from("mls_agents")
+      .select("phone_override")
+      .ilike("full_name", agentName.trim())
+      .not("phone_override", "is", null)
+      .limit(1)
+      .maybeSingle();
+    const override = (overrideRow as { phone_override: string | null } | null)
+      ?.phone_override?.trim();
+    if (override) return override;
+  } catch {
+    // Fall through to MLS-sourced lookup on any failure.
+  }
 
   const supabase = getAllianceDashClient();
   if (!supabase) return null;

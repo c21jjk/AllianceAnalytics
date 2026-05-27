@@ -64,34 +64,64 @@ export function buildOpenHouseSquareTemplate(): CanvasTemplateSchema {
     borderWidth: 0,
   });
 
-  // ---- z=20: date/time bar — top-LEFT half ----
+  // ---- z=20: date — top-LEFT half, top row ----
   // 2026-05-27 — moved from centered to the left half so the C21
-  // ALLIANCE logo can occupy the top-right. Width = half the canvas
-  // minus the left inset; text remains center-aligned within that
-  // narrower column so it reads as its own block.
+  // ALLIANCE logo can occupy the top-right.
+  // 2026-05-27 (v2) — split into TWO stacked layers so the date sits
+  // above the time, per Larissa's reference (pic 1): "Saturday, May 30"
+  // on row 1 and "10am - 1pm" on row 2.
   layers.push({
-    id: id("date_time"),
-    name: "Open House date + time",
+    id: id("date"),
+    name: "Open House date",
     kind: "text",
     locked: false,
     visible: true,
     left: 60,
-    top: 90,
+    top: 80,
     width: W / 2 - 60,
     height: 36,
     angle: 0,
     opacity: 1,
     z: 20,
-    text: "SATURDAY · TIME TBD",
+    text: "{open_house_date}",
     boundField: "open_house_date",
     fontFamily: ALLIANCE_FONTS.livvic,
-    fontSize: 26,
-    fontWeight: 500,
+    fontSize: 28,
+    fontWeight: 600,
     fontStyle: "normal",
     fill: ALLIANCE_COLORS.ink900,
     textAlign: "center",
     lineHeight: 1.0,
-    charSpacing: 200,
+    charSpacing: 100,
+    underline: false,
+    linethrough: false,
+    editable: true,
+  });
+
+  // ---- z=21: time — top-LEFT half, row below the date ----
+  layers.push({
+    id: id("time"),
+    name: "Open House time",
+    kind: "text",
+    locked: false,
+    visible: true,
+    left: 60,
+    top: 122,
+    width: W / 2 - 60,
+    height: 30,
+    angle: 0,
+    opacity: 1,
+    z: 21,
+    text: "{open_house_time}",
+    boundField: "open_house_time",
+    fontFamily: ALLIANCE_FONTS.livvic,
+    fontSize: 22,
+    fontWeight: 400,
+    fontStyle: "normal",
+    fill: ALLIANCE_COLORS.ink900,
+    textAlign: "center",
+    lineHeight: 1.0,
+    charSpacing: 100,
     underline: false,
     linethrough: false,
     editable: true,
