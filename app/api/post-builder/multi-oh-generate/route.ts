@@ -8,8 +8,11 @@
  *   1. ONE event-overview hero image (rendered by `multi-oh-render.ts`).
  *      This is the carousel's slide 0 — it lists every property's address,
  *      OH window, and agent contact in a single designed graphic.
- *   2. N per-property cards (rendered by the existing V1 Open House
- *      pipeline — `renderTemplate`). These are slides 1..N.
+ *   2. N per-property cards (rendered by the canvas-template OH
+ *      pipeline — `findCanvasTemplate` + `renderCanvasSchema`, the
+ *      same path the single-listing OH render uses; the legacy V1
+ *      `renderTemplate` shim was dropped on 2026-05-27 after the
+ *      V1 HTML registry was deleted). These are slides 1..N.
  *   3. ONE inserted `generated_posts` row. The hero is the row's
  *      `image_url`; the per-property URLs land in `additional_images` so
  *      the standard Post Builder carousel UX picks the bundle up without
@@ -71,9 +74,10 @@ import {
   renderMultiOHEventOverview,
   type MultiOHRenderResult,
 } from "@/lib/post-builder/multi-oh-render";
-import { renderTemplate } from "@/lib/post-builder/render";
 import { renderDbTemplate } from "@/lib/template-builder";
 import { formatShortName } from "@/lib/post-builder/templates/registry";
+import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
@@ -707,11 +711,8 @@ async function renderPerPropertyCards(
   const successes: PerPropertyRenderResult[] = [];
   const failures: PerPropertyRenderFailure[] = [];
   // Phase 2E (2026-05-22) — the wizard's DB-template pick (one per event)
-  // wins over the legacy variant for every per-property slide. The
-  // template_id below is the legacy fallback; the per-slide dispatch
-  // chooses the right pipeline.
-  const formatShort = formatShortName(input.format);
-  const legacyTemplateId = `open_house_${formatShort}_${input.per_property_variant}`;
+  // wins over the canvas-template default for every per-property slide.
+  // The per-slide dispatch below picks the right pipeline.
   const dbTemplateId = input.db_template_id ?? null;
 
   // Pre-compute the index list we'll actually process. In retry mode we
@@ -799,31 +800,79 @@ async function renderPerPropertyCards(
             },
           };
         }
-        // Legacy variant path — unchanged.
-        const result = await renderTemplate({
-          template_id: legacyTemplateId,
-          listing,
-          hero_image_url: listing.hero_image_url,
-        });
-        if (!result.ok) {
-          callbacks.onSlideFailed(idx, result.error, prop.address ?? null);
+        // Default canvas-template path (2026-05-27).
+        //
+        // The legacy V1 HTML template registry was deleted on
+        // 2026-05-24 (`lib/post-builder/templates/registry.ts` is a
+        // stub — `getTemplate()` now returns null), so the previous
+        // `renderTemplate(legacyTemplateId)` call always dead-ended in
+        // `Unknown template: open_house_square_v2` for the multi-OH
+        // per-property slides. Route them through the same canvas-
+        // template pipeline the single-listing OH render in
+        // `app/api/post-builder/render/route.ts` uses.
+        //
+        // The variant axis (v2/v3/v6/v8) is now cosmetic — every
+        // per-property variant resolves to the same `open_house/v1`
+        // canvas template via findCanvasTemplate's variant-ignored
+        // lookup. We still persist `input.per_property_variant` on the
+        // generated_posts row so legacy DB schema reads (and the Step 2
+        // grid before it was retired) don't break.
+        const schema = findCanvasTemplate(
+          "open_house",
+          "v1",
+          input.format,
+        );
+        if (!schema) {
+          const err = `no canvas template for open_house/${input.format}`;
+          callbacks.onSlideFailed(idx, err, prop.address ?? null);
           return {
             kind: "err" as const,
             failure: {
               index: idx,
               mls_number: prop.mls_number,
-              error: result.error,
+              error: err,
             },
           };
         }
-        callbacks.onSlideDone(idx, result.image_url);
+        // why: reuse the same hosting-attribution lookup the DB-template
+        // branch above performs so multi-host events get phone + photo
+        // resolved once per distinct host and shared across slides.
+        const hostKey = normalizeForAttributionKey(prop.hosting_agent_name);
+        const hosting = hostKey
+          ? hostingAttribution.get(hostKey)
+          : undefined;
+        const rendered = await renderCanvasSchema({
+          schema,
+          listingId: listing.id,
+          mlsNumber: prop.mls_number,
+          format: input.format,
+          logLabel: `multi-oh-property:${schema.id}`,
+          // Fall back to the listing agent inside the canvas template's
+          // bound-field resolver when no host name is set on this slide.
+          hostingAgentName: prop.hosting_agent_name ?? null,
+          hostingAgentPhone: hosting?.phone ?? null,
+          hostingAgentPhotoUrl: hosting?.photo_url ?? null,
+        });
+        if (!rendered.ok) {
+          const err = `${rendered.stage} failed: ${rendered.error}`;
+          callbacks.onSlideFailed(idx, err, prop.address ?? null);
+          return {
+            kind: "err" as const,
+            failure: {
+              index: idx,
+              mls_number: prop.mls_number,
+              error: err,
+            },
+          };
+        }
+        callbacks.onSlideDone(idx, rendered.image_url);
         return {
           kind: "ok" as const,
           success: {
             index: idx,
             mls_number: prop.mls_number,
-            image_url: result.image_url,
-            image_path: result.image_path,
+            image_url: rendered.image_url,
+            image_path: rendered.image_path,
           },
         };
       }),

@@ -105,47 +105,20 @@ interface Props {
  */
 type StepIndex = 1 | 2 | 3;
 
-interface VariantCardMeta {
-  id: PerPropertyVariant;
-  name: string;
-  description: string;
-}
-
 // 2026-05-22 — FormatCardMeta / FORMAT_CARDS / FormatCard removed. The
 // format-picker step was retired earlier (we ship Portrait + Story for
 // every post automatically), so the card-grid UI and its supporting types
-// were dead code. Variant picker below stays — variant is still a user
-// choice per property.
-
-// Descriptions mirror the canonical copy in lib/post-builder/templates/
-// registry.ts so the wizard and the standard Post Builder picker stay in
-// sync. If the registry changes, this list should too.
-const VARIANT_CARDS: readonly VariantCardMeta[] = [
-  {
-    id: "v2",
-    name: "v2 · Bold Stats",
-    description:
-      "Photo plus oversized price + stat row on a dark data surface. Magazine feel.",
-  },
-  {
-    id: "v3",
-    name: "v3 · Excellence Collection",
-    description:
-      "Premium tier — gold-trimmed editorial for properties $949k+. Dominant photo + Playfair price.",
-  },
-  {
-    id: "v6",
-    name: "v6 · Magazine Cover",
-    description:
-      "Editorial magazine-cover layout — hero photo above, large serif headline + price below on a cream surface.",
-  },
-  {
-    id: "v8",
-    name: "v8 · Standard",
-    description:
-      "Cream surface with dark bottom band carrying address, city, and bed/bath/feature row. Everyday tier.",
-  },
-];
+// were dead code.
+//
+// 2026-05-27 — VARIANT_CARDS + VariantCardMeta removed. The legacy V1
+// template registry was deleted on 2026-05-24; every per-property
+// variant (v2/v3/v6/v8) now routes to the same `open_house/v1` canvas
+// template inside the multi-OH generate route, so the picker grid was
+// showing four distinct cards that all rendered identically. Step 2
+// now surfaces only DB-template choices when they exist; otherwise it
+// shows a single "Using the default Open House template" card.
+// `perPropertyVariant` state remains so the legacy `variant` column on
+// generated_posts continues to receive a non-null value.
 
 // 2026-05-27 (Phase C) — rotating GENERATE_STATUSES timer was removed.
 // Status text is now driven directly by NDJSON events from the streaming
@@ -948,24 +921,15 @@ export default function MultiOHWizardClient({
         {step === 2 ? (
           <Step2FormatVariant
             format={format}
-            onFormatChange={setFormat}
-            variant={perPropertyVariant}
-            onVariantChange={(v) => {
-              setPerPropertyVariant(v);
-              // Phase 2E — picking a legacy variant clears the DB pick.
-              setDbTemplateId(null);
-            }}
             dbTemplates={dbTemplatesByFormat[format] ?? []}
             dbTemplateId={dbTemplateId}
             onDbTemplateChange={(id) => {
+              // 2026-05-27 — picking a DB template no longer clears any
+              // legacy variant state; `perPropertyVariant` is just a
+              // legacy column write now (every variant routes to the
+              // same canvas template inside the generate route).
               setDbTemplateId(id);
-              // Picking a DB template doesn't change perPropertyVariant —
-              // we keep it as the implicit fallback so deselecting the DB
-              // card via the "Use a legacy variant" affordance restores
-              // the user's prior choice without a re-pick.
             }}
-            eventTitle={eventTitle}
-            selectedListings={selectedListings}
           />
         ) : null}
         {step === 3 ? (
@@ -1023,7 +987,7 @@ interface StepperProps {
 
 const STEP_LABELS: readonly { id: StepIndex; label: string }[] = [
   { id: 1, label: "Pick properties" },
-  { id: 2, label: "Format + variant" },
+  { id: 2, label: "Template" },
   { id: 3, label: "Review + generate" },
 ];
 
@@ -1467,7 +1431,7 @@ function HostingAgentRow({ mls, value, onChange }: HostingAgentRowProps) {
 }
 
 // ===========================================================================
-// Step 2 — Format + variant
+// Step 2 — Template
 // ===========================================================================
 //
 // Step 2 was formerly an "Event details" form that collected an event-level
@@ -1475,42 +1439,36 @@ function HostingAgentRow({ mls, value, onChange }: HostingAgentRowProps) {
 // already shows the host who'll be at that home, so the event-level
 // attribution was misleading on multi-host events. The remaining
 // event-level field (event_title) moved up into Step 1.
+//
+// 2026-05-27 — the legacy variant card grid (v2/v3/v6/v8) was removed.
+// After the 2026-05-24 V1 HTML template purge, every per-property variant
+// resolved to the same `open_house/v1` canvas template inside the
+// generate route, so the four picker cards were showing distinct copy for
+// the same render. Step 2 now surfaces only DB-template choices when
+// they exist; otherwise it shows a single informational card describing
+// the default canvas template.
 
 interface Step2Props {
   format: PostFormat;
-  onFormatChange: (f: PostFormat) => void;
-  variant: PerPropertyVariant;
-  onVariantChange: (v: PerPropertyVariant) => void;
   /** Phase 2E — DB templates available for the active format. */
   dbTemplates: readonly TemplateMeta[];
-  /** Phase 2E — currently-selected DB template, or null when a legacy
-   *  variant is selected instead. */
+  /** Phase 2E — currently-selected DB template, or null when the default
+   *  canvas template is in play. */
   dbTemplateId: string | null;
   /** Phase 2E — fires with the new id (or null when deselecting). */
   onDbTemplateChange: (id: string | null) => void;
-  /** Event title for the format-card hero mocks. */
-  eventTitle: string;
-  /** Picked listings — first one is used as the sample property data for
-   *  the variant-card mocks. */
-  selectedListings: readonly PostBuilderListing[];
 }
 
 function Step2FormatVariant({
   format,
-  onFormatChange,
-  variant,
-  onVariantChange,
   dbTemplates,
   dbTemplateId,
   onDbTemplateChange,
-  eventTitle,
-  selectedListings,
 }: Step2Props) {
-  // First picked listing acts as the sample for variant previews. Falls
-  // back to a synthetic placeholder if (defensively) nothing is selected —
-  // shouldn't happen on Step 2 since Step 1 gates on 2+ picked.
-  const sampleListing = selectedListings[0] ?? null;
-
+  // why: silence unused-prop lint in the no-DB-templates path. `format`
+  // is part of the Step2Props contract because parent passes it; keep
+  // the surface stable for when a future format-aware default lands.
+  void format;
   return (
     <section className="space-y-5">
       {/* 2026-05-22 — Format-picker card removed. Multi-OH carousels
@@ -1520,15 +1478,14 @@ function Step2FormatVariant({
           for Larissa to make. */}
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-neutral-900 mb-1">
-          Pick the per-property card variant
+          Choose a template
         </h2>
         <p className="text-sm text-neutral-600 mb-4">
-          This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout. Previews use your first picked listing.
+          This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout.
         </p>
         {/* Phase 2E (2026-05-22) — admin-authored DB templates for OH.
             Section hides when no DB templates exist for the active
-            format. Clicking a card sets `dbTemplateId` and visually
-            outranks the legacy variant grid below. Same gold "Admin"
+            format. Clicking a card sets `dbTemplateId`. Same gold "DB"
             badge as PostBuilderClient for consistency. */}
         {dbTemplates.length > 0 ? (
           <div className="mb-4">
@@ -1577,114 +1534,22 @@ function Step2FormatVariant({
               })}
             </div>
           </div>
-        ) : null}
-        {/* Legacy variant cards. Greyed when a DB template is active so
-            the user sees the choice is mutually exclusive (clicking
-            here clears the DB pick — same handler the parent wired). */}
-        <div
-          className={[
-            dbTemplateId ? "opacity-50" : "",
-            "transition",
-          ].join(" ")}
-          aria-hidden={dbTemplateId !== null ? "false" : undefined}
-        >
-          {dbTemplateId ? (
-            <div className="eyebrow mb-2 text-neutral-500">
-              Or pick a legacy variant{" "}
-              <span className="text-neutral-400 font-normal normal-case tracking-normal">
-                · clears the admin template above
-              </span>
+        ) : (
+          // 2026-05-27 — when no DB templates are published for this
+          // format, Step 2 shows a single informational card instead of
+          // a pick grid. The default canvas template handles every
+          // per-property slide; the user just hits Continue.
+          <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
+            <div className="text-sm font-semibold text-neutral-900">
+              Using the default Open House template
             </div>
-          ) : null}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {VARIANT_CARDS.map((v) => (
-              <VariantCard
-                key={v.id}
-                meta={v}
-                active={!dbTemplateId && variant === v.id}
-                onClick={() => onVariantChange(v.id)}
-                format={format}
-                sampleListing={sampleListing}
-              />
-            ))}
+            <div className="mt-1 text-xs text-neutral-600 leading-relaxed">
+              Every per-property slide renders with the standard Alliance Open House layout. Publish a custom Open House template in /admin/templates to surface it here as a pick.
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </section>
-  );
-}
-
-interface VariantCardProps {
-  meta: VariantCardMeta;
-  active: boolean;
-  onClick: () => void;
-  /** Current format choice — drives the aspect ratio of the variant mock so
-   *  picking Story reshapes all three variants to tall thumbnails. */
-  format: PostFormat;
-  /** First picked listing (or null if none picked). Provides real photo +
-   *  address data to the mock so the variant card shows the user's actual
-   *  content, not lorem-ipsum. */
-  sampleListing: PostBuilderListing | null;
-}
-
-/**
- * 2026-05-21 — VariantCard now renders an actual PropertySlideBody mock of
- * each variant on top of the descriptive text. The mock uses the user's
- * first picked listing so the preview shows their actual photo + address
- * in the v1 / v2 / v3 layout. Renders at the currently-selected format's
- * aspect ratio.
- */
-function VariantCard({
-  meta,
-  active,
-  onClick,
-  format,
-  sampleListing,
-}: VariantCardProps) {
-  const thumbWidthClass: Record<PostFormat, string> = {
-    square_1x1: "w-[100px]",
-    story_9x16: "w-[72px]",
-  };
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        "rounded-xl border p-4 text-left transition flex flex-col items-start gap-3",
-        active
-          ? "border-gold-500 bg-gold-50/40 ring-2 ring-gold-500/30 shadow-sm"
-          : "border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-sm",
-      ].join(" ")}
-    >
-      {/* Variant mock — only when we have a sample listing. Defensive null
-          guard so the picker doesn't blow up if (somehow) Step 2 is reached
-          with no listings. */}
-      {sampleListing ? (
-        <div
-          className={`${thumbWidthClass[format]} ${FORMAT_ASPECT[format]} self-center overflow-hidden rounded-sm ring-1 ring-neutral-200 shadow-sm`}
-        >
-          <PropertySlideBody
-            variant={meta.id}
-            listing={sampleListing}
-            hostingAgent=""
-            size="thumb"
-          />
-        </div>
-      ) : null}
-      <div className="min-w-0">
-        <div
-          className={[
-            "text-sm font-semibold mb-1",
-            active ? "text-gold-900" : "text-neutral-900",
-          ].join(" ")}
-        >
-          {meta.name}
-        </div>
-        <div className="text-xs text-neutral-600 leading-relaxed">
-          {meta.description}
-        </div>
-      </div>
-    </button>
   );
 }
 
