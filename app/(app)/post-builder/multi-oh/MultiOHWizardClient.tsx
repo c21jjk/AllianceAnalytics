@@ -3,17 +3,66 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
   type MultiOHEventInput,
   type MultiOHEventProperty,
-  type MultiOHGenerateResult,
   type PostBuilderListing,
   type PostFormat,
 } from "@/lib/post-builder/types";
 import type { TemplateMeta } from "@/lib/template-builder";
+
+// ---------------------------------------------------------------------------
+// NDJSON event union — re-declared client-side to keep import boundaries
+// clean. Must stay in lockstep with `MultiOHStreamEvent` in
+// `app/api/post-builder/multi-oh-generate/route.ts`. If a third consumer
+// shows up, promote to a shared module under `lib/post-builder/`.
+// ---------------------------------------------------------------------------
+
+type StreamEvent =
+  | { type: "started"; totalSlides: number; format: PostFormat }
+  | { type: "hero_started" }
+  | { type: "hero_done"; url: string }
+  | { type: "slide_started"; index: number; address: string | null }
+  | { type: "slide_done"; index: number; url: string }
+  | { type: "slide_failed"; index: number; error: string; address: string | null }
+  | {
+      type: "completed";
+      generatedPostId: string;
+      redirectPath: string;
+      heroUrl: string;
+      failedIndices: number[];
+    }
+  | { type: "fatal"; error: string };
+
+/** Tile state for the in-flight carousel skeleton overlay. */
+type TileState = "pending" | "rendering" | "done" | "failed";
+
+interface SlideTile {
+  state: TileState;
+  url: string | null;
+  address: string | null;
+  error: string | null;
+}
+
+/** Partial-progress state — set when `completed` arrives with any failures.
+ *  Drives the retry / continue card inside the overlay. */
+interface PartialResult {
+  generatedPostId: string;
+  redirectPath: string;
+  heroUrl: string;
+  /** failed slide indexes, sorted ascending. */
+  failedIndices: readonly number[];
+  /** Per-failure detail so the card can list "Slide 3: 511 E 11th couldn't render". */
+  failedDetails: ReadonlyArray<{
+    index: number;
+    address: string | null;
+    error: string;
+  }>;
+}
 
 // ---------------------------------------------------------------------------
 // Local types
@@ -98,16 +147,11 @@ const VARIANT_CARDS: readonly VariantCardMeta[] = [
   },
 ];
 
-/** Friendly rotating status messages shown during the generate phase. The
- *  multi-OH endpoint doesn't stream per-property progress today, so we
- *  cycle these on a timer to give the user visual rhythm. */
-const GENERATE_STATUSES: readonly string[] = [
-  "Rendering hero card…",
-  "Composing event overview…",
-  "Rendering property cards…",
-  "Laying out the carousel…",
-  "Almost there — finalizing…",
-];
+// 2026-05-27 (Phase C) — rotating GENERATE_STATUSES timer was removed.
+// Status text is now driven directly by NDJSON events from the streaming
+// route (see `runGenerateStream` below) so the user sees true per-slide
+// progress instead of a fake "Composing event overview…" message during
+// what's actually slide 4 of 6.
 
 // ---------------------------------------------------------------------------
 // Component
@@ -165,6 +209,30 @@ export default function MultiOHWizardClient({
     Record<string, string>
   >({});
 
+  // ---- step 1 (cont.) — bulk hosting agent -----------------------------
+  // why: the common case is "Larissa hosts everything" — set once at the
+  // top of the picker rather than re-typing on every row. The control
+  // OVERWRITES every per-row value when applied (even if the user had
+  // individually customized rows already), and the dismissible hint below
+  // it offers an undo that re-derives each row from its listing.
+  const [bulkHostingAgent, setBulkHostingAgent] = useState<string>("");
+  /** Snapshot of perPropertyHostingAgent immediately BEFORE the last
+   *  bulk-apply, so the undo link can restore each row. We snapshot the
+   *  whole map (not just the names that changed) so a partial overwrite
+   *  followed by undo lands back exactly where the user left off. */
+  const bulkUndoSnapshotRef = useRef<Record<string, string> | null>(null);
+  /** Whether the "Applied X to all N — undo" hint is visible. Goes true
+   *  after applyBulkHostingAgent; flips false when the user clicks undo or
+   *  clears the bulk input. */
+  const [bulkHintVisible, setBulkHintVisible] = useState(false);
+  /** The agent name actually applied in the most recent bulk overwrite —
+   *  cached so the hint copy doesn't update mid-typing if the user keeps
+   *  editing the bulk input after applying. */
+  const [bulkAppliedAgent, setBulkAppliedAgent] = useState<string>("");
+
+  // Bulk apply/undo handlers are defined LOWER, after `listingsByMls`
+  // is constructed — the undo path reads from it to re-derive defaults.
+
   // ---- step 1 (cont.) — event title ------------------------------------
   // why: event_title used to live on its own "Event details" step alongside
   // event-level agent fields. 2026-05-21 that step was cut — the only thing
@@ -197,8 +265,25 @@ export default function MultiOHWizardClient({
 
   // ---- step 3 — generate state -----------------------------------------
   const [generating, setGenerating] = useState(false);
-  const [generateStatusIdx, setGenerateStatusIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /** One-line status under the overlay header — driven by NDJSON events. */
+  const [statusText, setStatusText] = useState<string>("Starting…");
+  /** Hero tile state for the overlay skeleton. */
+  const [heroTile, setHeroTile] = useState<SlideTile>({
+    state: "pending",
+    url: null,
+    address: null,
+    error: null,
+  });
+  /** Per-slide tile states for the overlay skeleton. Indexed by carousel
+   *  slot 0..N-1. Rebuilt at every `started` event. */
+  const [slideTiles, setSlideTiles] = useState<readonly SlideTile[]>([]);
+  /** Partial-progress card state. Set when `completed` arrives with one or
+   *  more `slide_failed` events. Null means: either still generating, or
+   *  redirect already happened, or fatal happened. */
+  const [partialResult, setPartialResult] = useState<PartialResult | null>(
+    null,
+  );
 
   // ---- derived state ----------------------------------------------------
 
@@ -227,6 +312,86 @@ export default function MultiOHWizardClient({
     [selectedListings],
   );
 
+  /**
+   * Consolidation summary — the wizard merges multiple picks of the same MLS
+   * (a condo with Sat + Sun OHs picked twice) into ONE carousel slide carrying
+   * an oh_sessions[] array. We surface that math inline on Step 1 so the user
+   * isn't surprised when "5 windows" renders as 4 slides.
+   *
+   * Mirrors the server-side consolidatePropertiesByMls in route.ts so the hint
+   * and the eventual render agree. Returns null when nothing was consolidated
+   * (no hint to show).
+   */
+  const consolidationSummary = useMemo<{
+    pickCount: number;
+    slideCount: number;
+    duplicateExamples: string[];
+    extraDuplicates: number;
+  } | null>(() => {
+    if (selectedListings.length < 2) return null;
+    const counts = new Map<string, { listing: PostBuilderListing; count: number }>();
+    for (const l of selectedListings) {
+      const existing = counts.get(l.mls_number);
+      if (existing) existing.count += 1;
+      else counts.set(l.mls_number, { listing: l, count: 1 });
+    }
+    if (counts.size === selectedListings.length) return null;
+    const duplicates: PostBuilderListing[] = [];
+    for (const { listing, count } of counts.values()) {
+      if (count > 1) duplicates.push(listing);
+    }
+    const exampleNames = duplicates.slice(0, 2).map((l) => {
+      const base = (l.address ?? "").trim();
+      return base.length > 0 ? base : l.mls_number;
+    });
+    return {
+      pickCount: selectedListings.length,
+      slideCount: counts.size,
+      duplicateExamples: exampleNames,
+      extraDuplicates: Math.max(0, duplicates.length - exampleNames.length),
+    };
+  }, [selectedListings]);
+
+  // ---- bulk hosting-agent apply / undo --------------------------------
+  // Defined here (not next to the state above) so `listingsByMls` is in
+  // scope for the undo path's re-derive fallback.
+  const applyBulkHostingAgent = useCallback((): void => {
+    const trimmed = bulkHostingAgent.trim();
+    if (trimmed.length === 0) return;
+    setPerPropertyHostingAgent((prev) => {
+      // Snapshot BEFORE overwrite so undo can restore the exact prior
+      // state (including any per-row customizations the user had typed).
+      bulkUndoSnapshotRef.current = { ...prev };
+      const next: Record<string, string> = {};
+      for (const mls of Object.keys(prev)) next[mls] = trimmed;
+      return next;
+    });
+    setBulkAppliedAgent(trimmed);
+    setBulkHintVisible(true);
+  }, [bulkHostingAgent]);
+
+  const undoBulkHostingAgent = useCallback((): void => {
+    // Restore from snapshot when we have one; otherwise re-derive each row
+    // from its listing (matches the seed logic in toggleSelect).
+    const snapshot = bulkUndoSnapshotRef.current;
+    setPerPropertyHostingAgent((prev) => {
+      if (snapshot) return snapshot;
+      const next: Record<string, string> = {};
+      for (const mls of Object.keys(prev)) {
+        const listing = listingsByMls.get(mls);
+        next[mls] = resolveHostingAgent(
+          listing?.oh_comments,
+          listing?.agent_name,
+        );
+      }
+      return next;
+    });
+    bulkUndoSnapshotRef.current = null;
+    setBulkHintVisible(false);
+    setBulkAppliedAgent("");
+    setBulkHostingAgent("");
+  }, [listingsByMls]);
+
   // Auto-fill event_title when the user hasn't manually edited it.
   useEffect(() => {
     if (!titleDirty) {
@@ -234,16 +399,19 @@ export default function MultiOHWizardClient({
     }
   }, [derivedEventTitle, titleDirty]);
 
-  // ---- generate-phase status ticker ------------------------------------
-  // why: rotate friendly status text on a 4s interval so the spinner feels
-  // alive. We don't actually know per-property progress from the server.
+  // Hide the bulk-apply hint as soon as the input is cleared. We don't
+  // also clear bulkAppliedAgent here so the hint copy stays stable while
+  // visible — only the visibility flag matters for the empty-bulk case.
   useEffect(() => {
-    if (!generating) return;
-    const handle = window.setInterval(() => {
-      setGenerateStatusIdx((i) => (i + 1) % GENERATE_STATUSES.length);
-    }, 4000);
-    return () => window.clearInterval(handle);
-  }, [generating]);
+    if (bulkHostingAgent.trim().length === 0 && bulkHintVisible) {
+      setBulkHintVisible(false);
+    }
+  }, [bulkHostingAgent, bulkHintVisible]);
+
+  // 2026-05-27 (Phase C) — the 4s rotating-status ticker was removed.
+  // The streaming route emits `slide_started` / `slide_done` events as
+  // each slot lands, and `statusText` is updated directly from those
+  // events in `runGenerateStream` below.
 
   // ---- selection handlers ----------------------------------------------
 
@@ -375,101 +543,66 @@ export default function MultiOHWizardClient({
     [],
   );
 
-  // ---- generate ---------------------------------------------------------
+  // ---- generate (NDJSON streaming) -------------------------------------
 
-  const generate = useCallback(async (): Promise<void> => {
-    setGenerating(true);
-    setError(null);
-    setGenerateStatusIdx(0);
-    try {
-      // Build the wizard payload. Map each picked listing into the slim
-      // MultiOHEventProperty shape the endpoint expects.
-      //
-      // why: hosting_agent_name comes from the per-property state map (Step 1
-      // input). Trim + coerce empty → null so the renderer's "no Hosted by
-      // line" branch fires when the user clears the field. We DO NOT fall
-      // back to the listing's agent_name here — the state map was already
-      // seeded with that default at selection time, so an empty value at
-      // this point is the user explicitly asking to suppress the override.
-      const properties: MultiOHEventProperty[] = selectedListings.map((l) => {
-        const rawHost = perPropertyHostingAgent[l.mls_number] ?? "";
-        const trimmedHost = rawHost.trim();
-        return {
-          mls_number: l.mls_number,
-          source_mls: l.source_mls,
-          listing_id: l.id,
-          address: l.address,
-          city: l.city,
-          state: l.state,
-          zip: l.zip,
-          list_price: l.list_price,
-          bedrooms: l.bedrooms,
-          bathrooms_full: l.bathrooms_full,
-          bathrooms_half: l.bathrooms_half,
-          property_type: l.property_type,
-          hero_image_url: l.hero_image_url,
-          oh_start_at: l.oh_start_at ?? null,
-          oh_end_at: l.oh_end_at ?? null,
-          hosting_agent_name: trimmedHost.length > 0 ? trimmedHost : null,
-          unit_number: l.unit_number ?? null,
-        };
-      });
-
-      const payload: MultiOHEventInput = {
-        event_title: eventTitle.trim(),
-        // why: event-level agent fields (agent_name / agent_phone /
-        // agent_email) were removed from the wizard on 2026-05-21 — the
-        // event hero no longer attributes a single agent because each
-        // per-property card carries its own hosting agent. We send null
-        // to keep the type contract intact; the renderer + caption
-        // synth both tolerate nulls.
-        agent_name: null,
-        agent_phone: null,
-        agent_email: null,
-        // office_name is hardcoded to defaultOfficeName ("Century 21
-        // Alliance") because there's only one office and the renderer's
-        // brand strip says it explicitly already.
-        office_name: defaultOfficeName,
-        format,
-        per_property_variant: perPropertyVariant,
-        // Phase 2E — when a DB template was picked, send its UUID; the
-        // route uses it instead of per_property_variant for every slide.
-        db_template_id: dbTemplateId,
-        properties,
+  /**
+   * Build the base payload the route consumes. Used for both fresh
+   * generations and retries — the retry path tacks `retry_indices` +
+   * `existing_generated_post_id` + `existing_hero_url` on top.
+   *
+   * why: hosting_agent_name comes from the per-property state map (Step 1
+   * input). Trim + coerce empty → null so the renderer's "no Hosted by
+   * line" branch fires when the user clears the field. We DO NOT fall
+   * back to the listing's agent_name here — the state map was already
+   * seeded with that default at selection time, so an empty value at
+   * this point is the user explicitly asking to suppress the override.
+   */
+  const buildBasePayload = useCallback((): MultiOHEventInput => {
+    const properties: MultiOHEventProperty[] = selectedListings.map((l) => {
+      const rawHost = perPropertyHostingAgent[l.mls_number] ?? "";
+      const trimmedHost = rawHost.trim();
+      return {
+        mls_number: l.mls_number,
+        source_mls: l.source_mls,
+        listing_id: l.id,
+        address: l.address,
+        city: l.city,
+        state: l.state,
+        zip: l.zip,
+        list_price: l.list_price,
+        bedrooms: l.bedrooms,
+        bathrooms_full: l.bathrooms_full,
+        bathrooms_half: l.bathrooms_half,
+        property_type: l.property_type,
+        hero_image_url: l.hero_image_url,
+        oh_start_at: l.oh_start_at ?? null,
+        oh_end_at: l.oh_end_at ?? null,
+        hosting_agent_name: trimmedHost.length > 0 ? trimmedHost : null,
+        unit_number: l.unit_number ?? null,
       };
-
-      const res = await fetch("/api/post-builder/multi-oh-generate", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      // why: defensively parse — a Vercel 504 / HTML proxy error would
-      // explode on res.json() and leave the user staring at a spinner.
-      let parsed: MultiOHGenerateResult | null = null;
-      try {
-        parsed = (await res.json()) as MultiOHGenerateResult;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error("[multi-oh wizard] non-JSON response:", msg);
-        throw new Error(`Server returned non-JSON (HTTP ${res.status}).`);
-      }
-
-      if (!parsed.ok) {
-        console.error("[multi-oh wizard] generate failed:", parsed.error);
-        setError(parsed.error);
-        return;
-      }
-      // Success — bounce to standard Post Builder with ?gp=<id> so the
-      // resume flow rehydrates the freshly-saved row.
-      router.push(`/post-builder?gp=${encodeURIComponent(parsed.generated_post_id)}`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[multi-oh wizard] generate threw:", msg);
-      setError(msg);
-    } finally {
-      setGenerating(false);
-    }
+    });
+    return {
+      event_title: eventTitle.trim(),
+      // why: event-level agent fields (agent_name / agent_phone /
+      // agent_email) were removed from the wizard on 2026-05-21 — the
+      // event hero no longer attributes a single agent because each
+      // per-property card carries its own hosting agent. We send null
+      // to keep the type contract intact; the renderer + caption
+      // synth both tolerate nulls.
+      agent_name: null,
+      agent_phone: null,
+      agent_email: null,
+      // office_name is hardcoded to defaultOfficeName ("Century 21
+      // Alliance") because there's only one office and the renderer's
+      // brand strip says it explicitly already.
+      office_name: defaultOfficeName,
+      format,
+      per_property_variant: perPropertyVariant,
+      // Phase 2E — when a DB template was picked, send its UUID; the
+      // route uses it instead of per_property_variant for every slide.
+      db_template_id: dbTemplateId,
+      properties,
+    };
   }, [
     selectedListings,
     eventTitle,
@@ -478,8 +611,304 @@ export default function MultiOHWizardClient({
     dbTemplateId,
     defaultOfficeName,
     perPropertyHostingAgent,
-    router,
   ]);
+
+  /**
+   * Core NDJSON streaming runner. Consumes the multi-oh-generate response
+   * body line-by-line, updating the carousel skeleton state on each
+   * event. Returns when the stream closes — either after `completed` (in
+   * which case caller decides redirect vs partial card based on
+   * failedIndices) or `fatal` (caller surfaces the error).
+   *
+   * Why the consumer is inlined here rather than a hook: keeps every
+   * piece of state it touches lexically adjacent. The reader loop is the
+   * only place where dozens of slide-tile setState calls cluster; pulling
+   * it into a separate file would create a long callback-prop drilling
+   * boundary for negligible reuse benefit (only one caller).
+   *
+   * If the user closes the wizard mid-stream, the writer on the server
+   * detects the disconnect on the next write and stops emitting, but the
+   * heavy work continues — the row still lands in the DB, and the user
+   * can resume via "Created Posts" if they re-open the app.
+   */
+  const runGenerateStream = useCallback(
+    async (
+      body: Record<string, unknown>,
+      mode: "fresh" | "retry",
+      retrySet?: ReadonlySet<number>,
+    ): Promise<void> => {
+      // Local mirrors of the failures we see during this stream. We
+      // collect them here and use them when `completed` arrives to build
+      // the PartialResult — relying on slideTiles state inside the
+      // reader loop would race against React batching.
+      const localFailures = new Map<
+        number,
+        { address: string | null; error: string }
+      >();
+
+      let res: Response;
+      try {
+        res = await fetch("/api/post-builder/multi-oh-generate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(`Network error: ${msg}`);
+        setGenerating(false);
+        return;
+      }
+
+      if (!res.ok || !res.body) {
+        // Pre-stream failure — the route returned a 4xx JSON body for
+        // auth / validation. Parse defensively.
+        const text = await res.text().catch(() => "");
+        let errMsg = `HTTP ${res.status}`;
+        try {
+          const parsed = JSON.parse(text) as { error?: string };
+          if (parsed.error) errMsg = parsed.error;
+        } catch {
+          // non-JSON proxy error — surface the raw snippet
+          if (text) errMsg = `${errMsg}: ${text.slice(0, 200)}`;
+        }
+        setError(errMsg);
+        setGenerating(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawCompleted = false;
+      let sawFatal: string | null = null;
+      let completedEvent: Extract<StreamEvent, { type: "completed" }> | null =
+        null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nlIdx: number;
+        while ((nlIdx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, nlIdx).trim();
+          buffer = buffer.slice(nlIdx + 1);
+          if (!line) continue;
+          let evt: StreamEvent;
+          try {
+            evt = JSON.parse(line) as StreamEvent;
+          } catch {
+            continue;
+          }
+          switch (evt.type) {
+            case "started": {
+              // Initialise the skeleton tiles. In retry mode the hero is
+              // already done (we passed its URL on the request), so we
+              // leave heroTile alone — only the retried slide tiles flip
+              // back to "rendering".
+              if (mode === "fresh") {
+                setHeroTile({
+                  state: "pending",
+                  url: null,
+                  address: null,
+                  error: null,
+                });
+                setSlideTiles(
+                  Array.from({ length: evt.totalSlides }, () => ({
+                    state: "pending" as TileState,
+                    url: null,
+                    address: null,
+                    error: null,
+                  })),
+                );
+                setStatusText("Preparing carousel…");
+              } else if (retrySet) {
+                // Flip just the retried slots back to pending; leave the
+                // rest (their thumbnails already on screen).
+                setSlideTiles((prev) =>
+                  prev.map((t, i) =>
+                    retrySet.has(i)
+                      ? { state: "pending", url: null, address: t.address, error: null }
+                      : t,
+                  ),
+                );
+                setStatusText(
+                  `Retrying ${retrySet.size} slide${retrySet.size === 1 ? "" : "s"}…`,
+                );
+              }
+              break;
+            }
+            case "hero_started": {
+              setHeroTile((t) => ({ ...t, state: "rendering" }));
+              setStatusText("Rendering hero…");
+              break;
+            }
+            case "hero_done": {
+              setHeroTile({
+                state: "done",
+                url: evt.url,
+                address: null,
+                error: null,
+              });
+              setStatusText("Hero ready — rendering slides…");
+              break;
+            }
+            case "slide_started": {
+              setSlideTiles((prev) =>
+                prev.map((t, i) =>
+                  i === evt.index
+                    ? { ...t, state: "rendering", address: evt.address }
+                    : t,
+                ),
+              );
+              setStatusText(`Rendering slide ${evt.index + 1}…`);
+              break;
+            }
+            case "slide_done": {
+              setSlideTiles((prev) =>
+                prev.map((t, i) =>
+                  i === evt.index
+                    ? { state: "done", url: evt.url, address: t.address, error: null }
+                    : t,
+                ),
+              );
+              break;
+            }
+            case "slide_failed": {
+              localFailures.set(evt.index, {
+                address: evt.address,
+                error: evt.error,
+              });
+              setSlideTiles((prev) =>
+                prev.map((t, i) =>
+                  i === evt.index
+                    ? {
+                        state: "failed",
+                        url: null,
+                        address: evt.address,
+                        error: evt.error,
+                      }
+                    : t,
+                ),
+              );
+              break;
+            }
+            case "completed": {
+              sawCompleted = true;
+              completedEvent = evt;
+              break;
+            }
+            case "fatal": {
+              sawFatal = evt.error;
+              break;
+            }
+          }
+        }
+      }
+
+      if (sawFatal) {
+        setError(sawFatal);
+        setGenerating(false);
+        return;
+      }
+      if (!sawCompleted || !completedEvent) {
+        // Stream closed without a terminal event — defensive backstop.
+        setError("Generation ended without a result. Please try again.");
+        setGenerating(false);
+        return;
+      }
+
+      const failedIndices = completedEvent.failedIndices;
+      if (failedIndices.length === 0) {
+        setStatusText("All done — redirecting…");
+        // why: clear partialResult before navigating so a stale card
+        // doesn't flash if the user comes back via browser-back.
+        setPartialResult(null);
+        router.push(completedEvent.redirectPath);
+        return;
+      }
+
+      // One or more slides failed — surface the partial-progress card.
+      setStatusText(
+        `Hero + ${failedIndices.length === 1 ? "1 slide" : `${failedIndices.length} slides`} need attention`,
+      );
+      const failedDetails = failedIndices.map((idx) => {
+        const localMatch = localFailures.get(idx);
+        return {
+          index: idx,
+          address: localMatch?.address ?? null,
+          error: localMatch?.error ?? "Render failed.",
+        };
+      });
+      setPartialResult({
+        generatedPostId: completedEvent.generatedPostId,
+        redirectPath: completedEvent.redirectPath,
+        heroUrl: completedEvent.heroUrl,
+        failedIndices,
+        failedDetails,
+      });
+      setGenerating(false);
+    },
+    [router],
+  );
+
+  /**
+   * User-facing "Generate carousel post" button handler. Builds the
+   * fresh payload, resets every overlay slot, and runs the stream.
+   */
+  const generate = useCallback(async (): Promise<void> => {
+    setGenerating(true);
+    setError(null);
+    setPartialResult(null);
+    setStatusText("Starting…");
+    setHeroTile({ state: "pending", url: null, address: null, error: null });
+    setSlideTiles([]);
+    const payload = buildBasePayload();
+    await runGenerateStream(payload as unknown as Record<string, unknown>, "fresh");
+  }, [buildBasePayload, runGenerateStream]);
+
+  /**
+   * Partial-progress retry — re-renders only the slides that failed in
+   * the previous stream. The hero is left alone (we pass its URL on the
+   * request so the route can skip rendering it) and the existing
+   * generated_posts row is UPDATEd in place by the route.
+   */
+  const retryFailedSlides = useCallback(async (): Promise<void> => {
+    if (!partialResult) return;
+    const retryIndices = [...partialResult.failedIndices];
+    if (retryIndices.length === 0) return;
+    const retrySet = new Set(retryIndices);
+    setGenerating(true);
+    setError(null);
+    // why: keep partialResult on screen until the new stream resolves.
+    // The skeleton card stays mounted; only the retried slots flip back
+    // to "rendering" via the `started` event handler above. Once the
+    // retry finishes we either redirect (zero failures) or replace the
+    // partial card with the new failure set.
+    const basePayload = buildBasePayload();
+    const retryPayload: Record<string, unknown> = {
+      ...basePayload,
+      retry_indices: retryIndices,
+      existing_generated_post_id: partialResult.generatedPostId,
+      existing_hero_url: partialResult.heroUrl,
+    };
+    setPartialResult(null);
+    setStatusText(
+      `Retrying ${retryIndices.length === 1 ? "1 slide" : `${retryIndices.length} slides`}…`,
+    );
+    await runGenerateStream(retryPayload, "retry", retrySet);
+  }, [partialResult, buildBasePayload, runGenerateStream]);
+
+  /**
+   * "Continue with what rendered" — abandon the failed slides and
+   * redirect to the editor with the partial post. The user can finish
+   * or remove the failed slides manually in Studio.
+   */
+  const continueWithPartial = useCallback((): void => {
+    if (!partialResult) return;
+    setPartialResult(null);
+    router.push(partialResult.redirectPath);
+  }, [partialResult, router]);
 
   // ---- render -----------------------------------------------------------
 
@@ -507,6 +936,13 @@ export default function MultiOHWizardClient({
               setTitleDirty(true);
               setEventTitle(next);
             }}
+            consolidationSummary={consolidationSummary}
+            bulkHostingAgent={bulkHostingAgent}
+            onBulkHostingAgentChange={setBulkHostingAgent}
+            onApplyBulkHostingAgent={applyBulkHostingAgent}
+            onUndoBulkHostingAgent={undoBulkHostingAgent}
+            bulkHintVisible={bulkHintVisible}
+            bulkAppliedAgent={bulkAppliedAgent}
           />
         ) : null}
         {step === 2 ? (
@@ -657,6 +1093,29 @@ interface Step1Props {
    *  it's the only event-level field left after the 2026-05-21 wizard cut. */
   eventTitle: string;
   onEventTitleChange: (next: string) => void;
+  /** Consolidation hint info (null when no duplicates picked). Surfaces the
+   *  N-picks → M-slides math so the user isn't surprised the carousel is
+   *  smaller than their pick count. */
+  consolidationSummary:
+    | {
+        pickCount: number;
+        slideCount: number;
+        duplicateExamples: string[];
+        extraDuplicates: number;
+      }
+    | null;
+  /** Bulk hosting-agent input value — set on the "Hosted by everyone:"
+   *  control above the picker. Submitting OVERWRITES every per-row value. */
+  bulkHostingAgent: string;
+  onBulkHostingAgentChange: (next: string) => void;
+  /** Fires when the user submits the bulk control (Enter or Apply button). */
+  onApplyBulkHostingAgent: () => void;
+  /** Reverts every row to its default listing-agent-derived value. */
+  onUndoBulkHostingAgent: () => void;
+  /** True after applyBulk; flips false on undo or bulk-input clear. */
+  bulkHintVisible: boolean;
+  /** The agent name actually applied in the most recent bulk overwrite. */
+  bulkAppliedAgent: string;
 }
 
 function Step1Pick({
@@ -667,6 +1126,13 @@ function Step1Pick({
   onHostingAgentChange,
   eventTitle,
   onEventTitleChange,
+  consolidationSummary,
+  bulkHostingAgent,
+  onBulkHostingAgentChange,
+  onApplyBulkHostingAgent,
+  onUndoBulkHostingAgent,
+  bulkHintVisible,
+  bulkAppliedAgent,
 }: Step1Props) {
   const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
 
@@ -757,6 +1223,85 @@ function Step1Pick({
           Shown big at the top of the event hero card. Auto-filled from your picked open-house dates — edit to taste.
         </div>
       </div>
+
+      {/* Bulk hosting-agent override — applies one name to every selected
+          row. The common case is Larissa hosting everything; this saves
+          re-typing on each row. Submitting overwrites per-row values
+          unconditionally, and the dismissible hint below offers an undo
+          that re-derives each row from its listing. Hidden until at least
+          one property is picked so the strip doesn't clutter an empty list. */}
+      {selectedMls.length > 0 ? (
+        <div className="mb-4 rounded-lg border border-neutral-200 bg-white px-3 py-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label
+              htmlFor="bulk-hosting-agent"
+              className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-700 shrink-0"
+            >
+              Hosted by everyone:
+            </label>
+            <input
+              id="bulk-hosting-agent"
+              type="text"
+              value={bulkHostingAgent}
+              onChange={(e) => onBulkHostingAgentChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  onApplyBulkHostingAgent();
+                }
+              }}
+              placeholder="e.g. Larissa Wilkerson"
+              className="flex-1 min-w-[140px] rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+            />
+            <button
+              type="button"
+              onClick={onApplyBulkHostingAgent}
+              disabled={bulkHostingAgent.trim().length === 0}
+              className={[
+                "rounded-md px-3 py-1 text-xs font-semibold transition shrink-0",
+                bulkHostingAgent.trim().length === 0
+                  ? "bg-neutral-200 text-neutral-500 cursor-not-allowed"
+                  : "bg-gold-500 text-white hover:bg-gold-600",
+              ].join(" ")}
+            >
+              Apply to all
+            </button>
+          </div>
+          {bulkHintVisible && bulkAppliedAgent.length > 0 ? (
+            <div className="mt-1.5 text-[11px] text-neutral-500">
+              Applied <span className="font-semibold text-neutral-700">{bulkAppliedAgent}</span> to all {selectedMls.length}{" "}
+              {selectedMls.length === 1 ? "property" : "properties"} —{" "}
+              <button
+                type="button"
+                onClick={onUndoBulkHostingAgent}
+                className="text-gold-700 underline underline-offset-2 hover:text-gold-800"
+              >
+                undo
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Consolidation hint — only when picks > unique-MLS. Mirrors the
+          server-side consolidatePropertiesByMls behavior so the user sees
+          ahead-of-time that "5 windows → 4 slides" is intentional. */}
+      {consolidationSummary ? (
+        <div className="mb-3 text-[11px] text-neutral-500 leading-snug">
+          {consolidationSummary.pickCount} windows selected → {consolidationSummary.slideCount} carousel{" "}
+          {consolidationSummary.slideCount === 1 ? "slide" : "slides"}
+          {consolidationSummary.duplicateExamples.length > 0 ? (
+            <>
+              {" "}(
+              {consolidationSummary.duplicateExamples.join(", ")} appears twice
+              {consolidationSummary.extraDuplicates > 0
+                ? ` and ${consolidationSummary.extraDuplicates} ${consolidationSummary.extraDuplicates === 1 ? "other" : "others"}`
+                : ""}
+              )
+            </>
+          ) : null}
+        </div>
+      ) : null}
 
       <ul className="space-y-2">
         {listings.map((l) => {
@@ -1011,7 +1556,7 @@ function Step2FormatVariant({
                         {t.name}
                       </span>
                       <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-gold-500/95 px-2 py-0.5 text-neutral-900">
-                        Admin
+                        DB
                       </span>
                     </div>
                     {t.description ? (
@@ -2323,40 +2868,84 @@ function formatHour(d: Date): string {
 
 /**
  * Build a smart default event title from the picked listings' OH dates.
- * Same-day → "Open House — Saturday May 17"
- * Two consecutive days → "Open House Weekend — May 17-18"
- * Otherwise → "Open House Event"
+ *
+ *   Same day → "Open House — Saturday May 23"
+ *   Consecutive multi-day span → "Open House — Saturday–Sunday May 23–24"
+ *     (also handles 3+ day consecutive runs like Fri–Sun May 22–24)
+ *   Non-consecutive dates → "Open House — May 22 & 24" (each date listed)
  *
  * why: this runs every time the picked set changes; intentionally cheap.
  * The user can always override (titleDirty flag stops the auto-overwrite).
+ *
+ * 2026-05-27 — broadened from the old same-day/weekend-only logic so 3+
+ * consecutive days (Fri–Sun) read naturally and non-consecutive picks
+ * (Sat + Mon) don't silently fall through to a generic "Open House Event".
  */
 function deriveEventTitle(selected: readonly PostBuilderListing[]): string {
   if (selected.length === 0) return "";
-  const days = new Set<string>();
-  const dates: Date[] = [];
+  // Collect one Date per unique calendar day, sorted ascending. We bucket
+  // by YYYY-MM-DD so a property with both Sat + Sun OHs contributes both
+  // days exactly once even though it appears as two picks.
+  const byDay = new Map<string, Date>();
   for (const l of selected) {
     if (!l.oh_start_at) continue;
     const d = new Date(l.oh_start_at);
     if (Number.isNaN(d.getTime())) continue;
-    days.add(d.toISOString().slice(0, 10));
-    dates.push(d);
+    const key = d.toISOString().slice(0, 10);
+    if (!byDay.has(key)) byDay.set(key, d);
   }
-  if (dates.length === 0) return "Open House Event";
+  if (byDay.size === 0) return "Open House Event";
+  const dates = Array.from(byDay.values()).sort(
+    (a, b) => a.getTime() - b.getTime(),
+  );
 
-  if (days.size === 1) {
+  // Same-day → "Open House — Saturday May 23"
+  if (dates.length === 1) {
     const d = dates[0];
     const dayName = d.toLocaleDateString("en-US", { weekday: "long" });
-    const monthDay = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+    const monthDay = d.toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+    });
     return `Open House — ${dayName} ${monthDay}`;
   }
-  if (days.size === 2) {
-    dates.sort((a, b) => a.getTime() - b.getTime());
-    const a = dates[0];
-    const b = dates[dates.length - 1];
-    const month = a.toLocaleDateString("en-US", { month: "long" });
-    return `Open House Weekend — ${month} ${a.getDate()}-${b.getDate()}`;
+
+  // Consecutive run? Walk the sorted list and check each gap is exactly 1
+  // calendar day. We compare on UTC-midnight rounding to avoid DST drift
+  // tripping the diff over to 23h / 25h.
+  const consecutive = dates.every((d, i) => {
+    if (i === 0) return true;
+    const prev = dates[i - 1];
+    const dayMs = 24 * 60 * 60 * 1000;
+    const a = Date.UTC(prev.getFullYear(), prev.getMonth(), prev.getDate());
+    const b = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+    return b - a === dayMs;
+  });
+
+  if (consecutive) {
+    const first = dates[0];
+    const last = dates[dates.length - 1];
+    const firstDay = first.toLocaleDateString("en-US", { weekday: "long" });
+    const lastDay = last.toLocaleDateString("en-US", { weekday: "long" });
+    const firstMonth = first.toLocaleDateString("en-US", { month: "long" });
+    const lastMonth = last.toLocaleDateString("en-US", { month: "long" });
+    // Same month across the span → "May 23–24"; otherwise → "May 30–June 1".
+    const dateRange =
+      firstMonth === lastMonth
+        ? `${firstMonth} ${first.getDate()}–${last.getDate()}`
+        : `${firstMonth} ${first.getDate()}–${lastMonth} ${last.getDate()}`;
+    return `Open House — ${firstDay}–${lastDay} ${dateRange}`;
   }
-  return "Open House Event";
+
+  // Non-consecutive — list each date. "Open House — May 22 & 24" or
+  // "Open House — May 22, 24 & 27" when 3+ dates.
+  const parts = dates.map((d) =>
+    d.toLocaleDateString("en-US", { month: "long", day: "numeric" }),
+  );
+  if (parts.length === 2) return `Open House — ${parts[0]} & ${parts[1]}`;
+  const head = parts.slice(0, -1).join(", ");
+  const tail = parts[parts.length - 1];
+  return `Open House — ${head} & ${tail}`;
 }
 
 /** Map a PostFormat enum to a short display string. */

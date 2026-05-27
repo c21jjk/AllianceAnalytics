@@ -130,10 +130,10 @@ function pickEmitter(
 ): (input: MultiOHEventInput) => string {
   switch (format) {
     case "square_1x1":
-      // 2026-05-24 — square is now the default feed format. Multi-OH still
-      // uses the portrait emitter as a fallback until a square-specific
-      // emitter is authored. Visually close enough; will need polish.
-      return emitEventOverviewPortrait;
+      // 2026-05-27 — square 1:1 now has a dedicated emitter re-tuned for
+      // the shorter frame (was previously falling back to the portrait
+      // emitter, which left titles oversized and footers crowded).
+      return emitEventOverviewSquare;
     case "story_9x16":
       return emitEventOverviewStory;
     default: {
@@ -665,6 +665,105 @@ function renderAgentBlock(_input: MultiOHEventInput): string {
 }
 
 // ---------------------------------------------------------------------------
+// Emitter — Square 1:1 · 1080×1080
+// ---------------------------------------------------------------------------
+
+/**
+ * Square 1:1 — the default feed format as of 2026-05-24. Authored 2026-05-27
+ * to replace the portrait fallback. Compared to the portrait emitter:
+ *
+ *  • Smaller headline tier (60 / 50 / 42 vs 72 / 60 / 52) — the 1080-tall
+ *    frame can't carry a 72px serif headline plus 9 rows plus a brand strip
+ *    without the rows getting starved. The tier curve is tuned so 2–3
+ *    properties still feel hero-scale, 4–6 reads as a tidy list, and 7–9
+ *    fits without ellipsis on typical addresses.
+ *
+ *  • Tighter header gap (18px) and margin-bottom (28px) — saves ~16px of
+ *    vertical real estate that goes back to the property rows.
+ *
+ *  • Tighter footer (margin-top 24, padding-top 24) — the brand strip is
+ *    the close, but in a 1:1 frame it can sit closer to the last row
+ *    without looking crowded; the gold-rule above the strip carries the
+ *    visual separation.
+ *
+ *  • Compact-tier row override — at 7–9 properties the shared
+ *    computeRowDensity heightMul of 1.08 leaves the rows too tall to fit
+ *    nine of them between header and footer. This emitter overrides
+ *    .row { height } at the compact tier so the column still closes
+ *    inside the frame. Spacious + balanced tiers use the shared values
+ *    unmodified — they already fit comfortably.
+ *
+ * Brand language matches the portrait emitter exactly: Playfair Display for
+ * the headline, Inter for body, Alliance gold + Obsessed Grey, off-white
+ * surface. Same per-row content (address, OH session(s), price, hosted-by).
+ * Same footer (brand strip + "Open House Event" tag; no per-event agent
+ * attribution since the 2026-05-21 cleanup).
+ */
+export function emitEventOverviewSquare(input: MultiOHEventInput): string {
+  const fmt: PostFormat = "square_1x1";
+  const { width, height } = PLATFORM_DIMENSIONS[fmt];
+  const margin = 56;
+  const density = computeRowDensity(input.properties.length, fmt);
+
+  const n = input.properties.length;
+  // Headline tier curve re-balanced for the shorter frame.
+  const titleSize = n <= 3 ? 60 : n <= 6 ? 50 : 42;
+
+  // Compact-tier row override. At 7–9 properties the shared density's row
+  // heights would exceed the available column height in a 1:1 frame, so
+  // squeeze height + vertical padding here. Spacious/balanced tiers fit
+  // without intervention.
+  //
+  // Numbers picked to land 9 rows + header + footer + margins under 1080:
+  //   header ~140 + footer ~96 + margins 112 + 9×64 = 924 → ~156px slack.
+  const compactRowOverride =
+    n >= 7
+      ? `
+.row { height: 64px; padding: 10px 0; gap: 18px; }
+.row-address { font-size: ${Math.min(density.addressSize, 24)}px; }
+.row-sub { font-size: ${Math.min(density.subSize, 14)}px; gap: 10px; }
+.row-num {
+  width: ${Math.min(density.chipSize, 34)}px;
+  height: ${Math.min(density.chipSize, 34)}px;
+  font-size: ${Math.min(density.chipFontSize, 17)}px;
+}
+.row-price {
+  font-size: ${Math.min(density.priceSize, 18)}px;
+  padding: 5px 11px;
+}`
+      : "";
+
+  const rowsHtml = input.properties
+    .map((p, i) => renderPropertyRow(p, i + 1, density))
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+${eventOverviewHead(`Open House Event — ${input.event_title}`)}
+<style>
+${baseCss({ width, height, margin, density })}
+.header { gap: 18px; margin-bottom: 28px; }
+.event-title { font-size: ${titleSize}px; }
+.agent-block { margin-top: 24px; padding-top: 24px; }
+${compactRowOverride}
+</style>
+<body>
+  <div class="frame">
+    <div class="header">
+      <div class="eyebrow">
+        <span class="eyebrow-rule"></span>
+        <span class="eyebrow-text">Open House Event</span>
+      </div>
+      <div class="event-title">${escapeHtml(input.event_title)}</div>
+    </div>
+    <div class="properties">${rowsHtml}</div>
+    ${renderAgentBlock(input)}
+  </div>
+</body>
+</html>`;
+}
+
+// ---------------------------------------------------------------------------
 // Emitter — Portrait 4:5 · 1080×1350
 // ---------------------------------------------------------------------------
 
@@ -672,6 +771,11 @@ function renderAgentBlock(_input: MultiOHEventInput): string {
  * Portrait 4:5 — IG's preferred feed format. Extra 270px of vertical room
  * over square; everything gets more breathing space. Margins bumped to 60px,
  * headline up to 72px to take advantage of the taller frame.
+ *
+ * 2026-05-27 — retained as an exported helper, but no longer wired into
+ * `pickEmitter`. Square 1:1 is the active feed format; the dedicated
+ * emitEventOverviewSquare above replaces the prior fallback through this
+ * function. Kept in place in case a future portrait_4x5 format is restored.
  */
 export function emitEventOverviewPortrait(input: MultiOHEventInput): string {
   const fmt: PostFormat = "square_1x1";

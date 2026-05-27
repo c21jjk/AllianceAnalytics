@@ -24,21 +24,44 @@
  *   • Headless Chromium rendering needs `runtime = "nodejs"` + a long
  *     `maxDuration`. Server actions inherit the page's runtime, which is
  *     edge-by-default for some routes and harder to tune.
- *   • We render N+1 images in parallel; a route handler gives us a clean
- *     POST shape, JSON in/out, and the same call-and-redirect pattern the
- *     wizard already wires up for `/api/post-builder/render`.
- *   • Error semantics: a route can return a partial-progress payload via
- *     `MultiOHGenerateErr.partial` so the wizard can resume without
- *     re-rendering everything. Wrapping that in a server action would
- *     leak the error envelope into the action's normal return path.
+ *   • We render N+1 images sequentially with a bounded concurrency window;
+ *     a route handler gives us a clean POST shape, NDJSON streaming, and
+ *     the same call-and-redirect pattern the wizard already wires up for
+ *     `/api/post-builder/render`.
+ *   • Error semantics: emitting per-slide `slide_failed` events on the
+ *     NDJSON stream lets the wizard offer a partial-progress retry on just
+ *     the failed indexes instead of forcing a full re-render.
+ *
+ * 2026-05-27 — Phase C: converted to NDJSON streaming. The response is now
+ * a `Content-Type: application/x-ndjson` body with one JSON event per line.
+ * Event types (see `MultiOHStreamEvent` below):
+ *   `started`       — fires first; carries totalSlides + format.
+ *   `hero_started`  — before hero render begins.
+ *   `hero_done`     — hero PNG uploaded; carries url.
+ *   `slide_started` — before each per-property render.
+ *   `slide_done`    — per-property PNG uploaded; carries index + url.
+ *   `slide_failed`  — per-property render threw; carries index + error.
+ *                     Stream continues — subsequent slides still try.
+ *   `completed`     — final event after the generated_posts row was
+ *                     inserted/updated. Fires even if some slides failed;
+ *                     the client decides whether to redirect or offer
+ *                     retry based on whether any `slide_failed` events
+ *                     arrived.
+ *   `fatal`         — hero render or DB insert failed; no `completed`
+ *                     follows. Stream closes.
+ *
+ * Retry mode: when the body carries `retry_indices` + an
+ * `existing_generated_post_id`, the route SKIPS hero render (assumes the
+ * caller already has the hero URL from the original generation), only
+ * re-renders the listed slide indexes, and on `completed` UPDATES the
+ * existing row's `additional_images` + `slide_metadata` arrays so the
+ * retried slots land in place. This lets the wizard's "Retry failed
+ * slides" button avoid re-rendering 8 cards just because 1 flunked.
  *
  * Auth: requires a signed-in Alliance user.
  *
- * Body (JSON): `MultiOHEventInput` — see lib/post-builder/types.ts.
- *
- * Response (200): `MultiOHGenerateOk`.
- * Response (4xx/5xx): `MultiOHGenerateErr` — sometimes with `partial`
- * populated so the wizard can offer a resume.
+ * Body (JSON): `MultiOHEventInput` plus optional retry fields — see
+ * `MultiOHStreamBody` below.
  */
 
 import { NextResponse } from "next/server";
@@ -57,7 +80,6 @@ import {
   type MultiOHEventInput,
   type MultiOHEventProperty,
   type MultiOHGenerateErr,
-  type MultiOHGenerateOk,
   type PostBuilderListing,
   type PostFormat,
   type SlideMetadata,
@@ -74,11 +96,38 @@ export const runtime = "nodejs";
 // why: Chromium renders run 5-15s each in the worst case. We render hero +
 // up to 9 per-property cards, capped at 5-in-flight, so a worst-case timing
 // budget is roughly two batches of ~15s plus the hero plus DB/Storage I/O.
-// 60s gives comfortable headroom; the V1 render route uses 300s because of
-// cold-start binary download, which by the time we hit this route is already
-// warm (the wizard pings /render-warmup first). If we ever see timeouts in
-// prod, bump this to 300s to match.
-export const maxDuration = 60;
+// 2026-05-27 — Phase C bumped to 120s to comfortably cover the NDJSON
+// streaming window. The function emits events incrementally so a stuck
+// slide doesn't block the user from seeing partial progress, but the
+// overall ceiling still needs to cover hero + 9 slides + DB I/O.
+export const maxDuration = 120;
+
+/**
+ * Union of NDJSON events the streaming route emits. One JSON object per
+ * line on the wire (newline-delimited). The wizard consumes this via
+ * `getReader()` + `TextDecoder`, matching the pattern at
+ * `app/api/post-builder/design-and-render/route.ts`.
+ *
+ * Kept inline (not in `lib/post-builder/multi-oh-stream.ts`) because both
+ * producer + consumer ship in the same task and re-declaring the union
+ * on the wizard side stays cheap. If a third consumer ever appears (e.g.,
+ * a CLI smoke test), promote this to a shared type module.
+ */
+export type MultiOHStreamEvent =
+  | { type: "started"; totalSlides: number; format: PostFormat }
+  | { type: "hero_started" }
+  | { type: "hero_done"; url: string }
+  | { type: "slide_started"; index: number; address: string | null }
+  | { type: "slide_done"; index: number; url: string }
+  | { type: "slide_failed"; index: number; error: string; address: string | null }
+  | {
+      type: "completed";
+      generatedPostId: string;
+      redirectPath: string;
+      heroUrl: string;
+      failedIndices: number[];
+    }
+  | { type: "fatal"; error: string };
 
 // why: cap parallelism so we don't blow past the function's memory ceiling
 // when all 9 Chromium instances + hero spin up at once. 5 in flight is a
@@ -136,11 +185,28 @@ interface PropertyRow {
 }
 
 /**
+ * Body shape for the streaming route. The base `MultiOHEventInput` plus
+ * optional retry fields. When `retry_indices` is set the route SKIPS the
+ * hero render and only re-renders the listed slide indexes, then UPDATES
+ * the existing generated_posts row rather than inserting a new one.
+ *
+ * `existing_hero_url` is required in retry mode because the route does
+ * not refetch the existing row (the client already has the URL from the
+ * original `hero_done` event). Skipping the DB round-trip keeps retry
+ * latency close to "just the slides".
+ */
+interface MultiOHStreamBody extends MultiOHEventInput {
+  retry_indices?: readonly number[];
+  existing_generated_post_id?: string;
+  existing_hero_url?: string;
+}
+
+/**
  * Slim parser for the raw POST body. We accept `unknown` and narrow defensively
  * — there's no zod here, and TypeScript can't trust JSON at the boundary.
  */
 function parseBody(raw: unknown):
-  | { ok: true; value: MultiOHEventInput }
+  | { ok: true; value: MultiOHStreamBody }
   | { ok: false; error: string } {
   if (typeof raw !== "object" || raw === null) {
     return { ok: false, error: "body must be a JSON object" };
@@ -275,6 +341,59 @@ function parseBody(raw: unknown):
       ? rawDbTemplateId.trim()
       : null;
 
+  // Phase C (2026-05-27) — optional retry fields. When `retry_indices`
+  // is present, the route runs in retry mode: skip the hero render,
+  // only re-render slides at the listed indexes, UPDATE the existing
+  // generated_posts row rather than inserting a fresh one.
+  let retry_indices: readonly number[] | undefined;
+  if (Array.isArray(r.retry_indices)) {
+    const arr: number[] = [];
+    for (let i = 0; i < r.retry_indices.length; i++) {
+      const v = r.retry_indices[i];
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
+        return {
+          ok: false,
+          error: `retry_indices[${i}] must be a non-negative integer`,
+        };
+      }
+      if (v >= properties.length) {
+        return {
+          ok: false,
+          error: `retry_indices[${i}] (${v}) is out of range for properties (length ${properties.length})`,
+        };
+      }
+      arr.push(v);
+    }
+    retry_indices = arr;
+  }
+  const existing_generated_post_id =
+    typeof r.existing_generated_post_id === "string" &&
+    r.existing_generated_post_id.length > 0
+      ? r.existing_generated_post_id
+      : undefined;
+  const existing_hero_url =
+    typeof r.existing_hero_url === "string" && r.existing_hero_url.length > 0
+      ? r.existing_hero_url
+      : undefined;
+  // why: retry mode is all-or-nothing on its three companion fields. If
+  // a stale client sends `retry_indices` without the row id or hero url
+  // we'd silently fall into the wrong code path (re-render the hero,
+  // insert a duplicate row). Fail loud instead.
+  if (retry_indices !== undefined) {
+    if (!existing_generated_post_id) {
+      return {
+        ok: false,
+        error: "retry_indices requires existing_generated_post_id",
+      };
+    }
+    if (!existing_hero_url) {
+      return {
+        ok: false,
+        error: "retry_indices requires existing_hero_url",
+      };
+    }
+  }
+
   return {
     ok: true,
     value: {
@@ -287,6 +406,9 @@ function parseBody(raw: unknown):
       per_property_variant: per_property_variant as ValidPerPropertyVariant,
       db_template_id,
       properties,
+      retry_indices,
+      existing_generated_post_id,
+      existing_hero_url,
     },
   };
 }
@@ -472,10 +594,32 @@ interface PerPropertyRenderFailure {
  * Render N per-property cards with bounded parallelism. Returns whichever
  * succeeded plus a list of failures — caller decides whether to fail the
  * whole flow or surface a partial-progress error.
+ *
+ * Phase C (2026-05-27) — accepts:
+ *   • `onSlideStarted` / `onSlideDone` / `onSlideFailed` callbacks so the
+ *     NDJSON stream can emit a `slide_started` event right before each
+ *     render kicks off and a `slide_done` / `slide_failed` event as soon
+ *     as that slide settles. Without these the user would see the whole
+ *     chunk land at once instead of per-slide tick-down.
+ *   • `restrictToIndexes` — when set (retry mode), only renders the
+ *     listed indexes. Other slides are skipped silently; the caller is
+ *     responsible for preserving the unchanged slides in the existing
+ *     row's additional_images. We still emit the lifecycle events for
+ *     just the retried indexes so the wizard's skeleton flips back.
  */
 async function renderPerPropertyCards(
   input: MultiOHEventInput,
   listingByMls: Map<string, PropertyRow>,
+  callbacks: {
+    onSlideStarted: (index: number, address: string | null) => void;
+    onSlideDone: (index: number, url: string) => void;
+    onSlideFailed: (
+      index: number,
+      error: string,
+      address: string | null,
+    ) => void;
+  },
+  restrictToIndexes?: ReadonlySet<number>,
 ): Promise<{
   successes: PerPropertyRenderResult[];
   failures: PerPropertyRenderFailure[];
@@ -490,23 +634,39 @@ async function renderPerPropertyCards(
   const legacyTemplateId = `open_house_${formatShort}_${input.per_property_variant}`;
   const dbTemplateId = input.db_template_id ?? null;
 
-  // why: simple windowed parallelism — process the properties in chunks of
+  // Pre-compute the index list we'll actually process. In retry mode we
+  // shrink to just the requested indexes; the chunking below still uses
+  // the same RENDER_CONCURRENCY budget but over the filtered set.
+  const allIndexes = input.properties.map((_, i) => i);
+  const indexesToRender = restrictToIndexes
+    ? allIndexes.filter((i) => restrictToIndexes.has(i))
+    : allIndexes;
+
+  // why: simple windowed parallelism — process the indexes in chunks of
   // RENDER_CONCURRENCY. Promise.all on chunks is good enough for ≤9 inputs;
   // a real semaphore would be overkill.
-  for (let start = 0; start < input.properties.length; start += RENDER_CONCURRENCY) {
-    const chunk = input.properties.slice(start, start + RENDER_CONCURRENCY);
+  for (let start = 0; start < indexesToRender.length; start += RENDER_CONCURRENCY) {
+    const chunkIndexes = indexesToRender.slice(start, start + RENDER_CONCURRENCY);
     const chunkResults = await Promise.all(
-      chunk.map(async (prop, offset) => {
-        const idx = start + offset;
+      chunkIndexes.map(async (idx) => {
+        const prop = input.properties[idx];
+        // why: emit `slide_started` AFTER we've narrowed the slot but
+        // BEFORE the heavy render call. The wizard flips its skeleton
+        // tile to a "rendering…" state on this event, so we want the
+        // user to see the activity even on the very first slide that
+        // hasn't reached its render yet.
+        callbacks.onSlideStarted(idx, prop.address ?? null);
         const row = listingByMls.get(prop.mls_number);
         const listing = toRenderListing(prop, row);
         if (!listing.hero_image_url) {
+          const err = "no hero_image_url for property";
+          callbacks.onSlideFailed(idx, err, prop.address ?? null);
           return {
             kind: "err" as const,
             failure: {
               index: idx,
               mls_number: prop.mls_number,
-              error: "no hero_image_url for property",
+              error: err,
             },
           };
         }
@@ -524,15 +684,18 @@ async function renderPerPropertyCards(
             oh_window: ohWindow,
           });
           if (!dbResult.ok) {
+            const err = `db_template render failed: ${dbResult.error}`;
+            callbacks.onSlideFailed(idx, err, prop.address ?? null);
             return {
               kind: "err" as const,
               failure: {
                 index: idx,
                 mls_number: prop.mls_number,
-                error: `db_template render failed: ${dbResult.error}`,
+                error: err,
               },
             };
           }
+          callbacks.onSlideDone(idx, dbResult.image_url);
           return {
             kind: "ok" as const,
             success: {
@@ -550,6 +713,7 @@ async function renderPerPropertyCards(
           hero_image_url: listing.hero_image_url,
         });
         if (!result.ok) {
+          callbacks.onSlideFailed(idx, result.error, prop.address ?? null);
           return {
             kind: "err" as const,
             failure: {
@@ -559,6 +723,7 @@ async function renderPerPropertyCards(
             },
           };
         }
+        callbacks.onSlideDone(idx, result.image_url);
         return {
           kind: "ok" as const,
           success: {
@@ -686,213 +851,361 @@ function buildSlideMetadata(
 }
 
 /**
- * The handler. Wraps the whole flow in try/catch so any unexpected throw
- * surfaces as a clean 500 with a `MultiOHGenerateErr` envelope rather than
- * a Next.js stack trace dump.
+ * The handler. Auth + body parse + validate happen synchronously and may
+ * return a JSON 4xx response. Past that point everything flows through
+ * the NDJSON stream — heavy lifting runs in a detached async IIFE so the
+ * response headers go out immediately and the client sees the first
+ * `started` event without waiting for the hero render.
  */
 export async function POST(request: Request): Promise<Response> {
-  try {
-    const profile = await getCurrentProfile();
-    if (!profile) {
-      return NextResponse.json<MultiOHGenerateErr>(
-        { ok: false, error: "unauthorized" },
-        { status: 401 },
-      );
-    }
-
-    // ---- Parse + validate body ----
-    let raw: unknown;
-    try {
-      raw = await request.json();
-    } catch (err) {
-      return NextResponse.json<MultiOHGenerateErr>(
-        {
-          ok: false,
-          error: `invalid_json: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        },
-        { status: 400 },
-      );
-    }
-    const parsed = parseBody(raw);
-    if (!parsed.ok) {
-      return NextResponse.json<MultiOHGenerateErr>(
-        { ok: false, error: parsed.error },
-        { status: 400 },
-      );
-    }
-    // 2026-05-22 — consolidate same-mls picks into one record carrying
-    // all session windows in oh_sessions. The wizard's pick list is
-    // OH-instance-flat (Sat + Sun for the same condo come in as two
-    // entries); the renderer + per-property carousel slides + caption
-    // synth all want one entry per unique property.
-    const input: MultiOHEventInput = {
-      ...parsed.value,
-      properties: consolidatePropertiesByMls(parsed.value.properties),
-    };
-
-    // ---- Render the event-overview hero ----
-    // why: `renderMultiOHEventOverview` throws on failure (Chromium / Storage)
-    // rather than returning a tagged-result envelope — opposite convention from
-    // `renderTemplate`. Wrap in try/catch to convert thrown errors into the
-    // `MultiOHGenerateErr` envelope this route's API contract expects.
-    let hero: MultiOHRenderResult;
-    try {
-      hero = await renderMultiOHEventOverview(input);
-    } catch (err) {
-      return NextResponse.json<MultiOHGenerateErr>(
-        {
-          ok: false,
-          error: `hero_render_failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        },
-        { status: 500 },
-      );
-    }
-
-    // ---- Fetch full listing rows for the per-property render path ----
-    const mlsNumbers = input.properties.map((p) => p.mls_number);
-    const listingByMls = await fetchListingRows(mlsNumbers);
-
-    // ---- Render per-property cards (bounded parallelism) ----
-    const { successes, failures } = await renderPerPropertyCards(
-      input,
-      listingByMls,
+  // ---- Auth (pre-stream) ----
+  const profile = await getCurrentProfile();
+  if (!profile) {
+    return NextResponse.json<MultiOHGenerateErr>(
+      { ok: false, error: "unauthorized" },
+      { status: 401 },
     );
+  }
 
-    if (failures.length > 0) {
-      // why: surface partial progress so the wizard can offer a retry on
-      // just the failed slides instead of forcing a full re-render. The
-      // hero is the most expensive single render, so it's worth keeping
-      // even when one card flunks.
-      return NextResponse.json<MultiOHGenerateErr>(
-        {
-          ok: false,
-          error: `per_property_render_failed: ${failures
-            .map((f) => `[${f.index}/${f.mls_number}] ${f.error}`)
-            .join("; ")}`,
-          partial: {
-            hero_image_url: hero.image_url,
-            per_property_urls: successes.map((s) => s.image_url),
-          },
-        },
-        { status: 500 },
-      );
-    }
-
-    // ---- Insert the generated_posts row ----
-    const supabase = createAdminClient();
-    const firstProp = input.properties[0];
-    const formatShort = formatShortName(input.format);
-
-    // why: Phase D guard — without a caption, /api/post-builder/post 412s
-    // on "generated_post has no caption" the first time Larissa tries to
-    // publish a freshly-generated multi-OH row. We synthesize a
-    // deterministic multi-OH caption + per-platform map so Post Now
-    // always has something to publish. Larissa can override either in
-    // Studio's caption pane before publishing.
-    const synthesized = synthesizeMultiOHCaption(input);
-
-    const { data: inserted, error: insertError } = await supabase
-      .from("generated_posts")
-      .insert({
-        mls_number: firstProp.mls_number,
-        source_mls: firstProp.source_mls,
-        property_id: firstProp.listing_id,
-        post_type: "open_house",
-        // why: persist the wizard's chosen per-property variant (v2/v3/v6/v8).
-        // 2026-05-21 — used to hardcode "v1" here back when v1 was the
-        // active default, but v1 was retired from the canvas-editor
-        // template registry on 2026-05-17, leaving downstream lookups
-        // (findCanvasTemplate, Edit in Studio, the resume-auto-open
-        // effect) failing for every multi-OH row. The synthetic
-        // `template_id` below (`multi_oh_event_*`) remains the canonical
-        // "this row is a multi-OH event" marker; variant just needs to
-        // match an ACTIVE registered template so Studio can resolve the
-        // per-property card schema when Larissa edits a slide.
-        variant: input.per_property_variant,
-        format: input.format,
-        // why: synthetic template id that won't collide with the V1 registry.
-        // Future "edit in Studio" code reads this prefix to decide whether
-        // to rehydrate the multi-OH wizard vs. open the standard editor.
-        template_id: `multi_oh_event_${formatShort}`,
-        image_url: hero.image_url,
-        image_path: hero.image_path,
-        // why: the event hero is a freshly designed graphic, not derived
-        // from any single listing's photo. Leaving this null tells the
-        // "reset to source photo" affordance in Studio that there's no
-        // upstream source to reset to.
-        hero_image_source_url: null,
-        template_props: {} as Json,
-        customizations: {} as Json,
-        // Phase D — synthesized deterministic caption + per-platform map.
-        // See synthesizeMultiOHCaption below.
-        caption: synthesized.legacy.caption,
-        hashtags: synthesized.legacy.hashtags,
-        mls_hashtag: synthesized.legacy.mls_hashtag,
-        captions_by_platform: synthesized.captions as unknown as Json,
-        // why: no canvas-editor layer tree — the event hero isn't a Path C
-        // template. The per-property cards are V1 renders, also without
-        // layer trees. A future "edit hero in Studio" flow would need to
-        // synthesize a tree from the hero's HTML, but that's not scope here.
-        layer_tree: null,
-        additional_images: buildAdditionalImages(successes),
-        // why: parallel array enabling per-slide edit. Index N here maps to
-        // additional_images[N]. Re-opening a slide in Studio reads variant +
-        // format + hosting agent here to resolve the source template.
-        slide_metadata: buildSlideMetadata(input, successes),
-        status: "draft",
-        created_by: profile.id,
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (insertError) {
-      return NextResponse.json<MultiOHGenerateErr>(
-        {
-          ok: false,
-          error: `insert_failed: ${insertError.message}`,
-          partial: {
-            hero_image_url: hero.image_url,
-            per_property_urls: successes.map((s) => s.image_url),
-          },
-        },
-        { status: 500 },
-      );
-    }
-    if (!inserted || typeof inserted.id !== "string") {
-      return NextResponse.json<MultiOHGenerateErr>(
-        {
-          ok: false,
-          error: "insert returned no row",
-          partial: {
-            hero_image_url: hero.image_url,
-            per_property_urls: successes.map((s) => s.image_url),
-          },
-        },
-        { status: 500 },
-      );
-    }
-
-    return NextResponse.json<MultiOHGenerateOk>({
-      ok: true,
-      generated_post_id: inserted.id,
-      hero_image_url: hero.image_url,
-      per_property_urls: successes.map((s) => s.image_url),
-    });
+  // ---- Parse + validate body (pre-stream) ----
+  let raw: unknown;
+  try {
+    raw = await request.json();
   } catch (err) {
-    // why: top-level guard for any unexpected throw — keeps the wizard's
-    // error toast meaningful rather than rendering a Next.js stack page.
     return NextResponse.json<MultiOHGenerateErr>(
       {
         ok: false,
-        error: `threw: ${err instanceof Error ? err.message : String(err)}`,
+        error: `invalid_json: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       },
-      { status: 500 },
+      { status: 400 },
     );
   }
+  const parsed = parseBody(raw);
+  if (!parsed.ok) {
+    return NextResponse.json<MultiOHGenerateErr>(
+      { ok: false, error: parsed.error },
+      { status: 400 },
+    );
+  }
+
+  // 2026-05-22 — consolidate same-mls picks into one record carrying
+  // all session windows in oh_sessions. The wizard's pick list is
+  // OH-instance-flat (Sat + Sun for the same condo come in as two
+  // entries); the renderer + per-property carousel slides + caption
+  // synth all want one entry per unique property.
+  //
+  // 2026-05-27 (Phase C) — consolidation happens ONLY on first
+  // generation. In retry mode we trust the client to send the same
+  // post-consolidation order it originally received so `retry_indices`
+  // line up with the persisted row's additional_images.
+  const isRetry = parsed.value.retry_indices !== undefined;
+  const properties = isRetry
+    ? parsed.value.properties
+    : consolidatePropertiesByMls(parsed.value.properties);
+  const input: MultiOHEventInput = {
+    ...parsed.value,
+    properties,
+  };
+  const retryIndexes = parsed.value.retry_indices
+    ? new Set(parsed.value.retry_indices)
+    : undefined;
+  const existingGeneratedPostId = parsed.value.existing_generated_post_id;
+  const existingHeroUrl = parsed.value.existing_hero_url;
+
+  // ---- NDJSON streaming setup ----
+  // Mirrors design-and-render: TransformStream + a writeLine helper that
+  // swallows write errors (client may have disconnected, but the
+  // server-side work continues so we don't leave half-rendered slides
+  // in Storage).
+  const encoder = new TextEncoder();
+  const stream = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = stream.writable.getWriter();
+
+  const writeLine = async (evt: MultiOHStreamEvent): Promise<void> => {
+    try {
+      await writer.write(encoder.encode(JSON.stringify(evt) + "\n"));
+    } catch {
+      // Client disconnected — keep the server work running so the row
+      // still lands in the DB; the user can resume via the saved
+      // generated_post_id even though the stream went away.
+    }
+  };
+
+  // why: the inner block returns immediately after kicking off the
+  // background work so the Response can flush its headers. All errors
+  // past this point go through `fatal` events, not HTTP status codes —
+  // the client is already reading the body as NDJSON.
+  void (async () => {
+    try {
+      // ---- started ----
+      await writeLine({
+        type: "started",
+        totalSlides: input.properties.length,
+        format: input.format,
+      });
+
+      // ---- Hero render (skipped in retry mode) ----
+      // Retry mode trusts the client-supplied existing_hero_url. We never
+      // refetch the row's image_url because (a) it adds a DB round-trip
+      // on the hot path and (b) the client just had it from the original
+      // `hero_done` event milliseconds ago.
+      let heroUrl: string;
+      let heroPath: string | null = null;
+      if (isRetry) {
+        heroUrl = existingHeroUrl ?? "";
+        // emit no hero_started / hero_done in retry — the carousel
+        // skeleton on the client already shows the hero from the prior
+        // stream.
+      } else {
+        await writeLine({ type: "hero_started" });
+        let hero: MultiOHRenderResult;
+        try {
+          hero = await renderMultiOHEventOverview(input);
+        } catch (err) {
+          await writeLine({
+            type: "fatal",
+            error: `hero_render_failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          });
+          return;
+        }
+        heroUrl = hero.image_url;
+        heroPath = hero.image_path;
+        await writeLine({ type: "hero_done", url: heroUrl });
+      }
+
+      // ---- Fetch full listing rows for the per-property render path ----
+      const mlsNumbers = input.properties.map((p) => p.mls_number);
+      const listingByMls = await fetchListingRows(mlsNumbers);
+
+      // ---- Render per-property cards (bounded parallelism + streaming events) ----
+      const { successes, failures } = await renderPerPropertyCards(
+        input,
+        listingByMls,
+        {
+          onSlideStarted: (index, address) => {
+            void writeLine({ type: "slide_started", index, address });
+          },
+          onSlideDone: (index, url) => {
+            void writeLine({ type: "slide_done", index, url });
+          },
+          onSlideFailed: (index, error, address) => {
+            void writeLine({
+              type: "slide_failed",
+              index,
+              error,
+              address,
+            });
+          },
+        },
+        retryIndexes,
+      );
+
+      // ---- Persist (INSERT for first generation, UPDATE for retry) ----
+      const supabase = createAdminClient();
+      const failedIndices = failures.map((f) => f.index).sort((a, b) => a - b);
+
+      if (isRetry && existingGeneratedPostId) {
+        // Retry mode — merge the retried slides into the existing row.
+        // We read the row's current additional_images + slide_metadata,
+        // splice in the new entries at their indexes, and write back.
+        //
+        // Judgment call: we do NOT race-protect the UPDATE. Two
+        // simultaneous retries on the same row would clobber each other,
+        // but the wizard's UI gates the retry button (one in-flight
+        // stream at a time per wizard instance) and the row id is
+        // session-scoped, so a real-world collision would require two
+        // tabs both retrying the same row at the same instant. If that
+        // ever becomes a problem, switch to a server-side RPC that
+        // patches by index inside a single SQL statement.
+        const { data: existing, error: fetchErr } = await supabase
+          .from("generated_posts")
+          .select("additional_images, slide_metadata")
+          .eq("id", existingGeneratedPostId)
+          .maybeSingle();
+        if (fetchErr || !existing) {
+          await writeLine({
+            type: "fatal",
+            error: `retry_fetch_failed: ${fetchErr?.message ?? "row not found"}`,
+          });
+          return;
+        }
+        const currentAdditional = Array.isArray(existing.additional_images)
+          ? (existing.additional_images as unknown as Array<{
+              id: string;
+              url: string;
+              source: string;
+              listingPhotoSequence: number;
+            }>)
+          : [];
+        const currentMeta = Array.isArray(existing.slide_metadata)
+          ? (existing.slide_metadata as unknown as SlideMetadata[])
+          : [];
+        const nextAdditional = [...currentAdditional];
+        const nextMeta = [...currentMeta];
+        for (const s of successes) {
+          const slot = nextAdditional[s.index];
+          nextAdditional[s.index] = {
+            // Preserve the previous slot's id so React keys / drag-drop
+            // state on the Studio carousel stay stable across the retry.
+            id: slot?.id ?? crypto.randomUUID(),
+            url: s.image_url,
+            source: "listing",
+            listingPhotoSequence: s.index + 1,
+          };
+          const prop = input.properties[s.index];
+          nextMeta[s.index] = {
+            listing_mls: prop.mls_number,
+            variant: input.per_property_variant,
+            db_template_id: input.db_template_id ?? null,
+            format: input.format,
+            hosting_agent_name: prop.hosting_agent_name ?? null,
+            layer_tree: null,
+          };
+        }
+        const { error: updateErr } = await supabase
+          .from("generated_posts")
+          .update({
+            additional_images: nextAdditional as unknown as Json,
+            slide_metadata: nextMeta as unknown as Json,
+          })
+          .eq("id", existingGeneratedPostId);
+        if (updateErr) {
+          await writeLine({
+            type: "fatal",
+            error: `retry_update_failed: ${updateErr.message}`,
+          });
+          return;
+        }
+        await writeLine({
+          type: "completed",
+          generatedPostId: existingGeneratedPostId,
+          redirectPath: `/post-builder?gp=${encodeURIComponent(existingGeneratedPostId)}`,
+          heroUrl,
+          failedIndices,
+        });
+        return;
+      }
+
+      // First-generation INSERT path. The persisted row carries whichever
+      // slides succeeded; the failed ones stay out of additional_images
+      // entirely so the client's "Continue with what rendered" affordance
+      // lands the user in Studio with N-of-M slides + nothing broken.
+      const firstProp = input.properties[0];
+      const formatShort = formatShortName(input.format);
+
+      // why: Phase D guard — without a caption, /api/post-builder/post 412s
+      // on "generated_post has no caption" the first time Larissa tries to
+      // publish a freshly-generated multi-OH row. We synthesize a
+      // deterministic multi-OH caption + per-platform map so Post Now
+      // always has something to publish. Larissa can override either in
+      // Studio's caption pane before publishing.
+      const synthesized = synthesizeMultiOHCaption(input);
+
+      const { data: inserted, error: insertError } = await supabase
+        .from("generated_posts")
+        .insert({
+          mls_number: firstProp.mls_number,
+          source_mls: firstProp.source_mls,
+          property_id: firstProp.listing_id,
+          post_type: "open_house",
+          // why: persist the wizard's chosen per-property variant (v2/v3/v6/v8).
+          // 2026-05-21 — used to hardcode "v1" here back when v1 was the
+          // active default, but v1 was retired from the canvas-editor
+          // template registry on 2026-05-17, leaving downstream lookups
+          // (findCanvasTemplate, Edit in Studio, the resume-auto-open
+          // effect) failing for every multi-OH row. The synthetic
+          // `template_id` below (`multi_oh_event_*`) remains the canonical
+          // "this row is a multi-OH event" marker; variant just needs to
+          // match an ACTIVE registered template so Studio can resolve the
+          // per-property card schema when Larissa edits a slide.
+          variant: input.per_property_variant,
+          format: input.format,
+          // why: synthetic template id that won't collide with the V1 registry.
+          // Future "edit in Studio" code reads this prefix to decide whether
+          // to rehydrate the multi-OH wizard vs. open the standard editor.
+          template_id: `multi_oh_event_${formatShort}`,
+          image_url: heroUrl,
+          image_path: heroPath,
+          // why: the event hero is a freshly designed graphic, not derived
+          // from any single listing's photo. Leaving this null tells the
+          // "reset to source photo" affordance in Studio that there's no
+          // upstream source to reset to.
+          hero_image_source_url: null,
+          template_props: {} as Json,
+          customizations: {} as Json,
+          // Phase D — synthesized deterministic caption + per-platform map.
+          // See synthesizeMultiOHCaption below.
+          caption: synthesized.legacy.caption,
+          hashtags: synthesized.legacy.hashtags,
+          mls_hashtag: synthesized.legacy.mls_hashtag,
+          captions_by_platform: synthesized.captions as unknown as Json,
+          // why: no canvas-editor layer tree — the event hero isn't a Path C
+          // template. The per-property cards are V1 renders, also without
+          // layer trees. A future "edit hero in Studio" flow would need to
+          // synthesize a tree from the hero's HTML, but that's not scope here.
+          layer_tree: null,
+          additional_images: buildAdditionalImages(successes),
+          // why: parallel array enabling per-slide edit. Index N here maps to
+          // additional_images[N]. Re-opening a slide in Studio reads variant +
+          // format + hosting agent here to resolve the source template.
+          slide_metadata: buildSlideMetadata(input, successes),
+          status: "draft",
+          created_by: profile.id,
+        })
+        .select("id")
+        .maybeSingle();
+
+      if (insertError) {
+        await writeLine({
+          type: "fatal",
+          error: `insert_failed: ${insertError.message}`,
+        });
+        return;
+      }
+      if (!inserted || typeof inserted.id !== "string") {
+        await writeLine({
+          type: "fatal",
+          error: "insert returned no row",
+        });
+        return;
+      }
+
+      await writeLine({
+        type: "completed",
+        generatedPostId: inserted.id,
+        redirectPath: `/post-builder?gp=${encodeURIComponent(inserted.id)}`,
+        heroUrl,
+        failedIndices,
+      });
+    } catch (err) {
+      // Defensive — any uncaught throw past the hero / per-property /
+      // insert try-catch boundaries lands here. Surface as a final
+      // `fatal` event so the client never hangs on a silent stream close.
+      await writeLine({
+        type: "fatal",
+        error: `threw: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      try {
+        await writer.close();
+      } catch {
+        // already closed
+      }
+    }
+  })();
+
+  return new Response(stream.readable, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/x-ndjson",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
 
 /**
@@ -919,16 +1232,13 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
   const count = input.properties.length;
   const eventTitle = input.event_title?.trim() || "Open Houses This Weekend";
 
-  // 2026-05-21 — rewrite. Captions used to be a generic blurb plus the
-  // FIRST property's MLS hashtag. Now they include a per-property
-  // bullet line (address · city · time · host) and ALL property MLS
-  // hashtags so every featured listing's Owner Story can be linked to
-  // the same post.
-  //
-  // The first property's MLS is still treated as the "anchor" — it's
-  // listed first in the tag set and returned as `legacy.mls_hashtag` so
-  // backward-compat callers that only look at one MLS still get the
-  // primary listing.
+  // 2026-05-27 — Phase D polish. Variant pool widened so two different
+  // events don't read like the same boilerplate, day-of-week + town
+  // phrasing surfaces in the lead, and per-platform shape is enforced
+  // (IG long with hashtags, FB shorter with no body hashtags, TT one
+  // line with hashtags). All variant selection is hash-derived from
+  // (event_title + count) so the same event always gets the same
+  // caption but different events feel different.
   const firstProp = input.properties[0];
   const anchorMls = canonicalMlsHashtag(
     firstProp?.mls_number ?? "",
@@ -943,6 +1253,24 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
       .map((p) => canonicalMlsHashtag(p.mls_number, p.source_mls))
       .filter((t) => t.length > 1),
   );
+
+  // ---- Voice ingredients derived from the event ----
+  // Day-of-week phrasing pulled from every property's sessions. Pinned
+  // to ET via formatCaptionTime so server-side TZ drift doesn't shove
+  // a Saturday OH into Sunday's bucket.
+  const dayPhrase = describeEventDays(input);
+  // Property-count phrasing — "two open houses", "five properties" — so
+  // the lead doesn't repeat the same digit-N pattern every time.
+  const countPhrase = describeCount(count);
+  // Address / town context — how the lead refers to "where". 2–4 lists
+  // addresses; 5–6 lists towns; 7+ summarizes top 3 towns ("across X,
+  // Y, and Z"). Returns "" when nothing meaningful can be said.
+  const townPhrase = describeTowns(input.properties);
+  // Single bulk-host attribution. When every property's hosting agent
+  // is the same person, we get to add a "Hosted by [name]" line. When
+  // they differ, we omit it — per-property bullets already attribute
+  // each host individually.
+  const bulkHost = describeBulkHost(input.properties);
 
   // Per-property bullet lines. Mirrors the rendered hero card:
   //   "1) 220 Village Road · Unit 207, Villas · Sat 11–1 PM · Hosted by Larissa"
@@ -976,35 +1304,108 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
     return `${i + 1}) ${parts.join(" · ")}`;
   });
 
-  // Per-platform caption bodies. IG/FB get full per-property lines (room
-  // to spare on both); TikTok caps at the top 3 lines so the caption
-  // doesn't dominate the video card (TikTok shows captions truncated).
-  const ttLineCount = Math.min(propertyLines.length, 3);
-  const ttRemainder = propertyLines.length - ttLineCount;
+  // ---- Deterministic variant pick ----
+  // Hash on event title + property count so the same event always
+  // resolves to the same opener/body/closer triple. Different events
+  // pick from the pool at different offsets so two carousels generated
+  // back-to-back don't read identically.
+  const seed = hashSeed(`${eventTitle}|${count}`);
 
-  const igBody = [
-    `${eventTitle} — ${count} open houses this weekend.`,
-    "",
-    ...propertyLines,
-    "",
-    "DM for showings, or just stop by — each home's host can answer questions on the spot.",
-  ].join("\n");
+  // 8 openers. Each is a `(ctx) => string` so it can splice in the
+  // event title, the day phrase, the count phrase, and the town phrase
+  // when present. Openers are written advanced/optimistic per Larissa's
+  // voice rules — punchy, address-forward, no clichés, no emoji.
+  const OPENERS: Array<(c: CaptionCtx) => string> = [
+    (c) =>
+      `${c.eventTitle}. ${capFirst(c.countPhrase)} on the calendar${c.dayPhrase ? ` ${c.dayPhrase}` : ""}${c.townPhrase ? ` ${c.townPhrase}` : ""}.`,
+    (c) =>
+      `${c.eventTitle} — ${c.countPhrase}${c.dayPhrase ? ` ${c.dayPhrase}` : ""}${c.townPhrase ? `, ${c.townPhrase}` : ""}.`,
+    (c) =>
+      `${c.dayPhrase ? `${capFirst(c.dayPhrase)} we're opening doors at ${c.countPhrase}` : `We're opening doors at ${c.countPhrase}`}${c.townPhrase ? ` ${c.townPhrase}` : ""}. ${c.eventTitle}.`,
+    (c) =>
+      `${c.eventTitle}: ${c.countPhrase}${c.townPhrase ? ` ${c.townPhrase}` : ""}${c.dayPhrase ? `, ${c.dayPhrase}` : ""}.`,
+    (c) =>
+      `${capFirst(c.countPhrase)} unlocked${c.dayPhrase ? ` ${c.dayPhrase}` : ""}${c.townPhrase ? ` ${c.townPhrase}` : ""}. ${c.eventTitle}.`,
+    (c) =>
+      `${c.eventTitle}. ${c.dayPhrase ? `${capFirst(c.dayPhrase)}, ` : ""}walk through ${c.countPhrase}${c.townPhrase ? ` ${c.townPhrase}` : ""}.`,
+    (c) =>
+      `Open house run${c.dayPhrase ? ` ${c.dayPhrase}` : ""} — ${c.countPhrase}${c.townPhrase ? ` ${c.townPhrase}` : ""}. ${c.eventTitle}.`,
+    (c) =>
+      `${c.eventTitle}. Tour ${c.countPhrase}${c.townPhrase ? ` ${c.townPhrase}` : ""}${c.dayPhrase ? ` ${c.dayPhrase}` : ""} — full schedule below.`,
+  ];
 
-  const fbBody = [
-    `${eventTitle}. ${count} open houses this weekend:`,
-    "",
-    ...propertyLines,
-    "",
-    "Send a message if you'd like a private tour of any of these — otherwise we'll see you on the doorstep.",
-  ].join("\n");
+  // 6 body intros — the one-line label that sits between the opener and
+  // the numbered property bullets. Keeps the bullet block from feeling
+  // like a wall of text.
+  const BODY_INTROS: Array<(c: CaptionCtx) => string> = [
+    () => "Here's the schedule:",
+    () => "On the tour:",
+    () => "Doors open at:",
+    () => "Where + when:",
+    () => "This weekend's lineup:",
+    () => "Stops on the route:",
+  ];
 
-  const ttBody = [
-    `${count} open houses this weekend 🏡`,
-    ...propertyLines.slice(0, ttLineCount),
-    ttRemainder > 0 ? `+ ${ttRemainder} more — see the carousel` : "",
-  ]
-    .filter((line) => line.length > 0)
-    .join("\n");
+  // 5 closers — short call to action that leans on views / showings,
+  // never on "don't miss out" / "dream home" / similar bans. Mini
+  // commercials: end with a reason to keep watching or stop by.
+  const CLOSERS: Array<(c: CaptionCtx) => string> = [
+    () => "Stop by any of them — agents will be on-site to answer questions.",
+    () => "DM for a private showing, or just walk in.",
+    () => "Send a message for a private tour, otherwise we'll see you on the doorstep.",
+    () => "Save this post so you've got the schedule on your phone.",
+    () => "Bring a friend — the more eyes on these, the better the offers tend to be.",
+  ];
+
+  const ctx: CaptionCtx = {
+    eventTitle,
+    count,
+    countPhrase,
+    dayPhrase,
+    townPhrase,
+    bulkHost,
+  };
+
+  const opener = OPENERS[seed % OPENERS.length](ctx);
+  const bodyIntro = BODY_INTROS[(seed >>> 3) % BODY_INTROS.length](ctx);
+  const closer = CLOSERS[(seed >>> 6) % CLOSERS.length](ctx);
+
+  // Per-platform caption bodies.
+  // IG: full opener + body intro + every property bullet + optional
+  // bulk-host line + closer. Has the 2200-char ceiling but realistically
+  // sits under 1000 even at 9 properties.
+  // FB: same shape as IG but with a tighter closer chosen from the same
+  // pool (we share the same string because the rendered caption is
+  // primarily one-line-per-property either way). FB caps at 1500.
+  // TT: opener + "+ N more — see the carousel" + bulk-host if present.
+  // Never includes bullet lines — TT truncates after ~100 chars in feed
+  // and the bullets would just look broken. TT caps at 300.
+
+  const igLines: string[] = [opener, "", bodyIntro, ...propertyLines];
+  if (bulkHost) {
+    igLines.push("", `Hosted by ${bulkHost} across all stops.`);
+  }
+  igLines.push("", closer);
+  const igBody = clampBody(igLines.join("\n"), 2200);
+
+  const fbLines: string[] = [opener, "", bodyIntro, ...propertyLines];
+  if (bulkHost) {
+    fbLines.push("", `Hosted by ${bulkHost} across all stops.`);
+  }
+  fbLines.push("", closer);
+  const fbBody = clampBody(fbLines.join("\n"), 1500);
+
+  // TikTok — one tight line. Re-use the opener (already references
+  // count + day + town), append a "see the carousel" hook so the user
+  // knows there's more, and tack on the bulk host when we have one.
+  const ttPieces: string[] = [opener];
+  if (count > 1) {
+    ttPieces.push("Full schedule in the carousel.");
+  }
+  if (bulkHost) {
+    ttPieces.push(`Hosted by ${bulkHost}.`);
+  }
+  const ttBody = clampBody(ttPieces.join(" "), 250); // leave room for tags
 
   // Tag set: post-type + brand + every property's MLS hashtag. Order
   // matters — `cap()` below preserves the anchor MLS but trims later
@@ -1022,8 +1423,11 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
 
   // Per-platform cap that always preserves the anchor MLS hashtag, and
   // packs as many additional property MLS hashtags as the platform's
-  // tag budget allows. IG fits all 9 comfortably; FB sees the anchor +
-  // up to 2 more; TT sees the anchor + maybe 1 more.
+  // tag budget allows. IG fits all 9 comfortably; FB is intentionally
+  // pared to the anchor MLS only (FB's algorithm doesn't reward
+  // hashtags and Larissa's voice on FB is conversational, not tagged);
+  // TT sees the anchor + maybe 1 more so the caption stays under 300
+  // total chars.
   const cap = (
     tags: readonly string[],
     limit: number,
@@ -1034,7 +1438,10 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
   };
 
   const igTags = cap(baseTags, 30);
-  const fbTags = cap(baseTags, 6);
+  // FB: anchor MLS only — preserves the auto-linker join (it keys on
+  // the MLS hashtag in caption + hashtags) while keeping the body
+  // clean of hashtag noise per Larissa's FB voice.
+  const fbTags = anchorMls ? [anchorMls] : [];
   const ttTags = cap(baseTags, 5);
 
   return {
@@ -1051,6 +1458,204 @@ function synthesizeMultiOHCaption(input: MultiOHEventInput): {
       tiktok: { caption: ttBody, hashtags: ttTags },
     },
   };
+}
+
+/** Context passed into every opener/body/closer variant. Kept small
+ *  and string-only so the variant functions stay readable. */
+interface CaptionCtx {
+  eventTitle: string;
+  count: number;
+  countPhrase: string;
+  dayPhrase: string;
+  townPhrase: string;
+  bulkHost: string;
+}
+
+/**
+ * "two open houses" / "five properties" / "nine homes" style phrasing.
+ * Cycles through {open houses, properties, homes} based on count so a
+ * 2-property post and an 8-property post don't both say the same noun.
+ * Numbers 2–9 are spelled out (AP style for small counts); 10+ uses
+ * the digit form, though MULTI_OH_MAX_PROPERTIES is 9 today so the
+ * digit branch is defensive.
+ */
+function describeCount(count: number): string {
+  const WORDS: Record<number, string> = {
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+  };
+  const numWord = WORDS[count] ?? String(count);
+  // Pick the noun deterministically from count — "open houses" for the
+  // 2/4/6/8 cohort, "properties" for 3/5/7/9 — so successive events
+  // alternate naturally without needing a hash here.
+  const noun =
+    count % 2 === 0 ? "open houses" : count <= 4 ? "properties" : "homes";
+  return `${numWord} ${noun}`;
+}
+
+/**
+ * Day-of-week phrasing derived from the union of every property's OH
+ * sessions. Returns "" when no dates parse (caller should drop the
+ * segment cleanly).
+ *
+ * Outputs feel like Larissa wrote them:
+ *   single day        → "Saturday only"
+ *   Sat + Sun         → "this Saturday + Sunday"
+ *   Sat + Sun + Mon   → "all weekend"
+ *   other 2-day combo → "Friday + Saturday"
+ *   other 3+ day      → "all weekend"
+ */
+function describeEventDays(input: MultiOHEventInput): string {
+  const days = new Set<string>();
+  for (const p of input.properties) {
+    const sessions =
+      p.oh_sessions && p.oh_sessions.length > 0
+        ? p.oh_sessions
+        : [{ start_at: p.oh_start_at, end_at: p.oh_end_at }];
+    for (const s of sessions) {
+      if (!s.start_at) continue;
+      const d = new Date(s.start_at);
+      if (Number.isNaN(d.getTime())) continue;
+      const name = d.toLocaleDateString("en-US", {
+        weekday: "long",
+        timeZone: CAPTION_TZ,
+      });
+      days.add(name);
+    }
+  }
+  if (days.size === 0) return "";
+  const sortedDays = Array.from(days).sort(
+    (a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b),
+  );
+  if (sortedDays.length === 1) {
+    return `${sortedDays[0]} only`;
+  }
+  const hasSat = days.has("Saturday");
+  const hasSun = days.has("Sunday");
+  if (sortedDays.length === 2 && hasSat && hasSun) {
+    return "this Saturday + Sunday";
+  }
+  if (sortedDays.length >= 3 && hasSat && hasSun) {
+    return "all weekend";
+  }
+  if (sortedDays.length === 2) {
+    return `${sortedDays[0]} + ${sortedDays[1]}`;
+  }
+  return "all weekend";
+}
+
+const DAY_ORDER = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+/**
+ * Address / town phrasing for the lead. Behaviour by property count:
+ *   2     → "in [Town A] and [Town B]" (or addresses if same town)
+ *   3–4   → "in [Town A], [Town B], and [Town C]"
+ *   5–6   → "across [Town A], [Town B], and [Town C]" (top 3 unique towns)
+ *   7+    → "across [Town A], [Town B], and [Town C]" (top 3 unique towns)
+ *
+ * Returns "" when no towns are populated. "Across South Jersey" is the
+ * fallback when there are too many distinct towns to list cleanly (4+
+ * unique towns inside the property set).
+ *
+ * Judgment call: for the 7+ case we don't enumerate every town — Larissa
+ * doesn't want a wall-of-text lead. The numbered bullet block below
+ * still lists every address, so nothing is lost.
+ */
+function describeTowns(
+  properties: readonly MultiOHEventProperty[],
+): string {
+  const towns = properties
+    .map((p) => p.city?.trim() ?? "")
+    .filter((c) => c.length > 0);
+  if (towns.length === 0) return "";
+  const uniqueTowns = uniqueStrings(towns);
+  if (uniqueTowns.length === 1) {
+    return `in ${uniqueTowns[0]}`;
+  }
+  if (uniqueTowns.length === 2) {
+    return `in ${uniqueTowns[0]} and ${uniqueTowns[1]}`;
+  }
+  if (uniqueTowns.length === 3) {
+    const verb = properties.length >= 5 ? "across" : "in";
+    return `${verb} ${uniqueTowns[0]}, ${uniqueTowns[1]}, and ${uniqueTowns[2]}`;
+  }
+  // 4+ unique towns — list the first three and fall back to a broad
+  // South Jersey framing for the rest. Hashtag pool still surfaces the
+  // full set via the MLS tags downstream.
+  return `across ${uniqueTowns[0]}, ${uniqueTowns[1]}, and ${uniqueTowns[2]}`;
+}
+
+/**
+ * Returns the single hosting-agent name when every property in the
+ * event is hosted by the same person. Returns "" otherwise (mixed
+ * hosts, or no hosts set). Used for the "Hosted by [name] across all
+ * stops" line — we only show that when it's truthful for the whole
+ * event.
+ */
+function describeBulkHost(
+  properties: readonly MultiOHEventProperty[],
+): string {
+  const hosts = properties
+    .map((p) => p.hosting_agent_name?.trim() ?? "")
+    .filter((h) => h.length > 0);
+  if (hosts.length === 0) return "";
+  if (hosts.length !== properties.length) return "";
+  const first = hosts[0];
+  for (const h of hosts) {
+    if (h !== first) return "";
+  }
+  return first;
+}
+
+/** Capitalize the first letter of a string. Leaves the rest untouched
+ *  so existing PascalCase / proper-noun casing survives. */
+function capFirst(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Deterministic 32-bit hash of a string (FNV-1a). Used to pick variant
+ * indices so the same event always synthesizes the same caption but
+ * different events feel different. Not cryptographic — just stable.
+ */
+function hashSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Trim a synthesized caption to a per-platform character ceiling
+ * without breaking mid-word. Used as a defensive backstop — the
+ * variant pool is sized to comfortably fit under each platform's
+ * limit, but a 9-property event with very long addresses could in
+ * principle nudge close to IG's 2200. We trim on a word boundary and
+ * append "..." so the truncation is obvious.
+ */
+function clampBody(body: string, max: number): string {
+  if (body.length <= max) return body;
+  const slice = body.slice(0, max - 3);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut = lastSpace > max * 0.8 ? slice.slice(0, lastSpace) : slice;
+  return `${cut.trimEnd()}...`;
 }
 
 /**
