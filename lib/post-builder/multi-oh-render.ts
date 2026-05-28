@@ -146,6 +146,104 @@ function pickEmitter(
 }
 
 // ---------------------------------------------------------------------------
+// Event-title derivation
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a deterministic event title from the picked listings' OH dates. The
+ * wizard no longer exposes an event-title input (cut 2026-05-28) — this
+ * helper is the single source of truth for the headline on the event hero
+ * card. Pinned to America/New_York so a server in any timezone bucketed
+ * Saturday OHs as Sunday won't slip the headline.
+ *
+ *   Single day → "Open House — Saturday May 30"
+ *   Consecutive multi-day → "Open House — Saturday–Sunday May 30–31"
+ *     (handles month spans too: "Saturday–Sunday May 31–June 1")
+ *   Non-consecutive → "Open House — May 22 & 24" (each date listed)
+ *
+ * Returns "Open House Event" as a generic fallback when no oh_start_at is
+ * present on any property — defensive against malformed payloads; should
+ * never trigger in practice since the wizard only surfaces listings with
+ * a scheduled OH.
+ */
+function deriveEventTitle(
+  properties: readonly MultiOHEventProperty[],
+): string {
+  const TZ = "America/New_York";
+  // Bucket dates by their NY-local YYYY-MM-DD so we don't double-count a
+  // property with two OH sessions on the same calendar day.
+  const byDay = new Map<string, Date>();
+  for (const p of properties) {
+    if (!p.oh_start_at) continue;
+    const d = new Date(p.oh_start_at);
+    if (Number.isNaN(d.getTime())) continue;
+    // en-CA yields YYYY-MM-DD which sorts correctly as a string key.
+    const key = d.toLocaleDateString("en-CA", { timeZone: TZ });
+    if (!byDay.has(key)) byDay.set(key, d);
+  }
+  if (byDay.size === 0) return "Open House Event";
+
+  const dates = Array.from(byDay.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, d]) => d);
+
+  // Same-day → "Open House — Saturday May 30"
+  if (dates.length === 1) {
+    const d = dates[0];
+    const dayName = d.toLocaleDateString("en-US", {
+      weekday: "long",
+      timeZone: TZ,
+    });
+    const monthDay = d.toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      timeZone: TZ,
+    });
+    return `Open House — ${dayName} ${monthDay}`;
+  }
+
+  // Consecutive run? Compare day-of-year-equivalent strings to avoid DST
+  // gotchas. We already have NY-local YYYY-MM-DD keys for each entry.
+  const keys = Array.from(byDay.keys()).sort();
+  const consecutive = keys.every((k, i) => {
+    if (i === 0) return true;
+    const prev = new Date(`${keys[i - 1]}T12:00:00Z`);
+    const curr = new Date(`${k}T12:00:00Z`);
+    const dayMs = 24 * 60 * 60 * 1000;
+    return curr.getTime() - prev.getTime() === dayMs;
+  });
+
+  const fmtParts = (d: Date) => ({
+    weekday: d.toLocaleDateString("en-US", { weekday: "long", timeZone: TZ }),
+    month: d.toLocaleDateString("en-US", { month: "long", timeZone: TZ }),
+    day: d.toLocaleDateString("en-US", { day: "numeric", timeZone: TZ }),
+  });
+
+  if (consecutive) {
+    const first = fmtParts(dates[0]);
+    const last = fmtParts(dates[dates.length - 1]);
+    const dateRange =
+      first.month === last.month
+        ? `${first.month} ${first.day}–${last.day}`
+        : `${first.month} ${first.day}–${last.month} ${last.day}`;
+    return `Open House — ${first.weekday}–${last.weekday} ${dateRange}`;
+  }
+
+  // Non-consecutive — list each date.
+  const parts = dates.map((d) =>
+    d.toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      timeZone: TZ,
+    }),
+  );
+  if (parts.length === 2) return `Open House — ${parts[0]} & ${parts[1]}`;
+  const head = parts.slice(0, -1).join(", ");
+  const tail = parts[parts.length - 1];
+  return `Open House — ${head} & ${tail}`;
+}
+
+// ---------------------------------------------------------------------------
 // Brand palette + typography (constants used by all three emitters)
 // ---------------------------------------------------------------------------
 //
@@ -736,10 +834,11 @@ export function emitEventOverviewSquare(input: MultiOHEventInput): string {
   const rowsHtml = input.properties
     .map((p, i) => renderPropertyRow(p, i + 1, density))
     .join("");
+  const title = deriveEventTitle(input.properties);
 
   return `<!doctype html>
 <html lang="en">
-${eventOverviewHead(`Open House Event — ${input.event_title}`)}
+${eventOverviewHead(`Open House Event — ${title}`)}
 <style>
 ${baseCss({ width, height, margin, density })}
 .header { gap: 18px; margin-bottom: 28px; }
@@ -754,7 +853,7 @@ ${compactRowOverride}
         <span class="eyebrow-rule"></span>
         <span class="eyebrow-text">Open House Event</span>
       </div>
-      <div class="event-title">${escapeHtml(input.event_title)}</div>
+      <div class="event-title">${escapeHtml(title)}</div>
     </div>
     <div class="properties">${rowsHtml}</div>
     ${renderAgentBlock(input)}
@@ -789,10 +888,11 @@ export function emitEventOverviewPortrait(input: MultiOHEventInput): string {
   const rowsHtml = input.properties
     .map((p, i) => renderPropertyRow(p, i + 1, density))
     .join("");
+  const title = deriveEventTitle(input.properties);
 
   return `<!doctype html>
 <html lang="en">
-${eventOverviewHead(`Open House Event — ${input.event_title}`)}
+${eventOverviewHead(`Open House Event — ${title}`)}
 <style>
 ${baseCss({ width, height, margin, density })}
 .header { gap: 22px; margin-bottom: 40px; }
@@ -806,7 +906,7 @@ ${baseCss({ width, height, margin, density })}
         <span class="eyebrow-rule"></span>
         <span class="eyebrow-text">Open House Event</span>
       </div>
-      <div class="event-title">${escapeHtml(input.event_title)}</div>
+      <div class="event-title">${escapeHtml(title)}</div>
     </div>
     <div class="properties">${rowsHtml}</div>
     ${renderAgentBlock(input)}
@@ -847,9 +947,11 @@ export function emitEventOverviewStory(input: MultiOHEventInput): string {
   // why: story format pads top/bottom heavily to clear IG's UI overlays.
   // The 310px top padding = 250 safe zone + 60 visual breathing room.
   // The 200px bottom padding tucks the brand footer above the 1720 line.
+  const title = deriveEventTitle(input.properties);
+
   return `<!doctype html>
 <html lang="en">
-${eventOverviewHead(`Open House Event — ${input.event_title}`)}
+${eventOverviewHead(`Open House Event — ${title}`)}
 <style>
 ${baseCss({ width, height, margin, density })}
 .frame {
@@ -866,7 +968,7 @@ ${baseCss({ width, height, margin, density })}
         <span class="eyebrow-rule"></span>
         <span class="eyebrow-text">Open House Event</span>
       </div>
-      <div class="event-title">${escapeHtml(input.event_title)}</div>
+      <div class="event-title">${escapeHtml(title)}</div>
     </div>
     <div class="properties">${rowsHtml}</div>
     ${renderAgentBlock(input)}

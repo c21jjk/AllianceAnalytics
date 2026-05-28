@@ -777,13 +777,12 @@ export function synthesizeMultiOHCaption(
     requestedTone === "auto" ? detectTone(properties) : requestedTone;
 
   // ---- Deterministic seed for variant picks ----
-  // 2026-05-27 — event_title was removed from the wizard. Seed is now
-  // (count | mls_numbers | resolvedTone) so the same set of properties
-  // always renders the same caption variant, and switching the tone picker
-  // yields a visibly different caption (otherwise a coastal seed + family
-  // pool would always pick variant[0]).
+  // 2026-05-28 — event_title was removed from the wizard payload entirely;
+  // seed is `count | mls_numbers` so the same set of properties always
+  // renders the same caption variant. The resolved tone selects the pool,
+  // not the index within it.
   const mlsKey = properties.map((p) => p.mls_number).join(",");
-  const seed = hashSeed(`${count}|${mlsKey}|${resolvedTone}`);
+  const seed = hashSeed(`${count}|${mlsKey}`);
 
   // ---- Geographic phrasing ----
   const geoPhrase = buildGeoPhrase(properties, seed);
@@ -794,7 +793,7 @@ export function synthesizeMultiOHCaption(
 
   // ---- Pool pick ----
   const pool = POOLS[resolvedTone];
-  const ctx: CaptionCtx = { eventTitle, count, geoPhrase };
+  const ctx: CaptionCtx = { count, geoPhrase };
   const opener = pool.openers[seed % pool.openers.length](ctx);
   const closer = pool.closers[(seed >>> 6) % pool.closers.length];
 

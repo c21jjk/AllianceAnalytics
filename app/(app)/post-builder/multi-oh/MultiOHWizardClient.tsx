@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -201,33 +201,14 @@ export default function MultiOHWizardClient({
   // OVERWRITES every per-row value when applied (even if the user had
   // individually customized rows already), and the dismissible hint below
   // it offers an undo that re-derives each row from its listing.
-  const [bulkHostingAgent, setBulkHostingAgent] = useState<string>("");
-  /** Snapshot of perPropertyHostingAgent immediately BEFORE the last
-   *  bulk-apply, so the undo link can restore each row. We snapshot the
-   *  whole map (not just the names that changed) so a partial overwrite
-   *  followed by undo lands back exactly where the user left off. */
-  const bulkUndoSnapshotRef = useRef<Record<string, string> | null>(null);
-  /** Whether the "Applied X to all N — undo" hint is visible. Goes true
-   *  after applyBulkHostingAgent; flips false when the user clicks undo or
-   *  clears the bulk input. */
-  const [bulkHintVisible, setBulkHintVisible] = useState(false);
-  /** The agent name actually applied in the most recent bulk overwrite —
-   *  cached so the hint copy doesn't update mid-typing if the user keeps
-   *  editing the bulk input after applying. */
-  const [bulkAppliedAgent, setBulkAppliedAgent] = useState<string>("");
-
-  // Bulk apply/undo handlers are defined LOWER, after `listingsByMls`
-  // is constructed — the undo path reads from it to re-derive defaults.
+  // 2026-05-28 — bulk hosting agent override removed. The per-property
+  // hosting-agent input under each property card is still available for
+  // anyone who needs to override.
 
   // ---- step 1 (cont.) — event title ------------------------------------
-  // why: event_title used to live on its own "Event details" step alongside
-  // event-level agent fields. 2026-05-21 that step was cut — the only thing
-  // left to ask is the title (one input, one decision), so we moved it up
-  // into Step 1 right above the property list. The auto-derive logic still
-  // applies: titleDirty flips true the moment the user edits, after which
-  // we stop overwriting the field when the picked set changes.
-  const [eventTitle, setEventTitle] = useState<string>("");
-  const [titleDirty, setTitleDirty] = useState(false);
+  // 2026-05-28 — event_title input + auto-derive removed from Step 1. The
+  // server derives a deterministic title from the picked OH dates inside
+  // the multi-oh-generate route (no user input needed).
 
   // ---- step 2 — format + variant ---------------------------------------
   const [format, setFormat] = useState<PostFormat>("square_1x1");
@@ -306,13 +287,6 @@ export default function MultiOHWizardClient({
     return out;
   }, [selectedMls, listingsByMls]);
 
-  /** Auto-derived default event_title from the picked OH dates. The user can
-   *  override; once they do, titleDirty stays true and we leave it alone. */
-  const derivedEventTitle = useMemo(
-    () => deriveEventTitle(selectedListings),
-    [selectedListings],
-  );
-
   /**
    * Consolidation summary — the wizard merges multiple picks of the same MLS
    * (a condo with Sat + Sun OHs picked twice) into ONE carousel slide carrying
@@ -353,61 +327,9 @@ export default function MultiOHWizardClient({
     };
   }, [selectedListings]);
 
-  // ---- bulk hosting-agent apply / undo --------------------------------
-  // Defined here (not next to the state above) so `listingsByMls` is in
-  // scope for the undo path's re-derive fallback.
-  const applyBulkHostingAgent = useCallback((): void => {
-    const trimmed = bulkHostingAgent.trim();
-    if (trimmed.length === 0) return;
-    setPerPropertyHostingAgent((prev) => {
-      // Snapshot BEFORE overwrite so undo can restore the exact prior
-      // state (including any per-row customizations the user had typed).
-      bulkUndoSnapshotRef.current = { ...prev };
-      const next: Record<string, string> = {};
-      for (const mls of Object.keys(prev)) next[mls] = trimmed;
-      return next;
-    });
-    setBulkAppliedAgent(trimmed);
-    setBulkHintVisible(true);
-  }, [bulkHostingAgent]);
-
-  const undoBulkHostingAgent = useCallback((): void => {
-    // Restore from snapshot when we have one; otherwise re-derive each row
-    // from its listing (matches the seed logic in toggleSelect).
-    const snapshot = bulkUndoSnapshotRef.current;
-    setPerPropertyHostingAgent((prev) => {
-      if (snapshot) return snapshot;
-      const next: Record<string, string> = {};
-      for (const mls of Object.keys(prev)) {
-        const listing = listingsByMls.get(mls);
-        next[mls] = resolveHostingAgent(
-          listing?.oh_comments,
-          listing?.agent_name,
-        );
-      }
-      return next;
-    });
-    bulkUndoSnapshotRef.current = null;
-    setBulkHintVisible(false);
-    setBulkAppliedAgent("");
-    setBulkHostingAgent("");
-  }, [listingsByMls]);
-
-  // Auto-fill event_title when the user hasn't manually edited it.
-  useEffect(() => {
-    if (!titleDirty) {
-      setEventTitle(derivedEventTitle);
-    }
-  }, [derivedEventTitle, titleDirty]);
-
-  // Hide the bulk-apply hint as soon as the input is cleared. We don't
-  // also clear bulkAppliedAgent here so the hint copy stays stable while
-  // visible — only the visibility flag matters for the empty-bulk case.
-  useEffect(() => {
-    if (bulkHostingAgent.trim().length === 0 && bulkHintVisible) {
-      setBulkHintVisible(false);
-    }
-  }, [bulkHostingAgent, bulkHintVisible]);
+  // 2026-05-28 — bulk hosting-agent apply / undo callbacks removed alongside
+  // the "Hosted by everyone" UI strip. Per-property hosting-agent inputs
+  // under each card remain the only entry point.
 
   // 2026-05-27 (Phase C) — the 4s rotating-status ticker was removed.
   // The streaming route emits `slide_started` / `slide_done` events as
@@ -490,15 +412,10 @@ export default function MultiOHWizardClient({
 
   // ---- step navigation --------------------------------------------------
 
-  // Step 1 also gates on a non-empty event title now that the input lives
-  // inline above the property picker. The auto-derive effect keeps the
-  // title populated as soon as a property with an oh_start_at is picked,
-  // so under normal use this is satisfied the moment selectedMls hits 2 —
-  // but the explicit check protects against the edge case where a user
-  // blanks the field manually.
+  // 2026-05-28 — event-title input was removed; Step 1 gates only on the
+  // minimum property count.
   const canContinueFromStep1 =
-    selectedMls.length >= MULTI_OH_MIN_PROPERTIES &&
-    eventTitle.trim().length > 0;
+    selectedMls.length >= MULTI_OH_MIN_PROPERTIES;
 
   const goToStep = useCallback(
     (target: StepIndex): void => {
@@ -583,7 +500,9 @@ export default function MultiOHWizardClient({
       };
     });
     return {
-      event_title: eventTitle.trim(),
+      // 2026-05-28 — event_title was removed from the payload. The
+      // multi-oh-generate route derives a deterministic title from the
+      // picked OH dates server-side.
       // why: event-level agent fields (agent_name / agent_phone /
       // agent_email) were removed from the wizard on 2026-05-21 — the
       // event hero no longer attributes a single agent because each
@@ -611,7 +530,6 @@ export default function MultiOHWizardClient({
     };
   }, [
     selectedListings,
-    eventTitle,
     format,
     perPropertyVariant,
     dbTemplateId,
@@ -939,18 +857,7 @@ export default function MultiOHWizardClient({
             onToggle={toggleSelect}
             perPropertyHostingAgent={perPropertyHostingAgent}
             onHostingAgentChange={setHostingAgentForProperty}
-            eventTitle={eventTitle}
-            onEventTitleChange={(next) => {
-              setTitleDirty(true);
-              setEventTitle(next);
-            }}
             consolidationSummary={consolidationSummary}
-            bulkHostingAgent={bulkHostingAgent}
-            onBulkHostingAgentChange={setBulkHostingAgent}
-            onApplyBulkHostingAgent={applyBulkHostingAgent}
-            onUndoBulkHostingAgent={undoBulkHostingAgent}
-            bulkHintVisible={bulkHintVisible}
-            bulkAppliedAgent={bulkAppliedAgent}
           />
         ) : null}
         {step === 2 ? (
@@ -969,7 +876,6 @@ export default function MultiOHWizardClient({
         ) : null}
         {step === 3 ? (
           <Step3Review
-            eventTitle={eventTitle}
             selectedListings={selectedListings}
             tone={tone}
             onToneChange={setTone}
@@ -1098,12 +1004,6 @@ interface Step1Props {
   perPropertyHostingAgent: Record<string, string>;
   /** Update one property's hosting agent override. */
   onHostingAgentChange: (mls: string, value: string) => void;
-  /** Event title shown on the hero card. Auto-derives from picked OH dates
-   *  until the user edits the input, at which point the parent freezes the
-   *  derivation (titleDirty). Lives at this step (vs. its own step) because
-   *  it's the only event-level field left after the 2026-05-21 wizard cut. */
-  eventTitle: string;
-  onEventTitleChange: (next: string) => void;
   /** Consolidation hint info (null when no duplicates picked). Surfaces the
    *  N-picks → M-slides math so the user isn't surprised the carousel is
    *  smaller than their pick count. */
@@ -1115,18 +1015,6 @@ interface Step1Props {
         extraDuplicates: number;
       }
     | null;
-  /** Bulk hosting-agent input value — set on the "Hosted by everyone:"
-   *  control above the picker. Submitting OVERWRITES every per-row value. */
-  bulkHostingAgent: string;
-  onBulkHostingAgentChange: (next: string) => void;
-  /** Fires when the user submits the bulk control (Enter or Apply button). */
-  onApplyBulkHostingAgent: () => void;
-  /** Reverts every row to its default listing-agent-derived value. */
-  onUndoBulkHostingAgent: () => void;
-  /** True after applyBulk; flips false on undo or bulk-input clear. */
-  bulkHintVisible: boolean;
-  /** The agent name actually applied in the most recent bulk overwrite. */
-  bulkAppliedAgent: string;
 }
 
 function Step1Pick({
@@ -1135,15 +1023,7 @@ function Step1Pick({
   onToggle,
   perPropertyHostingAgent,
   onHostingAgentChange,
-  eventTitle,
-  onEventTitleChange,
   consolidationSummary,
-  bulkHostingAgent,
-  onBulkHostingAgentChange,
-  onApplyBulkHostingAgent,
-  onUndoBulkHostingAgent,
-  bulkHintVisible,
-  bulkAppliedAgent,
 }: Step1Props) {
   const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
 
@@ -1209,90 +1089,6 @@ function Step1Pick({
       <p className="text-sm text-neutral-600 mb-4">
         Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel.
       </p>
-
-      {/* Event title — auto-derives from the picked OH dates (e.g. "Open
-          House — Saturday May 23"). Lives on Step 1 with the property
-          picker because it's the only event-level field left after the
-          2026-05-21 wizard cut. */}
-      <div className="mb-5 rounded-lg border border-neutral-200 bg-neutral-50/60 p-3">
-        <label
-          htmlFor="event_title"
-          className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-700 mb-1"
-        >
-          Event title
-          <span className="text-gold-700 ml-1">*</span>
-        </label>
-        <input
-          id="event_title"
-          type="text"
-          value={eventTitle}
-          onChange={(e) => onEventTitleChange(e.target.value)}
-          placeholder="Open House Weekend"
-          className="block w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
-        />
-        <div className="mt-1 text-[11px] text-neutral-500">
-          Shown big at the top of the event hero card. Auto-filled from your picked open-house dates — edit to taste.
-        </div>
-      </div>
-
-      {/* Bulk hosting-agent override — applies one name to every selected
-          row. The common case is Larissa hosting everything; this saves
-          re-typing on each row. Submitting overwrites per-row values
-          unconditionally, and the dismissible hint below offers an undo
-          that re-derives each row from its listing. Hidden until at least
-          one property is picked so the strip doesn't clutter an empty list. */}
-      {selectedMls.length > 0 ? (
-        <div className="mb-4 rounded-lg border border-neutral-200 bg-white px-3 py-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <label
-              htmlFor="bulk-hosting-agent"
-              className="text-[11px] font-semibold uppercase tracking-[0.08em] text-neutral-700 shrink-0"
-            >
-              Hosted by everyone:
-            </label>
-            <input
-              id="bulk-hosting-agent"
-              type="text"
-              value={bulkHostingAgent}
-              onChange={(e) => onBulkHostingAgentChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  onApplyBulkHostingAgent();
-                }
-              }}
-              placeholder="e.g. Larissa Wilkerson"
-              className="flex-1 min-w-[140px] rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
-            />
-            <button
-              type="button"
-              onClick={onApplyBulkHostingAgent}
-              disabled={bulkHostingAgent.trim().length === 0}
-              className={[
-                "rounded-md px-3 py-1 text-xs font-semibold transition shrink-0",
-                bulkHostingAgent.trim().length === 0
-                  ? "bg-neutral-200 text-neutral-500 cursor-not-allowed"
-                  : "bg-gold-500 text-white hover:bg-gold-600",
-              ].join(" ")}
-            >
-              Apply to all
-            </button>
-          </div>
-          {bulkHintVisible && bulkAppliedAgent.length > 0 ? (
-            <div className="mt-1.5 text-[11px] text-neutral-500">
-              Applied <span className="font-semibold text-neutral-700">{bulkAppliedAgent}</span> to all {selectedMls.length}{" "}
-              {selectedMls.length === 1 ? "property" : "properties"} —{" "}
-              <button
-                type="button"
-                onClick={onUndoBulkHostingAgent}
-                className="text-gold-700 underline underline-offset-2 hover:text-gold-800"
-              >
-                undo
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
       {/* Consolidation hint — only when picks > unique-MLS. Mirrors the
           server-side consolidatePropertiesByMls behavior so the user sees
@@ -1622,7 +1418,6 @@ function Step2FormatVariant({
 // Generate CTA + status copy stay on the sticky footer (unchanged).
 
 interface Step3Props {
-  eventTitle: string;
   selectedListings: readonly PostBuilderListing[];
   /** Caption tone bias. `auto` runs heuristic detection in the synth. */
   tone: CaptionTone;
@@ -1647,7 +1442,6 @@ interface Step3Props {
 }
 
 function Step3Review({
-  eventTitle,
   selectedListings,
   tone,
   onToneChange,
@@ -1669,7 +1463,6 @@ function Step3Review({
   const captionResult: MultiOHCaptionResult = useMemo(
     () =>
       synthesizeMultiOHCaption({
-        event_title: eventTitle,
         tone,
         caption_override: captionOverride,
         properties: selectedListings.map((l) => ({
@@ -1684,7 +1477,7 @@ function Step3Review({
           oh_end_at: l.oh_end_at ?? null,
         })),
       }),
-    [eventTitle, tone, captionOverride, selectedListings],
+    [tone, captionOverride, selectedListings],
   );
 
   const overrideActive = captionOverride !== null && captionOverride.length > 0;
@@ -2335,18 +2128,6 @@ function GeneratingOverlay({
           </div>
         </div>
 
-        {/* Hero tile — stacked above the slide grid. */}
-        <div className="mt-5 flex flex-col items-center">
-          <TileShell
-            tile={heroTile}
-            sizeClass="w-[180px] h-[180px]"
-            failLabel="Hero"
-          />
-          <div className="mt-1.5 text-xs font-medium uppercase tracking-wider text-neutral-500">
-            Hero
-          </div>
-        </div>
-
         {/* Per-slide grid (suppressed before `started` event arrives). */}
         {slideTiles.length > 0 ? (
           <div
@@ -2382,7 +2163,7 @@ function GeneratingOverlay({
         {partialResult ? (
           <div className="mt-4 pt-4 border-t border-neutral-200">
             <div className="text-sm font-semibold text-neutral-900">
-              Hero + {successCount} of {totalCount} slides ready
+              {successCount} of {totalCount} slides ready
             </div>
             <ul className="mt-1 space-y-0.5">
               {visibleFailures.map((f) => (
@@ -2519,88 +2300,6 @@ function formatHour(d: Date): string {
       ? { hour: "numeric", hour12: true }
       : { hour: "numeric", minute: "2-digit", hour12: true };
   return d.toLocaleTimeString("en-US", opts);
-}
-
-/**
- * Build a smart default event title from the picked listings' OH dates.
- *
- *   Same day → "Open House — Saturday May 23"
- *   Consecutive multi-day span → "Open House — Saturday–Sunday May 23–24"
- *     (also handles 3+ day consecutive runs like Fri–Sun May 22–24)
- *   Non-consecutive dates → "Open House — May 22 & 24" (each date listed)
- *
- * why: this runs every time the picked set changes; intentionally cheap.
- * The user can always override (titleDirty flag stops the auto-overwrite).
- *
- * 2026-05-27 — broadened from the old same-day/weekend-only logic so 3+
- * consecutive days (Fri–Sun) read naturally and non-consecutive picks
- * (Sat + Mon) don't silently fall through to a generic "Open House Event".
- */
-function deriveEventTitle(selected: readonly PostBuilderListing[]): string {
-  if (selected.length === 0) return "";
-  // Collect one Date per unique calendar day, sorted ascending. We bucket
-  // by YYYY-MM-DD so a property with both Sat + Sun OHs contributes both
-  // days exactly once even though it appears as two picks.
-  const byDay = new Map<string, Date>();
-  for (const l of selected) {
-    if (!l.oh_start_at) continue;
-    const d = new Date(l.oh_start_at);
-    if (Number.isNaN(d.getTime())) continue;
-    const key = d.toISOString().slice(0, 10);
-    if (!byDay.has(key)) byDay.set(key, d);
-  }
-  if (byDay.size === 0) return "Open House Event";
-  const dates = Array.from(byDay.values()).sort(
-    (a, b) => a.getTime() - b.getTime(),
-  );
-
-  // Same-day → "Open House — Saturday May 23"
-  if (dates.length === 1) {
-    const d = dates[0];
-    const dayName = d.toLocaleDateString("en-US", { weekday: "long" });
-    const monthDay = d.toLocaleDateString("en-US", {
-      month: "long",
-      day: "numeric",
-    });
-    return `Open House — ${dayName} ${monthDay}`;
-  }
-
-  // Consecutive run? Walk the sorted list and check each gap is exactly 1
-  // calendar day. We compare on UTC-midnight rounding to avoid DST drift
-  // tripping the diff over to 23h / 25h.
-  const consecutive = dates.every((d, i) => {
-    if (i === 0) return true;
-    const prev = dates[i - 1];
-    const dayMs = 24 * 60 * 60 * 1000;
-    const a = Date.UTC(prev.getFullYear(), prev.getMonth(), prev.getDate());
-    const b = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
-    return b - a === dayMs;
-  });
-
-  if (consecutive) {
-    const first = dates[0];
-    const last = dates[dates.length - 1];
-    const firstDay = first.toLocaleDateString("en-US", { weekday: "long" });
-    const lastDay = last.toLocaleDateString("en-US", { weekday: "long" });
-    const firstMonth = first.toLocaleDateString("en-US", { month: "long" });
-    const lastMonth = last.toLocaleDateString("en-US", { month: "long" });
-    // Same month across the span → "May 23–24"; otherwise → "May 30–June 1".
-    const dateRange =
-      firstMonth === lastMonth
-        ? `${firstMonth} ${first.getDate()}–${last.getDate()}`
-        : `${firstMonth} ${first.getDate()}–${lastMonth} ${last.getDate()}`;
-    return `Open House — ${firstDay}–${lastDay} ${dateRange}`;
-  }
-
-  // Non-consecutive — list each date. "Open House — May 22 & 24" or
-  // "Open House — May 22, 24 & 27" when 3+ dates.
-  const parts = dates.map((d) =>
-    d.toLocaleDateString("en-US", { month: "long", day: "numeric" }),
-  );
-  if (parts.length === 2) return `Open House — ${parts[0]} & ${parts[1]}`;
-  const head = parts.slice(0, -1).join(", ");
-  const tail = parts[parts.length - 1];
-  return `Open House — ${head} & ${tail}`;
 }
 
 /** Map a PostFormat enum to a short display string. */

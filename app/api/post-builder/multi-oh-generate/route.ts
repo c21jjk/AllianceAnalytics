@@ -248,10 +248,9 @@ function parseBody(raw: unknown):
   }
   const r = raw as Record<string, unknown>;
 
-  const event_title =
-    typeof r.event_title === "string" && r.event_title.trim().length > 0
-      ? r.event_title.trim()
-      : "Open House This Weekend"; // why: sensible default vs hard failure
+  // 2026-05-28 — event_title is no longer collected from the wizard. The
+  // renderer derives a deterministic title from the picked OH dates inside
+  // multi-oh-render.ts; the caption synth seeds from MLS numbers alone.
   // 2026-05-21 — agent_name / agent_phone / agent_email are no longer
   // collected by the wizard (per-property hosts on each carousel slide
   // are the only attribution shown). We still accept them defensively so
@@ -445,7 +444,6 @@ function parseBody(raw: unknown):
   return {
     ok: true,
     value: {
-      event_title,
       agent_name,
       agent_phone,
       agent_email,
@@ -1339,7 +1337,6 @@ export async function POST(request: Request): Promise<Response> {
       // Reads `tone` + `caption_override` off the parsed body (defaults
       // applied in parseBody so this call signature stays clean).
       const synthesized = synthesizeMultiOHCaption({
-        event_title: input.event_title,
         properties: input.properties.map((p) => ({
           address: p.address,
           city: p.city,
