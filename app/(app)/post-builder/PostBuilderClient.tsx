@@ -42,6 +42,7 @@ import {
   listCustomTemplatesAction,
   revertAiDesignAction,
   propagateCarouselLayoutAction,
+  reorderCarouselSlidesAction,
   saveCustomTemplateAction,
   saveGeneratedPostAction,
   schedulePostAction,
@@ -2085,6 +2086,61 @@ export default function PostBuilderClient({
       carouselLayoutOverrides,
       dbTemplatesForSlides,
     ],
+  );
+
+  // 2026-05-28 — carousel slides change handler. Previously this was just
+  // `setCarouselSlides`, so a post-creation drag-reorder lived only in
+  // local state: it reverted on reload and never reached the published
+  // carousel, and the parallel slide_metadata / hosting-agent arrays drifted
+  // out of alignment. Now, on a pure REORDER (same membership, new order) we
+  // (a) apply the same permutation to slide_metadata + hosting_agents_by_index
+  // in lockstep, and (b) persist all three to the row via
+  // reorderCarouselSlidesAction. Add/remove still flow through unchanged.
+  const handleSlidesChanged = useCallback(
+    (next: readonly CarouselSlide[]): void => {
+      const prevIds = carouselSlides.map((s) => s.id);
+      const nextIds = next.map((s) => s.id);
+      const sameMembership =
+        prevIds.length === nextIds.length &&
+        prevIds.length > 0 &&
+        [...prevIds].sort().join("|") === [...nextIds].sort().join("|");
+      const isReorder = sameMembership && prevIds.join("|") !== nextIds.join("|");
+
+      setCarouselSlides(next);
+
+      if (!isReorder) return;
+
+      // newIndex → oldIndex permutation, derived from slide ids.
+      const idToOld = new Map(prevIds.map((id, i) => [id, i] as const));
+      const oldIndexForNew = nextIds.map((id) => idToOld.get(id) as number);
+
+      // Reorder the parallel slide_metadata array in lockstep.
+      setSlideMetadata((m) =>
+        m.length === oldIndexForNew.length ? oldIndexForNew.map((oi) => m[oi]) : m,
+      );
+
+      // Remap hosting-agent entries from their old slide index to the new one.
+      const newIndexForOld = new Map<number, number>();
+      oldIndexForNew.forEach((oi, newIdx) => newIndexForOld.set(oi, newIdx));
+      setHostingAgentsByIndex((hosts) =>
+        hosts.map((h) =>
+          newIndexForOld.has(h.index)
+            ? { ...h, index: newIndexForOld.get(h.index) as number }
+            : h,
+        ),
+      );
+
+      // Persist the reorder so it survives reload + reaches the published
+      // carousel. Best-effort; the server validates the permutation and
+      // aborts on any mismatch rather than scrambling the row.
+      if (generatedPostId) {
+        void reorderCarouselSlidesAction({
+          generated_post_id: generatedPostId,
+          ordered_slide_ids: nextIds,
+        });
+      }
+    },
+    [carouselSlides, slideMetadata, generatedPostId],
   );
 
   // The current set of photo URLs to send to the render API. For single-
@@ -4536,7 +4592,7 @@ export default function PostBuilderClient({
         }}
         carousel={{
           slides: carouselSlides,
-          onSlidesChanged: setCarouselSlides,
+          onSlidesChanged: handleSlidesChanged,
           // why: availablePhotos is already loaded on listing-pick — same
           // source the in-canvas Photos panel reads from. Mapped to the
           // narrower {url, sequence} shape the picker expects.

@@ -930,6 +930,118 @@ export async function propagateCarouselLayoutAction(
   return { ok: true, slide_count: slideCount };
 }
 
+// ---------------------------------------------------------------------------
+// Persist carousel slide reorder — multi-OH "drag to reorder" after creation
+// ---------------------------------------------------------------------------
+
+export interface ReorderCarouselInput {
+  generated_post_id: string;
+  /** Carousel slide ids in their NEW order. Must be a permutation of the
+   *  row's existing additional_images ids. */
+  ordered_slide_ids: string[];
+}
+
+export type ReorderCarouselResult =
+  | { ok: true; count: number }
+  | { ok: false; error: string };
+
+/**
+ * 2026-05-28 — Persist a post-creation slide reorder. Previously the carousel
+ * strip's drag only updated client state, so the new order reverted on reload
+ * and never reached the published carousel. This reorders the THREE parallel
+ * structures in lockstep — `additional_images`, `slide_metadata`, and
+ * `hosting_agents_by_index` (whose entries carry a slide `index`) — so a
+ * property's hosting-agent attribution can't drift away from its card.
+ *
+ * Safety: we ONLY proceed when `ordered_slide_ids` is an exact permutation of
+ * the existing slide ids. Any length/id mismatch aborts with an error rather
+ * than risk scrambling live post data.
+ */
+export async function reorderCarouselSlidesAction(
+  input: ReorderCarouselInput,
+): Promise<ReorderCarouselResult> {
+  const profile = await requireUser();
+  if (!input.generated_post_id) {
+    return { ok: false, error: "missing generated_post_id" };
+  }
+  if (!Array.isArray(input.ordered_slide_ids) || input.ordered_slide_ids.length === 0) {
+    return { ok: false, error: "ordered_slide_ids required" };
+  }
+
+  const supabase = createAdminClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from("generated_posts")
+    .select("id, created_by, additional_images, slide_metadata, hosting_agents_by_index")
+    .eq("id", input.generated_post_id)
+    .maybeSingle();
+  if (fetchError) return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+  if (!existing) return { ok: false, error: "row not found" };
+  if (existing.created_by !== profile.id) return { ok: false, error: "not owner" };
+
+  const oldImages = Array.isArray(existing.additional_images)
+    ? (existing.additional_images as Array<Record<string, unknown>>)
+    : [];
+  const oldMeta = Array.isArray(existing.slide_metadata)
+    ? (existing.slide_metadata as unknown[])
+    : [];
+  const oldHosts = Array.isArray(existing.hosting_agents_by_index)
+    ? (existing.hosting_agents_by_index as Array<Record<string, unknown>>)
+    : [];
+
+  // Map each slide id → its current index.
+  const idToOldIndex = new Map<string, number>();
+  oldImages.forEach((img, i) => {
+    const id = typeof img?.id === "string" ? img.id : null;
+    if (id) idToOldIndex.set(id, i);
+  });
+
+  // Validate: the requested order must be an exact permutation of existing
+  // ids — same length, every id known. Otherwise abort (don't scramble).
+  if (input.ordered_slide_ids.length !== oldImages.length) {
+    return { ok: false, error: "order length mismatch — refusing to reorder" };
+  }
+  for (const id of input.ordered_slide_ids) {
+    if (!idToOldIndex.has(id)) {
+      return { ok: false, error: "unknown slide id in order — refusing to reorder" };
+    }
+  }
+
+  // newIndex → oldIndex
+  const oldIndexForNew = input.ordered_slide_ids.map((id) => idToOldIndex.get(id) as number);
+
+  const newImages = oldIndexForNew.map((oi) => oldImages[oi]);
+  // slide_metadata is parallel to additional_images; only remap when lengths
+  // agree (legacy rows that never carried per-slide metadata are left as-is).
+  const newMeta =
+    oldMeta.length === oldImages.length ? oldIndexForNew.map((oi) => oldMeta[oi]) : oldMeta;
+
+  // hosting_agents_by_index entries carry the slide `index` they belong to —
+  // remap each from its old index to its new index.
+  const newIndexForOld = new Map<number, number>();
+  oldIndexForNew.forEach((oi, newIdx) => newIndexForOld.set(oi, newIdx));
+  const newHosts = oldHosts.map((h) => {
+    const oi = typeof h?.index === "number" ? (h.index as number) : null;
+    if (oi === null || !newIndexForOld.has(oi)) return h;
+    return { ...h, index: newIndexForOld.get(oi) };
+  });
+
+  const { error: updErr } = await supabase
+    .from("generated_posts")
+    .update({
+      additional_images: newImages as unknown as Json,
+      slide_metadata: newMeta as unknown as Json,
+      hosting_agents_by_index: newHosts as unknown as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+  if (updErr) return { ok: false, error: `update_failed: ${updErr.message}` };
+
+  // No revalidatePath — the client already holds the reordered arrays; a
+  // route revalidation would tear down the open Studio overlay.
+  return { ok: true, count: newImages.length };
+}
+
 /**
  * Extract the Storage object path from a Supabase public URL. Supabase
  * public URLs look like:
