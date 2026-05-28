@@ -1766,29 +1766,119 @@ function Step3Review({
   onDragOver,
   onDrop,
 }: Step3Props) {
-  // ---- Caption synth — recompute on every state change ------------------
-  // Synth is pure + fast, so direct recomputation is fine (no debounce
-  // needed). Memo guards against the per-platform tab flip re-running
-  // the whole pipeline.
-  const captionResult: MultiOHCaptionResult = useMemo(
-    () =>
-      synthesizeMultiOHCaption({
-        tone,
-        caption_override: captionOverride,
-        properties: selectedListings.map((l) => ({
-          address: l.address,
-          city: l.city,
-          mls_number: l.mls_number,
-          source_mls: l.source_mls,
-          unit_number: l.unit_number,
-          list_price: l.list_price,
-          property_type: l.property_type,
-          oh_start_at: l.oh_start_at ?? null,
-          oh_end_at: l.oh_end_at ?? null,
-        })),
-      }),
+  // ---- Caption synth — debounced AI preview with deterministic fallback -
+  // 2026-05-28 — switched from local deterministic synth to a debounced
+  // POST against /api/post-builder/multi-oh-caption-preview. The server
+  // calls Claude Haiku and returns the same MultiOHCaptionResult shape;
+  // the deterministic synth runs as the local fallback when the request
+  // fails or the user is offline.
+  //
+  // Why debounce: every keystroke in the address override / tone picker
+  // shouldn't burn a Haiku call. 300ms is long enough to coalesce a
+  // burst but short enough that the preview feels live.
+  //
+  // Why keep `captionResult` non-null with a starting deterministic
+  // value: we don't want the preview tabs to flash empty on first paint
+  // while the API call is in flight. Same reason we preserve the prior
+  // result during in-flight requests further down.
+  const captionInputForSynth = useMemo(
+    () => ({
+      tone,
+      caption_override: captionOverride,
+      properties: selectedListings.map((l) => ({
+        address: l.address,
+        city: l.city,
+        mls_number: l.mls_number,
+        source_mls: l.source_mls,
+        unit_number: l.unit_number,
+        list_price: l.list_price,
+        property_type: l.property_type,
+        oh_start_at: l.oh_start_at ?? null,
+        oh_end_at: l.oh_end_at ?? null,
+      })),
+    }),
     [tone, captionOverride, selectedListings],
   );
+
+  const [captionResult, setCaptionResult] = useState<MultiOHCaptionResult>(
+    () => synthesizeMultiOHCaption(captionInputForSynth),
+  );
+  const [captionLoading, setCaptionLoading] = useState(false);
+  const captionAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    // why: 300ms debounce — long enough to coalesce a burst of state
+    // updates (tone toggle + carousel reorder happening together),
+    // short enough that the preview feels live.
+    const handle = setTimeout(() => {
+      // Cancel any in-flight request before starting a new one. The
+      // server stays stateless so a stale request can't taint state,
+      // but we still drop it to avoid a late response overwriting a
+      // newer one.
+      if (captionAbortRef.current) {
+        captionAbortRef.current.abort();
+      }
+      const ctrl = new AbortController();
+      captionAbortRef.current = ctrl;
+      setCaptionLoading(true);
+
+      fetch("/api/post-builder/multi-oh-caption-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          properties: captionInputForSynth.properties,
+          tone: captionInputForSynth.tone,
+          captionOverride: captionInputForSynth.caption_override,
+          hostingAgentNames: [],
+        }),
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            throw new Error(`preview endpoint ${res.status}`);
+          }
+          const json = (await res.json()) as {
+            ok: boolean;
+            result?: MultiOHCaptionResult;
+            error?: string;
+          };
+          if (!json.ok || !json.result) {
+            throw new Error(json.error ?? "preview returned no result");
+          }
+          // why: don't overwrite if the controller was aborted between
+          // network completion and JSON parse. AbortController.signal
+          // doesn't always reject the .then chain cleanly.
+          if (!ctrl.signal.aborted) {
+            setCaptionResult(json.result);
+            setCaptionLoading(false);
+          }
+        })
+        .catch((err) => {
+          if (ctrl.signal.aborted) return;
+          // why: client-side fallback so the user ALWAYS sees a caption.
+          // The deterministic synth is pure + fast; running it on the
+          // client avoids leaving the preview empty when the API is
+          // unreachable (offline mode, or Claude key not configured).
+          console.warn(
+            "[multi-oh-wizard] caption preview failed; using deterministic fallback:",
+            err,
+          );
+          setCaptionResult(synthesizeMultiOHCaption(captionInputForSynth));
+          setCaptionLoading(false);
+        });
+    }, 300);
+
+    return () => {
+      clearTimeout(handle);
+    };
+  }, [captionInputForSynth]);
+
+  // Best-effort cancel on unmount.
+  useEffect(() => {
+    return () => {
+      captionAbortRef.current?.abort();
+    };
+  }, []);
 
   const overrideActive = captionOverride !== null && captionOverride.length > 0;
 
@@ -1875,6 +1965,21 @@ function Step3Review({
             );
           })}
         </div>
+
+        {/* why: surface in-flight state inline under the platform tabs.
+            We keep the previously-rendered captionResult visible while a
+            new request is in flight so the box doesn't blink to empty —
+            the status text is the only visual change. */}
+        {captionLoading ? (
+          <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 mb-2">
+            <Loader2
+              size={12}
+              className="animate-spin"
+              aria-hidden="true"
+            />
+            <span>Writing your caption…</span>
+          </div>
+        ) : null}
 
         <CaptionPreviewBox
           platform={captionPreviewPlatform}

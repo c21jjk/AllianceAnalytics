@@ -81,7 +81,10 @@ import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canv
 import {
   synthesizeMultiOHCaption,
   type CaptionTone,
+  type MultiOHCaptionInput,
+  type MultiOHCaptionResult,
 } from "@/lib/post-builder/multi-oh-caption-synth";
+import { synthesizeMultiOHCaptionAI } from "@/lib/post-builder/ai/multi-oh-caption-ai";
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
@@ -1343,7 +1346,12 @@ export async function POST(request: Request): Promise<Response> {
       // Phase 6 — shared synth module, supports tone bias + caption override.
       // Reads `tone` + `caption_override` off the parsed body (defaults
       // applied in parseBody so this call signature stays clean).
-      const synthesized = synthesizeMultiOHCaption({
+      //
+      // 2026-05-28 — Claude AI synth path with deterministic fallback.
+      // The AI synth produces richer prose by re-reading the property mix
+      // each call; the deterministic synth is the graceful-degradation
+      // backup when Claude is unreachable or returns malformed JSON.
+      const captionInput: MultiOHCaptionInput = {
         properties: input.properties.map((p) => ({
           address: p.address,
           city: p.city,
@@ -1358,7 +1366,20 @@ export async function POST(request: Request): Promise<Response> {
         })),
         tone: parsed.value.tone,
         caption_override: parsed.value.caption_override,
-      });
+      };
+      let synthesized: MultiOHCaptionResult;
+      try {
+        synthesized = await synthesizeMultiOHCaptionAI(captionInput);
+        console.log(
+          "[multi-oh-generate] caption source: claude-haiku-4-5",
+        );
+      } catch (err) {
+        console.error(
+          "[multi-oh-generate] AI caption failed, falling back to deterministic:",
+          err,
+        );
+        synthesized = synthesizeMultiOHCaption(captionInput);
+      }
 
       const { data: inserted, error: insertError } = await supabase
         .from("generated_posts")
