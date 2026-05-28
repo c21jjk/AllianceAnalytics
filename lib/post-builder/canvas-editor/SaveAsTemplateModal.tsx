@@ -31,15 +31,19 @@
 import { type JSX, useEffect, useRef, useState } from "react";
 
 import type { PostFormat, PostType, PostVariant } from "../types";
+import type { CanvasTemplateSchema } from "./types";
 import type { SaveCustomTemplateResult } from "@/app/(app)/post-builder/actions";
 
 /**
  * Snapshot the modal asks the parent for at submit-time. Captured lazily so
  * the modal doesn't hold a Fabric reference; the parent passes a callback
- * that runs `canvas.toJSON()` + `canvas.toDataURL(...)` on demand.
+ * that runs `reconstructSchemaFromCanvas(canvas, originalSchema)` +
+ * `canvas.toDataURL(...)` on demand. `schemaJson` is a CanvasTemplateSchema
+ * (the same shape factory templates use) so the saved row re-hydrates with
+ * fresh listing data on each render.
  */
 export interface CanvasStateSnapshot {
-  fabricJson: unknown;
+  schemaJson: CanvasTemplateSchema;
   previewImageDataUri: string;
 }
 
@@ -76,7 +80,7 @@ export interface SaveAsTemplateModalProps {
     postType: PostType;
     format: PostFormat;
     basedOnVariant: PostVariant;
-    fabricJson: unknown;
+    schemaJson: CanvasTemplateSchema;
     makeDefault: boolean;
     previewImageDataUri: string;
   }) => Promise<SaveCustomTemplateResult>;
@@ -153,7 +157,7 @@ export default function SaveAsTemplateModal(
         postType: props.postType,
         format: props.format,
         basedOnVariant: props.basedOnVariant,
-        fabricJson: snapshot.fabricJson,
+        schemaJson: snapshot.schemaJson,
         makeDefault,
         previewImageDataUri: snapshot.previewImageDataUri,
       });

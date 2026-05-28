@@ -41,6 +41,7 @@ import {
   archiveBrandAssetAction,
   listCustomTemplatesAction,
   revertAiDesignAction,
+  propagateCarouselLayoutAction,
   saveCustomTemplateAction,
   saveGeneratedPostAction,
   schedulePostAction,
@@ -82,6 +83,11 @@ import type {
 import type { CreatedPostResumeRow } from "@/lib/data/created-posts-db";
 import type { TemplateDefinition, TemplateMeta } from "@/lib/template-builder";
 import { normalizeOrBuildStarter } from "@/lib/post-builder/canvas-editor/schema-normalize";
+import {
+  applyOverridesToSchema,
+  parseCarouselLayoutOverrides,
+  type CarouselLayoutOverrides,
+} from "@/lib/post-builder/canvas-editor/layout-delta";
 
 interface VariantOption {
   template_id: string;
@@ -538,6 +544,21 @@ export default function PostBuilderClient({
   const [editingSlideIndex, setEditingSlideIndex] = useState<number | null>(
     null,
   );
+  // 2026-05-28 — Carousel-wide layout overrides (multi-OH "Apply layout to
+  // all slides"). Seeded on resume from
+  // `initialResume.carousel_layout_overrides`. Merged onto the canonical
+  // template inside `handleSlideEditClick` via `applyOverridesToSchema`
+  // BEFORE bound-field hydration runs, so every sibling slide picks up
+  // the propagated layout while still re-resolving its own listing data
+  // + hosting agent. Updated in-place by the propagation handler below
+  // so the next slide click reflects the new layout without a page
+  // reload.
+  const [carouselLayoutOverrides, setCarouselLayoutOverrides] =
+    useState<CarouselLayoutOverrides>(() =>
+      parseCarouselLayoutOverrides(
+        initialResume?.carousel_layout_overrides ?? null,
+      ),
+    );
   // === AI Magic Design (Phase C.1) ===
   // why: when non-null, the MagicDesignModal mounts at the bottom of the
   // tree and fires the action against this listing. Photos for the listing
@@ -728,6 +749,16 @@ export default function PostBuilderClient({
       // Narrow defensively; older rows (pre-2026-05-27 migration) have null
       // for this column and the per-slide edit handler falls through to the
       // listing agent in that case.
+      // 2026-05-28 — re-seed carousel-wide layout overrides on resume.
+      // The state was initialized once at mount via useState; this re-seed
+      // is critical when the user navigates between two different multi-OH
+      // posts in the same browser session (the second post's initialResume
+      // arrives without remounting the component).
+      setCarouselLayoutOverrides(
+        parseCarouselLayoutOverrides(
+          initialResume.carousel_layout_overrides ?? null,
+        ),
+      );
       if (Array.isArray(initialResume.hosting_agents_by_index)) {
         const parsedHosts: Array<{
           index: number;
@@ -1957,6 +1988,17 @@ export default function PostBuilderClient({
         return;
       }
 
+      // 2026-05-28 — Apply carousel-wide layout overrides BEFORE bound-field
+      // hydration. why: the overrides bag carries layout-only properties
+      // (left/top/width/height/font/...) that the user pushed from one slide
+      // to all siblings via "Apply layout to all slides". applyOverridesToSchema
+      // merges them onto a copy of the template; the bound-field resolvers
+      // downstream still see the per-slide listing/hosting-agent payload, so
+      // each slide's data stays distinct. Empty overrides → no-op pass-through.
+      if (Object.keys(carouselLayoutOverrides).length > 0) {
+        template = applyOverridesToSchema(template, carouselLayoutOverrides);
+      }
+
       // ---- Build the slide's listing payload ----
       // why: the per-property card was generated with the wizard's
       // hosting_agent_name override (when set), NOT the listing's
@@ -2031,7 +2073,18 @@ export default function PostBuilderClient({
       setEditingSlideIndex(slideIndex);
       setStudioOpen(true);
     },
-    [carouselSlides, slideMetadata, listingsByPostType, hostingAgentsByIndex],
+    [
+      carouselSlides,
+      slideMetadata,
+      listingsByPostType,
+      hostingAgentsByIndex,
+      // 2026-05-28 — depend on the overrides so subsequent slide opens after
+      // an "Apply layout to all slides" click pick up the fresh layout (the
+      // handler updates state synchronously, then the next click on a
+      // sibling thumbnail re-runs this callback with the new closure).
+      carouselLayoutOverrides,
+      dbTemplatesForSlides,
+    ],
   );
 
   // The current set of photo URLs to send to the render API. For single-
@@ -4448,10 +4501,16 @@ export default function PostBuilderClient({
                         id: res.id,
                         name: input.name,
                         isDefault: input.makeDefault,
-                        // keep the existing canvas state; the user can still
-                        // edit until they explicitly close the editor.
+                        // why: this field is the legacy Fabric snapshot the
+                        // editor uses when re-mounting from a saved custom
+                        // template. New saves persist schema_json instead of
+                        // fabric_json (see saveCustomTemplateAction), but the
+                        // in-session studioContext keeps whatever was there
+                        // before — null/undefined for a fresh save is fine
+                        // because the canvas is already mounted with the
+                        // user's edits.
                         fabricJson:
-                          prev.customTemplate?.fabricJson ?? input.fabricJson,
+                          prev.customTemplate?.fabricJson ?? null,
                       },
                     }
                   : prev,
@@ -4497,6 +4556,37 @@ export default function PostBuilderClient({
           onSlideEditClick:
             slideMetadata.length > 0 ? handleSlideEditClick : undefined,
         }}
+        // 2026-05-28 — Multi-OH "Apply layout to all slides".
+        // Wire the callback ONLY when (a) the user is editing a slide
+        // (editingSlideIndex non-null) and (b) there are ≥2 sibling slides
+        // to propagate to. Outside that scope the button has no meaning
+        // and we hide it entirely by not passing the prop.
+        onApplyLayoutToSiblings={
+          editingSlideIndex !== null &&
+          generatedPostId &&
+          carouselSlides.length >= 2
+            ? async (overrides) => {
+                const res = await propagateCarouselLayoutAction({
+                  generated_post_id: generatedPostId,
+                  overrides: overrides as Record<
+                    string,
+                    Record<string, unknown>
+                  >,
+                });
+                if (res.ok) {
+                  // why: stash the propagated overrides locally so the
+                  // very next slide click in the same Studio session picks
+                  // up the new layout WITHOUT a server round-trip. The DB
+                  // is already updated; this is the in-memory mirror.
+                  setCarouselLayoutOverrides(
+                    overrides as CarouselLayoutOverrides,
+                  );
+                  return { ok: true, slide_count: res.slide_count };
+                }
+                return { ok: false, error: res.error };
+              }
+            : undefined
+        }
       />
       {/* Part 2 (Phase D) — Make-a-Reel follow-up prompt. Renders only
           when a Studio save just completed for a real listing. The user

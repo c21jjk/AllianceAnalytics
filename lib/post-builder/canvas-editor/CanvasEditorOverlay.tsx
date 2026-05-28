@@ -97,6 +97,13 @@ export interface CanvasEditorOverlayProps {
    */
   initialFabricJson?: CanvasEditorProps["initialFabricJson"];
   /**
+   * 2026-05-28 — Multi-OH "Apply layout to all slides". Forwarded verbatim
+   * to CanvasEditor. When provided, the editor shows the propagation
+   * button in its bottom action bar. See CanvasEditorProps.onApplyLayoutToSiblings
+   * for the full contract.
+   */
+  onApplyLayoutToSiblings?: CanvasEditorProps["onApplyLayoutToSiblings"];
+  /**
    * Phase 2 AI Design provenance. When non-null, the overlay renders a
    * floating "✨ Designed by Claude" badge in the top-left + a small
    * "Revert to template default" link. Clicking Revert pops a
@@ -278,6 +285,7 @@ export default function CanvasEditorOverlay(
           onSaveAsTemplate={props.onSaveAsTemplate}
           customTemplate={props.customTemplate}
           initialFabricJson={props.initialFabricJson}
+          onApplyLayoutToSiblings={props.onApplyLayoutToSiblings}
         />
       </div>
 

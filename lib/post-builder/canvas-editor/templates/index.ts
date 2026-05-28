@@ -57,7 +57,23 @@ export const CANVAS_TEMPLATES: readonly CanvasTemplateSchema[] = [
 ];
 
 /**
- * Find the template that matches a (category, variant, format) tuple.
+ * Find the FACTORY template that matches a (category, variant, format)
+ * tuple. SYNCHRONOUS — in-memory lookup over `CANVAS_TEMPLATES`.
+ *
+ * 2026-05-28 — Custom Templates note
+ *   This function does NOT consult the `custom_templates` table. Server-
+ *   side render contexts (multi-OH route, single-listing render route)
+ *   should layer a DB lookup IN FRONT of this call:
+ *
+ *       const schema =
+ *         (await fetchDefaultCustomTemplate(category, format, variant)) ??
+ *         findCanvasTemplate(category, variant, format);
+ *
+ *   The async helper lives at `lib/data/custom-templates-db.ts`. Keeping
+ *   the factory path synchronous avoids rippling `await` through every
+ *   client-side caller (editor mount, useMemo selectors in
+ *   PostBuilderClient, Reel manifest, etc.) where DB access isn't even
+ *   possible.
  *
  * 2026-05-24 — variant axis soft-deprecated: every placeholder is "v1".
  * Callers pass any variant value; the lookup ignores it and returns the

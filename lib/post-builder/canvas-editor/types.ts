@@ -1089,7 +1089,7 @@ export interface CanvasEditorProps {
       | "v8"
       | "v9"
       | "v10";
-    fabricJson: unknown;
+    schemaJson: CanvasTemplateSchema;
     makeDefault: boolean;
     previewImageDataUri: string;
   }) => Promise<{ ok: true; id: string } | { ok: false; error: string }>;
@@ -1138,4 +1138,24 @@ export interface CanvasEditorProps {
    * introspection.
    */
   initialFabricJson?: unknown;
+  /**
+   * 2026-05-28 — Multi-OH "Apply layout to all slides".
+   *
+   * When provided, the editor renders an "Apply layout to all slides"
+   * button in the bottom action bar (alongside Save as Template). Clicking
+   * it walks the current canvas, builds a per-layer `CarouselLayoutOverrides`
+   * map via `extractLayoutDelta`, and hands the map to the parent.
+   *
+   * The parent is responsible for the persistence call + toast — this prop
+   * is a pure UI hook. Return `{ ok: true, slide_count }` so the editor
+   * can render a "Layout applied to N slides" success state.
+   *
+   * Omit on non-multi-OH consumers (single-listing post builder, template
+   * author mode, etc.) — the button only makes sense when the same canvas
+   * has sibling slides to propagate to.
+   */
+  onApplyLayoutToSiblings?: (overrides: Record<string, unknown>) => Promise<
+    | { ok: true; slide_count: number }
+    | { ok: false; error: string }
+  >;
 }

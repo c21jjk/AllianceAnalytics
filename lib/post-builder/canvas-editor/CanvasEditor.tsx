@@ -171,6 +171,11 @@ import { CANVAS_TEMPLATES, findCanvasTemplate } from "./templates";
 import SaveAsTemplateModal, {
   type CanvasStateSnapshot,
 } from "./SaveAsTemplateModal";
+import { reconstructSchemaFromCanvas } from "./reconstruct-schema";
+import {
+  extractLayoutDelta,
+  type CarouselLayoutOverrides,
+} from "./layout-delta";
 import { createClient as createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // why: fonts.css contains Google Fonts @import statements for the 9 fonts
@@ -231,6 +236,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     onSaveAsTemplate,
     customTemplate,
     initialFabricJson,
+    onApplyLayoutToSiblings,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -358,6 +364,20 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // toJSON/toDataURL at submit-time.
   const [saveAsTemplateModalOpen, setSaveAsTemplateModalOpen] =
     useState<boolean>(false);
+
+  // 2026-05-28 — "Apply layout to all slides" button transient state.
+  // `pending` drives the spinner + disabled styling on the bottom-bar button
+  // while the propagation server action is in flight. `lastResult` drives a
+  // 4s success/error pill shown to the right of the button after the action
+  // resolves — gives the user immediate feedback without a full toast layer.
+  // Both reset when the editor closes (component unmounts) so no stale
+  // state leaks between sessions.
+  const [applyLayoutPending, setApplyLayoutPending] = useState<boolean>(false);
+  const [applyLayoutResult, setApplyLayoutResult] = useState<
+    | { kind: "ok"; slideCount: number }
+    | { kind: "err"; message: string }
+    | null
+  >(null);
 
   // -------------------------------------------------------------------------
   // Phase 2 — undo/redo history hook
@@ -2771,11 +2791,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // Custom Template — canvas-state snapshot + submit handler
   // -------------------------------------------------------------------------
   //
-  // why: the SaveAsTemplateModal needs the latest `canvas.toJSON()` AND a
-  // half-scale PNG preview at submit-time. Both reads are synchronous; we
-  // expose them as a single callback the modal calls inside its own submit
-  // handler so the data is captured at the moment of save (not at modal
-  // open, where the user might still be editing).
+  // why: the SaveAsTemplateModal needs the latest CanvasTemplateSchema AND
+  // a half-scale PNG preview at submit-time. The schema is reconstructed
+  // from the live Fabric canvas via `reconstructSchemaFromCanvas`, which
+  // PRESERVES the original template's bound-field metadata + placeholder
+  // tokens while overlaying the user's current layout edits. This replaces
+  // the previous flow that shipped raw `canvas.toJSON()` — that path lost
+  // boundField data + baked literal listing values into the saved row.
   //
   // The multiplier of 0.5 keeps the preview data URI to ~150-250KB for a
   // 1080×1350 canvas — small enough to round-trip through a Server Action
@@ -2790,12 +2812,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // the discard inside handleExport.
     canvas.discardActiveObject();
     canvas.requestRenderAll();
-    let fabricJson: unknown;
+    let schemaJson: CanvasTemplateSchema;
     let previewImageDataUri = "";
     try {
-      fabricJson = canvas.toJSON();
+      // why: reconstruct against the CURRENT template (post template-switch
+      // / post-resize), not the initial mount template — the user may have
+      // swapped templates inside Studio before saving.
+      schemaJson = reconstructSchemaFromCanvas(canvas, currentTemplate);
     } catch (err) {
-      console.warn("[SaveAsTemplate] toJSON failed:", err);
+      console.warn("[SaveAsTemplate] reconstructSchemaFromCanvas failed:", err);
       return null;
     }
     try {
@@ -2811,8 +2836,93 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       console.warn("[SaveAsTemplate] toDataURL failed:", err);
       previewImageDataUri = "";
     }
-    return { fabricJson, previewImageDataUri };
-  }, []);
+    return { schemaJson, previewImageDataUri };
+  }, [currentTemplate]);
+
+  // -------------------------------------------------------------------------
+  // 2026-05-28 — "Apply layout to all slides" handler (multi-OH carousels)
+  // -------------------------------------------------------------------------
+  //
+  // why: when the user has edited a slide in a multi-OH carousel and wants
+  // those LAYOUT changes (logo position, date font size, address placement)
+  // pushed to every sibling slide WITHOUT re-doing the work manually, this
+  // handler builds the propagation payload and hands it off to the parent's
+  // `onApplyLayoutToSiblings` callback for persistence.
+  //
+  // Approach:
+  //   1. reconstructSchemaFromCanvas — read fresh values off the Fabric
+  //      canvas while PRESERVING boundField/text/src/hideIfEmpty (which we
+  //      explicitly DON'T propagate). This is the same helper the
+  //      Save-as-Template flow uses, so layout reads are consistent.
+  //   2. Walk the schema and call `extractLayoutDelta` on each layer to
+  //      produce the `CarouselLayoutOverrides` map keyed by layer id.
+  //   3. Forward to the parent. The parent owns the server call + the next-
+  //      slide-load merge.
+  //
+  // why we never touch text content / image src / boundField:
+  //   extractLayoutDelta is the source of truth for what propagates. It
+  //   excludes those fields by design — the per-slide data (each property's
+  //   address, photo, hosting agent) must stay distinct. See
+  //   layout-delta.ts for the LayoutDelta contract.
+  //
+  // Idempotency: if the user hasn't actually moved anything, the deltas
+  // match the canonical template values, so applying them is a no-op on
+  // every sibling slide.
+  const handleApplyLayoutToSiblings = useCallback(async (): Promise<void> => {
+    if (!onApplyLayoutToSiblings) return;
+    if (applyLayoutPending) return;
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    setApplyLayoutPending(true);
+    setApplyLayoutResult(null);
+    try {
+      // why: discard active selection so we don't snapshot the selection-
+      // corner artwork into the reconstructed layer entries.
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+      const schemaJson = reconstructSchemaFromCanvas(canvas, currentTemplate);
+      const overrides: CarouselLayoutOverrides = {};
+      for (const layer of schemaJson.layers) {
+        overrides[layer.id] = extractLayoutDelta(layer);
+        // why: recurse into group children so a layout edit inside a group
+        // (rare today, allowed by schema) still propagates.
+        if (layer.kind === "group") {
+          for (const child of layer.children) {
+            overrides[child.id] = extractLayoutDelta(child);
+          }
+        }
+      }
+      const res = await onApplyLayoutToSiblings(
+        overrides as unknown as Record<string, unknown>,
+      );
+      if (res.ok) {
+        setApplyLayoutResult({ kind: "ok", slideCount: res.slide_count });
+      } else {
+        setApplyLayoutResult({ kind: "err", message: res.error });
+      }
+    } catch (err) {
+      setApplyLayoutResult({
+        kind: "err",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setApplyLayoutPending(false);
+    }
+  }, [
+    onApplyLayoutToSiblings,
+    applyLayoutPending,
+    currentTemplate,
+  ]);
+
+  // why: auto-clear the success/error pill after 4s so it doesn't linger.
+  // The clear runs ONLY when there's a result to clear — the cleanup
+  // function clears the timer if the user fires another apply before the
+  // 4s elapses (so the new result's timer restarts cleanly).
+  useEffect(() => {
+    if (!applyLayoutResult) return;
+    const t = window.setTimeout(() => setApplyLayoutResult(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [applyLayoutResult]);
 
   // why: lookup the current variant's display name from the registry so the
   // modal's checkbox copy reads naturally ("Make this the new default for
@@ -4096,6 +4206,61 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               <LBookmarkPlus size={14} />
               {customTemplate ? "Update template" : "Save as Template"}
             </button>
+          ) : null}
+          {/* 2026-05-28 — "Apply layout to all slides" (Multi-OH carousels).
+              Surfaced only when the parent wired onApplyLayoutToSiblings,
+              which itself only fires for multi-OH posts with ≥2 sibling
+              slides. Idempotent on the server side, so a misfire is
+              harmless. The result pill renders to the right of the button
+              for 4s after the action resolves. */}
+          {onApplyLayoutToSiblings ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleApplyLayoutToSiblings();
+                }}
+                disabled={
+                  effectiveSaving ||
+                  applyLayoutPending ||
+                  dimensionWarning !== null
+                }
+                aria-label="Apply this slide's layout to every other slide in the carousel"
+                title="Apply this slide's layout to every other slide in the carousel. Each slide keeps its own listing data + hosting agent."
+                className="focus-ring-dark inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {applyLayoutPending ? (
+                  <LLoader2 size={14} className="animate-spin" />
+                ) : (
+                  <LLayers size={14} />
+                )}
+                Apply layout to all slides
+              </button>
+              {applyLayoutResult ? (
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className={[
+                    "ml-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-medium",
+                    applyLayoutResult.kind === "ok"
+                      ? "bg-emerald-500/15 text-emerald-300"
+                      : "bg-red-500/15 text-red-300",
+                  ].join(" ")}
+                >
+                  {applyLayoutResult.kind === "ok" ? (
+                    <>
+                      <LCheck size={12} />
+                      Applied to {applyLayoutResult.slideCount} slides
+                    </>
+                  ) : (
+                    <>
+                      <LAlertTriangle size={12} />
+                      {applyLayoutResult.message}
+                    </>
+                  )}
+                </span>
+              ) : null}
+            </>
           ) : null}
         </div>
         <div className="flex items-center gap-1.5">

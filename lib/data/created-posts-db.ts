@@ -233,6 +233,22 @@ export interface CreatedPostResumeRow {
    * MUST NOT introspect.
    */
   fabric_json: unknown | null;
+  /**
+   * Carousel-wide layout overrides set by Studio's "Apply layout to all
+   * slides" button. Shape: `{ layerId: { left?, top?, width?, ... } }` —
+   * see lib/post-builder/canvas-editor/layout-delta.ts for the canonical
+   * LayoutDelta type.
+   *
+   * When non-null, the per-slide Studio open path (PostBuilderClient.
+   * handleSlideEditClick) merges these onto the canonical template via
+   * `applyOverridesToSchema` BEFORE bound-field hydration, so every
+   * sibling slide picks up the same layout while still re-resolving its
+   * own listing data + hosting agent.
+   *
+   * Null on rows that pre-date the column (added 2026-05-28) and on rows
+   * where the user never clicked "Apply layout to all slides".
+   */
+  carousel_layout_overrides: unknown | null;
 }
 
 export async function fetchCreatedPostResume(
@@ -253,7 +269,7 @@ export async function fetchCreatedPostResume(
       // 2026-05-24 — fabric_json added so the editor can rehydrate from
       // the user's actual canvas state on reopen (via initialFabricJson).
       // See CreatedPostResumeRow.fabric_json for the contract.
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, fabric_json, additional_images, slide_metadata, hosting_agents_by_index, caption, hashtags, captions_by_platform, test_mode, created_by, ai_design_mood, ai_design_critique_passed, ai_design_token_input, ai_design_token_output, ai_design_duration_ms, original_template_id",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, fabric_json, additional_images, slide_metadata, hosting_agents_by_index, caption, hashtags, captions_by_platform, test_mode, created_by, ai_design_mood, ai_design_critique_passed, ai_design_token_input, ai_design_token_output, ai_design_duration_ms, original_template_id, carousel_layout_overrides",
     )
     .eq("id", id)
     .maybeSingle();
@@ -292,6 +308,7 @@ export async function fetchCreatedPostResume(
     ai_design_duration_ms: data.ai_design_duration_ms ?? null,
     original_template_id: data.original_template_id ?? null,
     fabric_json: data.fabric_json ?? null,
+    carousel_layout_overrides: data.carousel_layout_overrides ?? null,
   };
 }
 

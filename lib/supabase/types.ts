@@ -281,6 +281,7 @@ export type Database = {
           name: string
           post_type: string
           preview_image_url: string | null
+          schema_json: Json | null
           updated_at: string
         }
         Insert: {
@@ -295,6 +296,7 @@ export type Database = {
           name: string
           post_type: string
           preview_image_url?: string | null
+          schema_json?: Json | null
           updated_at?: string
         }
         Update: {
@@ -309,6 +311,7 @@ export type Database = {
           name?: string
           post_type?: string
           preview_image_url?: string | null
+          schema_json?: Json | null
           updated_at?: string
         }
         Relationships: [
@@ -402,6 +405,7 @@ export type Database = {
           caption_override: string | null
           caption_tone: string | null
           captions_by_platform: Json
+          carousel_layout_overrides: Json | null
           composition_json: Json | null
           confirmed_platforms: string[] | null
           created_at: string
@@ -459,6 +463,7 @@ export type Database = {
           caption_override?: string | null
           caption_tone?: string | null
           captions_by_platform?: Json
+          carousel_layout_overrides?: Json | null
           composition_json?: Json | null
           confirmed_platforms?: string[] | null
           created_at?: string
@@ -516,6 +521,7 @@ export type Database = {
           caption_override?: string | null
           caption_tone?: string | null
           captions_by_platform?: Json
+          carousel_layout_overrides?: Json | null
           composition_json?: Json | null
           confirmed_platforms?: string[] | null
           created_at?: string

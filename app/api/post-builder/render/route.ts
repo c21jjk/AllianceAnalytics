@@ -28,6 +28,7 @@ import { renderTemplate } from "@/lib/post-builder/render";
 import { getTemplate } from "@/lib/post-builder/templates/registry";
 import { renderDbTemplate } from "@/lib/template-builder";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import { fetchDefaultCustomTemplate } from "@/lib/data/custom-templates-db";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
   getAgentAttribution,
@@ -225,7 +226,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const schema = findCanvasTemplate(body.post_type, "v1", body.format);
+  // why: prefer a user-authored DEFAULT custom template for this
+  // (post_type, format, variant) tuple. When the team has saved a tuned
+  // layout and marked it default, single-listing renders pick up THAT
+  // schema with fresh listing data on each render. Falls back to the
+  // factory placeholder when no default custom template exists or its
+  // schema_json is null. (Variant pinned to "v1" — see the soft-
+  // deprecation note above.)
+  const schema =
+    (await fetchDefaultCustomTemplate(body.post_type, body.format, "v1")) ??
+    findCanvasTemplate(body.post_type, "v1", body.format);
   if (!schema) {
     return NextResponse.json(
       {

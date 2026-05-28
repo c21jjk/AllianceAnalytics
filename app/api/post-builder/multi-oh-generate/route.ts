@@ -77,6 +77,7 @@ import {
 import { renderDbTemplate } from "@/lib/template-builder";
 import { formatShortName } from "@/lib/post-builder/templates/registry";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import { fetchDefaultCustomTemplate } from "@/lib/data/custom-templates-db";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
   synthesizeMultiOHCaption,
@@ -860,11 +861,15 @@ async function renderPerPropertyCards(
         // lookup. We still persist `input.per_property_variant` on the
         // generated_posts row so legacy DB schema reads (and the Step 2
         // grid before it was retired) don't break.
-        const schema = findCanvasTemplate(
-          "open_house",
-          "v1",
-          input.format,
-        );
+        // why: prefer a user-authored DEFAULT custom template for this
+        // (post_type, format, variant) tuple. When Larissa has saved a
+        // tuned OH layout and marked it default, every multi-OH slide
+        // picks up HER layout with fresh per-property listing data on
+        // each render. Falls back to the factory placeholder when no
+        // default custom template exists or its schema_json is null.
+        const schema =
+          (await fetchDefaultCustomTemplate("open_house", input.format, "v1")) ??
+          findCanvasTemplate("open_house", "v1", input.format);
         if (!schema) {
           const err = `no canvas template for open_house/${input.format}`;
           callbacks.onSlideFailed(idx, err, prop.address ?? null);

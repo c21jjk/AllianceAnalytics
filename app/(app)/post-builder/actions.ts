@@ -797,6 +797,125 @@ export async function updateGeneratedPostSlideAction(
   return { ok: true, prior_storage_cleaned: priorStorageCleaned };
 }
 
+// ---------------------------------------------------------------------------
+// Carousel layout propagation — "Apply layout to all slides"
+// ---------------------------------------------------------------------------
+
+/**
+ * Input for `propagateCarouselLayoutAction`. Called when the user clicks
+ * "Apply layout to all slides" inside Studio while editing a multi-OH
+ * carousel slide.
+ *
+ * Behavior contract:
+ *   1. Auth-gate + ownership check on the row.
+ *   2. Write `overrides` to `generated_posts.carousel_layout_overrides`.
+ *      The next time ANY slide is opened in Studio, the slide loader
+ *      (PostBuilderClient.handleSlideEditClick) merges these onto the
+ *      canonical template via `applyOverridesToSchema` BEFORE bound-field
+ *      hydration, so per-slide listing data still re-resolves correctly.
+ *   3. Return success.
+ *
+ * Why a JSONB column (not per-slide schema rewrites):
+ *   handleSlideEditClick deliberately prefers the canonical template over
+ *   any saved `slide_metadata[N].layer_tree` — see the 2026-05-28 priority-
+ *   order comment in PostBuilderClient.tsx. Writing the propagated layout
+ *   back into each slide's `layer_tree` would be silently ignored. The
+ *   overrides column is consumed by the canonical-template path, which is
+ *   the only path that runs on slide reopen.
+ */
+export interface PropagateCarouselLayoutInput {
+  generated_post_id: string;
+  /**
+   * Map of layerId → LayoutDelta. Built client-side from the currently-
+   * active slide's canvas by walking its layers + extracting LayoutDelta
+   * for each. Stored verbatim — the next slide-open re-derives from it.
+   */
+  overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface PropagateCarouselLayoutOk {
+  ok: true;
+  /** Number of sibling slides that will pick up the layout on next open. */
+  slide_count: number;
+}
+
+export interface PropagateCarouselLayoutErr {
+  ok: false;
+  error: string;
+}
+
+/**
+ * Persist a layout-overrides bag onto the generated_posts row so every
+ * sibling slide picks up the same layout on next open. Per-slide listing
+ * data is untouched — the overrides only carry LAYOUT properties
+ * (left/top/width/height/font/etc.) per the LayoutDelta contract.
+ *
+ * Idempotent: re-calling with the same overrides produces the same row.
+ */
+export async function propagateCarouselLayoutAction(
+  input: PropagateCarouselLayoutInput,
+): Promise<PropagateCarouselLayoutOk | PropagateCarouselLayoutErr> {
+  const profile = await requireUser();
+
+  if (!input.generated_post_id) {
+    return { ok: false, error: "missing generated_post_id" };
+  }
+  if (!input.overrides || typeof input.overrides !== "object") {
+    return { ok: false, error: "overrides must be an object" };
+  }
+
+  const supabase = createAdminClient();
+
+  // why: fetch the row first so we can (a) ownership-check, (b) report
+  // the sibling slide count back to the UI for the success toast, and
+  // (c) bail out cleanly when the row isn't a multi-OH carousel (no
+  // sibling slides → propagation is a no-op + a confused user).
+  const { data: existing, error: fetchError } = await supabase
+    .from("generated_posts")
+    .select("id, created_by, additional_images")
+    .eq("id", input.generated_post_id)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+  }
+  if (!existing) {
+    return { ok: false, error: "row not found" };
+  }
+  if (existing.created_by !== profile.id) {
+    return { ok: false, error: "not owner" };
+  }
+
+  const additionalImages = existing.additional_images;
+  const slideCount = Array.isArray(additionalImages)
+    ? additionalImages.length
+    : 0;
+  if (slideCount < 2) {
+    // why: propagation across one slide is meaningless. Fail soft so a
+    // misfired click doesn't write garbage into the column.
+    return {
+      ok: false,
+      error: "this post has fewer than 2 slides — nothing to propagate to",
+    };
+  }
+
+  const { error: updError } = await supabase
+    .from("generated_posts")
+    .update({
+      carousel_layout_overrides: input.overrides as unknown as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+
+  if (updError) {
+    return { ok: false, error: `update_failed: ${updError.message}` };
+  }
+
+  revalidatePath("/post-builder");
+  return { ok: true, slide_count: slideCount };
+}
+
 /**
  * Extract the Storage object path from a Supabase public URL. Supabase
  * public URLs look like:
@@ -2823,13 +2942,18 @@ export interface SaveCustomTemplateInput {
   format: PostFormat;
   basedOnVariant: PostVariant;
   /**
-   * Serialized Fabric canvas state. Pass `canvas.toJSON()` from the editor —
-   * we don't round-trip through the typed CanvasTemplateSchema because that
-   * lossy direction isn't built yet. The editor reloads via
-   * `canvas.loadFromJSON()`, which preserves all custom data fields
-   * (boundField on text layers etc.) needed for re-hydration.
+   * Reconstructed `CanvasTemplateSchema` — the SAME shape factory templates
+   * use. Built by the editor via `reconstructSchemaFromCanvas(canvas,
+   * originalSchema)` at submit-time. Critically, this PRESERVES the bound-
+   * field metadata + placeholder tokens on every layer, so the saved
+   * template re-hydrates with the LATEST listing data on each future
+   * render rather than baking in literal photos/addresses.
+   *
+   * Persisted to the `schema_json` jsonb column. The older `fabric_json`
+   * column is kept for back-compat with pre-2026-05-28 rows but is NOT
+   * written by this action; reads should prefer schema_json when present.
    */
-  fabricJson: unknown;
+  schemaJson: unknown;
   /**
    * When true, mark this template as the default for its
    * (postType, format, basedOnVariant) slot. The partial unique index
@@ -2901,13 +3025,38 @@ export async function saveCustomTemplateAction(
     };
   }
   if (
-    !input.fabricJson ||
-    typeof input.fabricJson !== "object" ||
-    Array.isArray(input.fabricJson)
+    !input.schemaJson ||
+    typeof input.schemaJson !== "object" ||
+    Array.isArray(input.schemaJson)
   ) {
     return {
       ok: false,
-      error: "fabricJson is required and must be an object (canvas.toJSON())",
+      error:
+        "schemaJson is required and must be an object (reconstructSchemaFromCanvas output)",
+    };
+  }
+  // why: enforce the CanvasTemplateSchema shape's three load-bearing
+  // structural fields so a broken save can't poison the lookup later.
+  // We don't import the full type here (avoiding a client→server type
+  // bridge) — structural duck-typing is enough at the API boundary.
+  const schema = input.schemaJson as Record<string, unknown>;
+  if (!Array.isArray(schema.layers)) {
+    return {
+      ok: false,
+      error: "schemaJson.layers must be an array (CanvasTemplateSchema)",
+    };
+  }
+  if (typeof schema.width !== "number" || typeof schema.height !== "number") {
+    return {
+      ok: false,
+      error:
+        "schemaJson.width and schemaJson.height are required numbers (CanvasTemplateSchema)",
+    };
+  }
+  if (typeof schema.format !== "string") {
+    return {
+      ok: false,
+      error: "schemaJson.format must be a string (CanvasTemplateSchema)",
     };
   }
 
@@ -3011,6 +3160,14 @@ export async function saveCustomTemplateAction(
   // ---- INSERT or UPDATE ----
   if (input.id === null) {
     // INSERT — previewImageUrl guaranteed non-null by the validation above.
+    // why: write schema_json (the new schema-preserving path). We also
+    // write a copy into fabric_json to keep the legacy `customTemplate.
+    // fabricJson` reopen path working — Fabric's loadFromJSON gracefully
+    // handles a CanvasTemplateSchema-shaped object that lacks Fabric's
+    // expected keys by simply rendering nothing, but reading
+    // schema_json is the canonical path. The duplicate write is cheap
+    // (one extra jsonb column) and avoids breaking existing reopen code
+    // until that path is rewritten to consume schema_json directly.
     const { data, error: insertErr } = await supabase
       .from("custom_templates")
       .insert({
@@ -3018,7 +3175,8 @@ export async function saveCustomTemplateAction(
         post_type: input.postType,
         format: input.format,
         based_on_variant: input.basedOnVariant,
-        fabric_json: input.fabricJson as Json,
+        schema_json: input.schemaJson as Json,
+        fabric_json: input.schemaJson as Json,
         preview_image_url: previewImageUrl,
         is_default: input.makeDefault,
         is_archived: false,
@@ -3046,6 +3204,7 @@ export async function saveCustomTemplateAction(
       post_type: string;
       format: string;
       based_on_variant: string;
+      schema_json: Json;
       fabric_json: Json;
       is_default: boolean;
       updated_at: string;
@@ -3055,7 +3214,11 @@ export async function saveCustomTemplateAction(
       post_type: input.postType,
       format: input.format,
       based_on_variant: input.basedOnVariant,
-      fabric_json: input.fabricJson as Json,
+      // why: write BOTH columns on UPDATE — schema_json is canonical, but
+      // fabric_json is kept in sync so existing reopen paths that still
+      // read fabric_json don't drift away from the saved design.
+      schema_json: input.schemaJson as Json,
+      fabric_json: input.schemaJson as Json,
       is_default: input.makeDefault,
       updated_at: new Date().toISOString(),
     };
