@@ -96,7 +96,9 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
     heroFormat,
     onSlidesChanged,
     onAddSlideClick,
-    onPreviewClick,
+    // 2026-05-28 — onPreviewClick prop retained on the contract for parents
+    // that still wire it, but the carousel-strip header Preview button was
+    // removed in this pass. Intentionally not destructured here.
     maxSlides = DEFAULT_MAX_SLIDES,
     onSlideEditClick,
   } = props;
@@ -222,9 +224,12 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
   // -------------------------------------------------------------------------
   // Render — header row
   // -------------------------------------------------------------------------
-
-  const previewDisabled = slideCount === 0;
-  const addDisabled = atMax;
+  //
+  // 2026-05-28 — "Preview" + "Add slide" header buttons were removed. The
+  // trailing "+ Add" tile (inside the thumbnails row) remains the sole entry
+  // point to the slide picker. Preview is still reachable via the per-slide
+  // pencil affordance / parent-driven flows. `onPreviewClick` is kept in
+  // props for API stability — parents may still wire it for future re-entry.
 
   return (
     <section
@@ -243,48 +248,6 @@ export default function CarouselStrip(props: CarouselStripProps): JSX.Element {
             nearMax={nearMax}
             atMax={atMax}
           />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={previewDisabled ? undefined : onPreviewClick}
-            disabled={previewDisabled}
-            className={[
-              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150",
-              previewDisabled
-                ? "cursor-not-allowed border-[var(--studio-border)] bg-transparent text-[var(--studio-text-faint)]"
-                : "border-[var(--studio-border)] bg-transparent text-white hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300",
-            ].join(" ")}
-            title={
-              previewDisabled
-                ? "Add at least one slide to preview."
-                : "Preview the full carousel as your audience will see it"
-            }
-            aria-label="Preview carousel"
-          >
-            <PreviewIcon />
-            Preview
-          </button>
-          <button
-            type="button"
-            onClick={addDisabled ? undefined : onAddSlideClick}
-            disabled={addDisabled}
-            className={[
-              "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150",
-              addDisabled
-                ? "cursor-not-allowed bg-[var(--studio-hover)] text-[var(--studio-text-faint)]"
-                : "bg-gold-500 text-white hover:bg-gold-600 active:bg-gold-700",
-            ].join(" ")}
-            title={
-              addDisabled
-                ? "Carousel is full — remove a slide to add another."
-                : "Add a supporting photo to the carousel"
-            }
-            aria-label="Add slide"
-          >
-            <PlusIcon />
-            Add slide
-          </button>
         </div>
       </header>
 
@@ -612,21 +575,8 @@ function EmptyState(props: {
 // Icons — kept inline so the strip is one file (mirrors ResizeMenu convention)
 // ===========================================================================
 
-function PreviewIcon(): JSX.Element {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      {/* why: filled play triangle reads as "preview / play" at small sizes
-          better than an outlined glyph. */}
-      <path d="M5 3.5v9l8-4.5-8-4.5z" />
-    </svg>
-  );
-}
+// 2026-05-28 — PreviewIcon removed alongside the carousel-strip header
+// Preview button. Re-add if/when a Preview affordance returns.
 
 function PlusIcon(): JSX.Element {
   return (

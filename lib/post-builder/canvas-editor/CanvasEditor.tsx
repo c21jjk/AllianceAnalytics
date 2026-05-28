@@ -41,6 +41,7 @@ import {
 } from "fabric";
 import {
   AlertTriangle as LAlertTriangle,
+  ArrowRight as LArrowRight,
   BookmarkPlus as LBookmarkPlus,
   Check as LCheck,
   ChevronsLeft as LChevronsLeft,
@@ -3401,84 +3402,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           <span aria-hidden="true" className="h-5 w-px bg-[var(--studio-border)] mx-1" />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Phase 4 — Smart Resize. Sits left of Save so the reading order
-              is "I want to change the format → I want to save." Renders only
-              when the parent has wired the onResize callback; non-resize
-              consumers (future template-author mode) hide the affordance. */}
-          {onResize ? (
-            <ResizeMenu
-              currentFormat={template.format}
-              options={buildResizeMenuOptions(
-                template.category,
-                template.variant,
-                template.format,
-              )}
-              onPick={handleResizePicked}
-            />
-          ) : null}
-          {/* Part 2 (Phase D) — "+ Reel" companion entry point. Sits left
-              of Save Post so the user's eye reaches it on the way to the
-              save action — and so the cluster reads as "Save OR also
-              make a Reel from this." Hidden when the parent didn't wire
-              `onMakeReel` (e.g., template-author embeds). */}
-          {onMakeReel ? (
-            <button
-              type="button"
-              onClick={onMakeReel}
-              disabled={effectiveSaving}
-              aria-label="Make a Reel from this listing"
-              title="Open Reel Studio for this listing"
-              className="focus-ring-dark inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3 text-[13px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <LFilm size={14} />
-              + Reel
-            </button>
-          ) : null}
-          {/* "Save as Template" — secondary, sits left of the primary Save
-              Post action. Rendered only when the parent wired
-              `onSaveAsTemplate` (typically the main Post Builder page; the
-              template-author / standalone embeds omit it). The button uses
-              the same h-8 chrome as +Reel / Resize so the cluster reads
-              uniform. */}
-          {onSaveAsTemplate ? (
-            <button
-              type="button"
-              onClick={() => setSaveAsTemplateModalOpen(true)}
-              disabled={effectiveSaving || dimensionWarning !== null}
-              aria-label={
-                customTemplate
-                  ? `Update template ${customTemplate.name}`
-                  : "Save current canvas as a reusable template"
-              }
-              title={
-                customTemplate
-                  ? `Update “${customTemplate.name}”`
-                  : "Save as Template"
-              }
-              className="focus-ring-dark inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3 text-[13px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <LBookmarkPlus size={14} />
-              {customTemplate ? "Update template" : "Save as Template"}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={effectiveSaving || dimensionWarning !== null}
-            className="focus-ring-dark inline-flex h-8 items-center gap-1.5 rounded-md bg-gold-500 px-3 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {effectiveSaving ? (
-              <span className="flex items-center gap-1.5">
-                <LLoader2 size={16} className="animate-spin" />
-                Saving…
-              </span>
-            ) : (
-              <>
-                <LSave size={16} />
-                {saveLabel ?? "Save Post"}
-              </>
-            )}
-          </button>
+          {/* 2026-05-28 — Resize / +Reel / Save as Template / Save Post were
+              removed from the top toolbar in this pass. Save as Template +
+              the primary Save CTA now live in the bottom action bar (see
+              below). Close stays here as the standard top-right dismiss
+              affordance. */}
           {onClose ? (
             <button
               type="button"
@@ -4138,6 +4066,60 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           onSlideEditClick={carousel.onSlideEditClick}
         />
       ) : null}
+
+      {/* === 2026-05-28 — Bottom action bar ===
+          why: relocated the primary Save CTA + Save as Template out of the
+          top toolbar so the editor chrome reads top-down "title → canvas →
+          act on it." Matches the standard footer pattern (secondary left,
+          primary right). Always renders so template-author + Studio modes
+          both get the Save affordance; Save as Template only renders when
+          the parent wired `onSaveAsTemplate`. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[var(--studio-border)] bg-[var(--studio-bg)] px-4 py-3">
+        <div className="flex items-center gap-1.5">
+          {onSaveAsTemplate ? (
+            <button
+              type="button"
+              onClick={() => setSaveAsTemplateModalOpen(true)}
+              disabled={effectiveSaving || dimensionWarning !== null}
+              aria-label={
+                customTemplate
+                  ? `Update template ${customTemplate.name}`
+                  : "Save current canvas as a reusable template"
+              }
+              title={
+                customTemplate
+                  ? `Update “${customTemplate.name}”`
+                  : "Save as Template"
+              }
+              className="focus-ring-dark inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3.5 text-[13px] font-medium text-white transition-colors hover:bg-[var(--studio-hover)] hover:border-gold-400 hover:text-gold-300 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <LBookmarkPlus size={14} />
+              {customTemplate ? "Update template" : "Save as Template"}
+            </button>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={effectiveSaving || dimensionWarning !== null}
+            className="focus-ring-dark inline-flex h-9 items-center gap-1.5 rounded-md bg-gold-500 px-4 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-gold-600 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {effectiveSaving ? (
+              <span className="flex items-center gap-1.5">
+                <LLoader2 size={16} className="animate-spin" />
+                Saving…
+              </span>
+            ) : (
+              <>
+                <LSave size={16} />
+                {saveLabel ?? "Continue to Final Review"}
+                <LArrowRight size={14} />
+              </>
+            )}
+          </button>
+        </div>
+      </div>
 
       {/* === Phase 5 — Carousel slide picker (modal) === */}
       {carousel ? (

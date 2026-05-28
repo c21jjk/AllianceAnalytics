@@ -4254,7 +4254,7 @@ export default function PostBuilderClient({
         template={studioContext?.template ?? null}
         listing={studioContext?.listing ?? null}
         onSave={handleStudioSave}
-        saveLabel="Save Post"
+        saveLabel="Continue to Final Review"
         onTemplateSwitched={handleStudioTemplateSwitched}
         onResize={handleStudioResize}
         onMakeReel={handleMakeReelFromStudio}
