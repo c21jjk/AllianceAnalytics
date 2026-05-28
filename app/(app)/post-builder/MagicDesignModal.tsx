@@ -74,7 +74,9 @@ const POST_TYPE_LABEL: Record<PostType, string> = {
 };
 
 const VARIANT_LABEL: Record<PostVariant, string> = {
-  v1: "Hero Editorial",
+  // 2026-05-28 — v1 is now the canonical default (post variant-axis
+  // soft-deprecation). "Hero Editorial" was the old retired template name.
+  v1: "Default",
   v2: "Bold Stats",
   v3: "Side-by-Side",
   v4: "Diptych",

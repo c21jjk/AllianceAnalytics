@@ -2795,7 +2795,17 @@ const ALLOWED_CUSTOM_TEMPLATE_FORMATS = new Set<PostFormat>([
 // why: factory variants in the active set. Custom templates must be based
 // on one of these — `based_on_variant` keys the variant-grid merge logic
 // (custom replaces factory when is_default=true and based_on matches).
+//
+// 2026-05-28 — added "v1". The variant axis was soft-deprecated to a
+// single "v1" value (memory: project_alliance_studio_state_2026-05-25 +
+// the placeholder-factory rewrite). The current canonical templates
+// (open-house-square.ts, placeholder-factory.ts) all stamp variant: "v1".
+// Studio's "Save as Template" was rejecting v1 with the stale error
+// message, blocking John from saving Larissa-spec edits as custom
+// templates. Allowing v1 here unblocks that surface without rippling
+// changes through the rest of the variant machinery.
 const ALLOWED_CUSTOM_TEMPLATE_BASE_VARIANTS = new Set<PostVariant>([
+  "v1",
   "v2",
   "v3",
   "v6",
@@ -2887,7 +2897,7 @@ export async function saveCustomTemplateAction(
   if (!ALLOWED_CUSTOM_TEMPLATE_BASE_VARIANTS.has(input.basedOnVariant)) {
     return {
       ok: false,
-      error: `Invalid based_on_variant: ${input.basedOnVariant} (must be one of v2/v3/v6/v8/v9/v10)`,
+      error: `Invalid based_on_variant: ${input.basedOnVariant} (must be one of v1/v2/v3/v6/v8/v9/v10)`,
     };
   }
   if (
