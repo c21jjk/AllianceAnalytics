@@ -98,15 +98,39 @@ export async function renderSchemaHeadless(
   // chromium pipeline ALSO waits for fonts.ready before screenshotting,
   // so this is a belt-and-suspenders gate against text drawing in
   // fallback font.
+  //
+  // 2026-05-28 — Bug 2 fix: `document.fonts.ready` alone is not
+  // sufficient because Google Fonts loaded with `display=swap` resolve
+  // the ready promise the moment a fallback metric is available,
+  // BEFORE the real font file finishes downloading. We now ALSO
+  // explicitly `await document.fonts.load("16px <family>")` for every
+  // font family referenced by the schema's text layers, which forces
+  // the browser to actually pull each .woff2 down before we
+  // screenshot. (`display=block` in fonts.css makes browsers hide text
+  // until the font is in, which closes the same gap on the rendering
+  // side.) Timeout bumped from 5s → 8s to absorb cold-start latency on
+  // headless Chromium.
+  const fontFamilies = collectFontFamilies(schema);
   try {
     await Promise.race([
-      document.fonts.ready,
+      Promise.all([
+        document.fonts.ready,
+        ...fontFamilies.map((family) =>
+          document.fonts.load(`16px "${family}"`),
+        ),
+      ]),
       new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("font-timeout")), 5_000),
+        setTimeout(() => rej(new Error("font-timeout")), 8_000),
       ),
     ]);
   } catch {
-    warnings.push("font-timeout (drew in fallback font)");
+    console.warn(
+      "[headless-render] font load timed out — drawing in fallback for families:",
+      fontFamilies,
+    );
+    warnings.push(
+      `font-timeout (drew in fallback for: ${fontFamilies.join(", ")})`,
+    );
   }
 
   // Sort layers by z so we add bottom-up — Fabric stacks by add-order on
@@ -160,4 +184,29 @@ export async function renderSchemaHeadless(
   canvas.renderAll();
 
   return { canvas, warnings };
+}
+
+/**
+ * Walk a schema's text layers and return the unique set of fontFamily
+ * values referenced. Used to drive explicit per-font load awaits in the
+ * renderSchemaHeadless prelude — `document.fonts.ready` alone is not
+ * enough when fonts are loaded with `display=swap` (resolved before
+ * the real file arrives).
+ *
+ * Skips invisible layers — they don't render so we don't need their
+ * font to be ready by the screenshot tick.
+ */
+function collectFontFamilies(schema: CanvasTemplateSchema): string[] {
+  const seen = new Set<string>();
+  for (const layer of schema.layers) {
+    if (!isTextLayer(layer)) continue;
+    if (!layer.visible) continue;
+    const family = (layer.fontFamily ?? "").trim();
+    if (!family) continue;
+    // Strip surrounding quotes if the schema stored a CSS-style
+    // quoted family — `document.fonts.load` wants the bare name.
+    const unquoted = family.replace(/^['"]|['"]$/g, "");
+    seen.add(unquoted);
+  }
+  return Array.from(seen);
 }

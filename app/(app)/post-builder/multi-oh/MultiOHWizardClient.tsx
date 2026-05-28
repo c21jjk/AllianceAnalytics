@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   AlertTriangle,
@@ -118,6 +118,135 @@ interface Props {
  */
 type StepIndex = 1 | 2 | 3;
 
+// ---------------------------------------------------------------------------
+// sessionStorage persistence
+// ---------------------------------------------------------------------------
+//
+// 2026-05-28 — Larissa kept losing all her picks whenever she refreshed
+// the page or hit browser-back mid-wizard. We snapshot the wizard's
+// human-input state into sessionStorage on every change, restore it on
+// mount, and clear it on either Cancel or successful generate.
+//
+// We DO NOT persist transient state (generating / partialResult / slide
+// tiles) — those rebuild from the NDJSON stream if the user retries. We
+// also don't persist `captionEditorOpen` (a UI overlay, not a decision).
+//
+// Bump STORAGE_KEY suffix (v1 → v2) when the persisted shape changes so
+// stale snapshots from an older deploy don't crash the wizard.
+
+const STORAGE_KEY = "multi-oh-wizard-state-v1";
+const MAX_AGE_HOURS = 24;
+
+interface MultiOhWizardPersistedState {
+  step: StepIndex;
+  selectedMls: string[];
+  perPropertyHostingAgent: Record<string, string>;
+  format: PostFormat;
+  dbTemplateId: string | null;
+  tone: CaptionTone;
+  captionOverride: string | null;
+  captionPreviewPlatform: "instagram" | "facebook" | "tiktok";
+  /** ISO timestamp the snapshot was taken — used to age it out. */
+  savedAt: string;
+}
+
+/**
+ * Read + validate the persisted wizard state. Returns null on:
+ *   - sessionStorage unavailable (SSR, private mode, quota errors)
+ *   - missing / unparseable / wrong-shape JSON
+ *   - snapshot older than MAX_AGE_HOURS
+ *
+ * The shape check is intentionally loose — we only verify the fields the
+ * hydrator actually reads. Anything beyond the contract is silently ignored
+ * so we never throw at mount-time on a partially-corrupted blob.
+ */
+function readPersistedState(): MultiOhWizardPersistedState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<MultiOhWizardPersistedState>;
+    if (!parsed || typeof parsed !== "object") return null;
+
+    // Required shape checks — bail on anything we can't trust.
+    if (
+      typeof parsed.step !== "number" ||
+      (parsed.step !== 1 && parsed.step !== 2 && parsed.step !== 3)
+    ) {
+      return null;
+    }
+    if (!Array.isArray(parsed.selectedMls)) return null;
+    if (parsed.selectedMls.some((v) => typeof v !== "string")) return null;
+    if (
+      !parsed.perPropertyHostingAgent ||
+      typeof parsed.perPropertyHostingAgent !== "object"
+    ) {
+      return null;
+    }
+    if (parsed.format !== "square_1x1" && parsed.format !== "story_9x16") {
+      return null;
+    }
+    if (
+      parsed.dbTemplateId !== null &&
+      typeof parsed.dbTemplateId !== "string"
+    ) {
+      return null;
+    }
+    const validTones: ReadonlyArray<CaptionTone> = [
+      "auto",
+      "coastal",
+      "family",
+      "investor",
+      "cozy",
+      "editorial",
+    ];
+    if (!validTones.includes(parsed.tone as CaptionTone)) return null;
+    if (
+      parsed.captionOverride !== null &&
+      typeof parsed.captionOverride !== "string"
+    ) {
+      return null;
+    }
+    if (
+      parsed.captionPreviewPlatform !== "instagram" &&
+      parsed.captionPreviewPlatform !== "facebook" &&
+      parsed.captionPreviewPlatform !== "tiktok"
+    ) {
+      return null;
+    }
+    if (typeof parsed.savedAt !== "string") return null;
+
+    // Age check.
+    const savedAtMs = Date.parse(parsed.savedAt);
+    if (Number.isNaN(savedAtMs)) return null;
+    const ageHours = (Date.now() - savedAtMs) / (1000 * 60 * 60);
+    if (ageHours > MAX_AGE_HOURS) return null;
+
+    return parsed as MultiOhWizardPersistedState;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedState(state: MultiOhWizardPersistedState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Quota / private-mode failures are non-fatal — the wizard still
+    // works, the user just loses persistence.
+  }
+}
+
+function clearPersistedState(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore — same defensive posture as the writer.
+  }
+}
+
 // 2026-05-22 — FormatCardMeta / FORMAT_CARDS / FormatCard removed. The
 // format-picker step was retired earlier (we ship Portrait + Story for
 // every post automatically), so the card-grid UI and its supporting types
@@ -165,14 +294,51 @@ export default function MultiOHWizardClient({
   dbTemplatesByFormat,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // ---- persistence hydration --------------------------------------------
+  // why: Larissa loses everything on refresh / back-nav today. We read
+  // sessionStorage exactly ONCE during the initial render (lazy initial
+  // value form of useState) so every persisted piece below seeds from the
+  // same snapshot atomically — avoids a flash of default state.
+  //
+  // Stale mls_numbers are filtered out below in a useMemo so a refresh
+  // after a listing expired doesn't crash the wizard.
+  const persistedOnMount = useRef<MultiOhWizardPersistedState | null>(null);
+  if (persistedOnMount.current === null && typeof window !== "undefined") {
+    // Set on first client render only; useRef pattern keeps it from
+    // re-reading sessionStorage on every render.
+    persistedOnMount.current = readPersistedState();
+  }
+  const initial = persistedOnMount.current;
+
+  // why: URL ?step=N takes precedence over the persisted step. This way
+  // browser back/forward "just works" — back goes to ?step=1 even if the
+  // last snapshot was step 3. We only honour 2 or 3 because Step 1 doesn't
+  // get a URL param (keeps the entry URL clean).
+  const urlStepRaw = searchParams?.get("step");
+  const urlStep =
+    urlStepRaw === "2" ? 2 : urlStepRaw === "3" ? 3 : null;
 
   // ---- step machine ------------------------------------------------------
-  const [step, setStep] = useState<StepIndex>(1);
+  const [step, setStep] = useState<StepIndex>(
+    urlStep ?? initial?.step ?? 1,
+  );
 
   // ---- step 1 — selection -----------------------------------------------
   /** mls_numbers in selection order; the carousel slide order follows this
-   *  list 1:1. Drag-reorder on step 4 mutates this same array. */
-  const [selectedMls, setSelectedMls] = useState<readonly string[]>([]);
+   *  list 1:1. Drag-reorder on step 4 mutates this same array.
+   *
+   *  Defensive filter on hydrate: if a listing the user picked yesterday
+   *  no longer appears in `listings` (its OH window passed, MLS pulled it,
+   *  etc.) we drop it from the restored selection rather than crash when
+   *  the renderer tries to look it up.
+   */
+  const [selectedMls, setSelectedMls] = useState<readonly string[]>(() => {
+    if (!initial) return [];
+    const availableSet = new Set(listings.map((l) => l.mls_number));
+    return initial.selectedMls.filter((mls) => availableSet.has(mls));
+  });
   /**
    * Per-property hosting agent override, keyed by mls_number.
    *
@@ -193,7 +359,17 @@ export default function MultiOHWizardClient({
    */
   const [perPropertyHostingAgent, setPerPropertyHostingAgent] = useState<
     Record<string, string>
-  >({});
+  >(() => {
+    if (!initial) return {};
+    // Defensive: drop entries for mls_numbers that didn't survive the
+    // selection filter above so the map can't get out of sync.
+    const availableSet = new Set(listings.map((l) => l.mls_number));
+    const out: Record<string, string> = {};
+    for (const [mls, agent] of Object.entries(initial.perPropertyHostingAgent)) {
+      if (availableSet.has(mls)) out[mls] = agent;
+    }
+    return out;
+  });
 
   // ---- step 1 (cont.) — bulk hosting agent -----------------------------
   // why: the common case is "Larissa hosts everything" — set once at the
@@ -211,7 +387,9 @@ export default function MultiOHWizardClient({
   // the multi-oh-generate route (no user input needed).
 
   // ---- step 2 — format + variant ---------------------------------------
-  const [format, setFormat] = useState<PostFormat>("square_1x1");
+  const [format, setFormat] = useState<PostFormat>(
+    initial?.format ?? "square_1x1",
+  );
   const [perPropertyVariant, setPerPropertyVariant] = useState<PerPropertyVariant>("v2");
   /**
    * Phase 2E — when set, every per-property card in the carousel renders
@@ -220,7 +398,9 @@ export default function MultiOHWizardClient({
    * the variant choice in the UI (picking a DB card clears the legacy
    * variant from the active state; picking a legacy card clears this).
    */
-  const [dbTemplateId, setDbTemplateId] = useState<string | null>(null);
+  const [dbTemplateId, setDbTemplateId] = useState<string | null>(
+    initial?.dbTemplateId ?? null,
+  );
 
   // 2026-05-27 (Phase 6) — `focusedSlideKey` state was removed along with
   // the featured-slide preview. The new Step 3 has no "selected slide"
@@ -236,12 +416,14 @@ export default function MultiOHWizardClient({
   // tone picker is disabled (override always wins) and the preview shows
   // the override + a "Custom caption" pill. Setting it back to null re-
   // enables auto + the tone picker.
-  const [tone, setTone] = useState<CaptionTone>("auto");
-  const [captionOverride, setCaptionOverride] = useState<string | null>(null);
+  const [tone, setTone] = useState<CaptionTone>(initial?.tone ?? "auto");
+  const [captionOverride, setCaptionOverride] = useState<string | null>(
+    initial?.captionOverride ?? null,
+  );
   /** Which platform tab is active in the Step 3 caption preview. */
   const [captionPreviewPlatform, setCaptionPreviewPlatform] = useState<
     "instagram" | "facebook" | "tiktok"
-  >("instagram");
+  >(initial?.captionPreviewPlatform ?? "instagram");
   /** Whether the full-screen "Edit caption" overlay is mounted. */
   const [captionEditorOpen, setCaptionEditorOpen] = useState(false);
 
@@ -266,6 +448,60 @@ export default function MultiOHWizardClient({
   const [partialResult, setPartialResult] = useState<PartialResult | null>(
     null,
   );
+
+  // ---- persistence write effect -----------------------------------------
+  // why: snapshot every state change to sessionStorage so refresh / back
+  // nav restores the wizard. Effect runs after the render that produced
+  // the change, so what we serialize is what's on screen. We omit
+  // transient state (generating / partialResult / slide tiles) because
+  // mid-flight progress isn't recoverable across a refresh anyway —
+  // the user re-clicks Generate and we re-stream.
+  useEffect(() => {
+    writePersistedState({
+      step,
+      selectedMls: [...selectedMls],
+      perPropertyHostingAgent,
+      format,
+      dbTemplateId,
+      tone,
+      captionOverride,
+      captionPreviewPlatform,
+      savedAt: new Date().toISOString(),
+    });
+  }, [
+    step,
+    selectedMls,
+    perPropertyHostingAgent,
+    format,
+    dbTemplateId,
+    tone,
+    captionOverride,
+    captionPreviewPlatform,
+  ]);
+
+  // ---- URL ?step= sync --------------------------------------------------
+  // why: keeping ?step= in the URL means browser back/forward steps
+  // through the wizard exactly like the user expects — back from Step 3
+  // lands on Step 2, back from Step 2 lands on Step 1 (then leaves the
+  // wizard entirely). We use router.replace so we don't pollute the
+  // history stack with each click of an internal Back/Continue button —
+  // the natural forward progression replaces ?step=2 with ?step=3.
+  //
+  // Step 1 deliberately has NO query param (the bare URL is the entry
+  // point) so we strip ?step= when stepping back to 1.
+  useEffect(() => {
+    const current = searchParams?.get("step");
+    if (step === 1) {
+      if (current !== null) {
+        router.replace("/post-builder/multi-oh");
+      }
+    } else {
+      const want = String(step);
+      if (current !== want) {
+        router.replace(`/post-builder/multi-oh?step=${want}`);
+      }
+    }
+  }, [step, router, searchParams]);
 
   // ---- derived state ----------------------------------------------------
 
@@ -416,6 +652,14 @@ export default function MultiOHWizardClient({
   // minimum property count.
   const canContinueFromStep1 =
     selectedMls.length >= MULTI_OH_MIN_PROPERTIES;
+
+  // 2026-05-28 — Bug 5 auto-skip: when no DB templates are published for
+  // the active format, Step 2's only choice is "use the default Open
+  // House template" which is what would happen anyway. Skip it to save
+  // the user a pointless Continue click. When ANY DB templates are
+  // available we keep the step visible so they can pick one.
+  const dbTemplatesForFormat = dbTemplatesByFormat[format] ?? [];
+  const skipStep2 = dbTemplatesForFormat.length === 0;
 
   const goToStep = useCallback(
     (target: StepIndex): void => {
@@ -750,6 +994,10 @@ export default function MultiOHWizardClient({
         // why: clear partialResult before navigating so a stale card
         // doesn't flash if the user comes back via browser-back.
         setPartialResult(null);
+        // why: a successful generation should start the next multi-OH
+        // from a clean slate. Clear the persisted snapshot so the wizard
+        // doesn't restore yesterday's picks on the next visit.
+        clearPersistedState();
         router.push(completedEvent.redirectPath);
         return;
       }
@@ -833,6 +1081,10 @@ export default function MultiOHWizardClient({
   const continueWithPartial = useCallback((): void => {
     if (!partialResult) return;
     setPartialResult(null);
+    // why: same rationale as the zero-failure success path — the user is
+    // leaving the wizard with a generated post in hand. Clear persistence
+    // so a subsequent multi-OH starts fresh.
+    clearPersistedState();
     router.push(partialResult.redirectPath);
   }, [partialResult, router]);
 
@@ -840,7 +1092,11 @@ export default function MultiOHWizardClient({
 
   return (
     <div className="relative">
-      <Stepper currentStep={step} onJump={goToStep} />
+      <Stepper
+        currentStep={step}
+        onJump={goToStep}
+        skipStep2={skipStep2}
+      />
 
       {error ? (
         <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -897,10 +1153,42 @@ export default function MultiOHWizardClient({
         step={step}
         selectedCount={selectedMls.length}
         canContinueFromStep1={canContinueFromStep1}
-        onBack={() => goToStep((step - 1) as StepIndex)}
+        onBack={() => {
+          // 2026-05-28 — Bug 5: when Step 2 is being auto-skipped (no
+          // DB templates published), Back from Step 3 jumps straight
+          // to Step 1 instead of momentarily landing on the empty
+          // Step 2. Symmetric with onContinue's skip behaviour below.
+          //
+          // why setStep instead of router.back(): router.back() in a
+          // Next.js app router context replays the previous history
+          // entry, which for a wizard entry might be /post-builder —
+          // i.e., leaves the wizard entirely. Driving the step machine
+          // directly keeps the user in the wizard, and the URL-sync
+          // useEffect handles the ?step= rewrite + history entry.
+          if (step === 3 && skipStep2) {
+            setStep(1);
+            setError(null);
+            return;
+          }
+          goToStep((step - 1) as StepIndex);
+        }}
+        onCancel={() => {
+          // why: Cancel leaves the wizard entirely — wipe persistence
+          // so the next visit starts fresh. We trigger the navigation
+          // ourselves (used to be a <Link>) so the clear happens
+          // synchronously before the route transition.
+          clearPersistedState();
+          router.push("/post-builder");
+        }}
         onContinue={() => {
-          if (step === 1 && canContinueFromStep1) setStep(2);
-          else if (step === 2) setStep(3);
+          if (step === 1 && canContinueFromStep1) {
+            // 2026-05-28 — Bug 5: when no DB templates are published
+            // for the active format, Step 2's only outcome is "use
+            // the default". Skip straight to Step 3 so the user
+            // doesn't have to click Continue through an empty
+            // pick screen.
+            setStep(skipStep2 ? 3 : 2);
+          } else if (step === 2) setStep(3);
         }}
         onGenerate={generate}
         generating={generating}
@@ -928,6 +1216,14 @@ export default function MultiOHWizardClient({
 interface StepperProps {
   currentStep: StepIndex;
   onJump: (target: StepIndex) => void;
+  /**
+   * 2026-05-28 — Bug 5: when true, Step 2 ("Template") is dimmed in
+   * the stepper bar because the wizard auto-skips it whenever no DB
+   * templates are published for the active format. The label is still
+   * visible so the user understands the step exists; it's just
+   * disabled and not clickable.
+   */
+  skipStep2?: boolean;
 }
 
 const STEP_LABELS: readonly { id: StepIndex; label: string }[] = [
@@ -936,13 +1232,17 @@ const STEP_LABELS: readonly { id: StepIndex; label: string }[] = [
   { id: 3, label: "Review + generate" },
 ];
 
-function Stepper({ currentStep, onJump }: StepperProps) {
+function Stepper({ currentStep, onJump, skipStep2 }: StepperProps) {
   return (
     <ol className="mb-6 flex items-center gap-1.5 overflow-x-auto" aria-label="Wizard progress">
       {STEP_LABELS.map((s, idx) => {
         const isActive = s.id === currentStep;
         const isComplete = s.id < currentStep;
-        const isClickable = s.id <= currentStep;
+        // 2026-05-28 — Bug 5: dim + un-click Step 2 when it's being
+        // auto-skipped. The pill stays in the bar so users still see
+        // the three-step shape of the flow.
+        const isSkipped = s.id === 2 && skipStep2 === true;
+        const isClickable = s.id <= currentStep && !isSkipped;
         return (
           <li key={s.id} className="flex items-center gap-1.5 shrink-0">
             <button
@@ -950,23 +1250,28 @@ function Stepper({ currentStep, onJump }: StepperProps) {
               onClick={() => isClickable && onJump(s.id)}
               disabled={!isClickable}
               aria-current={isActive ? "step" : undefined}
+              title={isSkipped ? "Skipped — no admin templates published for this format" : undefined}
               className={[
                 "flex items-center gap-2 rounded-full pl-1.5 pr-3 py-1 text-xs font-semibold transition",
-                isActive
-                  ? "bg-gold-100 text-gold-900 ring-1 ring-gold-500/40"
-                  : isComplete
-                    ? "bg-gold-50 text-gold-800 hover:bg-gold-100 ring-1 ring-gold-200"
-                    : "bg-neutral-100 text-neutral-500 ring-1 ring-neutral-200 cursor-not-allowed",
+                isSkipped
+                  ? "bg-neutral-50 text-neutral-400 ring-1 ring-neutral-200 cursor-not-allowed opacity-60"
+                  : isActive
+                    ? "bg-gold-100 text-gold-900 ring-1 ring-gold-500/40"
+                    : isComplete
+                      ? "bg-gold-50 text-gold-800 hover:bg-gold-100 ring-1 ring-gold-200"
+                      : "bg-neutral-100 text-neutral-500 ring-1 ring-neutral-200 cursor-not-allowed",
               ].join(" ")}
             >
               <span
                 className={[
                   "inline-flex w-5 h-5 items-center justify-center rounded-full text-[11px] font-bold",
-                  isActive
-                    ? "bg-gold-500 text-white"
-                    : isComplete
-                      ? "bg-gold-400 text-white"
-                      : "bg-neutral-300 text-white",
+                  isSkipped
+                    ? "bg-neutral-300 text-white"
+                    : isActive
+                      ? "bg-gold-500 text-white"
+                      : isComplete
+                        ? "bg-gold-400 text-white"
+                        : "bg-neutral-300 text-white",
                 ].join(" ")}
               >
                 {s.id}
@@ -1316,7 +1621,12 @@ function Step2FormatVariant({
           Choose a template
         </h2>
         <p className="text-sm text-neutral-600 mb-4">
-          This is the design for each individual property slide. The event hero card uses its own dedicated multi-property layout.
+          {/* 2026-05-28 — Bug 5 copy refresh. Prior helper text
+              referenced the event hero card, but the hero is no
+              longer published to social (only per-property slides
+              are). New copy describes the actual choice the user is
+              making here. */}
+          Pick a published template, or stick with the default Open House design.
         </p>
         {/* Phase 2E (2026-05-22) — admin-authored DB templates for OH.
             Section hides when no DB templates exist for the active
@@ -1963,6 +2273,7 @@ interface StickyFooterProps {
   selectedCount: number;
   canContinueFromStep1: boolean;
   onBack: () => void;
+  onCancel: () => void;
   onContinue: () => void;
   onGenerate: () => void;
   generating: boolean;
@@ -1973,6 +2284,7 @@ function StickyFooter({
   selectedCount,
   canContinueFromStep1,
   onBack,
+  onCancel,
   onContinue,
   onGenerate,
   generating,
@@ -1995,13 +2307,14 @@ function StickyFooter({
             Back
           </button>
         ) : (
-          <Link
-            href="/post-builder"
+          <button
+            type="button"
+            onClick={onCancel}
             className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 transition"
           >
             <span aria-hidden="true">◂</span>
             Cancel
-          </Link>
+          </button>
         )}
 
         {step === 1 ? (

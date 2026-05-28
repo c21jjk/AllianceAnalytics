@@ -49,6 +49,15 @@ function getAllianceDashClient(): AllianceDashClient | null {
   const url = process.env.ALLIANCE_DASH_SUPABASE_URL;
   const anonKey = process.env.ALLIANCE_DASH_SUPABASE_ANON_KEY;
 
+  // 2026-05-28 — Bug 1 diagnostics: surface env var presence at first
+  // call so prod logs make it obvious whether ALLIANCE_DASH_* are wired
+  // into the Vercel project. Cached branch on subsequent calls stays
+  // silent to avoid log spam.
+  console.log("[alliance-dash] env vars:", {
+    hasUrl: !!url,
+    hasKey: !!anonKey,
+  });
+
   if (!url || !anonKey) {
     // why: log once at first call so the absence is visible in prod logs
     // without spamming. Subsequent calls in the same process land in the
@@ -120,10 +129,18 @@ function normalizeAgentName(raw: string): string | null {
 export async function fetchAgentPhone(
   agentName: string,
 ): Promise<string | null> {
+  console.log("[fetchAgentPhone] looking up:", agentName);
+
   const norm = normalizeAgentName(agentName);
-  if (!norm) return null;
+  if (!norm) {
+    console.log("[fetchAgentPhone] name didn't normalize, returning null:", agentName);
+    return null;
+  }
   const [first, last] = norm.split(" ");
-  if (!first) return null;
+  if (!first) {
+    console.log("[fetchAgentPhone] no first-name token, returning null:", agentName);
+    return null;
+  }
 
   // ---- Pass 0: mls_agents.phone_override (AllianceAnalytics-side) ----
   // 2026-05-27 — an explicit override surface for agents whose phones
@@ -131,9 +148,17 @@ export async function fetchAgentPhone(
   // exist elsewhere (Darwin, manual entry, etc.). Checked first so it
   // wins over MLS-sourced data when both exist. Mirrors the existing
   // `headshot_label_override` pattern on the same table.
+  //
+  // 2026-05-28 — Bug 1 diagnostics: emit pass-0 outcome explicitly so we
+  // can see when the override path fires vs. when it falls through to
+  // MLS-sourced lookup. Production logs were silent on this branch
+  // before, making it impossible to tell whether the override surface
+  // was even being consulted.
+  let hasAdminClient = false;
   try {
     const adminClient = createAdminClient();
-    const { data: overrideRow } = await adminClient
+    hasAdminClient = true;
+    const { data: overrideRow, error: overrideError } = await adminClient
       .from("mls_agents")
       .select("phone_override")
       .ilike("full_name", agentName.trim())
@@ -142,13 +167,29 @@ export async function fetchAgentPhone(
       .maybeSingle();
     const override = (overrideRow as { phone_override: string | null } | null)
       ?.phone_override?.trim();
-    if (override) return override;
-  } catch {
+    console.log("[fetchAgentPhone] override result:", {
+      agentName,
+      hasClient: hasAdminClient,
+      override: override ?? null,
+      error: overrideError?.message ?? null,
+    });
+    if (override) {
+      console.log("[fetchAgentPhone] returning override:", override);
+      return override;
+    }
+  } catch (err) {
+    console.error("[fetchAgentPhone] pass 0 failed:", err);
     // Fall through to MLS-sourced lookup on any failure.
   }
 
   const supabase = getAllianceDashClient();
-  if (!supabase) return null;
+  if (!supabase) {
+    console.log(
+      "[fetchAgentPhone] no Alliance Dash client (env vars missing), returning null for:",
+      agentName,
+    );
+    return null;
+  }
 
   // why: a tiny helper to extract a trimmed phone1 string from a row,
   // returning "" when the column is null/undefined/non-string. Used
@@ -180,15 +221,29 @@ export async function fetchAgentPhone(
         .limit(1)
         .maybeSingle(),
     ]);
+    console.log("[fetchAgentPhone] pass 1 result:", {
+      agentName,
+      cmcHasRow: !!cmcExact.data,
+      cmcError: cmcExact.error?.message ?? null,
+      sjsrHasRow: !!sjsrExact.data,
+      sjsrError: sjsrExact.error?.message ?? null,
+    });
     const cmcPhone = pickPhone(
       cmcExact.data as { phone1: string | null } | null,
     );
-    if (cmcPhone) return cmcPhone;
+    if (cmcPhone) {
+      console.log("[fetchAgentPhone] returning pass-1 CMC phone:", cmcPhone);
+      return cmcPhone;
+    }
     const sjsrPhone = pickPhone(
       sjsrExact.data as { phone1: string | null } | null,
     );
-    if (sjsrPhone) return sjsrPhone;
-  } catch {
+    if (sjsrPhone) {
+      console.log("[fetchAgentPhone] returning pass-1 SJSR phone:", sjsrPhone);
+      return sjsrPhone;
+    }
+  } catch (err) {
+    console.error("[fetchAgentPhone] pass 1 failed:", err);
     // Fall through to the last-name fallback path on any failure.
   }
 
@@ -215,6 +270,13 @@ export async function fetchAgentPhone(
     const cmcRows: AgentRow[] = (cmcRes.data as AgentRow[] | null) ?? [];
     const sjsrRows: AgentRow[] = (sjsrRes.data as AgentRow[] | null) ?? [];
     const combined: AgentRow[] = [...cmcRows, ...sjsrRows];
+    console.log("[fetchAgentPhone] pass 2/3 row counts:", {
+      agentName,
+      cmcRows: cmcRows.length,
+      cmcError: cmcRes.error?.message ?? null,
+      sjsrRows: sjsrRows.length,
+      sjsrError: sjsrRes.error?.message ?? null,
+    });
 
     // Pass 2 — normalize-compare each result's first+last against input.
     for (const row of combined) {
@@ -224,7 +286,10 @@ export async function fetchAgentPhone(
       if (!rowNorm) continue;
       if (rowNorm === norm) {
         const p = pickPhone(row);
-        if (p) return p;
+        if (p) {
+          console.log("[fetchAgentPhone] returning pass-2 phone:", p);
+          return p;
+        }
       }
     }
 
@@ -232,10 +297,15 @@ export async function fetchAgentPhone(
     // tables matched the last-name LIKE, accept it as best-effort.
     if (combined.length === 1) {
       const p = pickPhone(combined[0]);
-      if (p) return p;
+      if (p) {
+        console.log("[fetchAgentPhone] returning pass-3 phone:", p);
+        return p;
+      }
     }
+    console.log("[fetchAgentPhone] no match found, returning null for:", agentName);
     return null;
-  } catch {
+  } catch (err) {
+    console.error("[fetchAgentPhone] pass 2/3 failed:", err);
     return null;
   }
 }

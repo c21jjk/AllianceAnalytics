@@ -1894,24 +1894,26 @@ export default function PostBuilderClient({
       }
 
       // ---- Resolve the slide's template ----
-      // why: prior edits win. If the user has previously saved this slide
-      // in Studio, `meta.layer_tree` is the post-hydration schema —
-      // re-use it directly so their edits stick. Otherwise:
-      //   • Phase 2F (2026-05-22) — when the slide was rendered via an
-      //     admin-authored DB template (db_template_id set on the meta),
-      //     resolve the schema from the dbTemplatesForSlides sidecar map.
-      //     Falls through to legacy lookup if the template can't be found
-      //     in the sidecar (e.g., the row was archived between render +
-      //     edit) so the user still gets SOMETHING to edit rather than a
-      //     hard failure.
-      //   • Legacy — fall through to the factory template that originally
-      //     produced the slide (open_house + variant + format from
-      //     slide_metadata, NOT from the parent's currently-selected
-      //     variant).
+      // 2026-05-28 — Bug 3 fix: PRIORITY ORDER CHANGED. Previously this
+      // function preferred `meta.layer_tree` (the saved fabric_json
+      // snapshot) when present, which baked in any `hideIfEmpty` drops
+      // from the render time — e.g., if slide 1's hosting-agent photo
+      // wasn't available at first render, the photo layer was removed
+      // from the snapshot and never returned when re-opening Studio.
+      // Now we prefer the canonical template (DB or registry) FIRST so
+      // every Studio open re-resolves bound fields against the current
+      // hosting_agent payload and the photo layer reappears the moment
+      // a brand_assets row gets added. The saved layer_tree is consulted
+      // ONLY as a last-resort fallback when no canonical schema can be
+      // found (the template was removed from the registry).
+      //
+      // Trade-off: a user's prior Studio edits to a slide are dropped
+      // when they re-open. That's deliberate — the missing-photo bug
+      // was the worse failure mode. The proper fix is to record
+      // hideIfEmpty drops as soft (visible: false) rather than hard
+      // removals in the saved JSON; tracked separately.
       let template: CanvasTemplateSchema | null = null;
-      if (meta.layer_tree && typeof meta.layer_tree === "object") {
-        template = meta.layer_tree as CanvasTemplateSchema;
-      } else if (meta.db_template_id) {
+      if (meta.db_template_id) {
         const dbTpl = dbTemplatesForSlides[meta.db_template_id];
         if (dbTpl) {
           // Phase 2G — apply the same defensive normalization the admin
@@ -1938,6 +1940,15 @@ export default function PostBuilderClient({
         // a future producer creates non-open_house slides, widen this by
         // adding a `category` field to SlideMetadata and reading it here.
         template = findCanvasTemplate("open_house", meta.variant, meta.format);
+      }
+      if (!template && meta.layer_tree && typeof meta.layer_tree === "object") {
+        // Last-resort fallback: only consult the saved snapshot when no
+        // canonical template is available. Logged so we can spot
+        // template-registry drift.
+        console.warn(
+          "[edit-slide] no canonical template found; falling back to saved layer_tree",
+        );
+        template = meta.layer_tree as CanvasTemplateSchema;
       }
       if (!template) {
         setError(
@@ -1985,6 +1996,29 @@ export default function PostBuilderClient({
       const hostEntry = hostingAgentsByIndex.find(
         (h) => h.index === slideIndex,
       );
+      // 2026-05-28 — Bug 3 diagnostics: surface the state of the host
+      // lookup so we can tell from prod logs whether (a) the array is
+      // empty when slide-1 fires (load race) or (b) the array is
+      // populated but the entry at this index has a null name / photo
+      // (data issue). Walk vs the post-edit hideIfEmpty drop in the
+      // saved layer_tree is the other suspect path.
+      console.log("[multi-oh slide click]", {
+        slideIndex,
+        hostingAgentsByIndexLen: hostingAgentsByIndex.length,
+        hostEntry: hostEntry
+          ? {
+              index: hostEntry.index,
+              name: hostEntry.name,
+              hasPhone: !!hostEntry.phone,
+              hasPhoto: !!hostEntry.photo_url,
+            }
+          : null,
+        templateSource: meta.layer_tree
+          ? "saved layer_tree"
+          : meta.db_template_id
+            ? "db template"
+            : "canonical canvas template",
+      });
       if (hostEntry && hostEntry.name) {
         payload.hosting_agent = {
           name: hostEntry.name,

@@ -316,13 +316,13 @@ const COASTAL_OPENERS: ReadonlyArray<(c: CaptionCtx) => string> = [
   (c) =>
     `🌊 Shore tour weekend, sorted. Beach getaway, summer rental, or forever address — our open house lineup has options worth seeing in person.${c.geoPhrase ? ` ${c.geoPhrase}.` : ""} 🌞🏡`,
   (c) =>
-    `🌊 Pack the flip-flops and the wishlist. We're opening doors at homes you can actually picture summering in${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()},` : ","} every one of them worth the drive. 🌞🏡`,
+    `🌊 Pack the flip-flops and the wishlist. We're opening doors at homes you can actually picture summering in${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)},` : ","} every one of them worth the drive. 🌞🏡`,
   (c) =>
     `🌊 Open house weekend on the shore. Bring the family, the dog, the questions — we'll have someone on-site at every stop.${c.geoPhrase ? ` ${c.geoPhrase}.` : ""} 🌞🏡`,
   (c) =>
     `🌊 Salt air, open doors, no appointment needed.${c.geoPhrase ? ` ${c.geoPhrase},` : ""} a shore-tour weekend built around homes worth walking through twice. 🌞🏡`,
   (c) =>
-    `🌊 Coastal homes, open weekend. This is your shot to scout the shore properties you've been bookmarking${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()}.` : "."} Come see them with your own eyes. 🌞🏡`,
+    `🌊 Coastal homes, open weekend. This is your shot to scout the shore properties you've been bookmarking${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}.` : "."} Come see them with your own eyes. 🌞🏡`,
 ];
 
 const FAMILY_OPENERS: ReadonlyArray<(c: CaptionCtx) => string> = [
@@ -331,13 +331,13 @@ const FAMILY_OPENERS: ReadonlyArray<(c: CaptionCtx) => string> = [
   (c) =>
     `🏡 Forever-home weekend, sorted.${c.geoPhrase ? ` ${c.geoPhrase}.` : ""} A handful of contenders, doors open, agents on every porch — bring the wish list and a friend. 🌟🏡`,
   (c) =>
-    `🏡 Looking for the place that fits? Backyards, basements, breakfast nooks${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()},` : "."} this weekend's lineup has options worth touring in person. 🌟🏡`,
+    `🏡 Looking for the place that fits? Backyards, basements, breakfast nooks${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)},` : "."} this weekend's lineup has options worth touring in person. 🌟🏡`,
   (c) =>
-    `🏡 House-hunt weekend, build-a-life edition. We're opening doors at homes built for the next chapter${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()}.` : "."} Bring the family, take your time, no rush. 🌟🏡`,
+    `🏡 House-hunt weekend, build-a-life edition. We're opening doors at homes built for the next chapter${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}.` : "."} Bring the family, take your time, no rush. 🌟🏡`,
   (c) =>
-    `🏡 The "let's just go look" Saturday is here. We've lined up open houses worth the drive${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()},` : ","} every one with someone on-site to answer the real questions. 🌟🏡`,
+    `🏡 The "let's just go look" Saturday is here. We've lined up open houses worth the drive${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)},` : ","} every one with someone on-site to answer the real questions. 🌟🏡`,
   (c) =>
-    `🏡 The right house feels right the second you walk in. This weekend's lineup is here for you to test that theory${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()}.` : "."} Bring everyone whose opinion matters. 🌟🏡`,
+    `🏡 The right house feels right the second you walk in. This weekend's lineup is here for you to test that theory${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}.` : "."} Bring everyone whose opinion matters. 🌟🏡`,
   (c) =>
     `🏡 A handful of homes worth touring this weekend.${c.geoPhrase ? ` ${c.geoPhrase},` : ""} bring your wish list — these are the ones where you can picture summer cookouts and snowed-in Sundays alike. 🌟🏡`,
   (c) =>
@@ -352,17 +352,17 @@ const INVESTOR_OPENERS: ReadonlyArray<(c: CaptionCtx) => string> = [
   (c) =>
     `📈 Numbers-first weekend.${c.geoPhrase ? ` ${c.geoPhrase}.` : ""} A lineup of properties worth running the math on — bring your spreadsheet, we'll bring the comps. 🏠💰`,
   (c) =>
-    `📈 Smart-money weekend. These homes pencil out on paper${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()},` : ","} come walk through and stress-test the math in person. 🏠💰`,
+    `📈 Smart-money weekend. These homes pencil out on paper${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)},` : ","} come walk through and stress-test the math in person. 🏠💰`,
   (c) =>
-    `📈 Been hunting for a rental, vacation rental, or hold play? This is the weekend to scout it${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()}.` : "."} Bring the proforma, we'll have answers on-site. 🏠💰`,
+    `📈 Been hunting for a rental, vacation rental, or hold play? This is the weekend to scout it${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}.` : "."} Bring the proforma, we'll have answers on-site. 🏠💰`,
   (c) =>
-    `📈 Open houses for the portfolio crowd. Cap rates, ARV math, rental projections${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()},` : " —"} bring questions, we'll bring answers. 🏠💰`,
+    `📈 Open houses for the portfolio crowd. Cap rates, ARV math, rental projections${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)},` : " —"} bring questions, we'll bring answers. 🏠💰`,
   (c) =>
     `📈 Investment-grade weekend.${c.geoPhrase ? ` ${c.geoPhrase}.` : ""} A handful of properties that work as rentals, flips, or long-term holds — walk every one and pick your play. 🏠💰`,
   (c) =>
     `📈 Rental-market homes, opening this weekend.${c.geoPhrase ? ` ${c.geoPhrase},` : ""} the spreadsheet only tells you so much — come see the bones, the block, the ceiling. 🏠💰`,
   (c) =>
-    `📈 Smart-move weekend. These properties have the bones, the location, and the rental ceiling worth touring${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()}.` : "."} Bring the calculator and your sharpest questions. 🏠💰`,
+    `📈 Smart-move weekend. These properties have the bones, the location, and the rental ceiling worth touring${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}.` : "."} Bring the calculator and your sharpest questions. 🏠💰`,
   (c) =>
     `📈 Opening doors on investment plays this weekend.${c.geoPhrase ? ` ${c.geoPhrase},` : ""} walk through, pull comps, picture the rental income — and decide which one to write on. 🏠💰`,
 ];
@@ -375,9 +375,9 @@ const COZY_OPENERS: ReadonlyArray<(c: CaptionCtx) => string> = [
   (c) =>
     `🍂 Stay-awhile homes, opening their doors this weekend.${c.geoPhrase ? ` ${c.geoPhrase},` : ""} come in, kick off your shoes, picture the fireplace lit — these are the homes that feel right in January, too. 🏡✨`,
   (c) =>
-    `🍂 Settle-in season is upon us. We're opening doors at homes that already feel lived-in${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()},` : ","} every one of them built for the long haul. 🏡✨`,
+    `🍂 Settle-in season is upon us. We're opening doors at homes that already feel lived-in${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)},` : ","} every one of them built for the long haul. 🏡✨`,
   (c) =>
-    `🍂 Open house weekend for the slow-mornings crowd. Front porches, fireplaces, full neighborhoods${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()},` : " —"} come walk through and find the one that feels like home. 🏡✨`,
+    `🍂 Open house weekend for the slow-mornings crowd. Front porches, fireplaces, full neighborhoods${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)},` : " —"} come walk through and find the one that feels like home. 🏡✨`,
   (c) =>
     `🍂 Mainland weekend.${c.geoPhrase ? ` ${c.geoPhrase}.` : ""} Year-round neighbors, real schools, real grocery stores — these are the homes that work in January, too. 🏡✨`,
   (c) =>
@@ -392,15 +392,15 @@ const EDITORIAL_OPENERS: ReadonlyArray<(c: CaptionCtx) => string> = [
   (c) =>
     `${c.count} homes. One weekend. ${c.geoPhrase ? `${c.geoPhrase}.` : "Open doors at every stop."} Walk every one, pick your favorite.`,
   (c) =>
-    `An open-house weekend, ${c.geoPhrase ? `${c.geoPhrase.toLowerCase()}` : "curated"}. ${c.count} addresses, one map, agents on-site at each. Walk through the lineup at your pace.`,
+    `An open-house weekend, ${c.geoPhrase ? `${lowercaseFirstLetter(c.geoPhrase)}` : "curated"}. ${c.count} addresses, one map, agents on-site at each. Walk through the lineup at your pace.`,
   (c) =>
     `A short list of homes worth walking through this weekend. ${c.geoPhrase ? `${c.geoPhrase}.` : "Doors open, agents on-site."} Bring your shortlist and your sharpest questions.`,
   (c) =>
-    `${c.count} homes, ${c.geoPhrase ? c.geoPhrase.toLowerCase() + "," : "open this weekend,"} every one worth your Saturday. Schedule below — take the tour at your own pace.`,
+    `${c.count} homes, ${c.geoPhrase ? lowercaseFirstLetter(c.geoPhrase) + "," : "open this weekend,"} every one worth your Saturday. Schedule below — take the tour at your own pace.`,
   (c) =>
     `Open-house weekend. ${c.geoPhrase ? `${c.geoPhrase}.` : "Doors open."} Bring your shortlist; we'll have someone on-site at each one to answer the real questions.`,
   (c) =>
-    `Doors open. Agents on-site. A short list of homes worth touring in person this weekend${c.geoPhrase ? ` — ${c.geoPhrase.toLowerCase()}.` : "."}`,
+    `Doors open. Agents on-site. A short list of homes worth touring in person this weekend${c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}.` : "."}`,
   (c) =>
     `${c.count} listings, one weekend, one map. ${c.geoPhrase ? `${c.geoPhrase}.` : "Take the tour."} Walk every one and decide for yourself.`,
   (c) =>
@@ -712,6 +712,27 @@ function canonicalMlsHashtag(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * 2026-05-28 — Bug 4 fix: lowercases only the FIRST CHARACTER of a
+ * string, preserving the casing of every other character (and therefore
+ * the proper nouns inside it). Used by opener templates that drop the
+ * geographic phrase mid-sentence — "across Cape May County" is correct,
+ * "across cape may county" is the broken behaviour we had when the
+ * entire phrase was `.toLowerCase()`ed.
+ *
+ * Returns the input verbatim when it's empty or starts with a non-letter
+ * (e.g., a punctuation character — nothing to lowercase).
+ */
+function lowercaseFirstLetter(s: string): string {
+  if (s.length === 0) return s;
+  const first = s.charAt(0);
+  const lowered = first.toLowerCase();
+  // Skip the substring rebuild if the first char is already lowercase
+  // (or has no case, like punctuation/numbers).
+  if (lowered === first) return s;
+  return lowered + s.slice(1);
+}
 
 function hashSeed(s: string): number {
   let h = 2166136261;
