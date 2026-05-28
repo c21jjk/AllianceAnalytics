@@ -2049,7 +2049,7 @@ function StickyFooter({
               ].join(" ")}
             >
               <span aria-hidden="true">✦</span>
-              {generating ? "Generating…" : "Generate carousel post"}
+              {generating ? "Generating…" : "Build Slides in Studio"}
             </button>
           )}
         </div>

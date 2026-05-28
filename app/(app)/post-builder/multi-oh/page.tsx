@@ -1,7 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
 import { listTemplatesForPostType } from "@/lib/template-builder";
-import PageHeader from "@/components/PageHeader";
 import MultiOHWizardClient from "./MultiOHWizardClient";
 
 // why: requireUser is still called here even though we no longer thread
@@ -55,12 +54,6 @@ export default async function MultiOHPage() {
 
   return (
     <div>
-      <PageHeader
-        eyebrow="Event-style carousel post for multiple properties"
-        title="Multi-property Open House"
-        description="Pick 2-9 open houses happening in the same window. We render an event-overview hero card plus a per-property card for each home, then drop you back into Post Builder as a ready-to-publish carousel."
-        phaseTag="Phase 5+"
-      />
       <MultiOHWizardClient
         listings={listings}
         defaultOfficeName="Century 21 Alliance"
