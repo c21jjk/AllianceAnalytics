@@ -99,6 +99,30 @@ function normalizeAgentName(raw: string): string | null {
 }
 
 /**
+ * Returns true when two first-name strings have a prefix relationship —
+ * either is a case-insensitive prefix of the other AND the shorter string
+ * is at least 2 characters long.
+ *
+ * Catches abbreviation cases like "Ed" ↔ "Edward", "Liz" ↔ "Elizabeth",
+ * "Beth" ↔ "Bethany". Does NOT catch nicknames with different roots:
+ * "Bob" ↔ "Robert", "Bill" ↔ "William", "Dick" ↔ "Richard" — those still
+ * need a manual `headshot_label_override` / `phone_override` row.
+ *
+ * The min-2-char guard prevents single-letter inputs ("J") from matching
+ * every James/John/Judith/Justin in the roster.
+ */
+function firstNameMatches(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const shorter = x.length < y.length ? x : y;
+  const longer = x.length < y.length ? y : x;
+  if (shorter.length < 2) return false;
+  return longer.startsWith(shorter);
+}
+
+/**
  * Resolve an agent's phone number against the Alliance Dash roster.
  *
  * 2026-05-27 — REWRITTEN to query `cmc_active_agents` + `sjsr_active_agents`
@@ -300,6 +324,27 @@ export async function fetchAgentPhone(
       if (p) {
         console.log("[fetchAgentPhone] returning pass-3 phone:", p);
         return p;
+      }
+    }
+
+    // ---- Pass 4: abbreviated first-name match ----
+    // 2026-05-28 — when normalize first+last and single-result both miss,
+    // walk the combined CMC+SJSR result set looking for a row whose
+    // first_name has a prefix relationship with the input's first name.
+    // Handles "Ed" ↔ "Edward" and similar abbreviation pairs without
+    // requiring a phone_override row.
+    for (const row of combined) {
+      if (!row.first_name) continue;
+      if (firstNameMatches(first, row.first_name)) {
+        const p = pickPhone(row);
+        if (p) {
+          console.log("[fetchAgentPhone] pass 4 prefix match:", {
+            input: agentName,
+            matched: `${row.first_name} ${row.last_name}`,
+            phone: p,
+          });
+          return p;
+        }
       }
     }
     console.log("[fetchAgentPhone] no match found, returning null for:", agentName);

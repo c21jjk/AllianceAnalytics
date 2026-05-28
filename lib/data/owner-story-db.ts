@@ -135,6 +135,30 @@ function normalizeAgentName(raw: string): string | null {
 }
 
 /**
+ * Returns true when two first-name strings have a prefix relationship —
+ * either is a case-insensitive prefix of the other AND the shorter string
+ * is at least 2 characters long.
+ *
+ * Catches abbreviation cases like "Ed" ↔ "Edward", "Liz" ↔ "Elizabeth",
+ * "Beth" ↔ "Bethany". Does NOT catch nicknames with different roots:
+ * "Bob" ↔ "Robert", "Bill" ↔ "William", "Dick" ↔ "Richard" — those still
+ * need a manual `headshot_label_override` / `phone_override` row.
+ *
+ * The min-2-char guard prevents single-letter inputs ("J") from matching
+ * every James/John/Judith/Justin in the roster.
+ */
+function firstNameMatches(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const shorter = x.length < y.length ? x : y;
+  const longer = x.length < y.length ? y : x;
+  if (shorter.length < 2) return false;
+  return longer.startsWith(shorter);
+}
+
+/**
  * Resolve an agent's headshot URL with a two-pass strategy:
  *
  *   1. Per-agent OVERRIDE — look up the agent in `mls_agents` by normalized
@@ -211,6 +235,24 @@ export async function fetchAgentHeadshotUrl(
     // style suffixes that survive normalization).
     if (data.length === 1) {
       return (data[0] as { public_url: string }).public_url;
+    }
+
+    // ---- Pass 4: abbreviated first-name match ----
+    // 2026-05-28 — when normalize first+last and single-result both miss,
+    // walk the brand_assets matches looking for a row whose label's first
+    // name has a prefix relationship with the input's first name. Handles
+    // "Ed Gorski" / "Edward Gorski" style label drift without requiring
+    // a headshot_label_override row.
+    for (const row of data as Array<{ label: string; public_url: string }>) {
+      const labelNorm = normalizeAgentName(row.label);
+      if (!labelNorm) continue;
+      const [labelFirst, labelLast] = labelNorm.split(" ");
+      if (!labelFirst || !labelLast) continue;
+      // Last name must match exactly (we already filtered by ILIKE last so
+      // this is mostly a sanity check); first name uses prefix match.
+      if (labelLast === (last ?? first) && firstNameMatches(first, labelFirst)) {
+        return row.public_url;
+      }
     }
     return null;
   } catch {
