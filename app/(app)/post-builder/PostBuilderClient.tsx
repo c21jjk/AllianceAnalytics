@@ -3263,16 +3263,27 @@ export default function PostBuilderClient({
         {postNowOpen ? (
           <PostNowModal
             previewImageUrl={renderResult?.image_url ?? null}
+            // 2026-05-27 — multi-OH: drop the hero from the publish strip.
+            // The hero is a Studio thumbnail / visual preview; it is NOT
+            // published as a carousel slide. Mirrors the publish logic at
+            // app/api/post-builder/post/route.ts. Defensive fallback to
+            // the hero only when no per-property slides exist so the
+            // strip isn't empty on a malformed row.
             allSlideUrls={
-              renderResult?.image_url
-                ? [renderResult.image_url, ...carouselSlides.map((s) => s.url)]
-                : carouselSlides.map((s) => s.url)
+              carouselSlides.length > 0
+                ? carouselSlides.map((s) => s.url)
+                : renderResult?.image_url
+                  ? [renderResult.image_url]
+                  : []
             }
             listingLabel={
               // why: in multi-OH mode there's no single listing label —
-              // use the slide-count framing from the FinalStage header
-              // so the modal's asset summary line still makes sense.
-              `Multi-property Open House · ${carouselSlides.length + 1} slides`
+              // use the per-property slide-count framing so the modal's
+              // asset summary line still makes sense. Count excludes the
+              // hero (see allSlideUrls above).
+              `Multi-property Open House · ${carouselSlides.length} slide${
+                carouselSlides.length === 1 ? "" : "s"
+              }`
             }
             captionPreview={editedCaption}
             platforms={postNowPlatforms}
@@ -3289,7 +3300,9 @@ export default function PostBuilderClient({
             globalTestModeOn={globalTestModeOn}
             error={error}
             onClearError={() => setError(null)}
-            slideCount={1 + carouselSlides.length}
+            // why: per-property count (no hero) — feeds the per-platform
+            // "N-image carousel" copy on the platform cards.
+            slideCount={carouselSlides.length}
           />
         ) : null}
       </div>
@@ -4698,6 +4711,13 @@ function PostNowModal(props: PostNowModalProps) {
   const anyPast = scheduleEntries.some(
     (e) => e.localValue !== "" && !e.isFuture,
   );
+  // why: Per the per-platform UX, EVERY enabled platform must carry its
+  // own future timestamp. If IG has a valid time but FB is enabled with
+  // an empty input, the submit button should stay disabled — otherwise
+  // FB would silently drop out of the schedule.
+  const anyEmpty = scheduleEntries.some((e) => e.localValue === "");
+  const allEnabledReady =
+    scheduleEntries.length > 0 && validFutureCount === scheduleEntries.length;
 
   /**
    * Build the ScheduledFor map from the current inputs and invoke the
@@ -5075,6 +5095,14 @@ function PostNowModal(props: PostNowModalProps) {
                             <div className="mt-1 text-[11px] text-rose-700">
                               Pick a time at least 1 minute in the future.
                             </div>
+                          ) : entry && entry.isFuture && entry.iso ? (
+                            // why: Larissa shouldn't have to mentally parse a
+                            // "2026-05-31T09:00" datetime-local value. Render
+                            // the same instant in a familiar weekday/time
+                            // shape just below the input.
+                            <div className="mt-1 text-[11px] text-neutral-500">
+                              Posts {formatHumanScheduleHint(entry.iso)}
+                            </div>
                           ) : null}
                         </div>
                       ) : null}
@@ -5181,10 +5209,10 @@ function PostNowModal(props: PostNowModalProps) {
                 onClick={() => {
                   void handleSchedule();
                 }}
-                disabled={sending || validFutureCount === 0 || anyPast}
+                disabled={sending || !allEnabledReady || anyPast}
                 className={[
                   "flex-[1.4] rounded-lg px-4 py-2.5 text-sm font-semibold transition",
-                  sending || validFutureCount === 0 || anyPast
+                  sending || !allEnabledReady || anyPast
                     ? "bg-neutral-200 text-neutral-500 cursor-not-allowed"
                     : "bg-gold-600 text-white hover:bg-gold-700 shadow-sm",
                 ].join(" ")}
@@ -5195,9 +5223,11 @@ function PostNowModal(props: PostNowModalProps) {
                     ? "Pick a platform"
                     : anyPast
                       ? "Fix past time(s)"
-                      : validFutureCount === 0
-                        ? "Set a future time"
-                        : `Schedule ${validFutureCount} post${validFutureCount === 1 ? "" : "s"}`}
+                      : anyEmpty
+                        ? "Set a time for each platform"
+                        : validFutureCount === 0
+                          ? "Set a future time"
+                          : `Schedule ${validFutureCount} post${validFutureCount === 1 ? "" : "s"}`}
               </button>
             </div>
           ) : (
@@ -5317,6 +5347,25 @@ function toDateTimeLocalValue(d: Date): string {
  */
 function getDateTimeLocalNow(): string {
   return toDateTimeLocalValue(new Date());
+}
+
+/**
+ * Format a UTC ISO string as a short human-readable hint for the inline
+ * schedule picker. Example output: "Sat May 31 at 9:00 AM". Renders in
+ * the user's local timezone — no explicit "ET" suffix because the value
+ * is browser-local, not pinned to Eastern (the eyebrow above already
+ * labels the input "Scheduled time (ET)" for users in ET).
+ */
+function formatHumanScheduleHint(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 /**

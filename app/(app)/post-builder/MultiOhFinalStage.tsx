@@ -291,7 +291,13 @@ export default function MultiOhFinalStage({
   const [activeCaptionPlatform, setActiveCaptionPlatform] =
     useState<SchedulablePlatform>("instagram");
 
-  const slideCount = 1 + carouselSlides.length;
+  // 2026-05-27 — multi-OH carousels publish ONLY the per-property slides.
+  // The hero is a visual preview / Studio thumbnail; all event details
+  // (addresses, dates, times) live in the caption. So the "slide count"
+  // shown to the user reflects the per-property slides — not hero + slides.
+  // Mirrors the publish logic at app/api/post-builder/post/route.ts where
+  // multi-OH posts skip the hero from imageUrls.
+  const publishedSlideCount = carouselSlides.length;
   const eventSubtitle = useMemo(
     () => buildEventSubtitle(slideMetadata, listingsByMls),
     [slideMetadata, listingsByMls],
@@ -324,7 +330,7 @@ export default function MultiOhFinalStage({
         </h1>
         <div className="mt-1.5 text-sm text-neutral-600">{eventSubtitle}</div>
         <div className="mt-1 text-xs text-neutral-500">
-          {slideCount} slide{slideCount === 1 ? "" : "s"} ·{" "}
+          {publishedSlideCount} slide{publishedSlideCount === 1 ? "" : "s"} ·{" "}
           {formatMeta?.display_name ?? format}
         </div>
         {hostingSummary ? (
@@ -342,22 +348,18 @@ export default function MultiOhFinalStage({
         )}
       </div>
 
-      {/* Carousel preview strip. Hero first, per-property slides after.
-          Horizontally scrollable when the row overflows. */}
+      {/* "What publishes" — per-property slides only. The hero is demoted
+          below the separator because it is NOT published as a carousel
+          slide; the event details live in the caption. */}
       <div className="card p-4">
         <div className="flex items-center justify-between mb-3">
-          <div className="eyebrow">Carousel preview</div>
+          <div className="eyebrow">What publishes</div>
           <div className="text-xs text-neutral-500">
-            {slideCount} slide{slideCount === 1 ? "" : "s"} publish in order
+            Carousel · {publishedSlideCount} slide
+            {publishedSlideCount === 1 ? "" : "s"}
           </div>
         </div>
         <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-          <SlideTile
-            imageUrl={heroImageUrl}
-            primaryLabel="HERO (transforms to caption)"
-            secondaryLabel="Event overview"
-            isHero
-          />
           {carouselSlides.map((slide, i) => {
             const meta = slideMetadata[i];
             const address = addressForSlide(meta, listingsByMls, i);
@@ -376,6 +378,32 @@ export default function MultiOhFinalStage({
           <div className="mt-2 text-xs text-rose-700">
             No per-property slides found on this post. Re-run the wizard if
             this looks wrong.
+          </div>
+        ) : null}
+
+        {/* Hero — demoted, smaller, muted. Visually clear this isn't a
+            publishable asset. The hero is generated as a Studio thumbnail
+            and a visual reference; the event details (dates / addresses /
+            times) are in the caption instead. */}
+        {heroImageUrl ? (
+          <div className="mt-4 pt-4 border-t border-dashed border-neutral-200 flex items-center gap-3">
+            <div className="w-[140px] h-[140px] shrink-0 rounded-lg overflow-hidden bg-neutral-100 ring-1 ring-neutral-200 opacity-80">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={heroImageUrl}
+                alt="Event overview"
+                className="w-full h-full object-cover"
+                loading="lazy"
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-500">
+                Event overview
+              </div>
+              <div className="mt-0.5 text-xs text-neutral-600">
+                Folded into the caption, not published as a slide.
+              </div>
+            </div>
           </div>
         ) : null}
       </div>

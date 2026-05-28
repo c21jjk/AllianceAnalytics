@@ -137,7 +137,11 @@ export async function POST(request: Request) {
       // Phase D — captions_by_platform added so each platform receives
       // its tuned caption variant; falls back to the legacy `caption`
       // when a platform's entry is missing.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode",
+      // 2026-05-27 — template_id added so the publish path can detect
+      // multi-OH events (prefix `multi_oh_event_`) and suppress the hero
+      // image from the published carousel; the hero is a Studio-only
+      // visual preview, not a slide.
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode, template_id",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -358,7 +362,24 @@ export async function POST(request: Request) {
         }
       }
     }
-    const imageUrls: string[] = [gp.image_url, ...validatedAdditionalUrls];
+    // 2026-05-27 — Multi-OH posts: the hero image is an event-summary
+    // graphic used as a visual preview / Studio thumbnail. ALL the event
+    // details (addresses, dates, times) live in the caption itself, so
+    // the hero is NOT published as a carousel slide — only the per-property
+    // slides go out. Detection mirrors the synthetic `template_id` prefix
+    // written by /api/post-builder/multi-oh-generate.
+    //
+    // Defensive fallback: if a multi-OH row somehow has no per-property
+    // slides (failed generation, manual DB edit), we still publish the hero
+    // so the post doesn't fail with zero images — the publish helpers all
+    // require at least one image.
+    const isMultiOhEvent =
+      typeof gp.template_id === "string" &&
+      gp.template_id.startsWith("multi_oh_event_");
+    const imageUrls: string[] =
+      isMultiOhEvent && validatedAdditionalUrls.length > 0
+        ? validatedAdditionalUrls
+        : [gp.image_url, ...validatedAdditionalUrls];
     if (imageUrls.length > IG_MAX_SLIDES) {
       console.warn(
         `[post] gp ${gp.id} has ${imageUrls.length} slides; IG accepts at most ${IG_MAX_SLIDES} — publishToIG will trim. Consider trimming before save.`,
