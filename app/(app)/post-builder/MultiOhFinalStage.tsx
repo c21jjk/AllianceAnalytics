@@ -16,15 +16,15 @@
  * main grid (banner + post-type tabs + listing picker + preview pane + caption
  * pane) with:
  *
- *   1. Hero header — "Final Review — Schedule or Post" + Step 3 of 3 pill.
- *   2. Carousel preview strip — hero + every per-property slide, each with
- *      an address caption underneath. Hero is labeled "HERO (transforms to
- *      caption)" per John's framing in the multi-OH UX brief.
- *   3. Hosting agents summary line (when slide_metadata.hosting_agent_name
- *      is populated).
- *   4. Caption preview — single-line collapsed view with "see more" toggle +
- *      per-platform tabs matching the existing caption pane.
- *   5. Action buttons — Schedule (secondary) + Post Now (primary gold).
+ *   1. Header band — "Final Review Before Posting" title + property-count
+ *      subtitle + lighter hosts line.
+ *   2. Carousel preview strip — every per-property slide with an address
+ *      caption underneath (hero is NOT published as a slide — event details
+ *      live in the caption).
+ *   3. Caption panel — per-platform tabs (IG / FB / TT) with body +
+ *      hashtags shown together and a character counter.
+ *   4. Single primary action — Post Now (opens PostNowModal; user can
+ *      switch to that modal's Schedule tab if needed).
  *
  * Why a separate file:
  *   PostBuilderClient.tsx is already 5600 lines. Inlining ~300 more lines
@@ -41,13 +41,7 @@
  */
 
 import { useMemo, useState, type JSX } from "react";
-import {
-  Calendar,
-  ChevronRight,
-  Edit3,
-  RotateCw,
-  Users,
-} from "lucide-react";
+import { ChevronRight, RotateCw } from "lucide-react";
 import type {
   PostBuilderListing,
   PostFormat,
@@ -55,7 +49,6 @@ import type {
   SlideMetadata,
 } from "@/lib/post-builder/types";
 import type { CarouselSlide } from "@/lib/post-builder/canvas-editor/types";
-import Link from "next/link";
 
 interface FormatMeta {
   display_name: string;
@@ -179,38 +172,18 @@ function buildHostingSummary(
 }
 
 /**
- * Derive the event subtitle. We don't persist `event_title` on
- * generated_posts, so we describe the event in terms of property count and
- * the earliest OH session date when present. Falls back to a generic
- * "Open House — Multi-property" when nothing else is available.
+ * Derive the event subtitle. 2026-05-28 — simplified to the bare property-
+ * count framing. The mechanical noise ("slide count," "format," "session
+ * date") got demoted out of the header because the carousel strip below
+ * already conveys slide count visually, and John's feedback was that the
+ * "Hosted by" line should sit alone on its own row instead of being
+ * appended after a long middle-dot chain.
  */
 function buildEventSubtitle(
   slideMetadata: readonly SlideMetadata[],
-  listingsByMls: ReadonlyMap<string, PostBuilderListing>,
 ): string {
   const count = slideMetadata.length;
   const propertyWord = count === 1 ? "property" : "properties";
-
-  // Try to pull the earliest OH session date from the linked listings.
-  let earliest: Date | null = null;
-  for (const meta of slideMetadata) {
-    const listing = listingsByMls.get(meta.listing_mls);
-    const startIso = listing?.oh_start_at;
-    if (!startIso) continue;
-    const t = new Date(startIso);
-    if (Number.isNaN(t.getTime())) continue;
-    if (!earliest || t < earliest) earliest = t;
-  }
-
-  if (earliest) {
-    const dayLabel = earliest.toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      timeZone: "America/New_York",
-    });
-    return `Open House — ${dayLabel} · ${count} ${propertyWord}`;
-  }
   return `Open House — ${count} ${propertyWord}`;
 }
 
@@ -267,13 +240,54 @@ function SlideTile({
   );
 }
 
+/**
+ * Split a per-platform caption string into prose body + hashtag list.
+ *
+ * The parent's `editedCaptions[platform]` string is the user's edit-friendly
+ * `"body\n\nhashtags"` blob (built by joinCaptionAndTags in
+ * PostBuilderClient). When the user clicks Edit Caption they can rearrange
+ * freely, so we re-parse by extracting every `#word` token rather than
+ * assuming structure. Mirrors `parsePlatformText` in PostBuilderClient —
+ * inlined here to avoid plumbing a private helper across the file boundary.
+ *
+ * 2026-05-28 — added to drive Change 6: the caption preview now explicitly
+ * surfaces the synthesized hashtag line below the body with a blank-line
+ * gap, so Larissa sees exactly what will publish (prior collapsed-snippet
+ * preview was trimming hashtags off entirely).
+ */
+function splitBodyAndHashtags(text: string): {
+  body: string;
+  hashtags: string[];
+} {
+  const tokens = text.match(/#[A-Za-z0-9_]+/g) ?? [];
+  let prose = text;
+  for (const t of tokens) {
+    prose = prose.replace(t, "");
+  }
+  prose = prose.replace(/\s+$/g, "");
+  return { body: prose, hashtags: tokens };
+}
+
+/**
+ * Build the "what will publish" preview string for a platform: body, a
+ * blank-line gap, then the hashtags joined by spaces. Mirrors the exact
+ * format the publish path emits (see joinCaptionAndTags in
+ * PostBuilderClient).
+ */
+function buildPreviewString(text: string): string {
+  const { body, hashtags } = splitBodyAndHashtags(text);
+  if (hashtags.length === 0) return body;
+  if (body.length === 0) return hashtags.join(" ");
+  return `${body}\n\n${hashtags.join(" ")}`;
+}
+
 export default function MultiOhFinalStage({
-  heroImageUrl,
+  heroImageUrl: _heroImageUrl,
   carouselSlides,
   slideMetadata,
   listingsByMls,
-  format,
-  formatMeta,
+  format: _format,
+  formatMeta: _formatMeta,
   editedCaptions,
   onEditedCaptionsChange,
   hasCaption,
@@ -283,82 +297,55 @@ export default function MultiOhFinalStage({
   onRegenerateCaption,
   regeneratingCaption,
 }: MultiOhFinalStageProps): JSX.Element {
-  // why: caption preview defaults to collapsed (single line) — the user is
-  // here to publish, not edit. Expanding opens the per-platform tab + edit
-  // surface inline. Matches the existing /post-builder caption pane shape
-  // so the user's mental model carries over.
-  const [captionExpanded, setCaptionExpanded] = useState(false);
+  // 2026-05-28 — the prior "collapsed snippet + Edit caption toggle" was
+  // dropped in favor of an always-visible per-platform caption panel. John's
+  // walkthrough with Larissa flagged the collapsed view as a hidden-state
+  // trap (Larissa's ADHD memory) — show the real caption + hashtag line at
+  // all times so the user sees exactly what will publish.
   const [activeCaptionPlatform, setActiveCaptionPlatform] =
     useState<SchedulablePlatform>("instagram");
 
-  // 2026-05-27 — multi-OH carousels publish ONLY the per-property slides.
-  // The hero is a visual preview / Studio thumbnail; all event details
-  // (addresses, dates, times) live in the caption. So the "slide count"
-  // shown to the user reflects the per-property slides — not hero + slides.
-  // Mirrors the publish logic at app/api/post-builder/post/route.ts where
-  // multi-OH posts skip the hero from imageUrls.
-  const publishedSlideCount = carouselSlides.length;
   const eventSubtitle = useMemo(
-    () => buildEventSubtitle(slideMetadata, listingsByMls),
-    [slideMetadata, listingsByMls],
+    () => buildEventSubtitle(slideMetadata),
+    [slideMetadata],
   );
   const hostingSummary = useMemo(
     () => buildHostingSummary(slideMetadata),
     [slideMetadata],
   );
 
-  // why: collapsed caption shows ~150 chars from the IG tab (canonical
-  // platform), then a "see more" toggle. We use IG because every caption
-  // pipeline writes IG first and falls back to it for other platforms.
-  const captionForPreview = editedCaptions.instagram || editedCaptions.facebook || editedCaptions.tiktok;
-  const COLLAPSED_LEN = 150;
-  const captionSnippet =
-    captionForPreview.length > COLLAPSED_LEN
-      ? captionForPreview.slice(0, COLLAPSED_LEN).trimEnd() + "…"
-      : captionForPreview;
+  // 2026-05-28 — preview string for the active tab is body + blank line +
+  // hashtags, exactly mirroring the publish path's joinCaptionAndTags
+  // output. Character counter below sums the full string so Larissa can
+  // see total length (IG cap = 2200, FB ~63206, TT = 4000 but tag-pruned).
+  const captionPreviewString = useMemo(
+    () => buildPreviewString(editedCaptions[activeCaptionPlatform] ?? ""),
+    [editedCaptions, activeCaptionPlatform],
+  );
 
   return (
-    <div className="space-y-5">
-      {/* Hero header — large, centered. Step 3 of 3 pill anchors the
-          "you're at the end" framing. */}
-      <div className="card p-6 text-center">
-        <div className="inline-flex items-center gap-1.5 rounded-full bg-gold-100 px-3 py-0.5 text-[11px] font-bold uppercase tracking-wider text-gold-800 mb-3">
-          Step 3 of 3
-        </div>
+    <div className="space-y-7">
+      {/* 1. Header band — title + property-count subtitle + hosts line.
+             Compact (~80px), centered, no flair. The "Step 3 of 3" pill
+             and Users icon got dropped — John flagged the chrome as
+             noise once the parent page chrome is also suppressed. */}
+      <div className="text-center pt-2">
         <h1 className="text-2xl font-bold text-neutral-900">
-          Final Review — Schedule or Post
+          Final Review Before Posting
         </h1>
-        <div className="mt-1.5 text-sm text-neutral-600">{eventSubtitle}</div>
-        <div className="mt-1 text-xs text-neutral-500">
-          {publishedSlideCount} slide{publishedSlideCount === 1 ? "" : "s"} ·{" "}
-          {formatMeta?.display_name ?? format}
-        </div>
+        <div className="mt-1.5 text-sm text-neutral-700">{eventSubtitle}</div>
         {hostingSummary ? (
-          <div className="mt-3 inline-flex items-center gap-1.5 text-sm text-neutral-700">
-            <Users size={14} aria-hidden="true" className="text-gold-600" />
-            <span>{hostingSummary}</span>
-          </div>
-        ) : (
-          // why: hosting_agents_by_index isn't wired yet (multi-OH route
-          // writes a single hosting_agent_name per slide; per-slide hosts
-          // already come through above). If a future migration adds a
-          // top-level event-host list, render it here instead.
-          // TODO(hosting_agents_by_index): replace fallback once available.
-          null
-        )}
+          <div className="mt-1 text-xs text-neutral-500">{hostingSummary}</div>
+        ) : null}
       </div>
 
-      {/* "What publishes" — per-property slides only. The hero is demoted
-          below the separator because it is NOT published as a carousel
-          slide; the event details live in the caption. */}
+      {/* 2. Carousel preview — full-width strip of per-property slides.
+             No header label (the visual itself is self-explanatory and
+             the "Carousel · N slides" eyebrow was redundant noise per
+             John's walkthrough). Hero is intentionally NOT shown — it's
+             a Studio thumbnail, not a publishable slide; event details
+             live in the caption. */}
       <div className="card p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="eyebrow">What publishes</div>
-          <div className="text-xs text-neutral-500">
-            Carousel · {publishedSlideCount} slide
-            {publishedSlideCount === 1 ? "" : "s"}
-          </div>
-        </div>
         <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
           {carouselSlides.map((slide, i) => {
             const meta = slideMetadata[i];
@@ -380,117 +367,65 @@ export default function MultiOhFinalStage({
             this looks wrong.
           </div>
         ) : null}
-
-        {/* Hero — demoted, smaller, muted. Visually clear this isn't a
-            publishable asset. The hero is generated as a Studio thumbnail
-            and a visual reference; the event details (dates / addresses /
-            times) are in the caption instead. */}
-        {heroImageUrl ? (
-          <div className="mt-4 pt-4 border-t border-dashed border-neutral-200 flex items-center gap-3">
-            <div className="w-[140px] h-[140px] shrink-0 rounded-lg overflow-hidden bg-neutral-100 ring-1 ring-neutral-200 opacity-80">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={heroImageUrl}
-                alt="Event overview"
-                className="w-full h-full object-cover"
-                loading="lazy"
-              />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-500">
-                Event overview
-              </div>
-              <div className="mt-0.5 text-xs text-neutral-600">
-                Folded into the caption, not published as a slide.
-              </div>
-            </div>
-          </div>
-        ) : null}
       </div>
 
-      {/* Caption preview — collapsed by default. "See more" toggles the
-          full edit surface (per-platform tabs + textarea). */}
+      {/* 3. Caption panel — per-platform tabs at top, preview box (body +
+             hashtags joined the same way the publish path emits), char
+             counter below. Always visible — no collapsed snippet. */}
       <div className="card p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="eyebrow">Caption</div>
-          {hasCaption ? (
-            <button
-              type="button"
-              onClick={() => setCaptionExpanded((v) => !v)}
-              className="text-xs font-medium text-gold-700 hover:text-gold-800 focus-ring rounded"
-            >
-              {captionExpanded ? "Collapse" : "Edit caption"}
-            </button>
-          ) : null}
+        <div
+          role="tablist"
+          aria-label="Caption platform"
+          className="mb-3 flex gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-1"
+        >
+          {CAPTION_PLATFORMS.map((p) => {
+            const active = activeCaptionPlatform === p;
+            return (
+              <button
+                key={p}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveCaptionPlatform(p)}
+                className={`flex-1 rounded text-xs font-semibold uppercase tracking-wider transition-colors py-1.5 ${
+                  active
+                    ? "bg-white text-neutral-900 shadow-sm"
+                    : "text-neutral-500 hover:text-neutral-800"
+                }`}
+              >
+                {CAPTION_PLATFORM_LABELS[p]}
+              </button>
+            );
+          })}
         </div>
-
-        {!captionExpanded ? (
-          <div className="text-sm text-neutral-800 leading-relaxed">
-            {hasCaption ? (
-              <>
-                {captionSnippet}
-                {captionForPreview.length > COLLAPSED_LEN ? (
-                  <button
-                    type="button"
-                    onClick={() => setCaptionExpanded(true)}
-                    className="ml-1 text-xs font-medium text-gold-700 hover:text-gold-800 focus-ring rounded"
-                  >
-                    see more
-                  </button>
-                ) : null}
-              </>
-            ) : (
-              <span className="text-neutral-500 italic">
-                No caption yet. Click "Edit caption" to add one.
-              </span>
-            )}
-          </div>
-        ) : (
-          <div>
-            <div
-              role="tablist"
-              aria-label="Caption platform"
-              className="mb-2 flex gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-1"
-            >
-              {CAPTION_PLATFORMS.map((p) => {
-                const active = activeCaptionPlatform === p;
-                return (
-                  <button
-                    key={p}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setActiveCaptionPlatform(p)}
-                    className={`flex-1 rounded text-xs font-semibold uppercase tracking-wider transition-colors py-1.5 ${
-                      active
-                        ? "bg-white text-neutral-900 shadow-sm"
-                        : "text-neutral-500 hover:text-neutral-800"
-                    }`}
-                  >
-                    {CAPTION_PLATFORM_LABELS[p]}
-                  </button>
-                );
-              })}
-            </div>
+        {hasCaption ? (
+          <>
             <textarea
-              className="input min-h-[180px] font-sans text-sm leading-relaxed resize-y w-full"
+              className="input min-h-[200px] font-sans text-sm leading-relaxed resize-y w-full"
               placeholder={`${CAPTION_PLATFORM_LABELS[activeCaptionPlatform]} caption + hashtags…`}
-              value={editedCaptions[activeCaptionPlatform]}
-              onChange={(e) =>
+              value={captionPreviewString}
+              onChange={(e) => {
+                // why: editing rewrites the active platform's raw string.
+                // The next render re-derives `captionPreviewString` via
+                // buildPreviewString, which normalizes back to
+                // "body\n\nhashtags" so a round-trip stays stable.
                 onEditedCaptionsChange({
                   ...editedCaptions,
                   [activeCaptionPlatform]: e.target.value,
-                })
-              }
+                });
+              }}
               disabled={busy}
             />
-            {onRegenerateCaption ? (
-              <div className="mt-2 flex justify-end">
+            <div className="mt-2 flex items-center justify-between text-xs">
+              <div className="text-neutral-500">
+                {captionPreviewString.length.toLocaleString()} chars
+              </div>
+              {onRegenerateCaption ? (
                 <button
                   type="button"
                   onClick={onRegenerateCaption}
                   disabled={regeneratingCaption || busy}
-                  className="inline-flex items-center gap-1 text-xs text-neutral-600 font-medium hover:text-neutral-900 disabled:opacity-50 focus-ring rounded"
+                  className="inline-flex items-center gap-1 text-neutral-600 font-medium hover:text-neutral-900 disabled:opacity-50 focus-ring rounded"
                 >
                   {regeneratingCaption ? (
                     "Rewriting…"
@@ -501,50 +436,30 @@ export default function MultiOhFinalStage({
                     </>
                   )}
                 </button>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-neutral-500 italic py-6 text-center">
+            No caption yet.
           </div>
         )}
       </div>
 
-      {/* Action buttons — Schedule (secondary) + Post Now (primary).
-          Schedule uses the same PostNowModal's Schedule tab so we route
-          through onPostNow; users land on the modal and switch the tab.
-          A future tweak could pass a `defaultTab` to onPostNow so this
-          jumps straight to Schedule, but that's a deeper modal refactor. */}
-      <div className="flex flex-wrap gap-3 justify-end">
+      {/* 4. Action row — single primary Post Now button, right-aligned.
+             Schedule moved to the PostNowModal's "Schedule" tab; the
+             Final Stage page is single-action. */}
+      <div className="flex justify-end">
         <button
           type="button"
           onClick={onPostNow}
           disabled={!postNowEnabled || busy}
-          className="inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-5 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
-          title="Open the Schedule + Post Now panel"
-        >
-          <Calendar size={14} aria-hidden="true" />
-          Schedule
-        </button>
-        <button
-          type="button"
-          onClick={onPostNow}
-          disabled={!postNowEnabled || busy}
-          className="btn-primary inline-flex items-center justify-center gap-1.5 px-6"
+          className="btn-primary inline-flex items-center justify-center gap-1.5 px-7 py-3 text-base"
           title="Publish this carousel now"
         >
           Post Now
-          <ChevronRight size={14} aria-hidden="true" />
+          <ChevronRight size={16} aria-hidden="true" />
         </button>
-      </div>
-
-      {/* Escape hatch — if Larissa needs to re-do the carousel entirely,
-          we keep the wizard link discoverable but demoted. NOT a tab. */}
-      <div className="text-center">
-        <Link
-          href="/post-builder/multi-oh"
-          className="inline-flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-800 focus-ring rounded"
-        >
-          <Edit3 size={11} aria-hidden="true" />
-          Start over with a different set of properties
-        </Link>
       </div>
     </div>
   );

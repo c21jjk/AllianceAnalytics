@@ -197,37 +197,49 @@ export default async function PostBuilderPage({
   // seed new posts to the right default and render the inline banner.
   const systemConfig = await loadSystemConfig();
 
+  // 2026-05-28 — when the resume row is a multi-OH carousel, the dedicated
+  // MultiOhFinalStage screen carries its own header chrome (title, subtitle,
+  // hosts line). Suppress the generic Post Builder PageHeader + Saved-posts
+  // link so the Final Stage page reads as a focused review surface rather
+  // than a "Post Builder with extra stuff stapled on top." Mirrors the
+  // client-side `isMultiOHPost` memo at PostBuilderClient.tsx ~line 1159.
+  const isMultiOHResume =
+    typeof resume?.template_id === "string" &&
+    resume.template_id.startsWith("multi_oh_event_");
+
   return (
     <div>
-      <PageHeader
-        eyebrow={`${totalEligible} eligible listings · 60 legacy templates · 2 formats`}
-        title="Post Builder"
-        description="Pick a post type, listing, and variant. Every post auto-renders in both formats — Portrait 4:5 for IG/FB feed, Story 9:16 for Stories/Reels/TikTok — with the MLS hashtag baked in for auto-attribution."
-        phaseTag="Phase 3"
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Part 2 (Phase D, 2026-05-16) — Reel Studio is no longer
-                accessed via this standalone header button. Reels are now
-                offered as a follow-up to any Save Post via the "Make a
-                Reel?" prompt, and from a "+ Reel" affordance inside
-                Studio's header. The /post-builder/reel route still
-                exists for deep-links and scheduled-task triggers, but it
-                doesn't deserve a header-level entry point that competes
-                with the canvas-Studio flow. */}
-            {/* Phase D — Multi-property OH affordance moved from the page
-                header into the Post Builder's "Pick a listing" column,
-                where it only surfaces when the active post type is
-                Open House. See PostBuilderClient.tsx. */}
-            <Link
-              href="/saved-posts"
-              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition focus-ring"
-            >
-              <FileText size={14} aria-hidden="true" />
-              Saved posts
-            </Link>
-          </div>
-        }
-      />
+      {!isMultiOHResume ? (
+        <PageHeader
+          eyebrow={`${totalEligible} eligible listings · 60 legacy templates · 2 formats`}
+          title="Post Builder"
+          description="Pick a post type, listing, and variant. Every post auto-renders in both formats — Portrait 4:5 for IG/FB feed, Story 9:16 for Stories/Reels/TikTok — with the MLS hashtag baked in for auto-attribution."
+          phaseTag="Phase 3"
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Part 2 (Phase D, 2026-05-16) — Reel Studio is no longer
+                  accessed via this standalone header button. Reels are now
+                  offered as a follow-up to any Save Post via the "Make a
+                  Reel?" prompt, and from a "+ Reel" affordance inside
+                  Studio's header. The /post-builder/reel route still
+                  exists for deep-links and scheduled-task triggers, but it
+                  doesn't deserve a header-level entry point that competes
+                  with the canvas-Studio flow. */}
+              {/* Phase D — Multi-property OH affordance moved from the page
+                  header into the Post Builder's "Pick a listing" column,
+                  where it only surfaces when the active post type is
+                  Open House. See PostBuilderClient.tsx. */}
+              <Link
+                href="/saved-posts"
+                className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition focus-ring"
+              >
+                <FileText size={14} aria-hidden="true" />
+                Saved posts
+              </Link>
+            </div>
+          }
+        />
+      ) : null}
       <PostBuilderClient
         listingsByPostType={listingsByPostType}
         variantsByPostTypeAndFormat={variantsByPostTypeAndFormat}
