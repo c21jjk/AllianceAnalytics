@@ -1134,6 +1134,34 @@ export async function POST(request: Request): Promise<Response> {
         input.properties,
       );
 
+      // ---- Build per-slide hosting-agent attribution array ----
+      // why: persisted on `generated_posts.hosting_agents_by_index` so Studio
+      // can hydrate the hosting_agent_* bound fields when Larissa re-opens an
+      // individual slide for editing. Mirrors what the headless render token
+      // already injects at render time (see app/render/template/[token]/page.tsx
+      // lines 113–119) — without persisting here, the rendered PNG carries the
+      // host's photo + phone but the editor view would resolve to the listing
+      // agent on reopen because the token was discarded after screenshot.
+      //
+      // The array is keyed by carousel position (0-based, starting at the
+      // first per-property slide — the hero is slide 0 of additional_images
+      // here, NOT a per-property slide, so index 0 in this array maps to the
+      // first per-property card). Entries are emitted for ALL input
+      // properties so retry mode can read the same array shape regardless of
+      // which slides ran.
+      const hostingAgentsByIndex = input.properties.map((prop, index) => {
+        const hostKey = normalizeForAttributionKey(prop.hosting_agent_name);
+        const attribution = hostKey
+          ? hostingAttribution.get(hostKey)
+          : undefined;
+        return {
+          index,
+          name: prop.hosting_agent_name ?? null,
+          phone: attribution?.phone ?? null,
+          photo_url: attribution?.photo_url ?? null,
+        };
+      });
+
       // ---- Render per-property cards (bounded parallelism + streaming events) ----
       const { successes, failures } = await renderPerPropertyCards(
         input,
@@ -1225,6 +1253,14 @@ export async function POST(request: Request): Promise<Response> {
           .update({
             additional_images: nextAdditional as unknown as Json,
             slide_metadata: nextMeta as unknown as Json,
+            // why: re-write the per-slide hosting-agent attribution array on
+            // retry too. The wizard re-sends the same MultiOHEventInput when
+            // it retries (only retry_indices narrows the render scope), so
+            // `hostingAgentsByIndex` rebuilt above is identical for unchanged
+            // slots and refreshed for the retried ones. Safe to overwrite
+            // wholesale — and forward-fills the column on rows that were
+            // first generated before this column existed.
+            hosting_agents_by_index: hostingAgentsByIndex as unknown as Json,
           })
           .eq("id", existingGeneratedPostId);
         if (updateErr) {
@@ -1307,6 +1343,15 @@ export async function POST(request: Request): Promise<Response> {
           // additional_images[N]. Re-opening a slide in Studio reads variant +
           // format + hosting agent here to resolve the source template.
           slide_metadata: buildSlideMetadata(input, successes),
+          // why: per-slide hosting-agent attribution (name + phone + photo_url),
+          // captured from the same `hostingAttribution` map the renderer uses.
+          // Studio's per-slide edit handler reads this on resume and injects
+          // it into the MLSListingPayload before bound-field resolution, so
+          // the editor view matches the rendered PNG (photo block populated
+          // instead of empty). Null entries are kept so the array length lines
+          // up with `input.properties.length` regardless of which slides
+          // succeeded.
+          hosting_agents_by_index: hostingAgentsByIndex as unknown as Json,
           status: "draft",
           created_by: profile.id,
         })

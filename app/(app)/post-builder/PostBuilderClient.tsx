@@ -68,6 +68,11 @@ import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListing
 import MagicDesignModal, {
   type MagicDesignAppliedPayload,
 } from "./MagicDesignModal";
+// === Multi-OH "Final Stage" UI (Phase 1, 2026-05-27) ===
+// why: when ?gp=<id> resolves to a multi-OH carousel, swap the whole
+// generic Post Builder grid for a focused "Step 3 of 3" review screen.
+// See the component for the framing rationale.
+import MultiOhFinalStage from "./MultiOhFinalStage";
 import type {
   CanvasExportResult,
   CanvasTemplateSchema,
@@ -506,6 +511,25 @@ export default function PostBuilderClient({
   const [slideMetadata, setSlideMetadata] = useState<readonly SlideMetadata[]>(
     [],
   );
+  // Per-slide hosting-agent attribution (multi-OH carousels only).
+  // Populated from initialResume.hosting_agents_by_index on resume. Studio's
+  // per-slide edit handler reads this by index and injects it into the
+  // MLSListingPayload as `hosting_agent` so the editor view matches the
+  // rendered PNG (photo + phone visible instead of empty). Mirrors what the
+  // headless render token already does at render time
+  // (app/render/template/[token]/page.tsx lines 113–119).
+  //
+  // Indexes line up with the per-property carousel positions emitted by
+  // /api/post-builder/multi-oh-generate. Entries are null-safe — a missing
+  // index or a null-filled entry falls through to the listing agent.
+  const [hostingAgentsByIndex, setHostingAgentsByIndex] = useState<
+    ReadonlyArray<{
+      index: number;
+      name: string | null;
+      phone: string | null;
+      photo_url: string | null;
+    }>
+  >([]);
   // When set, the next Studio save updates that slide's image + layer_tree
   // (via updateGeneratedPostSlideAction) instead of the hero (via
   // upsertGeneratedPostFromStudioAction). Reset to null on every Studio
@@ -692,6 +716,41 @@ export default function PostBuilderClient({
         setSlideMetadata(parsedMeta);
       } else {
         setSlideMetadata([]);
+      }
+      // Per-slide hosting-agent attribution (multi-OH carousels).
+      // why: persisted by /api/post-builder/multi-oh-generate so Studio's
+      // per-slide edit handler can inject hosting_agent (name + phone +
+      // photo_url) into the listing payload before bound-field resolution.
+      // Without this, the editor view of a multi-OH slide resolves to the
+      // listing agent's photo instead of the host's — mismatching the
+      // rendered PNG the user already sees in the carousel strip.
+      //
+      // Narrow defensively; older rows (pre-2026-05-27 migration) have null
+      // for this column and the per-slide edit handler falls through to the
+      // listing agent in that case.
+      if (Array.isArray(initialResume.hosting_agents_by_index)) {
+        const parsedHosts: Array<{
+          index: number;
+          name: string | null;
+          phone: string | null;
+          photo_url: string | null;
+        }> = [];
+        for (const raw of initialResume.hosting_agents_by_index) {
+          if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+            const r = raw as Record<string, unknown>;
+            if (typeof r.index !== "number") continue;
+            parsedHosts.push({
+              index: r.index,
+              name: typeof r.name === "string" ? r.name : null,
+              phone: typeof r.phone === "string" ? r.phone : null,
+              photo_url:
+                typeof r.photo_url === "string" ? r.photo_url : null,
+            });
+          }
+        }
+        setHostingAgentsByIndex(parsedHosts);
+      } else {
+        setHostingAgentsByIndex([]);
       }
       // why: also pre-fill renderResult so the preview pane shows the
       // saved image as soon as Studio closes — the user sees the same
@@ -944,6 +1003,22 @@ export default function PostBuilderClient({
     () => listings.find((l) => l.mls_number === selectedMls) ?? null,
     [listings, selectedMls],
   );
+
+  // why: MultiOhFinalStage needs to resolve `slide_metadata[i].listing_mls`
+  // → its full listing row so it can show the property address under each
+  // carousel slide. We pull from EVERY post-type bucket (not just the
+  // current one) because a multi-OH carousel can mix listings across
+  // post-type buckets in theory, and listings are deduplicated by MLS
+  // anyway. Last-write-wins on duplicates is fine — same row, same data.
+  const listingsByMls = useMemo<ReadonlyMap<string, PostBuilderListing>>(() => {
+    const out = new Map<string, PostBuilderListing>();
+    for (const bucket of Object.values(listingsByPostType)) {
+      for (const l of bucket) {
+        if (l.mls_number) out.set(l.mls_number, l);
+      }
+    }
+    return out;
+  }, [listingsByPostType]);
 
   // === Canvas Editor (Path C) — template lookup + open/save/close handlers ===
   // why: lookup is by (postType, variantId, format) tuple — if no canvas-editor
@@ -1892,11 +1967,37 @@ export default function PostBuilderClient({
         officeName: slideListing.listing_office_name ?? null,
       });
 
+      // ---- Inject per-slide hosting_agent attribution ----
+      // why: multi-OH carousels persist a per-slide hosting agent (name +
+      // phone + photo_url) on `generated_posts.hosting_agents_by_index`.
+      // The headless render injects this onto the listing payload at render
+      // time (see app/render/template/[token]/page.tsx lines 113–119) so
+      // the rendered PNG shows the host's photo + phone. The render token
+      // is discarded after screenshot, so without this hydration the editor
+      // view would resolve `hosting_agent_*` bound fields to the listing
+      // agent and the photo block would render empty (hideIfEmpty on src).
+      //
+      // We look up by `slideIndex` against the parsed array so retried /
+      // reordered slides still resolve to the right host. A missing entry
+      // (legacy row pre-2026-05-27, or non-multi-OH context) falls through
+      // to the listing-agent bindings — same behavior as the rendered card
+      // when no host override was set.
+      const hostEntry = hostingAgentsByIndex.find(
+        (h) => h.index === slideIndex,
+      );
+      if (hostEntry && hostEntry.name) {
+        payload.hosting_agent = {
+          name: hostEntry.name,
+          phone: hostEntry.phone,
+          photo_url: hostEntry.photo_url,
+        };
+      }
+
       setStudioContext({ template, listing: payload });
       setEditingSlideIndex(slideIndex);
       setStudioOpen(true);
     },
-    [carouselSlides, slideMetadata, listingsByPostType],
+    [carouselSlides, slideMetadata, listingsByPostType, hostingAgentsByIndex],
   );
 
   // The current set of photo URLs to send to the render API. For single-
@@ -2240,6 +2341,7 @@ export default function PostBuilderClient({
     // category, different framing).
     setCarouselSlides([]);
     setSlideMetadata([]);
+    setHostingAgentsByIndex([]);
     setEditingSlideIndex(null);
     setGeneratedPostId(null);
   }
@@ -2269,6 +2371,7 @@ export default function PostBuilderClient({
     // house — clear instead.
     setCarouselSlides([]);
     setSlideMetadata([]);
+    setHostingAgentsByIndex([]);
     setEditingSlideIndex(null);
     setGeneratedPostId(null);
     setError(null);
@@ -3116,42 +3219,85 @@ export default function PostBuilderClient({
     }
   }
 
+  // === Multi-OH "Final Stage" branch ============================
+  // why: when ?gp=<id> resolves to a multi-OH carousel, swap the entire
+  // single-listing Post Builder UI (post-type picker, listing list,
+  // variant grid, preview/caption pane, Edit-in-Studio / Start-a-new-MultiOH
+  // / Saved-Post tabs) for the dedicated MultiOhFinalStage screen. The
+  // PostNowModal + Studio overlay still mount below so the flow's downstream
+  // actions (Schedule, Post Now, slide edits launched from elsewhere) keep
+  // working unchanged. See PostBuilderClient.tsx imports and
+  // MultiOhFinalStage.tsx for the rationale.
+  if (isMultiOHPost) {
+    const hasCaption =
+      editedCaptions.instagram.trim().length > 0 ||
+      editedCaptions.facebook.trim().length > 0 ||
+      editedCaptions.tiktok.trim().length > 0;
+    return (
+      <div className="space-y-5">
+        <MultiOhFinalStage
+          heroImageUrl={renderResult?.image_url ?? null}
+          carouselSlides={carouselSlides}
+          slideMetadata={slideMetadata}
+          listingsByMls={listingsByMls}
+          format={format}
+          formatMeta={formatMeta[format] ?? null}
+          editedCaptions={editedCaptions}
+          onEditedCaptionsChange={setEditedCaptions}
+          hasCaption={hasCaption}
+          busy={generating}
+          onPostNow={openPostNow}
+          postNowEnabled={isAdmin && !!renderResult}
+          onRegenerateCaption={
+            // why: regenerateCaption uses `selectedListing` internally to
+            // build its prompt. In multi-OH mode there's no single selected
+            // listing — the carousel is multi-property by definition — so
+            // the caption pipeline can't ask for a refresh against any one
+            // listing. Hide the affordance instead of wiring a half-broken
+            // button. A future "regenerate from event metadata" endpoint
+            // could plug in here.
+            undefined
+          }
+          regeneratingCaption={regeneratingCaption}
+        />
+        {postNowOpen ? (
+          <PostNowModal
+            previewImageUrl={renderResult?.image_url ?? null}
+            allSlideUrls={
+              renderResult?.image_url
+                ? [renderResult.image_url, ...carouselSlides.map((s) => s.url)]
+                : carouselSlides.map((s) => s.url)
+            }
+            listingLabel={
+              // why: in multi-OH mode there's no single listing label —
+              // use the slide-count framing from the FinalStage header
+              // so the modal's asset summary line still makes sense.
+              `Multi-property Open House · ${carouselSlides.length + 1} slides`
+            }
+            captionPreview={editedCaption}
+            platforms={postNowPlatforms}
+            onTogglePlatform={togglePostNowPlatform}
+            armedAt={postNowArmedAt}
+            sending={postNowSending}
+            results={postNowResults}
+            onCancel={closePostNow}
+            onConfirm={submitPostNow}
+            onSchedule={submitSchedule}
+            testMode={currentTestMode}
+            onSetTestMode={handleSetTestMode}
+            testModeSaving={testModeSaving}
+            globalTestModeOn={globalTestModeOn}
+            error={error}
+            onClearError={() => setError(null)}
+            slideCount={1 + carouselSlides.length}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
-      {/* 2026-05-21 — Multi-OH header banner. Replaces the post-type
-          segmented picker + listing picker for rows resumed from the
-          multi-OH wizard: those choices were already made in the wizard
-          and can't be changed here without re-rendering the entire
-          carousel. The banner orients Larissa to what she's editing. */}
-      {isMultiOHPost ? (
-        <div className="rounded-xl p-4 bg-gold-50/40 ring-1 ring-gold-200">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-[0.1em] text-gold-700 mb-0.5">
-                Multi-property Open House
-              </div>
-              <div className="text-sm text-neutral-900">
-                Carousel post —{" "}
-                <span className="font-semibold">
-                  {carouselSlides.length + 1} slides
-                </span>{" "}
-                · {formatMeta[format]?.display_name ?? format}
-              </div>
-              <div className="text-xs text-neutral-600 mt-0.5">
-                Format and per-property card style were chosen in the wizard. Edit captions below, or click Edit in Studio to fine-tune a slide.
-              </div>
-            </div>
-            <Link
-              href="/post-builder/multi-oh"
-              className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-white px-3 py-1.5 text-xs font-medium text-gold-800 hover:bg-gold-100/50 transition focus-ring"
-            >
-              <RotateCw size={14} aria-hidden="true" />
-              Start a new Multi-OH
-            </Link>
-          </div>
-        </div>
-      ) : null}
-
       {/* Post type segmented picker — hidden in multi-OH mode (the
           carousel is locked to "open_house" and the picker tabs would
           let Larissa wander out of the multi-OH context confusingly). */}
@@ -4030,6 +4176,11 @@ export default function PostBuilderClient({
       {postNowOpen ? (
         <PostNowModal
           previewImageUrl={renderResult?.image_url ?? null}
+          allSlideUrls={
+            renderResult?.image_url
+              ? [renderResult.image_url, ...carouselSlides.map((s) => s.url)]
+              : carouselSlides.map((s) => s.url)
+          }
           listingLabel={
             selectedListing
               ? `${selectedListing.address ?? selectedListing.mls_number}`
@@ -4317,8 +4468,67 @@ export default function PostBuilderClient({
   );
 }
 
+/**
+ * Collapsed caption preview shown inside PostNowModal — single-line snippet
+ * with a "view full" toggle. The previous screen already shows the
+ * editable per-platform caption pane, so duplicating the full
+ * pre-formatted block here was confusing in the multi-OH flow (and noisy
+ * in single-listing too).
+ */
+function CaptionCollapsedPreview({
+  captionPreview,
+}: {
+  captionPreview: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (!captionPreview.trim()) {
+    return (
+      <div>
+        <div className="eyebrow mb-2">Caption</div>
+        <div className="text-xs italic text-neutral-400">(empty)</div>
+      </div>
+    );
+  }
+  const SNIPPET_LEN = 60;
+  const snippet =
+    captionPreview.length > SNIPPET_LEN
+      ? captionPreview.slice(0, SNIPPET_LEN).trimEnd() + "…"
+      : captionPreview;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="eyebrow">Caption</div>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-xs font-medium text-gold-700 hover:text-gold-800 focus-ring rounded"
+        >
+          {expanded ? "Hide" : "View full"}
+        </button>
+      </div>
+      {!expanded ? (
+        <div className="text-xs text-neutral-700 truncate" title={captionPreview}>
+          {snippet}
+        </div>
+      ) : (
+        <div className="rounded-lg bg-neutral-50 ring-1 ring-neutral-200 p-3 text-xs font-mono text-neutral-700 max-h-[140px] overflow-y-auto whitespace-pre-wrap">
+          {captionPreview}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface PostNowModalProps {
   previewImageUrl: string | null;
+  /**
+   * 2026-05-27 — when present and non-empty, the modal renders a horizontal
+   * strip of all carousel slides (hero + additional_images) at the top of
+   * the body so the user can see the FULL bundle they're about to publish.
+   * Empty / undefined → fall back to the single-thumbnail asset summary.
+   * Each URL maps 1:1 to a slide in publish order (hero is index 0).
+   */
+  allSlideUrls?: readonly string[];
   listingLabel: string;
   captionPreview: string;
   platforms: Set<PostPlatform>;
@@ -4369,6 +4579,7 @@ const POST_NOW_ARM_MS = 2000;
 function PostNowModal(props: PostNowModalProps) {
   const {
     previewImageUrl,
+    allSlideUrls,
     listingLabel,
     captionPreview,
     platforms,
@@ -4387,6 +4598,12 @@ function PostNowModal(props: PostNowModalProps) {
     onClearError,
     slideCount,
   } = props;
+
+  // why: render the full carousel strip whenever we have 2+ slides. The
+  // strip replaces the single-thumbnail asset summary so the user can
+  // verify EVERY slide before publishing — most important for multi-OH
+  // where slide 1 (the hero) is the only one that used to surface.
+  const showCarouselStrip = Array.isArray(allSlideUrls) && allSlideUrls.length >= 2;
 
   // why: drive the per-platform copy off the real slide count. 1 slide
   // → "single photo / image", 2+ → "N-photo carousel". TT photo accepts
@@ -4451,10 +4668,10 @@ function PostNowModal(props: PostNowModalProps) {
 
   const canConfirm = platforms.size > 0 && armed && !sending && !results;
 
-  // Trim caption preview for the modal (we have textarea on the main page).
-  const captionShort = captionPreview.length > 280
-    ? captionPreview.slice(0, 280).trimEnd() + "…"
-    : captionPreview;
+  // 2026-05-27 — the full pre-formatted caption block was retired in favor
+  // of CaptionCollapsedPreview (snippet + "view full" toggle), since the
+  // previous screen already shows the editable per-platform caption pane.
+  // The old `captionShort` trim lived here.
 
   // ---- Schedule tab derived state -------------------------------------
   // why: For the Schedule tab we count platforms with valid FUTURE
@@ -4602,7 +4819,60 @@ function PostNowModal(props: PostNowModalProps) {
             </div>
           ) : null}
 
-          {/* Asset summary */}
+          {/* Carousel strip — 2026-05-27. When the post is a carousel
+              (2+ slides) we render every slide in publish order so the
+              user can verify the full bundle. Otherwise we drop straight
+              into the existing single-thumbnail asset summary. */}
+          {showCarouselStrip && allSlideUrls ? (
+            <div className="rounded-lg bg-neutral-50 ring-1 ring-neutral-200 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="eyebrow">Slides ({allSlideUrls.length})</div>
+                <div className="text-xs text-neutral-500 truncate ml-2">
+                  {listingLabel}
+                </div>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                {allSlideUrls.map((url, idx) => (
+                  <div key={`${url}-${idx}`} className="shrink-0">
+                    <div
+                      className={[
+                        "w-20 h-20 rounded-md overflow-hidden bg-neutral-100 ring-1",
+                        idx === 0 ? "ring-gold-400" : "ring-neutral-200",
+                      ].join(" ")}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={url}
+                        alt={idx === 0 ? "Hero" : `Slide ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    </div>
+                    <div
+                      className={[
+                        "mt-1 text-[10px] font-semibold uppercase tracking-wider text-center",
+                        idx === 0 ? "text-gold-700" : "text-neutral-500",
+                      ].join(" ")}
+                    >
+                      {idx === 0 ? "Hero" : `#${idx + 1}`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Asset summary. 2026-05-27 — label now reflects the actual
+              slide count (hero + per-property slides). Single-image posts
+              still read "1 designed image · single post"; carousel posts
+              read "Carousel post · N slides". The publish flow at
+              app/api/post-builder/post/route.ts:361 pushes
+              [image_url, ...additional_images] for every IG/FB carousel,
+              so a multi-OH event of N per-property slides publishes as
+              an (N+1)-slide carousel. When the carousel strip above is
+              rendered we hide this single-thumbnail summary to avoid
+              duplicating the hero. */}
+          {!showCarouselStrip ? (
           <div className="flex gap-3 items-start rounded-lg bg-neutral-50 ring-1 ring-neutral-200 p-3">
             {previewImageUrl ? (
               /* eslint-disable-next-line @next/next/no-img-element */
@@ -4621,10 +4891,13 @@ function PostNowModal(props: PostNowModalProps) {
                 {listingLabel}
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                1 designed image · IG single post
+                {isCarousel
+                  ? `Carousel post · ${slideCount} slides`
+                  : "1 designed image · single post"}
               </div>
             </div>
           </div>
+          ) : null}
 
           {/* 2026-05-16 — per-post Test / Live toggle. Test routes
               publishers through hidden/draft paths (FB Drafts, IG container
@@ -4690,146 +4963,133 @@ function PostNowModal(props: PostNowModalProps) {
             </div>
           </div>
 
-          {/* Platform pickers */}
+          {/* Platform pickers. 2026-05-27 — when the Schedule tab is
+              active, each card now contains its own inline datetime-local
+              picker (rendered below the platform description when that
+              platform's checkbox is on). The separate centralized
+              "When to publish (ET)" block was deleted in favor of this
+              co-located UI. Data wiring (scheduleInputs / setScheduleInputs)
+              is unchanged — only the visual placement moved. */}
           <div>
             <div className="eyebrow mb-2">Publish to</div>
             <div className="space-y-2">
-              <label
-                className={[
-                  "flex items-start gap-3 rounded-lg p-3 cursor-pointer transition ring-1",
-                  platforms.has("facebook")
-                    ? "bg-blue-50 ring-blue-300"
-                    : "bg-white ring-neutral-200 hover:bg-neutral-50",
-                ].join(" ")}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={platforms.has("facebook")}
-                  onChange={() => onTogglePlatform("facebook")}
-                  disabled={sending || !!results}
-                />
-                <div className="flex-1">
-                  <div className="text-sm font-semibold text-neutral-900">Facebook Page</div>
-                  <div className="text-xs text-neutral-600 mt-0.5">{fbCardCopy}</div>
-                </div>
-              </label>
-
-              <label
-                className={[
-                  "flex items-start gap-3 rounded-lg p-3 transition ring-1",
-                  platforms.has("instagram")
-                    ? "bg-pink-50 ring-pink-300 cursor-pointer"
-                    : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer",
-                ].join(" ")}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={platforms.has("instagram")}
-                  onChange={() => onTogglePlatform("instagram")}
-                  disabled={sending || !!results}
-                />
-                <div className="flex-1">
-                  <div className="text-sm font-semibold text-neutral-900">Instagram Business</div>
-                  <div className="text-xs text-neutral-600 mt-0.5">{igCardCopy}</div>
-                </div>
-              </label>
-
-              <label
-                className={[
-                  "flex items-start gap-3 rounded-lg p-3 transition ring-1",
-                  platforms.has("tiktok")
+              {(["facebook", "instagram", "tiktok"] as const).map((platform) => {
+                const isOn = platforms.has(platform);
+                const entry = scheduleEntries.find((e) => e.platform === platform);
+                const localValue = scheduleInputs[platform] ?? "";
+                const hasInput = localValue !== "";
+                const showPastWarning =
+                  hasInput && entry !== undefined && !entry.isFuture;
+                const window = OPTIMAL_POSTING_WINDOWS[platform];
+                const cardRing = (() => {
+                  if (platform === "facebook") {
+                    return isOn
+                      ? "bg-blue-50 ring-blue-300 cursor-pointer"
+                      : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer";
+                  }
+                  if (platform === "instagram") {
+                    return isOn
+                      ? "bg-pink-50 ring-pink-300 cursor-pointer"
+                      : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer";
+                  }
+                  return isOn
                     ? "bg-neutral-900/10 ring-neutral-400 cursor-pointer"
-                    : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer",
-                ].join(" ")}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={platforms.has("tiktok")}
-                  onChange={() => onTogglePlatform("tiktok")}
-                  disabled={sending || !!results}
-                />
-                <div className="flex-1">
-                  <div className="text-sm font-semibold text-neutral-900">TikTok</div>
-                  <div className="text-xs text-neutral-600 mt-0.5">
-                    {testMode
-                      ? "Test mode → lands in the TikTok app drafts inbox (publish manually from the app)."
-                      : "Posts to the Alliance TikTok account."}
-                  </div>
-                </div>
-              </label>
-            </div>
-          </div>
+                    : "bg-white ring-neutral-200 hover:bg-neutral-50 cursor-pointer";
+                })();
+                const label =
+                  platform === "facebook"
+                    ? "Facebook Page"
+                    : platform === "instagram"
+                      ? "Instagram Business"
+                      : "TikTok";
+                const description =
+                  platform === "facebook"
+                    ? fbCardCopy
+                    : platform === "instagram"
+                      ? igCardCopy
+                      : testMode
+                        ? "Test mode → lands in the TikTok app drafts inbox (publish manually from the app)."
+                        : "Posts to the Alliance TikTok account.";
 
-          {/* Schedule pane — only when Schedule tab is active AND at least
-              one platform is selected. Each selected platform gets its own
-              datetime-local input pre-filled with its optimal window. */}
-          {tab === "schedule" && !results ? (
-            <div>
-              <div className="eyebrow mb-2">When to publish (ET)</div>
-              {platforms.size === 0 ? (
-                <div className="rounded-lg bg-amber-50 ring-1 ring-amber-200 p-3 text-xs text-amber-900">
-                  Pick at least one platform above to schedule it.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {scheduleEntries.map((entry) => {
-                    const window = OPTIMAL_POSTING_WINDOWS[entry.platform];
-                    const hasInput = entry.localValue !== "";
-                    const showPastWarning = hasInput && !entry.isFuture;
-                    return (
-                      <div
-                        key={entry.platform}
-                        className="rounded-lg ring-1 ring-neutral-200 bg-white p-3"
-                      >
-                        <div className="flex items-center justify-between gap-3 mb-1.5">
-                          <div className="text-sm font-semibold capitalize text-neutral-900">
-                            {entry.platform}
-                          </div>
-                          <div className="text-[11px] text-neutral-500">
-                            Optimal: {window.label}
-                          </div>
-                        </div>
-                        <input
-                          type="datetime-local"
-                          value={entry.localValue}
-                          min={getDateTimeLocalNow()}
-                          disabled={sending}
-                          onChange={(e) =>
-                            setScheduleInputs((prev) => ({
-                              ...prev,
-                              [entry.platform]: e.target.value,
-                            }))
-                          }
-                          className={[
-                            "w-full rounded-md border px-3 py-2 text-sm font-mono transition",
-                            showPastWarning
-                              ? "border-rose-300 bg-rose-50 text-rose-900"
-                              : "border-neutral-300 bg-white text-neutral-900 focus:border-gold-500 focus:ring-1 focus:ring-gold-500",
-                          ].join(" ")}
-                        />
-                        {showPastWarning ? (
-                          <div className="mt-1 text-[11px] text-rose-700">
-                            Pick a time at least 1 minute in the future.
-                          </div>
-                        ) : null}
+                return (
+                  <label
+                    key={platform}
+                    className={[
+                      "flex items-start gap-3 rounded-lg p-3 transition ring-1",
+                      cardRing,
+                    ].join(" ")}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={isOn}
+                      onChange={() => onTogglePlatform(platform)}
+                      disabled={sending || !!results}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-neutral-900">
+                        {label}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ) : null}
+                      <div className="text-xs text-neutral-600 mt-0.5">
+                        {description}
+                      </div>
 
-          {/* Caption preview */}
-          <div>
-            <div className="eyebrow mb-2">Caption</div>
-            <div className="rounded-lg bg-neutral-50 ring-1 ring-neutral-200 p-3 text-xs font-mono text-neutral-700 max-h-[140px] overflow-y-auto whitespace-pre-wrap">
-              {captionShort || <span className="italic text-neutral-400">(empty)</span>}
+                      {/* Inline per-platform schedule picker. Only rendered
+                          on the Schedule tab, only when this platform is
+                          on, and never once results have landed. Wrapper
+                          stops click propagation so interacting with the
+                          input doesn't bubble up to the surrounding
+                          <label> and toggle the checkbox. */}
+                      {tab === "schedule" && isOn && !results ? (
+                        <div
+                          className="mt-3"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-1">
+                            <div className="text-xs font-medium text-neutral-500">
+                              Scheduled time (ET)
+                            </div>
+                            <div className="text-[11px] text-neutral-500">
+                              Optimal: {window.label}
+                            </div>
+                          </div>
+                          <input
+                            type="datetime-local"
+                            value={localValue}
+                            min={getDateTimeLocalNow()}
+                            disabled={sending}
+                            onChange={(e) =>
+                              setScheduleInputs((prev) => ({
+                                ...prev,
+                                [platform]: e.target.value,
+                              }))
+                            }
+                            className={[
+                              "w-full rounded-md border px-3 py-2 text-sm font-mono transition",
+                              showPastWarning
+                                ? "border-rose-300 bg-rose-50 text-rose-900"
+                                : "border-neutral-300 bg-white text-neutral-900 focus:border-gold-500 focus:ring-1 focus:ring-gold-500",
+                            ].join(" ")}
+                          />
+                          {showPastWarning ? (
+                            <div className="mt-1 text-[11px] text-rose-700">
+                              Pick a time at least 1 minute in the future.
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </label>
+                );
+              })}
             </div>
           </div>
+
+          {/* Caption preview — 2026-05-27: collapsed to a single-line
+              snippet so the modal no longer duplicates the full caption
+              editor on the previous screen. "View full" toggles to the
+              full pre-formatted block inline. */}
+          <CaptionCollapsedPreview captionPreview={captionPreview} />
 
           {/* Results display */}
           {results ? (

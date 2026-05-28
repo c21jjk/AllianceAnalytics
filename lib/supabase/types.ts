@@ -411,6 +411,7 @@ export type Database = {
           format: string
           hashtags: string[] | null
           hero_image_source_url: string | null
+          hosting_agents_by_index: Json | null
           id: string
           image_path: string | null
           image_url: string | null
@@ -465,6 +466,7 @@ export type Database = {
           format: string
           hashtags?: string[] | null
           hero_image_source_url?: string | null
+          hosting_agents_by_index?: Json | null
           id?: string
           image_path?: string | null
           image_url?: string | null
@@ -519,6 +521,7 @@ export type Database = {
           format?: string
           hashtags?: string[] | null
           hero_image_source_url?: string | null
+          hosting_agents_by_index?: Json | null
           id?: string
           image_path?: string | null
           image_url?: string | null

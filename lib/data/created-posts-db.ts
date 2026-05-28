@@ -161,6 +161,19 @@ export interface CreatedPostResumeRow {
    */
   slide_metadata: unknown | null;
   /**
+   * Per-slide hosting-agent attribution for multi-OH carousel posts. Persisted
+   * by /api/post-builder/multi-oh-generate; read by Studio's per-slide edit
+   * handler to inject hosting_agent into the MLSListingPayload before bound-
+   * field resolution, so the editor view matches the rendered PNG.
+   *
+   * Shape:
+   *   Array<{ index: number; name: string|null; phone: string|null; photo_url: string|null }>
+   *
+   * Null on non-multi-OH posts and on rows that pre-date the column.
+   * Narrowed by the client.
+   */
+  hosting_agents_by_index: unknown | null;
+  /**
    * Phase D — legacy single caption (mirrors what FB/IG/TikTok used to
    * publish before per-platform variants). Surfaced on resume so the
    * client can seed editedCaptions when captions_by_platform is empty.
@@ -240,7 +253,7 @@ export async function fetchCreatedPostResume(
       // 2026-05-24 — fabric_json added so the editor can rehydrate from
       // the user's actual canvas state on reopen (via initialFabricJson).
       // See CreatedPostResumeRow.fabric_json for the contract.
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, fabric_json, additional_images, slide_metadata, caption, hashtags, captions_by_platform, test_mode, created_by, ai_design_mood, ai_design_critique_passed, ai_design_token_input, ai_design_token_output, ai_design_duration_ms, original_template_id",
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, image_path, hero_image_source_url, layer_tree, fabric_json, additional_images, slide_metadata, hosting_agents_by_index, caption, hashtags, captions_by_platform, test_mode, created_by, ai_design_mood, ai_design_critique_passed, ai_design_token_input, ai_design_token_output, ai_design_duration_ms, original_template_id",
     )
     .eq("id", id)
     .maybeSingle();
@@ -267,6 +280,7 @@ export async function fetchCreatedPostResume(
     layer_tree: data.layer_tree,
     additional_images: data.additional_images,
     slide_metadata: data.slide_metadata,
+    hosting_agents_by_index: data.hosting_agents_by_index,
     caption: data.caption,
     hashtags: data.hashtags,
     captions_by_platform: data.captions_by_platform,
