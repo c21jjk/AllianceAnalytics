@@ -19,6 +19,19 @@ import { useEffect, useRef, useState } from "react";
 import { renderSchemaHeadless } from "@/lib/post-builder/canvas-editor/headless-render";
 import type { CanvasTemplateSchema, MLSListingPayload } from "@/lib/post-builder/canvas-editor/types";
 
+// 2026-05-28 — CRITICAL fix for the multi-OH font race.
+// fonts.css declares the @font-face rules for Allura, Playfair Display,
+// Glacial Indifference, etc. CanvasEditor.tsx imports it for the Studio
+// editor — but the headless render page (this client) was NOT importing
+// it. Result: when Chromium loaded the render page, no @font-face was
+// declared, `document.fonts.load("16px Allura")` resolved instantly with
+// nothing, and Fabric painted text using the cursive fallback
+// (Brush Script MT). Multi-OH slides drew the "Open" eyebrow in bold
+// fallback instead of elegant Allura script. Importing fonts.css here
+// declares the @font-face rules and lets the explicit document.fonts.load
+// waits inside renderSchemaHeadless actually fetch the font files.
+import "@/lib/post-builder/canvas-editor/fonts.css";
+
 interface Props {
   schema: CanvasTemplateSchema;
   listing: MLSListingPayload;
