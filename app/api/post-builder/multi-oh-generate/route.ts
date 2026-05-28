@@ -79,6 +79,10 @@ import { formatShortName } from "@/lib/post-builder/templates/registry";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
+  synthesizeMultiOHCaption,
+  type CaptionTone,
+} from "@/lib/post-builder/multi-oh-caption-synth";
+import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
   type MultiOHEventInput,
@@ -207,7 +211,30 @@ interface MultiOHStreamBody extends MultiOHEventInput {
   retry_indices?: readonly number[];
   existing_generated_post_id?: string;
   existing_hero_url?: string;
+  /**
+   * Phase 6 (2026-05-27) — opener/closer tone bias for the auto-synthesized
+   * caption. `"auto"` (default) runs the heuristic; the named tones
+   * (`coastal`, `family`, `investor`, `cozy`, `editorial`) lock the pool
+   * to that tone regardless of property mix. Ignored when
+   * `caption_override` is set — the override always wins.
+   */
+  tone?: CaptionTone;
+  /**
+   * Phase 6 — full-caption user override. When set, replaces the
+   * auto-synth body for all three platforms; hashtags are still
+   * auto-appended unless the override already contains them.
+   */
+  caption_override?: string | null;
 }
+
+const VALID_TONES = [
+  "auto",
+  "coastal",
+  "family",
+  "investor",
+  "cozy",
+  "editorial",
+] as const satisfies readonly CaptionTone[];
 
 /**
  * Slim parser for the raw POST body. We accept `unknown` and narrow defensively
@@ -402,6 +429,19 @@ function parseBody(raw: unknown):
     }
   }
 
+  // Phase 6 (2026-05-27) — tone + caption_override.
+  // tone defaults to "auto" so older clients keep working unchanged.
+  const rawTone = r.tone;
+  const tone: CaptionTone =
+    typeof rawTone === "string" && (VALID_TONES as readonly string[]).includes(rawTone)
+      ? (rawTone as CaptionTone)
+      : "auto";
+  const rawOverride = r.caption_override;
+  const caption_override: string | null =
+    typeof rawOverride === "string" && rawOverride.trim().length > 0
+      ? rawOverride
+      : null;
+
   return {
     ok: true,
     value: {
@@ -417,6 +457,8 @@ function parseBody(raw: unknown):
       retry_indices,
       existing_generated_post_id,
       existing_hero_url,
+      tone,
+      caption_override,
     },
   };
 }
@@ -1293,7 +1335,26 @@ export async function POST(request: Request): Promise<Response> {
       // deterministic multi-OH caption + per-platform map so Post Now
       // always has something to publish. Larissa can override either in
       // Studio's caption pane before publishing.
-      const synthesized = synthesizeMultiOHCaption(input);
+      // Phase 6 — shared synth module, supports tone bias + caption override.
+      // Reads `tone` + `caption_override` off the parsed body (defaults
+      // applied in parseBody so this call signature stays clean).
+      const synthesized = synthesizeMultiOHCaption({
+        event_title: input.event_title,
+        properties: input.properties.map((p) => ({
+          address: p.address,
+          city: p.city,
+          mls_number: p.mls_number,
+          source_mls: p.source_mls,
+          unit_number: p.unit_number,
+          list_price: p.list_price,
+          property_type: p.property_type,
+          oh_sessions: p.oh_sessions,
+          oh_start_at: p.oh_start_at,
+          oh_end_at: p.oh_end_at,
+        })),
+        tone: parsed.value.tone,
+        caption_override: parsed.value.caption_override,
+      });
 
       const { data: inserted, error: insertError } = await supabase
         .from("generated_posts")
@@ -1328,11 +1389,17 @@ export async function POST(request: Request): Promise<Response> {
           template_props: {} as Json,
           customizations: {} as Json,
           // Phase D — synthesized deterministic caption + per-platform map.
-          // See synthesizeMultiOHCaption below.
+          // See synthesizeMultiOHCaption in lib/post-builder/multi-oh-caption-synth.ts.
           caption: synthesized.legacy.caption,
           hashtags: synthesized.legacy.hashtags,
           mls_hashtag: synthesized.legacy.mls_hashtag,
           captions_by_platform: synthesized.captions as unknown as Json,
+          // Phase 6 — persist tone + override so future edit/regen flows
+          // can resume from the same caption choice. Tone always lands
+          // as the RESOLVED concrete tone (never "auto") so the column
+          // reads cleanly. Override is null when not set.
+          caption_override: parsed.value.caption_override,
+          caption_tone: synthesized.resolved_tone,
           // why: no canvas-editor layer tree — the event hero isn't a Path C
           // template. The per-property cards are V1 renders, also without
           // layer trees. A future "edit hero in Studio" flow would need to
@@ -1407,532 +1474,3 @@ export async function POST(request: Request): Promise<Response> {
   });
 }
 
-/**
- * Phase D — synthesize a caption + per-platform variants for a multi-OH
- * event row at insert time. Deterministic (no AI call) because the
- * multi-OH render path is already 30+ seconds of Chromium work and we
- * shouldn't add another network round-trip on the critical path.
- *
- * 2026-05-27 — Major rewrite. Because the hero image is no longer
- * published as a carousel slide, ALL event details (dates, addresses,
- * times) must live in the caption. The structure matches a real
- * gold-standard post Larissa shipped:
- *
- *   {opener_emoji} {opener_line} {closing_emoji_pair}
- *
- *   📍 {Weekday, Month Day}
- *   • {Address}, {City} | {time-range}
- *   • {Address}, {City} | {time-range}
- *
- *   📍 {Next day}
- *   • {Address}, {City} | {time-range}
- *
- *   {closer_line} 🖤💛
- *
- *   #century21alliance #shoredivision #southjerseyrealestate #openhouse
- *
- * Caption emojis are allowed; the no-emoji rule applies to canvas/image
- * text only. IG / FB caps at 5 hashtags total. TT shortens to one line.
- *
- * Returns both the legacy single-caption fields (caption / hashtags /
- * mls_hashtag) and the per-platform CaptionsByPlatform map. The publish
- * routes read whichever is populated, with the per-platform map taking
- * precedence — so writing both keeps every consumer happy.
- */
-function synthesizeMultiOHCaption(input: MultiOHEventInput): {
-  legacy: { caption: string; hashtags: string[]; mls_hashtag: string };
-  captions: Record<
-    "instagram" | "facebook" | "tiktok",
-    { caption: string; hashtags: string[] }
-  >;
-} {
-  const count = input.properties.length;
-  const eventTitle = input.event_title?.trim() ?? "";
-  // why: "Open Houses This Weekend" (and a couple of older defaults) are
-  // wizard placeholders, not real titles. We treat them as "unset" so
-  // they don't leak into the caption body. The hash still incorporates
-  // the literal value to keep determinism stable across pre/post-fix
-  // generations of the same event.
-  const hasRealEventTitle =
-    eventTitle.length > 0 &&
-    !/^open houses? this weekend$/i.test(eventTitle) &&
-    !/^open house weekend$/i.test(eventTitle);
-
-  const firstProp = input.properties[0];
-  const anchorMls = canonicalMlsHashtag(
-    firstProp?.mls_number ?? "",
-    firstProp?.source_mls ?? null,
-  );
-
-  // ---- Geographic theme detection ----
-  // If at least 2 properties sit in shore/coastal cities, the opener +
-  // closer pools shift to the coastal theme. The detection list is
-  // intentionally loose — substring match against the city. Memory
-  // calls this out as the canonical shore-town list.
-  const SHORE_CITY_PATTERNS = [
-    "wildwood",
-    "ocean city",
-    "cape may",
-    "sea isle",
-    "stone harbor",
-    "avalon",
-    "strathmere",
-    "atlantic city",
-    "brigantine",
-    "margate",
-    "ventnor",
-    "longport",
-    "beach",
-    "shore",
-    "coast",
-    "bay",
-  ];
-  const shoreCount = input.properties.filter((p) => {
-    const city = (p.city ?? "").toLowerCase();
-    return SHORE_CITY_PATTERNS.some((pat) => city.includes(pat));
-  }).length;
-  const isShoreEvent = shoreCount >= 2;
-
-  // Town-range phrase for shore openers. "From Ocean City to Wildwood"
-  // when we have 2+ distinct shore towns; falls back to "" when we don't.
-  const towns = uniqueStrings(
-    input.properties
-      .map((p) => (p.city ?? "").trim())
-      .filter((c) => c.length > 0),
-  );
-  const fromToTown =
-    towns.length >= 2 ? `From ${towns[0]} to ${towns[towns.length - 1]}` : "";
-
-  // ---- Day-grouped property bullets ----
-  // Properties are listed under day headers — one bullet per
-  // (property, session). A condo with Sat + Sun OHs appears once on
-  // each day. Days sort chronologically.
-  const dayGroups = groupPropertiesByDay(input.properties);
-  const propertyBulletBlock = renderDayGroups(dayGroups);
-
-  // ---- Deterministic variant pick ----
-  // Hash on event title + property count so the same event always
-  // resolves to the same opener/closer combination.
-  const seed = hashSeed(`${eventTitle}|${count}`);
-
-  // ---- Opener pools ----
-  // Each opener is a function `(ctx) => string`. Emojis live in the
-  // opener templates themselves (one leading theme emoji + 2-3 closing
-  // emojis) per the gold-standard caption shape.
-  const SHORE_OPENERS: Array<(c: CaptionCtx) => string> = [
-    (c) =>
-      `🌊 Shore house hunting this weekend? We've got you covered.${c.fromToTown ? ` ${c.fromToTown},` : ""} come tour these incredible coastal properties and see what shore living is all about. 🌞🏡`,
-    (c) =>
-      `🌊 ${c.fromToTown ? `${c.fromToTown}, w` : "W"}e're opening doors on the shore this weekend. Salt air, sandy welcome mats, and a full lineup of homes to walk through. 🌞🏡`,
-    (c) =>
-      `🌊 The shore is calling — and we're answering with a full weekend of open houses${c.fromToTown ? `. ${c.fromToTown}, w` : ", w"}alk through every one. 🌞🏡`,
-    (c) =>
-      `🌊 If you've been daydreaming about shore living, this weekend is your chance to walk through it.${c.fromToTown ? ` ${c.fromToTown},` : ""} we'll have agents on-site at every stop. 🌞🏡`,
-    () =>
-      `🌊 Shore tour weekend. Whether you're after a beach getaway or a forever address, our open house lineup has options worth seeing in person. 🌞🏡`,
-  ];
-
-  const GENERIC_OPENERS: Array<(c: CaptionCtx) => string> = [
-    () =>
-      `🏡 House hunting this weekend? We've got the lineup. Walk through, ask questions, and see what fits. 🌟🏡`,
-    () =>
-      `🏡 Big open house weekend ahead. A handful of homes worth walking through, all in one stretch. 🌟🏡`,
-    () =>
-      `🏡 Doors are open this weekend. Bring your questions, your tape measure, and your gut feel. 🌟🏡`,
-    () =>
-      `🏡 The weekend lineup is here. Come tour each one and see what feels like home. 🌟🏡`,
-    () =>
-      `🏡 Open houses on deck this weekend. Stop by, walk through, and meet the agents who know each address inside out. 🌟🏡`,
-  ];
-
-  // ---- Closer pools ----
-  // Each closer is a complete sentence ending in 🖤💛 (Alliance's
-  // gold-and-black hearts). Shore pool nods to "shore living" framing;
-  // generic pool stays universally applicable.
-  const SHORE_CLOSERS: string[] = [
-    "Whether you're looking for a beach getaway, investment property, or your forever shore home — stop by and take a look. 🖤💛",
-    "Sand in your shoes by Sunday, keys in your hand by closing. Stop by any of these. 🖤💛",
-    "DMs open if you can't make it in person but want a private shore tour. 🖤💛",
-    "Coastal living starts with a walkthrough. We'll have agents on-site at every stop. 🖤💛",
-    "Bring your shore-house wishlist. We'll match it to one of these addresses. 🖤💛",
-  ];
-
-  const GENERIC_CLOSERS: string[] = [
-    "Stop by, walk through, and ask all the questions. We'll have agents on-site. 🖤💛",
-    "DMs open if you can't make it in person but want a private tour. 🖤💛",
-    "Bring a friend — the more eyes on these, the better the offers tend to be. 🖤💛",
-    "Save this post so you've got the schedule on your phone all weekend. 🖤💛",
-    "See you on the doorstep — or in your DMs for a private walkthrough. 🖤💛",
-  ];
-
-  const ctx: CaptionCtx = {
-    eventTitle: hasRealEventTitle ? eventTitle : "",
-    count,
-    fromToTown,
-    isShoreEvent,
-  };
-
-  const openerPool = isShoreEvent ? SHORE_OPENERS : GENERIC_OPENERS;
-  const closerPool = isShoreEvent ? SHORE_CLOSERS : GENERIC_CLOSERS;
-  const opener = openerPool[seed % openerPool.length](ctx);
-  const closer = closerPool[(seed >>> 6) % closerPool.length];
-
-  // ---- Assemble caption bodies (no hashtags in body) ----
-  const bodyParts: string[] = [opener];
-  if (propertyBulletBlock.length > 0) {
-    bodyParts.push("", propertyBulletBlock);
-  }
-  bodyParts.push("", closer);
-  const baseBody = bodyParts.join("\n");
-
-  const igBody = clampBody(baseBody, 2200);
-  const fbBody = clampBody(baseBody, 1500);
-
-  // ---- TikTok: one-line opener + carousel hook ----
-  // TT truncates aggressively in feed. We keep the opener but drop the
-  // bullets entirely — they look broken when cut off mid-line.
-  const ttPieces: string[] = [opener];
-  if (count > 1) {
-    ttPieces.push("Full schedule in the carousel.");
-  }
-  const ttBody = clampBody(ttPieces.join(" "), 250);
-
-  // ---- Hashtags ----
-  // IG hard caps at 5. Brand-fixed set is 4; the 5th slot is an optional
-  // regional theme tag based on the dominant shore town (when one exists).
-  // FB matches IG. TT uses the same 5.
-  const BRAND_TAGS = [
-    "#century21alliance",
-    "#shoredivision",
-    "#southjerseyrealestate",
-    "#openhouse",
-  ];
-  const regionalTag = pickRegionalTag(input.properties, isShoreEvent);
-  const fixedTags = regionalTag ? [...BRAND_TAGS, regionalTag] : BRAND_TAGS;
-  // Defensive trim — should already be ≤5 but the explicit slice
-  // documents intent for the next reader.
-  const igTags = fixedTags.slice(0, 5);
-  const fbTags = fixedTags.slice(0, 5);
-  const ttTags = fixedTags.slice(0, 5);
-
-  return {
-    legacy: {
-      // why: legacy single-caption mirrors the IG variant — that's the
-      // platform the auto-linker and OG-tag preview both key on.
-      caption: igBody,
-      hashtags: igTags,
-      mls_hashtag: anchorMls,
-    },
-    captions: {
-      instagram: { caption: igBody, hashtags: igTags },
-      facebook: { caption: fbBody, hashtags: fbTags },
-      tiktok: { caption: ttBody, hashtags: ttTags },
-    },
-  };
-}
-
-/** Context passed into every opener variant. Kept small and string-only
- *  so the variant functions stay readable. */
-interface CaptionCtx {
-  eventTitle: string;
-  count: number;
-  /** "From Ocean City to Wildwood" — empty string when not applicable. */
-  fromToTown: string;
-  isShoreEvent: boolean;
-}
-
-/**
- * Group properties by the day of their first OH session. Each
- * (property, session) pair gets its own entry — a condo with Sat + Sun
- * OHs appears on both days. Days sort chronologically.
- *
- * Returns an array of `{ dayLabel, bullets }` where:
- *   dayLabel = "Saturday, May 16" (no comma after weekday — matches the
- *              gold-standard caption shape)
- *   bullets  = ["• 115 W 6th Avenue, North Wildwood | 10-12", ...]
- *
- * Returns an empty array when no parseable sessions exist (caller drops
- * the bullet block entirely so the caption stays clean).
- */
-interface DayGroup {
-  /** YYYY-MM-DD key used for chronological sorting. */
-  sortKey: string;
-  /** Display label, e.g., "Saturday, May 16". */
-  label: string;
-  /** Per-property bullet lines. */
-  bullets: string[];
-}
-
-function groupPropertiesByDay(
-  properties: readonly MultiOHEventProperty[],
-): DayGroup[] {
-  const byDay = new Map<string, DayGroup>();
-  for (const p of properties) {
-    const sessions =
-      p.oh_sessions && p.oh_sessions.length > 0
-        ? p.oh_sessions
-        : [{ start_at: p.oh_start_at, end_at: p.oh_end_at }];
-    for (const s of sessions) {
-      if (!s.start_at) continue;
-      const start = new Date(s.start_at);
-      if (Number.isNaN(start.getTime())) continue;
-      // why: pin to ET so the sortKey + label both reflect Larissa's
-      // local time. Without the timezone the server formats in UTC and
-      // a Saturday 10 AM ET open house can slip into Sunday's bucket.
-      const sortKey = start.toLocaleDateString("en-CA", {
-        timeZone: CAPTION_TZ,
-      });
-      const label = start.toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        timeZone: CAPTION_TZ,
-      });
-      const bullet = formatPropertyBullet(p, s.start_at, s.end_at);
-      if (!bullet) continue;
-      let group = byDay.get(sortKey);
-      if (!group) {
-        group = { sortKey, label, bullets: [] };
-        byDay.set(sortKey, group);
-      }
-      group.bullets.push(bullet);
-    }
-  }
-  return Array.from(byDay.values()).sort((a, b) =>
-    a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0,
-  );
-}
-
-/**
- * Render the array of DayGroup blocks into the final caption string —
- * each day gets a `📍 {label}` header followed by its bullet lines, and
- * a blank line separates day blocks.
- */
-function renderDayGroups(groups: readonly DayGroup[]): string {
-  if (groups.length === 0) return "";
-  const blocks = groups.map((g) => {
-    const lines = [`📍 ${g.label}`, ...g.bullets];
-    return lines.join("\n");
-  });
-  return blocks.join("\n\n");
-}
-
-/**
- * Render a single property bullet for the caption — gold-standard shape:
- *
- *   • {Address}, {City} | {start}-{end}
- *
- * No agent attribution (per task spec). No AM/PM in the time range —
- * just `10-12`, `10-1`, `12-2`. Half-hour starts get the `:30` suffix
- * (e.g., `10:30-1`); zero-minute starts stay compact.
- *
- * Returns null when address + city are both empty (defensive — the
- * caller drops the bullet so we don't end up with `• , | 10-12`).
- */
-function formatPropertyBullet(
-  p: MultiOHEventProperty,
-  startIso: string | null,
-  endIso: string | null,
-): string | null {
-  const baseAddress = (p.address ?? "").trim();
-  const unit = (p.unit_number ?? "").trim();
-  const addressWithUnit = unit
-    ? baseAddress
-      ? `${baseAddress} · ${unit}`
-      : unit
-    : baseAddress;
-  const city = (p.city ?? "").trim();
-  if (!addressWithUnit && !city) return null;
-  const addressFull =
-    addressWithUnit && city
-      ? `${addressWithUnit}, ${city}`
-      : addressWithUnit || city;
-  const timeRange = formatCompactTimeRange(startIso, endIso);
-  return timeRange
-    ? `• ${addressFull} | ${timeRange}`
-    : `• ${addressFull}`;
-}
-
-/**
- * Compact AM-PM-less time range:
- *   10:00 → 12:00 ⇒ "10-12"
- *   10:00 → 13:00 ⇒ "10-1"
- *   10:30 → 13:00 ⇒ "10:30-1"
- *   12:00 → 14:30 ⇒ "12-2:30"
- *
- * Returns "" when start or end can't be parsed (caller drops the range).
- */
-function formatCompactTimeRange(
-  startIso: string | null,
-  endIso: string | null,
-): string {
-  if (!startIso) return "";
-  const start = new Date(startIso);
-  if (Number.isNaN(start.getTime())) return "";
-  const startLabel = formatCompactHour(start);
-  if (!endIso) return startLabel;
-  const end = new Date(endIso);
-  if (Number.isNaN(end.getTime())) return startLabel;
-  const endLabel = formatCompactHour(end);
-  return `${startLabel}-${endLabel}`;
-}
-
-/**
- * Single-clock-position label without AM/PM. 12-hour-style hour number
- * (10, 11, 12, 1, 2) so noon reads "12" and 1 PM reads "1". Minutes
- * only appear when non-zero.
- */
-function formatCompactHour(d: Date): string {
-  // why: parse ET-local hour + minute. Using two probes (one for hour
-  // in 12-h, one for minute) keeps the implementation portable across
-  // V8 versions where minute:"2-digit" with hour:"numeric" can drop the
-  // minute when minutes are 0.
-  const hour12 = d.toLocaleString("en-US", {
-    timeZone: CAPTION_TZ,
-    hour: "numeric",
-    hour12: true,
-  });
-  // toLocaleString returns e.g. "10 AM" or "1 PM" — strip the marker.
-  const hourPart = hour12.replace(/\s?(AM|PM)$/i, "").trim();
-  const minuteProbe = d.toLocaleString("en-US", {
-    timeZone: CAPTION_TZ,
-    hour12: false,
-    minute: "2-digit",
-  });
-  const minutes = parseInt(minuteProbe, 10);
-  if (!Number.isFinite(minutes) || minutes === 0) return hourPart;
-  // Pad single-digit minutes to 2 digits — "10:05" not "10:5".
-  const mm = minutes < 10 ? `0${minutes}` : String(minutes);
-  return `${hourPart}:${mm}`;
-}
-
-/**
- * Pick the 5th-slot regional hashtag based on the property towns. When
- * a single shore town dominates (≥half of properties), we surface its
- * canonical tag. Otherwise we surface `#capemaycounty` for shore events
- * that span the county, or `null` when there's no clean theme.
- *
- * Mapping is hand-curated for the towns Alliance actually services —
- * adding a town here is a one-liner.
- */
-function pickRegionalTag(
-  properties: readonly MultiOHEventProperty[],
-  isShoreEvent: boolean,
-): string | null {
-  if (!isShoreEvent) return null;
-  const TOWN_TAGS: Record<string, string> = {
-    "wildwood": "#wildwoodnj",
-    "north wildwood": "#wildwoodnj",
-    "wildwood crest": "#wildwoodnj",
-    "west wildwood": "#wildwoodnj",
-    "ocean city": "#oceancitynj",
-    "cape may": "#capemaynj",
-    "cape may court house": "#capemaynj",
-    "west cape may": "#capemaynj",
-    "north cape may": "#capemaynj",
-    "sea isle city": "#seaislecitynj",
-    "stone harbor": "#stoneharbornj",
-    "avalon": "#avalonnj",
-    "strathmere": "#strathmerenj",
-    "atlantic city": "#atlanticcitynj",
-    "brigantine": "#brigantinenj",
-    "margate": "#margatenj",
-    "margate city": "#margatenj",
-    "ventnor": "#ventnornj",
-    "ventnor city": "#ventnornj",
-    "longport": "#longportnj",
-  };
-  const counts = new Map<string, number>();
-  for (const p of properties) {
-    const city = (p.city ?? "").trim().toLowerCase();
-    if (!city) continue;
-    const tag = TOWN_TAGS[city];
-    if (!tag) continue;
-    counts.set(tag, (counts.get(tag) ?? 0) + 1);
-  }
-  if (counts.size === 0) return null;
-  // Dominant tag if any single tag covers ≥half of properties.
-  const total = properties.length;
-  let dominant: { tag: string; count: number } | null = null;
-  for (const [tag, count] of counts.entries()) {
-    if (!dominant || count > dominant.count) dominant = { tag, count };
-  }
-  if (dominant && dominant.count * 2 >= total) return dominant.tag;
-  // Multi-town shore event — fall back to a county-level tag.
-  return "#capemaycounty";
-}
-
-/**
- * Deterministic 32-bit hash of a string (FNV-1a). Used to pick variant
- * indices so the same event always synthesizes the same caption but
- * different events feel different. Not cryptographic — just stable.
- */
-function hashSeed(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-/**
- * Trim a synthesized caption to a per-platform character ceiling
- * without breaking mid-word. Used as a defensive backstop — the
- * variant pool is sized to comfortably fit under each platform's
- * limit, but a 9-property event with very long addresses could in
- * principle nudge close to IG's 2200. We trim on a word boundary and
- * append "..." so the truncation is obvious.
- */
-function clampBody(body: string, max: number): string {
-  if (body.length <= max) return body;
-  const slice = body.slice(0, max - 3);
-  const lastSpace = slice.lastIndexOf(" ");
-  const cut = lastSpace > max * 0.8 ? slice.slice(0, lastSpace) : slice;
-  return `${cut.trimEnd()}...`;
-}
-
-/**
- * Timezone pin for every date/time formatter below. Pinned to
- * America/New_York so server-side TZ drift doesn't shove a Saturday OH
- * into Sunday's bucket — Vercel functions otherwise format in UTC, which
- * made 11 AM ET look like 3 PM in the caption.
- */
-const CAPTION_TZ = "America/New_York";
-
-/**
- * De-dupes a string array while preserving the FIRST occurrence's order.
- * Used to keep canonical MLS hashtags unique even if the wizard ever
- * submits the same listing twice (defensive — shouldn't happen).
- */
-function uniqueStrings(items: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const item of items) {
-    if (seen.has(item)) continue;
-    seen.add(item);
-    out.push(item);
-  }
-  return out;
-}
-
-/**
- * Inline canonical MLS hashtag generator. Duplicated from captions.ts to
- * keep this route self-contained (and avoid pulling the full AI module
- * into a route that doesn't otherwise need it). If both copies drift,
- * the auto-linker will silently miss multi-OH rows for one of the MLS
- * conventions — keep them in sync.
- */
-function canonicalMlsHashtag(
-  mls_number: string,
-  source_mls: SourceMls,
-): string {
-  const normalized = mls_number.replace(/^#/, "").trim();
-  if (!normalized) return "";
-  if (source_mls === "cmc") return `#CMC${normalized}`;
-  if (source_mls === "sjsr") return `#SJSR${normalized}`;
-  if (source_mls === "bright" || /^NJ[A-Z]{2}\d+$/i.test(normalized)) {
-    return `#${normalized.toUpperCase()}`;
-  }
-  return `#${normalized}`;
-}

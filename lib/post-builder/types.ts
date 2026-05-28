@@ -430,6 +430,22 @@ export interface MultiOHEventInput {
    *  of this field (the DB template applies to per-property slides only).
    *  Optional / nullable so legacy clients continue to work unchanged. */
   db_template_id?: string | null;
+  /**
+   * Phase 6 (2026-05-27) — caption tone bias. Picked from a 6-pill picker
+   * on Step 3 of the wizard. `"auto"` (the default) runs heuristic tone
+   * detection inside the shared synth module; explicit values lock the
+   * pool. Editorial is never auto-picked.
+   *
+   * Ignored when `caption_override` is set — the override always wins.
+   */
+  tone?: "auto" | "coastal" | "family" | "investor" | "cozy" | "editorial";
+  /**
+   * Phase 6 — full-caption user override. When set, replaces the auto-
+   * synth body for all three platforms. Hashtags are still auto-appended
+   * unless the override already contains them. Null / empty means "no
+   * override; let synth do its thing".
+   */
+  caption_override?: string | null;
   /** Properties to feature, in carousel order (slide 1 = properties[0],
    *  slide 2 = properties[1], etc.). Minimum 2 (1 makes a single-listing
    *  post, use the standard Post Builder for that). Maximum 9 — leaves

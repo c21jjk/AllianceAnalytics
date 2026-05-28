@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, AlertTriangle, Check, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  GripVertical,
+  Loader2,
+  Pencil,
+  X,
+} from "lucide-react";
 import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 import {
   MULTI_OH_MAX_PROPERTIES,
@@ -13,6 +21,11 @@ import {
   type PostBuilderListing,
   type PostFormat,
 } from "@/lib/post-builder/types";
+import {
+  synthesizeMultiOHCaption,
+  type CaptionTone,
+  type MultiOHCaptionResult,
+} from "@/lib/post-builder/multi-oh-caption-synth";
 import type { TemplateMeta } from "@/lib/template-builder";
 
 // ---------------------------------------------------------------------------
@@ -228,13 +241,28 @@ export default function MultiOHWizardClient({
    */
   const [dbTemplateId, setDbTemplateId] = useState<string | null>(null);
 
-  // ---- step 3 — carousel preview focus ---------------------------------
-  // why: Step 3 shows a featured slide preview at the top + a ribbon of
-  // thumbnails below. The user clicks a thumbnail to swap which slide is
-  // featured. We track focus by KEY ("hero" or the property's mls_number)
-  // rather than by index so a drag-reorder doesn't change which slide is
-  // featured — the user stays anchored on the slide they were looking at.
-  const [focusedSlideKey, setFocusedSlideKey] = useState<string>("hero");
+  // 2026-05-27 (Phase 6) — `focusedSlideKey` state was removed along with
+  // the featured-slide preview. The new Step 3 has no "selected slide"
+  // concept; tiles just sit in a grid.
+
+  // ---- step 3 — caption tone + override ---------------------------------
+  // 2026-05-27 (Phase 6) — Step 3 now shows a live caption preview with a
+  // tone picker (Auto / Coastal / Family / Investor / Cozy / Editorial) and
+  // an "Edit caption" overlay for full text override. Both ship through to
+  // the multi-oh-generate route in the payload below.
+  //
+  // `captionOverride` is null when auto-synth is active. When non-null, the
+  // tone picker is disabled (override always wins) and the preview shows
+  // the override + a "Custom caption" pill. Setting it back to null re-
+  // enables auto + the tone picker.
+  const [tone, setTone] = useState<CaptionTone>("auto");
+  const [captionOverride, setCaptionOverride] = useState<string | null>(null);
+  /** Which platform tab is active in the Step 3 caption preview. */
+  const [captionPreviewPlatform, setCaptionPreviewPlatform] = useState<
+    "instagram" | "facebook" | "tiktok"
+  >("instagram");
+  /** Whether the full-screen "Edit caption" overlay is mounted. */
+  const [captionEditorOpen, setCaptionEditorOpen] = useState(false);
 
   // ---- step 3 — generate state -----------------------------------------
   const [generating, setGenerating] = useState(false);
@@ -574,6 +602,11 @@ export default function MultiOHWizardClient({
       // Phase 2E — when a DB template was picked, send its UUID; the
       // route uses it instead of per_property_variant for every slide.
       db_template_id: dbTemplateId,
+      // Phase 6 (2026-05-27) — tone bias + optional caption override
+      // collected on Step 3. The route forwards both into the shared
+      // synth module; override wins over tone when set.
+      tone,
+      caption_override: captionOverride,
       properties,
     };
   }, [
@@ -584,6 +617,8 @@ export default function MultiOHWizardClient({
     dbTemplateId,
     defaultOfficeName,
     perPropertyHostingAgent,
+    tone,
+    captionOverride,
   ]);
 
   /**
@@ -936,11 +971,15 @@ export default function MultiOHWizardClient({
           <Step3Review
             eventTitle={eventTitle}
             selectedListings={selectedListings}
-            format={format}
-            variant={perPropertyVariant}
-            perPropertyHostingAgent={perPropertyHostingAgent}
-            focusedSlideKey={focusedSlideKey}
-            onFocusChange={setFocusedSlideKey}
+            tone={tone}
+            onToneChange={setTone}
+            captionOverride={captionOverride}
+            onCaptionOverrideChange={setCaptionOverride}
+            captionPreviewPlatform={captionPreviewPlatform}
+            onCaptionPreviewPlatformChange={setCaptionPreviewPlatform}
+            captionEditorOpen={captionEditorOpen}
+            onOpenCaptionEditor={() => setCaptionEditorOpen(true)}
+            onCloseCaptionEditor={() => setCaptionEditorOpen(false)}
             onDragStart={onDragStart}
             onDragOver={onDragOver}
             onDrop={onDrop}
@@ -1554,39 +1593,54 @@ function Step2FormatVariant({
 }
 
 // ===========================================================================
-// Step 3 — Review + generate (carousel preview)
+// Step 3 — Review + generate (carousel reorder + caption preview)
 // ===========================================================================
 //
-// 2026-05-21 — Step 3 was rewritten from a text-only summary into a visual
-// "carousel preview." The user sees what they're about to render before
-// clicking Generate:
+// 2026-05-27 (Phase 6) — Step 3 was rewritten again. The previous version
+// led with a large featured-slide mock + ribbon. That mock no longer
+// reflects reality because:
 //
-//   • Featured slide preview (top) — ratio-correct CSS mock at ~480px wide
-//     that matches the chosen format + variant. Shows the focused slide
-//     (hero by default, or any property the user clicks in the ribbon).
-//   • Slide ribbon (middle) — every slide as a small thumbnail in carousel
-//     order. Property thumbs are drag-reorderable; the hero is pinned at
-//     position 1. Clicking a thumb focuses it in the preview above.
-//   • Compact summary line (bottom) — single-line metadata + render-time
-//     hint, replacing what used to be two separate cards.
+//   • The event hero card was retired as a published carousel slide (only
+//     the per-property cards are pushed to social), so the hero mock at
+//     slide 1 was misleading.
+//   • The variant-flavored "v2/v3 property card" mock was disclaiming
+//     itself as a layout sketch — Larissa stopped trusting it.
 //
-// The mocks are CSS approximations, not real renders. They convey shape,
-// layout, and structure — not pixel fidelity. Real renders happen in the
-// 20-40s generate phase.
+// The new Step 3 surfaces what Larissa actually decides on this screen:
+//
+//   1. Header band — "Step 3 of 3 · Review + generate" + one-line guidance.
+//   2. Carousel order panel — drag-reorderable thumbnail grid of the
+//      selected properties (one tile per property; no hero tile).
+//   3. Caption preview panel — per-platform tabs (IG / FB / TT) showing the
+//      live composed caption from the shared synth module, with a "char
+//      count / 5 hashtags" footer + an Edit pencil that opens a full-text
+//      override overlay.
+//   4. Tone picker — 6 small pills (Auto · Coastal · Family · Investor ·
+//      Cozy · Editorial) that bias the synth. Disabled when an override
+//      is active.
+//
+// Generate CTA + status copy stay on the sticky footer (unchanged).
 
 interface Step3Props {
   eventTitle: string;
   selectedListings: readonly PostBuilderListing[];
-  format: PostFormat;
-  variant: PerPropertyVariant;
-  /** Per-property hosting agent map (mls_number → name). Featured property
-   *  mocks read this to display the correct host, falling back to the
-   *  listing's own agent_name when no override is set. */
-  perPropertyHostingAgent: Record<string, string>;
-  /** Which slide is currently featured in the big preview. "hero" or a
-   *  property's mls_number. Survives drag-reorders cleanly. */
-  focusedSlideKey: string;
-  onFocusChange: (key: string) => void;
+  /** Caption tone bias. `auto` runs heuristic detection in the synth. */
+  tone: CaptionTone;
+  onToneChange: (next: CaptionTone) => void;
+  /** Null when auto-synth is active; non-null when the user has saved a
+   *  full-caption override via the Edit overlay. */
+  captionOverride: string | null;
+  onCaptionOverrideChange: (next: string | null) => void;
+  /** Which platform tab is selected in the caption preview. */
+  captionPreviewPlatform: "instagram" | "facebook" | "tiktok";
+  onCaptionPreviewPlatformChange: (
+    next: "instagram" | "facebook" | "tiktok",
+  ) => void;
+  /** True while the Edit-caption overlay is mounted. */
+  captionEditorOpen: boolean;
+  onOpenCaptionEditor: () => void;
+  onCloseCaptionEditor: () => void;
+  /** Carousel reorder drag handlers — same shape as Step 1 ribbon. */
   onDragStart: (mls: string) => void;
   onDragOver: (e: React.DragEvent<HTMLElement>) => void;
   onDrop: (targetMls: string) => void;
@@ -1595,964 +1649,517 @@ interface Step3Props {
 function Step3Review({
   eventTitle,
   selectedListings,
-  format,
-  variant,
-  perPropertyHostingAgent,
-  focusedSlideKey,
-  onFocusChange,
+  tone,
+  onToneChange,
+  captionOverride,
+  onCaptionOverrideChange,
+  captionPreviewPlatform,
+  onCaptionPreviewPlatformChange,
+  captionEditorOpen,
+  onOpenCaptionEditor,
+  onCloseCaptionEditor,
   onDragStart,
   onDragOver,
   onDrop,
 }: Step3Props) {
-  // Resolve the focused slide. If the user previously focused a property
-  // that's no longer in the picked set (shouldn't happen on Step 3 normally,
-  // but defensive), fall back to the hero.
-  const focusedListing =
-    focusedSlideKey === "hero"
-      ? null
-      : selectedListings.find((l) => l.mls_number === focusedSlideKey) ?? null;
-  const isHeroFocused = focusedListing === null;
-  const focusedPosition = isHeroFocused
-    ? 1
-    : selectedListings.findIndex((l) => l.mls_number === focusedSlideKey) + 2;
+  // ---- Caption synth — recompute on every state change ------------------
+  // Synth is pure + fast, so direct recomputation is fine (no debounce
+  // needed). Memo guards against the per-platform tab flip re-running
+  // the whole pipeline.
+  const captionResult: MultiOHCaptionResult = useMemo(
+    () =>
+      synthesizeMultiOHCaption({
+        event_title: eventTitle,
+        tone,
+        caption_override: captionOverride,
+        properties: selectedListings.map((l) => ({
+          address: l.address,
+          city: l.city,
+          mls_number: l.mls_number,
+          source_mls: l.source_mls,
+          unit_number: l.unit_number,
+          list_price: l.list_price,
+          property_type: l.property_type,
+          oh_start_at: l.oh_start_at ?? null,
+          oh_end_at: l.oh_end_at ?? null,
+        })),
+      }),
+    [eventTitle, tone, captionOverride, selectedListings],
+  );
 
-  const totalSlides = selectedListings.length + 1;
+  const overrideActive = captionOverride !== null && captionOverride.length > 0;
 
   return (
-    <section className="space-y-5">
-      {/* ─── Featured slide preview ────────────────────────────────── */}
-      <div className="card p-5">
-        <div className="flex items-baseline justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-semibold text-neutral-900">
-              Slide {focusedPosition} of {totalSlides}
-              <span className="text-neutral-500 font-normal ml-2">
-                {isHeroFocused ? "· Event hero" : `· ${variant.toUpperCase()} property card`}
-              </span>
-            </h3>
-            <div className="text-xs text-neutral-500 mt-0.5">
-              Preview is a layout mock — the final render adds full polish, real photo composition, and brand polish.
-            </div>
-          </div>
-          <span className="text-xs text-neutral-500 hidden sm:inline">
-            {prettyFormat(format)}
-          </span>
+    <section className="space-y-6">
+      {/* ─── Header band ────────────────────────────────────────────── */}
+      <div>
+        <div className="text-[11px] font-bold tracking-[0.18em] uppercase text-gold-600">
+          Step 3 of 3
         </div>
-        <div className="flex justify-center">
-          <FeaturedSlideMock
-            format={format}
-            variant={variant}
-            kind={isHeroFocused ? "hero" : "property"}
-            eventTitle={eventTitle}
-            properties={selectedListings}
-            hostingAgents={perPropertyHostingAgent}
-            listing={focusedListing}
-            hostingAgent={
-              focusedListing
-                ? perPropertyHostingAgent[focusedListing.mls_number] ?? focusedListing.agent_name ?? ""
-                : ""
-            }
-          />
-        </div>
+        <h2 className="mt-1 text-2xl font-semibold text-neutral-900 leading-tight">
+          Review + generate
+        </h2>
+        <p className="mt-1 text-sm text-neutral-600">
+          Drag to reorder slides. Edit the caption if you&apos;d like. Then
+          generate.
+        </p>
       </div>
 
-      {/* ─── Slide ribbon ──────────────────────────────────────────── */}
+      {/* ─── Carousel order ─────────────────────────────────────────── */}
       <div className="card p-5">
         <div className="flex items-baseline justify-between mb-3">
           <h3 className="text-sm font-semibold text-neutral-900">
             Carousel order
           </h3>
           <span className="text-xs text-neutral-500">
-            Tap a slide to preview · drag properties to re-order
+            {selectedListings.length} slide{selectedListings.length === 1 ? "" : "s"}
+            {" · "}drag tiles to reorder
           </span>
         </div>
-        <SlideRibbon
-          format={format}
-          variant={variant}
-          eventTitle={eventTitle}
+        <CarouselReorderGrid
           selectedListings={selectedListings}
-          focusedSlideKey={focusedSlideKey}
-          onFocusChange={onFocusChange}
           onDragStart={onDragStart}
           onDragOver={onDragOver}
           onDrop={onDrop}
         />
       </div>
 
-      {/* ─── Compact summary + render hint ─────────────────────────── */}
-      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3">
-        <div className="text-sm text-neutral-700 leading-snug">
-          <span className="font-semibold text-neutral-900">{totalSlides} slides total</span>
-          <span className="text-neutral-400 mx-2">·</span>
-          <span>{prettyFormat(format)}</span>
-          <span className="text-neutral-400 mx-2">·</span>
-          <span>{prettyVariant(variant)}</span>
+      {/* ─── Caption preview panel ──────────────────────────────────── */}
+      <div className="card p-5">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h3 className="text-sm font-semibold text-neutral-900">
+              Caption preview
+            </h3>
+            {overrideActive ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-gold-100 text-gold-700 text-[10px] font-semibold px-2 py-0.5 uppercase tracking-wider">
+                Custom caption
+              </span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={onOpenCaptionEditor}
+            className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50 transition"
+            aria-label="Edit caption"
+          >
+            <Pencil size={12} aria-hidden="true" />
+            Edit caption
+          </button>
         </div>
-        <div className="text-xs text-neutral-500 mt-1">
-          Rendering takes about 20-40 seconds. You&apos;ll be redirected to Post Builder when it&apos;s ready.
+
+        {/* Per-platform tabs */}
+        <div className="flex items-center gap-1.5 mb-3">
+          {(["instagram", "facebook", "tiktok"] as const).map((p) => {
+            const label =
+              p === "instagram" ? "IG" : p === "facebook" ? "FB" : "TT";
+            const active = captionPreviewPlatform === p;
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onCaptionPreviewPlatformChange(p)}
+                className={[
+                  "rounded-full px-3 py-1 text-xs font-semibold transition",
+                  active
+                    ? "bg-neutral-900 text-white"
+                    : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200",
+                ].join(" ")}
+                aria-pressed={active}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
+
+        <CaptionPreviewBox
+          platform={captionPreviewPlatform}
+          captionResult={captionResult}
+        />
       </div>
+
+      {/* ─── Tone picker ────────────────────────────────────────────── */}
+      <div className="card p-5">
+        <div className="flex items-baseline justify-between mb-3">
+          <h3 className="text-sm font-semibold text-neutral-900">
+            Caption tone
+          </h3>
+          <span className="text-xs text-neutral-500">
+            {overrideActive
+              ? "Disabled while a custom caption is active"
+              : tone === "auto"
+                ? `Auto · resolved to ${captionResult.resolved_tone}`
+                : "Manually selected"}
+          </span>
+        </div>
+        <TonePillRow
+          tone={tone}
+          onToneChange={onToneChange}
+          disabled={overrideActive}
+        />
+      </div>
+
+      {/* ─── Edit caption overlay ───────────────────────────────────── */}
+      {captionEditorOpen ? (
+        <EditCaptionOverlay
+          initialValue={
+            captionOverride !== null
+              ? captionOverride
+              : // Pre-fill from the synthesized IG body so the user has a
+                // starting point. They can edit-from-blank by clearing the
+                // textarea.
+                captionResult.captions.instagram.caption +
+                (captionResult.captions.instagram.hashtags.length > 0
+                  ? "\n\n" +
+                    captionResult.captions.instagram.hashtags.join(" ")
+                  : "")
+          }
+          overrideActive={overrideActive}
+          onSave={(text) => {
+            onCaptionOverrideChange(text.length > 0 ? text : null);
+            onCloseCaptionEditor();
+          }}
+          onResetToAuto={() => {
+            onCaptionOverrideChange(null);
+            onCloseCaptionEditor();
+          }}
+          onCancel={onCloseCaptionEditor}
+        />
+      ) : null}
     </section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Featured slide mock — large, content-rich CSS approximation of the slide.
+// Carousel reorder grid — drag-and-drop tiles, no hero entry.
 // ---------------------------------------------------------------------------
 
-/**
- * Tailwind aspect-ratio classes per PostFormat. Used by both the featured
- * mock and the ribbon thumbnails — same source of truth so a Square pick
- * shows square mocks everywhere, etc.
- */
-const FORMAT_ASPECT: Record<PostFormat, string> = {
-  square_1x1: "aspect-square",
-  story_9x16: "aspect-[9/16]",
-};
-
-interface FeaturedSlideMockProps {
-  format: PostFormat;
-  variant: PerPropertyVariant;
-  kind: "hero" | "property";
-  eventTitle: string;
-  properties: readonly PostBuilderListing[];
-  /** Per-property hosting agent map — forwarded to HeroSlideBody so the
-   *  featured hero shows "Hosted by …" per row. */
-  hostingAgents: Record<string, string>;
-  listing: PostBuilderListing | null;
-  hostingAgent: string;
-}
-
-function FeaturedSlideMock({
-  format,
-  variant,
-  kind,
-  eventTitle,
-  properties,
-  hostingAgents,
-  listing,
-  hostingAgent,
-}: FeaturedSlideMockProps) {
-  // Cap featured width per format so square doesn't dominate vs story.
-  // Story gets a narrower max (it's tall, will fill vertically); square
-  // and portrait get the full ~480px.
-  const widthClass =
-    format === "story_9x16" ? "w-[280px]" : "w-full max-w-[440px]";
-
-  return (
-    <div className={`${widthClass} ${FORMAT_ASPECT[format]} relative shadow-md rounded-sm overflow-hidden ring-1 ring-neutral-200`}>
-      {kind === "hero" ? (
-        <HeroSlideBody
-          eventTitle={eventTitle}
-          properties={properties}
-          hostingAgents={hostingAgents}
-          size="featured"
-        />
-      ) : listing ? (
-        <PropertySlideBody
-          variant={variant}
-          listing={listing}
-          hostingAgent={hostingAgent}
-          size="featured"
-        />
-      ) : null}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Hero slide body — used by both featured + ribbon, scaled via `size` prop.
-// ---------------------------------------------------------------------------
-
-interface HeroSlideBodyProps {
-  eventTitle: string;
-  properties: readonly PostBuilderListing[];
-  size: "featured" | "thumb";
-  /** Per-property hosting agent overrides (mls_number → name). Optional —
-   *  ribbon thumbs pass undefined since the thumb is too small to legibly
-   *  show hosted-by anyway. When present and the featured size is used,
-   *  each row renders a "Hosted by …" line below the address/city/time
-   *  strip. */
-  hostingAgents?: Record<string, string>;
-}
-
-function HeroSlideBody({
-  eventTitle,
-  properties,
-  size,
-  hostingAgents,
-}: HeroSlideBodyProps) {
-  const isThumb = size === "thumb";
-  // 2026-05-22 — consolidate same-mls picks so a condo unit with Sat + Sun
-  // open houses renders as ONE row with both windows on the sub-line,
-  // mirroring what the real render does via consolidatePropertiesByMls
-  // in the route. Wizard mocks were showing duplicate rows before.
-  const consolidated: Array<{
-    listing: PostBuilderListing;
-    sessions: Array<{ start_at: string | null; end_at: string | null }>;
-  }> = [];
-  const indexByMls = new Map<string, number>();
-  for (const p of properties) {
-    const existing = indexByMls.get(p.mls_number);
-    const session = { start_at: p.oh_start_at ?? null, end_at: p.oh_end_at ?? null };
-    if (existing === undefined) {
-      indexByMls.set(p.mls_number, consolidated.length);
-      consolidated.push({ listing: p, sessions: [session] });
-    } else {
-      consolidated[existing].sessions.push(session);
-    }
-  }
-  // Sort each property's sessions chronologically so Sat reads before Sun.
-  for (const entry of consolidated) {
-    entry.sessions.sort((a, b) => {
-      const ta = a.start_at ? new Date(a.start_at).getTime() : 0;
-      const tb = b.start_at ? new Date(b.start_at).getTime() : 0;
-      return ta - tb;
-    });
-  }
-  // Cap the rendered rows so a 9-property event doesn't blow out the layout
-  // — the real render uses computeRowDensity to shrink, but for the mock
-  // we just truncate with a "+N more" line.
-  const maxRows = isThumb ? 3 : 6;
-  const visible = consolidated.slice(0, maxRows);
-  const overflow = consolidated.length - visible.length;
-
-  // Resolve a row's hosting agent: explicit override first, listing's own
-  // agent_name second, empty third (suppresses the "Hosted by" line). The
-  // explicit map mirrors the per-property override the wizard collects on
-  // Step 1.
-  const hostFor = (p: PostBuilderListing): string => {
-    const override = hostingAgents?.[p.mls_number]?.trim() ?? "";
-    if (override.length > 0) return override;
-    return (p.agent_name ?? "").trim();
-  };
-
-  return (
-    <div className="w-full h-full bg-[#FCFCFB] flex flex-col p-[6%]">
-      {/* eyebrow */}
-      <div className="flex items-center gap-1.5">
-        <span
-          aria-hidden="true"
-          className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
-          style={{ width: isThumb ? 14 : 36, height: 2 }}
-        />
-        <span
-          className={`font-bold uppercase tracking-[0.2em] text-[#A68A4A] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
-        >
-          Open House Event
-        </span>
-      </div>
-      {/* title */}
-      <div
-        className={`mt-[3%] font-serif font-bold text-[#18181B] leading-[1.05] ${isThumb ? "text-[7px]" : "text-[20px]"}`}
-        style={{ fontFamily: "Georgia, serif" }}
-      >
-        {eventTitle || "Untitled event"}
-      </div>
-      {/* property list */}
-      <div className={`mt-[4%] flex-1 flex flex-col ${isThumb ? "gap-[2px]" : "gap-2.5"} overflow-hidden`}>
-        {visible.map((entry, i) => {
-          const p = entry.listing;
-          const baseAddress = (p.address ?? p.mls_number ?? "").trim();
-          const unit = (p.unit_number ?? "").trim();
-          // 2026-05-22 — append unit suffix so condo / townhouse rows
-          // show "511 E 11th Avenue · Unit 207" rather than orphaning
-          // the unit ID where the consumer can't see it.
-          const addressLine = unit
-            ? baseAddress
-              ? `${baseAddress} · ${unit}`
-              : unit
-            : baseAddress;
-          const cityState = [p.city, p.state].filter(Boolean).join(", ");
-          // Every session window for this consolidated entry. Empty array
-          // when none have a valid timestamp.
-          const sessionLabels = entry.sessions
-            .map((s) =>
-              s.start_at ? formatOhBadge(s.start_at, s.end_at ?? null) : "",
-            )
-            .filter((s) => s.length > 0);
-          const host = hostFor(p);
-
-          if (isThumb) {
-            // Tight one-line row for ribbon thumbs — address truncates,
-            // no city/time/host (too small to be legible).
-            return (
-              <div
-                key={p.mls_number}
-                className="flex items-center gap-1"
-              >
-                <span
-                  aria-hidden="true"
-                  className="shrink-0 rounded-full bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center w-[7px] h-[7px] text-[4px]"
-                >
-                  {i + 1}
-                </span>
-                <span className="truncate text-[#525250] text-[4px]">
-                  {addressLine}
-                </span>
-              </div>
-            );
-          }
-
-          // Featured row — multi-line: address + city · session1 · session2 + hosted-by.
-          // Mirrors the real renderer's renderPropertyRow output.
-          return (
-            <div
-              key={p.mls_number}
-              className="flex items-start gap-2"
-            >
-              <span
-                aria-hidden="true"
-                className="shrink-0 mt-0.5 rounded-full bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center w-4 h-4 text-[9px]"
-              >
-                {i + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[11px] font-semibold text-[#18181B] leading-tight">
-                  {addressLine}
-                </div>
-                {(cityState || sessionLabels.length > 0) ? (
-                  <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#525250] leading-tight flex-wrap">
-                    {cityState ? <span className="truncate">{cityState}</span> : null}
-                    {sessionLabels.map((label, idx) => (
-                      <span key={idx} className="inline-flex items-center gap-1">
-                        {(cityState || idx > 0) ? (
-                          <span
-                            aria-hidden="true"
-                            className="inline-block w-1 h-1 rounded-full bg-[#C9A84C] shrink-0"
-                          />
-                        ) : null}
-                        <span className="truncate">{label}</span>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {host ? (
-                  <div className="mt-0.5 text-[9px] italic text-[#525250] truncate">
-                    Hosted by {host}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
-        {overflow > 0 ? (
-          <div
-            className={`text-[#A68A4A] font-semibold ${isThumb ? "text-[4px]" : "text-[9px]"}`}
-          >
-            + {overflow} more
-          </div>
-        ) : null}
-      </div>
-      {/* brand strip */}
-      <div className={`${isThumb ? "mt-1 pt-1" : "mt-2 pt-2"} border-t border-[#18181B]/30 relative`}>
-        {/* gold accent on top edge */}
-        <span
-          aria-hidden="true"
-          className="absolute top-[-1px] left-0 bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
-          style={{ width: isThumb ? 18 : 56, height: 2 }}
-        />
-        <div className="flex items-center justify-between">
-          <div className={`flex items-center ${isThumb ? "gap-[3px]" : "gap-1.5"}`}>
-            <span
-              className={`bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-5 h-5 text-[9px]"}`}
-            >
-              21
-            </span>
-            <span
-              className={`font-semibold text-[#18181B] ${isThumb ? "text-[4px]" : "text-[10px]"}`}
-            >
-              Century 21 Alliance
-            </span>
-          </div>
-          <span
-            className={`uppercase tracking-wider text-[#525250] ${isThumb ? "text-[3px]" : "text-[8px]"}`}
-          >
-            Open House Event
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Property slide body — switches layout based on variant (v1/v2/v3).
-// ---------------------------------------------------------------------------
-
-interface PropertySlideBodyProps {
-  variant: PerPropertyVariant;
-  listing: PostBuilderListing;
-  hostingAgent: string;
-  size: "featured" | "thumb";
-}
-
-function PropertySlideBody({
-  variant,
-  listing,
-  hostingAgent,
-  size,
-}: PropertySlideBodyProps) {
-  switch (variant) {
-    case "v2":
-      return <PropertyV2Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
-    case "v3":
-      return <PropertyV3Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
-    case "v6":
-      return <PropertyV6Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
-    case "v8":
-      return <PropertyV8Mock listing={listing} hostingAgent={hostingAgent} size={size} />;
-  }
-}
-
-interface VariantMockProps {
-  listing: PostBuilderListing;
-  hostingAgent: string;
-  size: "featured" | "thumb";
-}
-
-/** v2 — Bold Stats. Photo top ~58%, dark data pane bottom ~42% with
- *  bd/ba/price stats. */
-function PropertyV2Mock({ listing, hostingAgent, size }: VariantMockProps) {
-  const isThumb = size === "thumb";
-  const photo = listing.hero_image_url ?? "";
-  return (
-    <div className="w-full h-full flex flex-col">
-      {/* photo */}
-      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "58%" }}>
-        {photo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={photo}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : null}
-        {/* eyebrow over photo */}
-        <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
-          <span
-            aria-hidden="true"
-            className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
-            style={{ width: isThumb ? 12 : 32, height: 2 }}
-          />
-          <span
-            className={`font-bold uppercase tracking-[0.2em] text-[#C9A84C] ${isThumb ? "text-[5px]" : "text-[10px]"}`}
-            style={{ textShadow: "0 1px 2px rgba(0,0,0,0.4)" }}
-          >
-            Open House
-          </span>
-        </div>
-      </div>
-      {/* dark data pane */}
-      <div
-        className={`text-white ${isThumb ? "p-1.5" : "p-3"}`}
-        style={{ flexBasis: "42%", background: "#18181B" }}
-      >
-        <div
-          className={`font-serif font-bold leading-tight ${isThumb ? "text-[7px]" : "text-base"}`}
-          style={{ fontFamily: "Georgia, serif" }}
-        >
-          {displayAddressWithUnit(listing)}
-        </div>
-        <div
-          className={`opacity-80 ${isThumb ? "text-[5px] mt-0.5" : "text-xs mt-1"}`}
-        >
-          {[listing.city, listing.state].filter(Boolean).join(", ")}
-        </div>
-        {/* stats row */}
-        {!isThumb ? (
-          <div className="mt-2 flex items-center gap-3 text-xs text-white/85">
-            {typeof listing.bedrooms === "number" ? (
-              <span>
-                <span className="font-bold text-white">{listing.bedrooms}</span> bd
-              </span>
-            ) : null}
-            {typeof listing.bathrooms_full === "number" ? (
-              <span>
-                <span className="font-bold text-white">
-                  {listing.bathrooms_full + (listing.bathrooms_half ?? 0) * 0.5}
-                </span>{" "}
-                ba
-              </span>
-            ) : null}
-            {typeof listing.list_price === "number" ? (
-              <span className="text-[#C9A84C] font-bold">
-                ${listing.list_price.toLocaleString()}
-              </span>
-            ) : null}
-          </div>
-        ) : (
-          <div className="mt-1 flex gap-1 opacity-70">
-            <span className="block w-3 h-1 rounded-sm bg-white/60" />
-            <span className="block w-3 h-1 rounded-sm bg-white/60" />
-            <span className="block w-4 h-1 rounded-sm bg-[#C9A84C]" />
-          </div>
-        )}
-        {!isThumb && listing.oh_start_at ? (
-          <div className="mt-1.5 text-[10px] text-[#C9A84C] font-medium">
-            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
-          </div>
-        ) : null}
-        {!isThumb && hostingAgent ? (
-          <div className="mt-0.5 text-[10px] text-white/70">
-            Hosted by {hostingAgent}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/** v3 — Excellence Collection. Premium tier ($949k+). Gold-trimmed
- *  editorial frame: dominant photo top ~62%, cream pane below with
- *  "EXCELLENCE COLLECTION" eyebrow + Playfair price. Subtle gold rule
- *  along the edges signals luxury. */
-function PropertyV3Mock({ listing, hostingAgent, size }: VariantMockProps) {
-  const isThumb = size === "thumb";
-  const photo = listing.hero_image_url ?? "";
-  return (
-    <div className="w-full h-full flex flex-col relative bg-[#FCFCFB]">
-      {/* Gold trim border — subtle 1px gold rule on all four edges. */}
-      <span
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none ring-1 ring-[#C9A84C]/60 z-10"
-      />
-      {/* photo dominant */}
-      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "62%" }}>
-        {photo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={photo}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : null}
-      </div>
-      {/* cream data pane below */}
-      <div
-        className={`flex flex-col text-[#18181B] ${isThumb ? "p-1.5" : "p-3"}`}
-        style={{ flexBasis: "38%" }}
-      >
-        {/* eyebrow — gold "Excellence Collection" */}
-        <div
-          className={`font-bold uppercase tracking-[0.22em] text-[#A68A4A] ${isThumb ? "text-[4px]" : "text-[9px]"}`}
-        >
-          Excellence Collection
-        </div>
-        <div
-          className={`mt-1 font-serif font-bold leading-tight ${isThumb ? "text-[6px]" : "text-sm"}`}
-          style={{ fontFamily: "Georgia, serif" }}
-        >
-          {displayAddressWithUnit(listing)}
-        </div>
-        <div
-          className={`opacity-70 ${isThumb ? "text-[4px] mt-0.5" : "text-[10px] mt-0.5"}`}
-        >
-          {[listing.city, listing.state].filter(Boolean).join(", ")}
-        </div>
-        <div className="flex-1" />
-        {!isThumb && typeof listing.list_price === "number" ? (
-          <div
-            className="font-serif font-bold text-[#A68A4A] text-xl leading-none"
-            style={{ fontFamily: "Georgia, serif" }}
-          >
-            ${listing.list_price.toLocaleString()}
-          </div>
-        ) : null}
-        {!isThumb && listing.oh_start_at ? (
-          <div className="mt-1 text-[10px] text-[#525250] font-medium">
-            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
-          </div>
-        ) : null}
-        {!isThumb && hostingAgent ? (
-          <div className="mt-0.5 text-[10px] text-[#525250]">
-            Hosted by {hostingAgent}
-          </div>
-        ) : null}
-        {isThumb ? (
-          <div className="flex gap-0.5 mt-auto">
-            <span className="block flex-1 h-0.5 bg-[#C9A84C]" />
-            <span className="block flex-1 h-0.5 bg-[#A68A4A]" />
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/** v6 — Magazine Cover. Hero photo top ~55%, cream surface below with
- *  large serif headline + price. Editorial / magazine-cover feel. */
-function PropertyV6Mock({ listing, hostingAgent, size }: VariantMockProps) {
-  const isThumb = size === "thumb";
-  const photo = listing.hero_image_url ?? "";
-  return (
-    <div className="w-full h-full flex flex-col bg-[#FCFCFB]">
-      {/* photo top — magazine-cover style */}
-      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "55%" }}>
-        {photo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={photo}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : null}
-        {/* Top-left masthead-style eyebrow */}
-        <div className={`absolute top-0 left-0 right-0 flex items-center ${isThumb ? "gap-1 p-1.5" : "gap-2 p-3"}`}>
-          <span
-            aria-hidden="true"
-            className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
-            style={{ width: isThumb ? 12 : 32, height: 2 }}
-          />
-          <span
-            className={`font-bold uppercase tracking-[0.22em] text-white ${isThumb ? "text-[5px]" : "text-[10px]"}`}
-            style={{ textShadow: "0 1px 3px rgba(0,0,0,0.5)" }}
-          >
-            Open House
-          </span>
-        </div>
-      </div>
-      {/* cream pane with editorial headline + price */}
-      <div
-        className={`flex flex-col text-[#18181B] ${isThumb ? "p-1.5" : "p-3"}`}
-        style={{ flexBasis: "45%" }}
-      >
-        <div
-          className={`font-serif font-bold leading-[1.05] ${isThumb ? "text-[8px]" : "text-lg"}`}
-          style={{ fontFamily: "Georgia, serif" }}
-        >
-          {displayAddressWithUnit(listing)}
-        </div>
-        <div
-          className={`opacity-70 ${isThumb ? "text-[4px] mt-0.5" : "text-[11px] mt-1"}`}
-        >
-          {[listing.city, listing.state].filter(Boolean).join(", ")}
-        </div>
-        <div className="flex-1" />
-        {!isThumb && typeof listing.list_price === "number" ? (
-          <div
-            className="font-serif font-bold text-[#A68A4A] text-2xl leading-none"
-            style={{ fontFamily: "Georgia, serif" }}
-          >
-            ${listing.list_price.toLocaleString()}
-          </div>
-        ) : null}
-        {!isThumb && listing.oh_start_at ? (
-          <div className="mt-1.5 text-[10px] text-[#525250] font-medium">
-            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
-          </div>
-        ) : null}
-        {!isThumb && hostingAgent ? (
-          <div className="mt-0.5 text-[10px] text-[#525250]">
-            Hosted by {hostingAgent}
-          </div>
-        ) : null}
-        {isThumb ? (
-          <div className="mt-auto">
-            <span
-              aria-hidden="true"
-              className="block bg-gradient-to-r from-[#C9A84C] to-[#A68A4A]"
-              style={{ width: 20, height: 1.5 }}
-            />
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/** v8 — Standard NEW LISTING. Cream surface top ~65% with C21 Alliance
- *  badge top-right, dark bottom band ~35% carrying address + city +
- *  bed/bath/feature row. Everyday tier. */
-function PropertyV8Mock({ listing, hostingAgent, size }: VariantMockProps) {
-  const isThumb = size === "thumb";
-  const photo = listing.hero_image_url ?? "";
-  return (
-    <div className="w-full h-full flex flex-col bg-[#FCFCFB]">
-      {/* photo cream-framed */}
-      <div className="relative w-full bg-neutral-300" style={{ flexBasis: "65%" }}>
-        {photo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={photo}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : null}
-        {/* C21 Alliance badge top-right */}
-        <div className={`absolute top-1 right-1 flex items-center ${isThumb ? "gap-[2px]" : "gap-1"} bg-white/95 rounded ${isThumb ? "px-1 py-0.5" : "px-1.5 py-1"} shadow-sm`}>
-          <span
-            className={`bg-gradient-to-br from-[#C9A84C] to-[#A68A4A] text-white font-bold flex items-center justify-center rounded-sm ${isThumb ? "w-[8px] h-[8px] text-[4px]" : "w-4 h-4 text-[8px]"}`}
-          >
-            21
-          </span>
-          <span
-            className={`font-bold uppercase tracking-wider text-[#18181B] ${isThumb ? "text-[3px]" : "text-[7px]"}`}
-          >
-            Alliance
-          </span>
-        </div>
-      </div>
-      {/* dark bottom band */}
-      <div
-        className={`text-white ${isThumb ? "p-1.5" : "p-3"}`}
-        style={{ flexBasis: "35%", background: "#18181B" }}
-      >
-        <div
-          className={`font-bold leading-tight ${isThumb ? "text-[7px]" : "text-sm"}`}
-        >
-          {displayAddressWithUnit(listing)}
-        </div>
-        <div
-          className={`opacity-80 ${isThumb ? "text-[4px] mt-0.5" : "text-[10px] mt-0.5"}`}
-        >
-          {[listing.city, listing.state].filter(Boolean).join(", ")}
-        </div>
-        {/* bed/bath/feature row */}
-        {!isThumb ? (
-          <div className="mt-1.5 flex items-center gap-2 text-[10px] text-white/85">
-            {typeof listing.bedrooms === "number" ? (
-              <span>
-                <span className="font-bold text-white">{listing.bedrooms}</span> bd
-              </span>
-            ) : null}
-            <span
-              aria-hidden="true"
-              className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A84C]"
-            />
-            {typeof listing.bathrooms_full === "number" ? (
-              <span>
-                <span className="font-bold text-white">
-                  {listing.bathrooms_full + (listing.bathrooms_half ?? 0) * 0.5}
-                </span>{" "}
-                ba
-              </span>
-            ) : null}
-            {typeof listing.list_price === "number" ? (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="inline-block w-0.5 h-0.5 rounded-full bg-[#C9A84C]"
-                />
-                <span className="text-[#C9A84C] font-bold">
-                  ${listing.list_price.toLocaleString()}
-                </span>
-              </>
-            ) : null}
-          </div>
-        ) : (
-          <div className="mt-1 flex gap-0.5 opacity-70">
-            <span className="block w-2 h-0.5 bg-white/60" />
-            <span className="block w-2 h-0.5 bg-white/60" />
-            <span className="block w-3 h-0.5 bg-[#C9A84C]" />
-          </div>
-        )}
-        {!isThumb && listing.oh_start_at ? (
-          <div className="mt-1 text-[10px] text-[#C9A84C] font-medium">
-            {formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)}
-          </div>
-        ) : null}
-        {!isThumb && hostingAgent ? (
-          <div className="mt-0.5 text-[10px] text-white/70">
-            Hosted by {hostingAgent}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Slide ribbon — every slide as a small thumb, drag-reorderable on props.
-// ---------------------------------------------------------------------------
-
-interface SlideRibbonProps {
-  format: PostFormat;
-  variant: PerPropertyVariant;
-  eventTitle: string;
+interface CarouselReorderGridProps {
   selectedListings: readonly PostBuilderListing[];
-  focusedSlideKey: string;
-  onFocusChange: (key: string) => void;
   onDragStart: (mls: string) => void;
   onDragOver: (e: React.DragEvent<HTMLElement>) => void;
   onDrop: (targetMls: string) => void;
 }
 
-function SlideRibbon({
-  format,
-  variant,
-  eventTitle,
+function CarouselReorderGrid({
   selectedListings,
-  focusedSlideKey,
-  onFocusChange,
   onDragStart,
   onDragOver,
   onDrop,
-}: SlideRibbonProps) {
-  // why: thumbs are fixed-HEIGHT so the layout stays predictable as count
-  // grows. Width derives from the format's aspect ratio. Story is a tall
-  // thumb (narrow), square is a square thumb, portrait is in between.
-  // 100px tall fits comfortably on mobile; the ribbon scrolls horizontally
-  // when total width exceeds the container.
-  const thumbHeight = 110;
-  const thumbWidthClass: Record<PostFormat, string> = {
-    square_1x1: "w-[110px]",
-    story_9x16: "w-[62px]",
-  };
-
+}: CarouselReorderGridProps) {
   return (
-    <div className="flex gap-2 overflow-x-auto pb-2 -mb-2">
-      {/* Hero thumb — pinned at position 1, not draggable */}
-      <SlideThumb
-        keyId="hero"
-        position={1}
-        focused={focusedSlideKey === "hero"}
-        onFocus={() => onFocusChange("hero")}
-        draggable={false}
-        widthClass={thumbWidthClass[format]}
-        heightPx={thumbHeight}
-        label="Event hero"
-      >
-        <HeroSlideBody
-          eventTitle={eventTitle}
-          properties={selectedListings}
-          size="thumb"
-        />
-      </SlideThumb>
-
-      {/* Property thumbs — drag-reorderable */}
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
       {selectedListings.map((l, idx) => (
-        <SlideThumb
+        <CarouselReorderTile
           key={l.mls_number}
-          keyId={l.mls_number}
-          position={idx + 2}
-          focused={focusedSlideKey === l.mls_number}
-          onFocus={() => onFocusChange(l.mls_number)}
-          draggable
+          position={idx + 1}
+          listing={l}
           onDragStart={() => onDragStart(l.mls_number)}
           onDragOver={onDragOver}
           onDrop={() => onDrop(l.mls_number)}
-          widthClass={thumbWidthClass[format]}
-          heightPx={thumbHeight}
-          label={l.address ?? l.mls_number}
-        >
-          <PropertySlideBody
-            variant={variant}
-            listing={l}
-            hostingAgent=""
-            size="thumb"
-          />
-        </SlideThumb>
+        />
       ))}
     </div>
   );
 }
 
-interface SlideThumbProps {
-  keyId: string;
+interface CarouselReorderTileProps {
   position: number;
-  focused: boolean;
-  onFocus: () => void;
-  draggable: boolean;
-  onDragStart?: () => void;
-  onDragOver?: (e: React.DragEvent<HTMLElement>) => void;
-  onDrop?: () => void;
-  widthClass: string;
-  heightPx: number;
-  /** Used for the title attribute / a11y label. */
-  label: string;
-  children: React.ReactNode;
+  listing: PostBuilderListing;
+  onDragStart: () => void;
+  onDragOver: (e: React.DragEvent<HTMLElement>) => void;
+  onDrop: () => void;
 }
 
-function SlideThumb({
+function CarouselReorderTile({
   position,
-  focused,
-  onFocus,
-  draggable,
+  listing,
   onDragStart,
   onDragOver,
   onDrop,
-  widthClass,
-  heightPx,
-  label,
-  children,
-}: SlideThumbProps) {
+}: CarouselReorderTileProps) {
+  const baseAddress = (listing.address ?? "").trim();
+  const unit = (listing.unit_number ?? "").trim();
+  const addressLine = unit
+    ? baseAddress
+      ? `${baseAddress} · ${unit}`
+      : unit
+    : baseAddress || listing.mls_number;
+  const cityState = [listing.city, listing.state].filter(Boolean).join(", ");
+  const ohLabel = listing.oh_start_at
+    ? formatOhBadge(listing.oh_start_at, listing.oh_end_at ?? null)
+    : null;
+  const photo = listing.hero_image_url ?? "";
+
   return (
-    <div className={`shrink-0 ${widthClass} flex flex-col items-center gap-1`}>
-      <button
-        type="button"
-        onClick={onFocus}
-        draggable={draggable}
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-        title={label}
-        aria-label={`Slide ${position}: ${label}`}
-        aria-current={focused ? "true" : undefined}
-        className={[
-          "relative w-full overflow-hidden rounded-sm transition shadow-sm",
-          focused
-            ? "ring-2 ring-gold-500 ring-offset-2 ring-offset-white shadow-md"
-            : "ring-1 ring-neutral-200 hover:ring-neutral-300",
-          draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
-        ].join(" ")}
-        style={{ height: heightPx }}
-      >
-        {children}
-        {/* Position chip — top-left corner */}
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className="group relative flex flex-col rounded-lg border border-neutral-200 bg-white overflow-hidden shadow-sm hover:shadow-md hover:border-neutral-300 transition cursor-grab active:cursor-grabbing"
+    >
+      {/* Photo square — aspect ratio matches the carousel image. */}
+      <div className="relative aspect-square bg-neutral-200">
+        {photo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+            draggable={false}
+          />
+        ) : null}
+        {/* Position chip */}
         <span
           aria-hidden="true"
-          className={[
-            "absolute top-1 left-1 w-4 h-4 rounded-full text-white text-[9px] font-bold flex items-center justify-center shadow-sm",
-            focused ? "bg-gold-500" : "bg-neutral-800/80",
-          ].join(" ")}
+          className="absolute top-1.5 left-1.5 w-6 h-6 rounded-full bg-neutral-900/85 text-white text-[11px] font-bold flex items-center justify-center shadow-sm"
         >
           {position}
         </span>
-      </button>
+        {/* Grip handle */}
+        <span
+          aria-hidden="true"
+          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-white/85 text-neutral-700 flex items-center justify-center shadow-sm opacity-70 group-hover:opacity-100"
+        >
+          <GripVertical size={14} />
+        </span>
+      </div>
+      {/* Caption block */}
+      <div className="p-2.5">
+        <div className="text-xs font-semibold text-neutral-900 leading-tight truncate">
+          {addressLine}
+        </div>
+        {cityState ? (
+          <div className="mt-0.5 text-[11px] text-neutral-600 leading-tight truncate">
+            {cityState}
+          </div>
+        ) : null}
+        {ohLabel ? (
+          <div className="mt-1 text-[11px] text-gold-700 font-medium leading-tight truncate">
+            {ohLabel}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 helpers
+// Caption preview box — read-only textarea-styled block + char counter.
 // ---------------------------------------------------------------------------
 
-/**
- * Compose the address line shown on a property mock, suffixing the
- * unit identifier when present (e.g. "511 E 11th Avenue · Unit 207").
- * Falls back to the MLS number when there's no address at all.
- *
- * 2026-05-22 — added so condo/townhouse units are visible in the
- * wizard preview. The real renderer applies the same suffix via
- * route.ts's toRenderListing.
- */
-function displayAddressWithUnit(listing: PostBuilderListing): string {
-  const base = (listing.address ?? "").trim();
-  const unit = (listing.unit_number ?? "").trim();
-  if (base && unit) return `${base} · ${unit}`;
-  if (base) return base;
-  if (unit) return unit;
-  return listing.mls_number;
+interface CaptionPreviewBoxProps {
+  platform: "instagram" | "facebook" | "tiktok";
+  captionResult: MultiOHCaptionResult;
 }
 
-/** Short display name for the variant in summary copy. */
-function prettyVariant(v: PerPropertyVariant): string {
-  switch (v) {
-    case "v2":
-      return "v2 Bold Stats";
-    case "v3":
-      return "v3 Excellence Collection";
-    case "v6":
-      return "v6 Magazine Cover";
-    case "v8":
-      return "v8 Standard";
-  }
+function CaptionPreviewBox({ platform, captionResult }: CaptionPreviewBoxProps) {
+  const slot = captionResult.captions[platform];
+  const fullText =
+    slot.hashtags.length > 0
+      ? `${slot.caption}\n\n${slot.hashtags.join(" ")}`
+      : slot.caption;
+  const charLimit =
+    platform === "instagram" ? 2200 : platform === "facebook" ? 1500 : 250;
+  const overLimit = fullText.length > charLimit;
+
+  return (
+    <div>
+      <div
+        className={[
+          "rounded-md border bg-neutral-50 p-3 text-sm text-neutral-800 whitespace-pre-wrap leading-relaxed font-[ui-sans-serif]",
+          overLimit ? "border-red-300" : "border-neutral-200",
+        ].join(" ")}
+        style={{ maxHeight: "320px", overflowY: "auto" }}
+      >
+        {fullText.length > 0 ? (
+          fullText
+        ) : (
+          <span className="text-neutral-400 italic">
+            Pick at least 2 properties to preview the caption.
+          </span>
+        )}
+      </div>
+      <div className="mt-1.5 flex items-center justify-between text-[11px] text-neutral-500">
+        <span>
+          <span
+            className={overLimit ? "font-semibold text-red-600" : "text-neutral-700"}
+          >
+            {fullText.length.toLocaleString()}
+          </span>
+          {" / "}
+          {charLimit.toLocaleString()} chars
+          <span className="mx-1.5 text-neutral-300">·</span>
+          {slot.hashtags.length} hashtag{slot.hashtags.length === 1 ? "" : "s"}
+        </span>
+        {overLimit ? (
+          <span className="text-red-600 font-semibold">Over the limit</span>
+        ) : null}
+      </div>
+    </div>
+  );
 }
+
+// ---------------------------------------------------------------------------
+// Tone picker — 6 pills, gold-active, disabled when override is active.
+// ---------------------------------------------------------------------------
+
+interface TonePillRowProps {
+  tone: CaptionTone;
+  onToneChange: (next: CaptionTone) => void;
+  disabled: boolean;
+}
+
+const TONE_PILLS: ReadonlyArray<{ value: CaptionTone; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "coastal", label: "Coastal" },
+  { value: "family", label: "Family" },
+  { value: "investor", label: "Investor" },
+  { value: "cozy", label: "Cozy" },
+  { value: "editorial", label: "Editorial" },
+];
+
+function TonePillRow({ tone, onToneChange, disabled }: TonePillRowProps) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {TONE_PILLS.map((pill) => {
+        const active = tone === pill.value;
+        return (
+          <button
+            key={pill.value}
+            type="button"
+            onClick={() => onToneChange(pill.value)}
+            disabled={disabled}
+            className={[
+              "rounded-full px-3 py-1 text-xs font-semibold transition border",
+              active
+                ? "bg-gold-500 text-white border-gold-500 shadow-sm"
+                : "bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50",
+              disabled ? "opacity-50 cursor-not-allowed" : "",
+            ].join(" ")}
+            aria-pressed={active}
+          >
+            {pill.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Edit caption overlay — fullscreen-ish modal with textarea + save/cancel.
+// ---------------------------------------------------------------------------
+
+interface EditCaptionOverlayProps {
+  initialValue: string;
+  overrideActive: boolean;
+  onSave: (text: string) => void;
+  onResetToAuto: () => void;
+  onCancel: () => void;
+}
+
+function EditCaptionOverlay({
+  initialValue,
+  overrideActive,
+  onSave,
+  onResetToAuto,
+  onCancel,
+}: EditCaptionOverlayProps) {
+  const [draft, setDraft] = useState<string>(initialValue);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-caption-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/60 backdrop-blur-sm"
+      onClick={(e) => {
+        // Click on backdrop cancels (no save).
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-neutral-200">
+          <div>
+            <h3
+              id="edit-caption-title"
+              className="text-base font-semibold text-neutral-900"
+            >
+              Edit caption
+            </h3>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Applies to all platforms · per-platform overrides are a future
+              feature
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Close"
+            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        {/* Textarea */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={20}
+            spellCheck
+            className="w-full rounded-md border border-neutral-300 bg-white p-3 text-sm font-mono text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/50 focus:border-gold-500 resize-y leading-relaxed"
+            placeholder="Write your caption here…"
+            autoFocus
+          />
+          <p className="mt-2 text-[11px] text-neutral-500">
+            Caption emojis are allowed. Hashtags will be auto-appended for
+            each platform unless you include them in your override.
+          </p>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 p-4 border-t border-neutral-200 bg-neutral-50">
+          <div>
+            {overrideActive ? (
+              <button
+                type="button"
+                onClick={onResetToAuto}
+                className="text-xs font-medium text-neutral-600 hover:text-neutral-900 underline underline-offset-2"
+              >
+                Reset to auto
+              </button>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="text-sm font-medium text-neutral-600 hover:text-neutral-900 px-3 py-1.5"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => onSave(draft.trim())}
+              className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 hover:bg-gold-600 text-white text-sm font-semibold px-4 py-1.5 transition shadow-sm"
+            >
+              <Check size={14} aria-hidden="true" />
+              Save override
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // ===========================================================================
 // Sticky footer

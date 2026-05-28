@@ -399,6 +399,8 @@ export type Database = {
           bundle_path: string | null
           bundle_url: string | null
           caption: string | null
+          caption_override: string | null
+          caption_tone: string | null
           captions_by_platform: Json
           composition_json: Json | null
           confirmed_platforms: string[] | null
@@ -454,6 +456,8 @@ export type Database = {
           bundle_path?: string | null
           bundle_url?: string | null
           caption?: string | null
+          caption_override?: string | null
+          caption_tone?: string | null
           captions_by_platform?: Json
           composition_json?: Json | null
           confirmed_platforms?: string[] | null
@@ -509,6 +513,8 @@ export type Database = {
           bundle_path?: string | null
           bundle_url?: string | null
           caption?: string | null
+          caption_override?: string | null
+          caption_tone?: string | null
           captions_by_platform?: Json
           composition_json?: Json | null
           confirmed_platforms?: string[] | null
