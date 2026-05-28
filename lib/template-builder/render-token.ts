@@ -69,6 +69,18 @@ export interface RenderTokenPayload {
   /** Pre-formatted OH window label. Optional. */
   oh_window?: string | null;
   /**
+   * Open-House session window override (multi-OH wizard). When set,
+   * the render page stamps these onto the MLSListingPayload's
+   * `openHouseStartUtc` / `openHouseEndUtc` before hydration, so the
+   * `open_house_date` / `open_house_time` bound-field resolvers can
+   * format them. Same rationale as the hosting_agent fields — token
+   * carries the wizard-selected values so we don't re-read NULL
+   * `properties.oh_start_at` / `oh_end_at` columns at render time.
+   * Optional; non-multi-OH renders leave these unset.
+   */
+  open_house_start_utc?: string | null;
+  open_house_end_utc?: string | null;
+  /**
    * Phase 2 AI Design — when set, the render page reads the
    * `CanvasTemplateSchema` from `render_schema_cache.id = <this>` instead
    * of looking up template_id. This is how a freshly-generated AI design

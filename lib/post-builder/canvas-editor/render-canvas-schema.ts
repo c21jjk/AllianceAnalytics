@@ -77,6 +77,22 @@ export interface RenderCanvasSchemaInput {
   hostingAgentName?: string | null;
   hostingAgentPhone?: string | null;
   hostingAgentPhotoUrl?: string | null;
+  /**
+   * Open-House session window override (multi-OH wizard). When set, these
+   * ride the render token through to the headless render page, which
+   * stamps them onto the MLSListingPayload's `openHouseStartUtc` /
+   * `openHouseEndUtc` fields so the `open_house_date` / `open_house_time`
+   * bound-field resolvers format them correctly.
+   *
+   * Why this override exists: `properties.oh_start_at` / `oh_end_at` are
+   * not 100% populated in production data, so the listing payload's
+   * stored values can be NULL — which leaves the bound-field resolver
+   * empty and the `{open_house_date}` placeholder leaks through to the
+   * rendered PNG. The multi-OH wizard captures the user's chosen
+   * session per slide, so we thread those values through here.
+   */
+  openHouseStartUtc?: string | null;
+  openHouseEndUtc?: string | null;
 }
 
 export interface RenderCanvasSchemaOk {
@@ -155,6 +171,11 @@ export async function renderCanvasSchema(
       hosting_agent_name: input.hostingAgentName ?? null,
       hosting_agent_phone: input.hostingAgentPhone ?? null,
       hosting_agent_photo_url: input.hostingAgentPhotoUrl ?? null,
+      // Open House session window — wizard-selected per-slide times,
+      // ridden through to the render page so the bound-field resolver
+      // formats them correctly even when properties.oh_start_at is NULL.
+      open_house_start_utc: input.openHouseStartUtc ?? null,
+      open_house_end_utc: input.openHouseEndUtc ?? null,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

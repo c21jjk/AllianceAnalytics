@@ -892,6 +892,13 @@ async function renderPerPropertyCards(
           hostingAgentName: prop.hosting_agent_name ?? null,
           hostingAgentPhone: hosting?.phone ?? null,
           hostingAgentPhotoUrl: hosting?.photo_url ?? null,
+          // Override the listing's stored oh_start_at/end_at with the
+          // wizard's selected session, since not all properties have
+          // those columns populated. The wizard captured the exact
+          // session the user picked on Step 1; we prefer that over
+          // whatever stale (or NULL) column value lives on properties.
+          openHouseStartUtc: prop.oh_sessions?.[0]?.start_at ?? null,
+          openHouseEndUtc: prop.oh_sessions?.[0]?.end_at ?? null,
         });
         if (!rendered.ok) {
           const err = `${rendered.stage} failed: ${rendered.error}`;

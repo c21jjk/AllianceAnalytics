@@ -63,6 +63,17 @@ interface RenderRequestBody {
   variant?: PostVariant;
   hosting_agent_name?: string | null;
   oh_window?: string | null;
+  /**
+   * Optional OH session window override. Threaded through to the
+   * canvas render token so the bound-field resolver can format the
+   * date/time even when properties.oh_start_at / oh_end_at are NULL.
+   * Single-listing OH today rarely needs this (the columns are usually
+   * populated for the listing the user is acting on), but accepting
+   * the fields keeps the contract consistent with the multi-OH route
+   * and gives a future caller a clean hook.
+   */
+  open_house_start_utc?: string | null;
+  open_house_end_utc?: string | null;
 }
 
 /** Loose UUID check — DB template ids are v4 UUIDs (8-4-4-4-12 hex). */
@@ -242,6 +253,11 @@ export async function POST(request: Request) {
       factoryHosting?.name ?? body.hosting_agent_name ?? null,
     hostingAgentPhone: factoryHosting?.phone ?? null,
     hostingAgentPhotoUrl: factoryHosting?.photo_url ?? null,
+    // Pass through if the client provides them; today single-listing
+    // OH usually relies on the listing's stored oh_start_at / oh_end_at,
+    // but the contract mirror with the multi-OH route is intentional.
+    openHouseStartUtc: body.open_house_start_utc ?? null,
+    openHouseEndUtc: body.open_house_end_utc ?? null,
   });
 
   if (!rendered.ok) {

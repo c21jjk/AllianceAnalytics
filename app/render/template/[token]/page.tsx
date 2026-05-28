@@ -119,6 +119,19 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
     };
   }
 
+  // Override the listing's stored OH window with the multi-OH wizard's
+  // session selection. Properties.oh_start_at is not 100% populated in
+  // production data; the wizard captured the exact session the user
+  // picked, so we prefer that over whatever stale column value exists.
+  // Truthy check (not just `in payload`) so an explicit null override
+  // doesn't blow away a non-null value the listing already had.
+  if (payload.open_house_start_utc) {
+    mlsPayload.openHouseStartUtc = payload.open_house_start_utc;
+  }
+  if (payload.open_house_end_utc) {
+    mlsPayload.openHouseEndUtc = payload.open_house_end_utc;
+  }
+
   const dims = FORMAT_DIMS[payload.format];
 
   return (
