@@ -19,7 +19,7 @@ import type {
   TemplateUpdate,
   TemplatePublishState,
 } from "./schema";
-import type { PostType } from "@/lib/post-builder/types";
+import type { PostType, PostFormat } from "@/lib/post-builder/types";
 
 /**
  * Internal — row shape returned by Supabase before we narrow it into a
@@ -34,6 +34,9 @@ interface DbTemplateRow {
   schema: unknown;
   display_order: number;
   publish_state: string;
+  preview_image_url: string | null;
+  is_default: boolean;
+  source: string;
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -41,7 +44,7 @@ interface DbTemplateRow {
 }
 
 const SELECT_COLUMNS =
-  "id, name, description, post_types, schema, display_order, publish_state, created_at, updated_at, created_by, updated_by";
+  "id, name, description, post_types, schema, display_order, publish_state, preview_image_url, is_default, source, created_at, updated_at, created_by, updated_by";
 
 /**
  * Narrow a raw DB row into our typed shape. Defensive — bad data shouldn't
@@ -63,6 +66,9 @@ function toDefinition(row: DbTemplateRow): TemplateDefinition {
         : {},
     display_order: row.display_order,
     publish_state: normalizePublishState(row.publish_state),
+    preview_image_url: row.preview_image_url ?? null,
+    is_default: row.is_default ?? false,
+    source: row.source ?? "builder",
     created_at: row.created_at,
     updated_at: row.updated_at,
     created_by: row.created_by,
@@ -171,6 +177,9 @@ export async function createTemplate(
     schema: (payload.schema ?? {}) as unknown as Record<string, unknown>,
     display_order: payload.display_order ?? 0,
     publish_state: payload.publish_state ?? "draft",
+    preview_image_url: payload.preview_image_url ?? null,
+    is_default: payload.is_default ?? false,
+    source: payload.source ?? "builder",
     created_by: actor_id,
     updated_by: actor_id,
   };
@@ -204,6 +213,9 @@ export async function updateTemplate(
   if (patch.schema !== undefined) update.schema = patch.schema;
   if (patch.display_order !== undefined) update.display_order = patch.display_order;
   if (patch.publish_state !== undefined) update.publish_state = patch.publish_state;
+  if (patch.preview_image_url !== undefined) update.preview_image_url = patch.preview_image_url;
+  if (patch.is_default !== undefined) update.is_default = patch.is_default;
+  if (patch.source !== undefined) update.source = patch.source;
 
   const { data, error } = await supabase
     .from("template_definitions")
@@ -343,6 +355,181 @@ export async function getTemplateUseCounts(): Promise<Record<string, number>> {
     counts[tid] = ids.size;
   }
   return counts;
+}
+
+/**
+ * Studio "Save as Template" bridge (unified 2026-05-28).
+ *
+ * Studio reconstructs a single-format CanvasTemplateSchema and a preview
+ * PNG. We persist it as a PUBLISHED `template_definitions` row tagged
+ * `source='studio'`, wrapping the schema under its format key in the
+ * TemplateSchemaFamily. On UPDATE we merge into the existing family so a
+ * row that defines multiple formats keeps the others intact.
+ */
+export interface StudioTemplateSaveInput {
+  /** null = INSERT a new row; non-null = UPDATE that row. */
+  id: string | null;
+  name: string;
+  postType: PostType;
+  format: PostFormat;
+  /** Reconstructed CanvasTemplateSchema for the single edited format. */
+  schemaJson: unknown;
+  makeDefault: boolean;
+  /** Public URL of the uploaded preview PNG; null = keep existing (UPDATE). */
+  previewImageUrl: string | null;
+}
+
+/**
+ * Clear `is_default` on every published studio row that shares the same
+ * (post_type, format) slot, except `exceptId`. Mirrors the partial-unique
+ * "one default per slot" guarantee the retired custom_templates table had.
+ */
+async function clearStudioDefaultForSlot(
+  postType: PostType,
+  format: PostFormat,
+  exceptId: string | null,
+  actor_id: string,
+): Promise<void> {
+  const supabase = createAdminClient();
+  // Fetch candidate defaults tagged for this post type, then narrow to the
+  // format in JS (the schema family lives in JSONB; a SQL `?` test would be
+  // brittle across the PostgREST builder).
+  const { data, error } = await supabase
+    .from("template_definitions")
+    .select(SELECT_COLUMNS)
+    .contains("post_types", [postType])
+    .eq("is_default", true);
+  if (error || !data) return;
+  const ids = (data as DbTemplateRow[])
+    .map(toDefinition)
+    .filter(
+      (d) =>
+        d.id !== exceptId && templateSupportsFormatLocal(d.schema, format),
+    )
+    .map((d) => d.id);
+  if (ids.length === 0) return;
+  await supabase
+    .from("template_definitions")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .update({ is_default: false, updated_by: actor_id } as any)
+    .in("id", ids);
+}
+
+// Local copy to avoid an import cycle with schema.ts helpers at call sites
+// inside this module (templateSupportsFormat is exported from schema.ts and
+// imported lazily here).
+function templateSupportsFormatLocal(
+  schema: TemplateDefinition["schema"],
+  format: PostFormat,
+): boolean {
+  const entry = (schema as Record<string, unknown>)[format];
+  return entry !== null && entry !== undefined;
+}
+
+/**
+ * Insert or update a Studio-authored template. Returns the row id.
+ */
+export async function saveStudioTemplate(
+  input: StudioTemplateSaveInput,
+  actor_id: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  if (input.makeDefault) {
+    await clearStudioDefaultForSlot(input.postType, input.format, input.id, actor_id);
+  }
+
+  if (input.id === null) {
+    const created = await createTemplate(
+      {
+        name: input.name,
+        description: null,
+        post_types: [input.postType],
+        schema: { [input.format]: input.schemaJson } as TemplateDefinition["schema"],
+        display_order: 0,
+        publish_state: "published",
+        preview_image_url: input.previewImageUrl,
+        is_default: input.makeDefault,
+        source: "studio",
+      },
+      actor_id,
+    );
+    if (!created) return { ok: false, error: "insert_failed" };
+    return { ok: true, id: created.id };
+  }
+
+  // UPDATE — merge the edited format into the existing schema family so we
+  // don't clobber a sibling format the template also defines.
+  const existing = await getTemplateById(input.id);
+  if (!existing) return { ok: false, error: "row_not_found" };
+  const mergedSchema = {
+    ...(existing.schema as Record<string, unknown>),
+    [input.format]: input.schemaJson,
+  } as TemplateDefinition["schema"];
+  const patch: TemplateUpdate = {
+    name: input.name,
+    schema: mergedSchema,
+    is_default: input.makeDefault,
+    publish_state: "published",
+    source: "studio",
+  };
+  // Only overwrite the preview when a fresh one was uploaded.
+  if (input.previewImageUrl !== null) {
+    patch.preview_image_url = input.previewImageUrl;
+  }
+  const updated = await updateTemplate(input.id, patch, actor_id);
+  if (!updated) return { ok: false, error: "update_failed" };
+  return { ok: true, id: updated.id };
+}
+
+/**
+ * Picker lane query for STUDIO-authored templates (source='studio'),
+ * published + tagged for the post type + defining the format. The Post
+ * Builder renders these in the "your saved templates" lane (the surface
+ * the retired custom_templates table used to feed).
+ */
+export async function listStudioTemplatesForSlot(
+  postType: PostType,
+  format: PostFormat,
+): Promise<TemplateDefinition[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("template_definitions")
+    .select(SELECT_COLUMNS)
+    .contains("post_types", [postType])
+    .eq("source", "studio")
+    .eq("publish_state", "published")
+    .order("is_default", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error || !data) {
+    if (error)
+      console.error("[template-builder/storage] listStudioTemplatesForSlot:", error);
+    return [];
+  }
+  return (data as DbTemplateRow[])
+    .map(toDefinition)
+    .filter((d) => templateSupportsFormatLocal(d.schema, format));
+}
+
+/**
+ * Toggle a studio template's default flag, clearing any other default in
+ * the same (post_type, format) slot first. Returns false on lookup miss.
+ */
+export async function setStudioTemplateDefault(
+  id: string,
+  isDefault: boolean,
+  actor_id: string,
+): Promise<boolean> {
+  const def = await getTemplateById(id);
+  if (!def) return false;
+  if (isDefault) {
+    const format = (["square_1x1", "story_9x16", "portrait_4x5"] as PostFormat[]).find(
+      (f) => templateSupportsFormatLocal(def.schema, f),
+    );
+    if (format) {
+      await clearStudioDefaultForSlot(def.post_types[0], format, id, actor_id);
+    }
+  }
+  const updated = await updateTemplate(id, { is_default: isDefault }, actor_id);
+  return Boolean(updated);
 }
 
 /**

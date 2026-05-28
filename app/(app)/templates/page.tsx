@@ -30,7 +30,7 @@ export default async function ManageTemplatesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Custom Templates"
-        description="Manage canvas templates you've saved from the Post Builder Studio. Mark one as the default for a slot and it replaces the factory variant card for everyone."
+        description="Manage canvas templates you've saved from the Post Builder Studio. These now live in the same unified catalog as the admin Template Builder — saving a template here makes it available in both the picker and the Template Builder. Mark one as the default for a slot and it replaces the factory variant card for everyone."
       />
 
       {errorMessage ? (

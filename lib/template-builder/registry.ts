@@ -44,7 +44,35 @@ export async function listTemplatesForPostType(
   const rows = await storage.listPublishedTemplatesForPostType(post_type);
   return rows
     .filter((row) => templateSupportsFormat(row.schema, format))
+    // 2026-05-28 unification — Studio-saved templates live in the SAME
+    // table now but render in the picker's dedicated "your saved" lane
+    // (fed by listStudioTemplatesForSlot). Exclude them here so the
+    // builder lane doesn't show the same card twice.
+    .filter((row) => row.source !== "studio")
     .map(templateMetaFromDefinition);
+}
+
+/**
+ * Picker lane for Studio-saved templates (source='studio'). Returns full
+ * TemplateDefinition rows so the Post Builder can map them into the
+ * "custom template" card shape it already renders.
+ */
+export async function listStudioTemplatesForSlot(
+  post_type: PostType,
+  format: PostFormat,
+): Promise<TemplateDefinition[]> {
+  return storage.listStudioTemplatesForSlot(post_type, format);
+}
+
+/**
+ * Persist a Studio "Save as Template" into the unified table. Thin
+ * passthrough so server actions import only from the registry.
+ */
+export async function saveStudioTemplate(
+  input: storage.StudioTemplateSaveInput,
+  actor_id: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  return storage.saveStudioTemplate(input, actor_id);
 }
 
 /**
@@ -97,5 +125,8 @@ export function templateMetaFromDefinition(
     display_order: def.display_order,
     publish_state: def.publish_state,
     updated_at: def.updated_at,
+    preview_image_url: def.preview_image_url,
+    is_default: def.is_default,
+    source: def.source,
   };
 }

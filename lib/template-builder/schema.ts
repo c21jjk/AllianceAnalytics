@@ -61,6 +61,24 @@ export interface TemplateDefinition {
   schema: TemplateSchemaFamily;
   display_order: number;
   publish_state: TemplatePublishState;
+  /**
+   * Optional preview PNG URL. Studio "Save as Template" supplies one;
+   * admin-authored rows may be null (the admin list renders on the fly).
+   * Unified 2026-05-28 — see project_alliance template-unification.
+   */
+  preview_image_url: string | null;
+  /**
+   * When true, this is the preferred/auto-selected card for its
+   * post_type+format slot in the Post Builder picker. Mirrors the retired
+   * `custom_templates.is_default`.
+   */
+  is_default: boolean;
+  /**
+   * Provenance: 'builder' (admin Template Builder) or 'studio' (Post
+   * Builder Studio Save-as-Template). Lets the picker route its two lanes
+   * without duplicating cards.
+   */
+  source: string;
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -82,6 +100,12 @@ export interface TemplateMeta {
   display_order: number;
   publish_state: TemplatePublishState;
   updated_at: string;
+  /** Optional preview PNG URL (Studio saves supply one). */
+  preview_image_url: string | null;
+  /** Preferred/auto-selected card for its slot. */
+  is_default: boolean;
+  /** 'builder' | 'studio' — picker lane routing. */
+  source: string;
   /**
    * Phase 2H/2I (2026-05-22) — adoption metric. Distinct
    * `generated_posts` rows that reference this template, across BOTH
@@ -110,6 +134,9 @@ export interface TemplateInsert {
   schema?: TemplateSchemaFamily;
   display_order?: number;
   publish_state?: TemplatePublishState;
+  preview_image_url?: string | null;
+  is_default?: boolean;
+  source?: string;
 }
 
 export interface TemplateUpdate {
@@ -119,6 +146,9 @@ export interface TemplateUpdate {
   schema?: TemplateSchemaFamily;
   display_order?: number;
   publish_state?: TemplatePublishState;
+  preview_image_url?: string | null;
+  is_default?: boolean;
+  source?: string;
 }
 
 /**

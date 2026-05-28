@@ -8,6 +8,17 @@ import {
   loadMetaCredentials,
 } from "@/lib/post-builder/publish";
 import { getPublishTestMode } from "@/lib/data/system-config";
+// 2026-05-28 unification — Studio "Save as Template" now persists into the
+// admin Template Builder catalog (template_definitions) instead of the
+// retired custom_templates table. See lib/template-builder/registry.ts.
+import {
+  saveStudioTemplate,
+  listStudioTemplatesForSlot,
+} from "@/lib/template-builder/registry";
+import {
+  updateTemplate as updateBuilderTemplate,
+  setStudioTemplateDefault,
+} from "@/lib/template-builder/storage";
 import type { Json } from "@/lib/supabase/types";
 import type {
   AiDesignProvenance,
@@ -912,7 +923,10 @@ export async function propagateCarouselLayoutAction(
     return { ok: false, error: `update_failed: ${updError.message}` };
   }
 
-  revalidatePath("/post-builder");
+  // why (2026-05-28): NO revalidatePath("/post-builder") — revalidating the
+  // current route re-renders the page and tears down the open Studio
+  // overlay, ejecting the user to Final Review mid-edit. The client mirrors
+  // the propagated overrides in state, so no server revalidation is needed.
   return { ok: true, slide_count: slideCount };
 }
 
@@ -3128,114 +3142,34 @@ export async function saveCustomTemplateAction(
     };
   }
 
-  // ---- Clear existing default in the same slot when makeDefault is true ----
-  // why: the partial unique index `(post_type, format, based_on_variant)
-  // WHERE is_default = true` will reject our write with a 23505 conflict
-  // if any other row in the same slot is currently the default. We clear
-  // it first to make the write deterministic. This is a two-statement
-  // operation without a transaction wrapper — if step 2 fails after
-  // step 1 succeeds, the slot is left with NO default until the user
-  // re-saves. Acceptable trade-off; the worst case is one variant card
-  // showing the factory baseline for a few minutes.
-  if (input.makeDefault) {
-    const { error: clearErr } = await supabase
-      .from("custom_templates")
-      .update({ is_default: false, updated_at: new Date().toISOString() })
-      .eq("post_type", input.postType)
-      .eq("format", input.format)
-      .eq("based_on_variant", input.basedOnVariant)
-      .eq("is_default", true)
-      // why: when updating an existing row that's ALREADY the default,
-      // don't clear ourselves — that would defeat the makeDefault intent
-      // and leave the slot with no default until the next write.
-      .neq("id", input.id ?? "00000000-0000-0000-0000-000000000000");
-    if (clearErr) {
-      return {
-        ok: false,
-        error: `Failed to clear existing default: ${clearErr.message}`,
-      };
-    }
+  // ---- Persist into the unified Template Builder catalog ----
+  // 2026-05-28 unification — Studio saves now write a PUBLISHED,
+  // studio-sourced `template_definitions` row instead of the retired
+  // `custom_templates` table, so the same template is visible in BOTH the
+  // admin Template Builder and the Post Builder picker. saveStudioTemplate
+  // handles INSERT vs UPDATE, default-clearing within the slot, and merging
+  // the edited format into the existing schema family.
+  const saved = await saveStudioTemplate(
+    {
+      id: input.id,
+      name,
+      postType: input.postType,
+      format: input.format,
+      schemaJson: input.schemaJson,
+      makeDefault: input.makeDefault,
+      previewImageUrl,
+    },
+    profile.id,
+  );
+  if (!saved.ok) {
+    return { ok: false, error: `Save failed: ${saved.error}` };
   }
 
-  // ---- INSERT or UPDATE ----
-  if (input.id === null) {
-    // INSERT — previewImageUrl guaranteed non-null by the validation above.
-    // why: write schema_json (the new schema-preserving path). We also
-    // write a copy into fabric_json to keep the legacy `customTemplate.
-    // fabricJson` reopen path working — Fabric's loadFromJSON gracefully
-    // handles a CanvasTemplateSchema-shaped object that lacks Fabric's
-    // expected keys by simply rendering nothing, but reading
-    // schema_json is the canonical path. The duplicate write is cheap
-    // (one extra jsonb column) and avoids breaking existing reopen code
-    // until that path is rewritten to consume schema_json directly.
-    const { data, error: insertErr } = await supabase
-      .from("custom_templates")
-      .insert({
-        name,
-        post_type: input.postType,
-        format: input.format,
-        based_on_variant: input.basedOnVariant,
-        schema_json: input.schemaJson as Json,
-        fabric_json: input.schemaJson as Json,
-        preview_image_url: previewImageUrl,
-        is_default: input.makeDefault,
-        is_archived: false,
-        created_by: profile.id,
-      })
-      .select("id")
-      .maybeSingle();
-    if (insertErr || !data?.id) {
-      return {
-        ok: false,
-        error: `Insert failed: ${insertErr?.message ?? "no id returned"}`,
-      };
-    }
-    revalidatePath("/post-builder");
-    revalidatePath("/templates");
-    return { ok: true, id: data.id };
-  } else {
-    // UPDATE — keep preview unless a new one was uploaded. The payload
-    // type matches the Database['public']['Tables']['custom_templates']
-    // ['Update'] shape; we narrow explicitly via the supabase chain so
-    // the type system doesn't widen to `Record<string, unknown>` (which
-    // would fail the strict excess-property check).
-    const updatePayload: {
-      name: string;
-      post_type: string;
-      format: string;
-      based_on_variant: string;
-      schema_json: Json;
-      fabric_json: Json;
-      is_default: boolean;
-      updated_at: string;
-      preview_image_url?: string;
-    } = {
-      name,
-      post_type: input.postType,
-      format: input.format,
-      based_on_variant: input.basedOnVariant,
-      // why: write BOTH columns on UPDATE — schema_json is canonical, but
-      // fabric_json is kept in sync so existing reopen paths that still
-      // read fabric_json don't drift away from the saved design.
-      schema_json: input.schemaJson as Json,
-      fabric_json: input.schemaJson as Json,
-      is_default: input.makeDefault,
-      updated_at: new Date().toISOString(),
-    };
-    if (previewImageUrl !== null) {
-      updatePayload.preview_image_url = previewImageUrl;
-    }
-    const { error: updateErr } = await supabase
-      .from("custom_templates")
-      .update(updatePayload)
-      .eq("id", input.id);
-    if (updateErr) {
-      return { ok: false, error: `Update failed: ${updateErr.message}` };
-    }
-    revalidatePath("/post-builder");
-    revalidatePath("/templates");
-    return { ok: true, id: input.id };
-  }
+  // why (2026-05-28): intentionally NO revalidatePath("/post-builder")
+  // here. Revalidating the current route re-renders the page and tears
+  // down the open Studio overlay, ejecting the user to Final Review. The
+  // client refreshes its picker via refetchCustomTemplates instead.
+  return { ok: true, id: saved.id };
 }
 
 export type CustomTemplateSummary = {
@@ -3283,34 +3217,33 @@ export async function listCustomTemplatesAction(
     return { ok: false, error: `Invalid format: ${format}` };
   }
 
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("custom_templates")
-    .select(
-      "id, name, post_type, format, based_on_variant, fabric_json, preview_image_url, is_default, created_at, updated_at",
-    )
-    .eq("post_type", postType)
-    .eq("format", format)
-    .eq("is_archived", false)
-    .order("is_default", { ascending: false })
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    return { ok: false, error: `Query failed: ${error.message}` };
-  }
-
-  const templates: CustomTemplateSummary[] = (data ?? []).map((row) => ({
-    id: row.id,
-    name: row.name,
-    post_type: row.post_type as PostType,
-    format: row.format as PostFormat,
-    based_on_variant: row.based_on_variant as PostVariant,
-    fabric_json: row.fabric_json,
-    preview_image_url: row.preview_image_url,
-    is_default: row.is_default,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }));
+  // 2026-05-28 unification — read studio-sourced rows from the unified
+  // template_definitions catalog. Mapped into the legacy CustomTemplateSummary
+  // shape so the picker's "your saved templates" lane needs no changes.
+  const defs = await listStudioTemplatesForSlot(postType, format);
+  const templates: CustomTemplateSummary[] = defs.map((def) => {
+    const schemaForFormat = (def.schema as Record<string, unknown>)[format];
+    const variant =
+      schemaForFormat &&
+      typeof schemaForFormat === "object" &&
+      typeof (schemaForFormat as { variant?: unknown }).variant === "string"
+        ? ((schemaForFormat as { variant: string }).variant as PostVariant)
+        : ("v1" as PostVariant);
+    return {
+      id: def.id,
+      name: def.name,
+      post_type: postType,
+      format,
+      based_on_variant: variant,
+      // why: the picker + generation read `fabric_json` as the schema body.
+      // For a studio row that's the per-format CanvasTemplateSchema.
+      fabric_json: schemaForFormat ?? null,
+      preview_image_url: def.preview_image_url,
+      is_default: def.is_default,
+      created_at: def.created_at,
+      updated_at: def.updated_at,
+    };
+  });
 
   return { ok: true, templates };
 }
@@ -3330,15 +3263,17 @@ export async function listAllCustomTemplatesAction(): Promise<ListCustomTemplate
     };
   }
 
+  // 2026-05-28 unification — list studio-sourced rows from the unified
+  // template_definitions catalog (the retired custom_templates is no longer
+  // read). Each studio row defines exactly one format key in its schema.
   const supabase = createAdminClient();
   const { data, error } = await supabase
-    .from("custom_templates")
+    .from("template_definitions")
     .select(
-      "id, name, post_type, format, based_on_variant, fabric_json, preview_image_url, is_default, created_at, updated_at",
+      "id, name, post_types, schema, preview_image_url, is_default, created_at, updated_at",
     )
-    .eq("is_archived", false)
-    .order("post_type", { ascending: true })
-    .order("format", { ascending: true })
+    .eq("source", "studio")
+    .neq("publish_state", "archived")
     .order("is_default", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -3346,18 +3281,34 @@ export async function listAllCustomTemplatesAction(): Promise<ListCustomTemplate
     return { ok: false, error: `Query failed: ${error.message}` };
   }
 
-  const templates: CustomTemplateSummary[] = (data ?? []).map((row) => ({
-    id: row.id,
-    name: row.name,
-    post_type: row.post_type as PostType,
-    format: row.format as PostFormat,
-    based_on_variant: row.based_on_variant as PostVariant,
-    fabric_json: row.fabric_json,
-    preview_image_url: row.preview_image_url,
-    is_default: row.is_default,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }));
+  const FORMAT_KEYS: PostFormat[] = ["square_1x1", "story_9x16"];
+  const templates: CustomTemplateSummary[] = (data ?? []).map((row) => {
+    const schema = (row.schema ?? {}) as Record<string, unknown>;
+    const format =
+      FORMAT_KEYS.find((f) => schema[f] != null) ?? ("square_1x1" as PostFormat);
+    const body = schema[format];
+    const variant =
+      body &&
+      typeof body === "object" &&
+      typeof (body as { variant?: unknown }).variant === "string"
+        ? ((body as { variant: string }).variant as PostVariant)
+        : ("v1" as PostVariant);
+    const postTypes = Array.isArray(row.post_types)
+      ? (row.post_types as string[])
+      : [];
+    return {
+      id: row.id,
+      name: row.name,
+      post_type: (postTypes[0] ?? "open_house") as PostType,
+      format,
+      based_on_variant: variant,
+      fabric_json: body ?? null,
+      preview_image_url: row.preview_image_url,
+      is_default: row.is_default,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  });
 
   return { ok: true, templates };
 }
@@ -3388,22 +3339,20 @@ export async function archiveCustomTemplateAction(
     return { ok: false, error: "id is required" };
   }
 
-  const supabase = createAdminClient();
-  const { error } = await supabase
-    .from("custom_templates")
-    .update({
-      is_archived: true,
-      is_default: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-
-  if (error) {
-    return { ok: false, error: `Archive failed: ${error.message}` };
+  // 2026-05-28 unification — archive = publish_state 'archived' in the
+  // unified catalog, and clear the default flag so the slot falls back.
+  const profile = await requireUser();
+  const updated = await updateBuilderTemplate(
+    id,
+    { publish_state: "archived", is_default: false },
+    profile.id,
+  );
+  if (!updated) {
+    return { ok: false, error: "Archive failed" };
   }
 
-  revalidatePath("/post-builder");
   revalidatePath("/templates");
+  revalidatePath("/admin/templates");
   return { ok: true, id };
 }
 
@@ -3433,53 +3382,17 @@ export async function setCustomTemplateDefaultAction(
     return { ok: false, error: "id is required" };
   }
 
-  const supabase = createAdminClient();
-
-  if (isDefault) {
-    // Read the row to find its slot, then clear any existing default in
-    // that slot before flipping this one on.
-    const { data: existing, error: readErr } = await supabase
-      .from("custom_templates")
-      .select("id, post_type, format, based_on_variant")
-      .eq("id", id)
-      .maybeSingle();
-    if (readErr || !existing) {
-      return {
-        ok: false,
-        error: `Lookup failed: ${readErr?.message ?? "row not found"}`,
-      };
-    }
-
-    const { error: clearErr } = await supabase
-      .from("custom_templates")
-      .update({ is_default: false, updated_at: new Date().toISOString() })
-      .eq("post_type", existing.post_type)
-      .eq("format", existing.format)
-      .eq("based_on_variant", existing.based_on_variant)
-      .eq("is_default", true)
-      .neq("id", id);
-    if (clearErr) {
-      return {
-        ok: false,
-        error: `Failed to clear existing default: ${clearErr.message}`,
-      };
-    }
+  // 2026-05-28 unification — default toggle now operates on the unified
+  // catalog; setStudioTemplateDefault clears any other default in the same
+  // (post_type, format) slot first.
+  const profile = await requireUser();
+  const ok = await setStudioTemplateDefault(id, isDefault, profile.id);
+  if (!ok) {
+    return { ok: false, error: "Update failed (template not found)" };
   }
 
-  const { error: updateErr } = await supabase
-    .from("custom_templates")
-    .update({
-      is_default: isDefault,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-
-  if (updateErr) {
-    return { ok: false, error: `Update failed: ${updateErr.message}` };
-  }
-
-  revalidatePath("/post-builder");
   revalidatePath("/templates");
+  revalidatePath("/admin/templates");
   return { ok: true, id };
 }
 
@@ -3512,17 +3425,14 @@ export async function renameCustomTemplateAction(
     return { ok: false, error: "id is required" };
   }
 
-  const supabase = createAdminClient();
-  const { error } = await supabase
-    .from("custom_templates")
-    .update({ name: trimmed, updated_at: new Date().toISOString() })
-    .eq("id", id);
-
-  if (error) {
-    return { ok: false, error: `Rename failed: ${error.message}` };
+  // 2026-05-28 unification — rename patches the unified catalog row.
+  const profile = await requireUser();
+  const updated = await updateBuilderTemplate(id, { name: trimmed }, profile.id);
+  if (!updated) {
+    return { ok: false, error: "Rename failed" };
   }
 
-  revalidatePath("/post-builder");
   revalidatePath("/templates");
+  revalidatePath("/admin/templates");
   return { ok: true, id };
 }

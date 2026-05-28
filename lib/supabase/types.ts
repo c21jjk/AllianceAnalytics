@@ -1080,6 +1080,9 @@ export type Database = {
           schema: Json
           display_order: number
           publish_state: string
+          preview_image_url: string | null
+          is_default: boolean
+          source: string
           created_at: string
           updated_at: string
           created_by: string | null
@@ -1093,6 +1096,9 @@ export type Database = {
           schema?: Json
           display_order?: number
           publish_state?: string
+          preview_image_url?: string | null
+          is_default?: boolean
+          source?: string
           created_at?: string
           updated_at?: string
           created_by?: string | null
@@ -1106,6 +1112,9 @@ export type Database = {
           schema?: Json
           display_order?: number
           publish_state?: string
+          preview_image_url?: string | null
+          is_default?: boolean
+          source?: string
           created_at?: string
           updated_at?: string
           created_by?: string | null

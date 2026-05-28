@@ -73,15 +73,21 @@ export async function fetchDefaultCustomTemplate(
   format: PostFormat,
   variant: PostVariant,
 ): Promise<CanvasTemplateSchema | null> {
+  // 2026-05-28 unification — default custom templates now live in the
+  // unified `template_definitions` catalog as published, studio-sourced
+  // rows (the retired custom_templates table is no longer read). The
+  // per-format CanvasTemplateSchema lives under schema[format]. We match by
+  // the (post_type, format) slot; `variant` is retained in the signature
+  // for back-compat but the unified default is keyed per post_type+format.
+  void variant;
   const supabase = createAdminClient();
   const { data, error } = await supabase
-    .from("custom_templates")
-    .select("schema_json")
-    .eq("post_type", postType)
-    .eq("format", format)
-    .eq("based_on_variant", variant)
+    .from("template_definitions")
+    .select("schema")
+    .contains("post_types", [postType])
+    .eq("source", "studio")
     .eq("is_default", true)
-    .eq("is_archived", false)
+    .neq("publish_state", "archived")
     .maybeSingle();
 
   if (error) {
@@ -101,11 +107,15 @@ export async function fetchDefaultCustomTemplate(
     return null;
   }
 
-  if (!data || !data.schema_json) {
+  const family =
+    data && data.schema && typeof data.schema === "object" && !Array.isArray(data.schema)
+      ? (data.schema as Record<string, unknown>)
+      : null;
+  if (!family || !family[format]) {
     return null;
   }
 
-  const schema = data.schema_json as unknown;
+  const schema = family[format] as unknown;
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
     return null;
   }

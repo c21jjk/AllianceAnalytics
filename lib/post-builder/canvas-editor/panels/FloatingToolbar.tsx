@@ -473,7 +473,30 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
           max={400}
           step={1}
           value={Math.round(state.fontSize)}
-          onChange={(e) => handleFontSize(Number(e.target.value))}
+          // why (2026-05-28): typing a multi-digit size used to be impossible
+          // — the old onChange called handleFontSize, which REJECTS any value
+          // < 4, so the first keystroke "1" of "150" was discarded and the
+          // field snapped back. Now we update the visible value freely while
+          // typing (no canvas mutation yet) and clamp + apply + record history
+          // on blur / Enter.
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (Number.isFinite(v) && v >= 1) {
+              setState((prev) => (prev ? { ...prev, fontSize: v } : prev));
+            }
+          }}
+          onBlur={(e) => {
+            const raw = Number(e.target.value);
+            const next = Math.max(
+              4,
+              Math.min(400, Math.round(Number.isFinite(raw) && raw > 0 ? raw : state.fontSize)),
+            );
+            handleFontSize(next);
+            commit(canvas, onCanvasMutated, recordHistory);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
           aria-label="Font size"
           className="h-6 w-10 border-0 bg-transparent p-0 text-center text-[12px] font-medium text-white focus:outline-none [&::-webkit-inner-spin-button]:hidden [&::-webkit-outer-spin-button]:hidden"
         />

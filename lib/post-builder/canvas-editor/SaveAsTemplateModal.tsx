@@ -101,6 +101,10 @@ export default function SaveAsTemplateModal(
   );
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // 2026-05-28 — brief success confirmation. The old flow gave no feedback
+  // and the page revalidation ejected the user to Final Review; now we keep
+  // the editor open and flash "Saved" before the parent closes the modal.
+  const [saved, setSaved] = useState<boolean>(false);
 
   const nameInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -144,7 +148,10 @@ export default function SaveAsTemplateModal(
         !snapshot.previewImageDataUri.startsWith("data:image/png;base64,"))
     ) {
       setError(
-        "Couldn't capture a preview image. Try toggling a layer and re-saving.",
+        "Couldn't capture a preview image. This usually means a photo on " +
+          "the slide isn't CORS-safe (a direct MLS-CDN image taints the " +
+          "canvas). Re-pick the photo from the Photos panel (those are served " +
+          "from our storage), then save again.",
       );
       return;
     }
@@ -166,11 +173,13 @@ export default function SaveAsTemplateModal(
         setSubmitting(false);
         return;
       }
-      props.onSaved(res.id);
-      // Parent is expected to call onClose() after onSaved fires, but we
-      // also leave submitting=true so the buttons stay disabled until the
-      // modal unmounts. No setState after a successful save — the parent
-      // owns the unmount.
+      // why (2026-05-28): flash a success confirmation, THEN let the parent
+      // unmount. submitting stays true so the buttons remain disabled. The
+      // editor itself stays open (the save action no longer revalidates the
+      // route), so the user lands back on their canvas, not Final Review.
+      setSaved(true);
+      const savedId = res.id;
+      window.setTimeout(() => props.onSaved(savedId), 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSubmitting(false);
@@ -250,6 +259,12 @@ export default function SaveAsTemplateModal(
         {error ? (
           <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-200">
             {error}
+          </div>
+        ) : null}
+
+        {saved ? (
+          <div className="mt-3 rounded-md border border-emerald-500/40 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">
+            Saved ✓ — available now in the picker and the Template Builder.
           </div>
         ) : null}
 
