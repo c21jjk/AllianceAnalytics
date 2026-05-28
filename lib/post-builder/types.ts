@@ -390,11 +390,6 @@ export interface MultiOHEventProperty {
  * endpoint consumes it.
  */
 export interface MultiOHEventInput {
-  /** Display title rendered at the top of the event hero card. e.g.,
-   *  "Open House This Weekend" / "Saturday Open Houses" / "Beach Block
-   *  Tour — Sunday 11–3". Wizard pre-fills based on the picked
-   *  properties' dates; the user can override. */
-  event_title: string;
   /**
    * DEPRECATED 2026-05-21 — the event hero no longer surfaces a single
    * event-level agent. Each property card carries its own

@@ -82,7 +82,6 @@ export interface MultiOHCaptionProperty {
 }
 
 export interface MultiOHCaptionInput {
-  event_title: string | null;
   properties: readonly MultiOHCaptionProperty[];
   /** Tone bias. Default `"auto"`. */
   tone?: CaptionTone;
@@ -300,7 +299,6 @@ function median(nums: readonly number[]): number | null {
 // ---------------------------------------------------------------------------
 
 interface CaptionCtx {
-  eventTitle: string;
   count: number;
   /** Geographic phrase appropriate to the property set. Empty when none fits. */
   geoPhrase: string;
@@ -767,12 +765,6 @@ export function synthesizeMultiOHCaption(
 ): MultiOHCaptionResult {
   const properties = input.properties;
   const count = properties.length;
-  const eventTitleRaw = (input.event_title ?? "").trim();
-  const hasRealEventTitle =
-    eventTitleRaw.length > 0 &&
-    !/^open houses? this weekend$/i.test(eventTitleRaw) &&
-    !/^open house weekend$/i.test(eventTitleRaw);
-  const eventTitle = hasRealEventTitle ? eventTitleRaw : "";
 
   const firstProp = properties[0];
   const anchorMls = firstProp
@@ -785,10 +777,13 @@ export function synthesizeMultiOHCaption(
     requestedTone === "auto" ? detectTone(properties) : requestedTone;
 
   // ---- Deterministic seed for variant picks ----
-  // Include resolvedTone in the seed so switching the tone picker yields a
-  // visibly different caption (otherwise a coastal seed + family pool
-  // would always pick variant[0]).
-  const seed = hashSeed(`${eventTitleRaw}|${count}|${resolvedTone}`);
+  // 2026-05-27 — event_title was removed from the wizard. Seed is now
+  // (count | mls_numbers | resolvedTone) so the same set of properties
+  // always renders the same caption variant, and switching the tone picker
+  // yields a visibly different caption (otherwise a coastal seed + family
+  // pool would always pick variant[0]).
+  const mlsKey = properties.map((p) => p.mls_number).join(",");
+  const seed = hashSeed(`${count}|${mlsKey}|${resolvedTone}`);
 
   // ---- Geographic phrasing ----
   const geoPhrase = buildGeoPhrase(properties, seed);
