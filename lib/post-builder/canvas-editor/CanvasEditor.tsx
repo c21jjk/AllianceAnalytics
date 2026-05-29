@@ -2143,6 +2143,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       .map((obj): LayerEntry | null => {
         const data = getLayerData(obj);
         if (!data) return null;
+        // 2026-05-29 (bug fix) — never surface transient/leaked hover-preview
+        // highlight rects in the layer list.
+        if (data.layerId.startsWith("__hover_preview__")) return null;
         return {
           id: data.layerId,
           name: data.displayName,
@@ -2549,9 +2552,17 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     autosaveWriteTimerRef.current = setTimeout(() => {
       const current = fabricRef.current;
       if (!current) return;
-      // Strip the hover-preview rect (if any) so it doesn't get persisted.
+      // Strip the live hover-preview rect AND any LEGACY leaked hover-preview
+      // objects (older builds serialized them as permanent layers) so they're
+      // removed for good and never re-persisted. The live one is re-added
+      // after serialize; the legacy ones stay gone.
       const hover = hoverHighlightRef.current;
-      if (hover) current.remove(hover);
+      const leakedHovers = current
+        .getObjects()
+        .filter((o) =>
+          getLayerData(o)?.layerId?.startsWith("__hover_preview__"),
+        );
+      for (const o of leakedHovers) current.remove(o);
       let json: unknown = null;
       try {
         // Fabric v6: toObject(propertiesToInclude) preserves our `data`
@@ -2630,6 +2641,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         evented: false,
         selectable: false,
         hoverCursor: "default",
+        // 2026-05-29 (bug fix) — NEVER serialize the hover highlight. Without
+        // this it leaked into autosave + history snapshots + export and
+        // reloaded as a permanent "(hover preview)" layer. excludeFromExport
+        // makes every toObject/toJSON path (autosave, undo/redo capture,
+        // PNG export) skip it.
+        excludeFromExport: true,
       });
       // Stamp a marker on the rect's data so a defensive sweep can clean
       // up stragglers (shouldn't be needed, but cheap insurance).
@@ -2865,7 +2882,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         "lockMovementY",
       ];
       const hoverForExport = hoverHighlightRef.current;
-      if (hoverForExport) canvas.remove(hoverForExport);
+      // Strip the live hover-preview rect + any legacy leaked ones so they
+      // never end up in the saved snapshot. Live one re-added after.
+      const leakedHoversExport = canvas
+        .getObjects()
+        .filter((o) =>
+          getLayerData(o)?.layerId?.startsWith("__hover_preview__"),
+        );
+      for (const o of leakedHoversExport) canvas.remove(o);
       let fabricJson: unknown;
       try {
         fabricJson = canvas.toObject(propsToInclude);

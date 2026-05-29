@@ -727,6 +727,19 @@ export interface UndoRedoHistory {
    * from its props, so adding `start` here does not affect that surface.
    */
   start: () => void;
+  /**
+   * Pause auto-snapshot recording. Used during crop mode: entering crop
+   * mutates the canvas a lot (removes the image clipPath, adds overlay rects),
+   * which would otherwise pollute the undo stack with intermediate states.
+   * Pair with `resume()`. While suspended, `record()` is also a no-op.
+   */
+  suspend: () => void;
+  /**
+   * Resume auto-snapshot recording after `suspend()`. The caller typically
+   * calls `record()` right after to capture the net result as ONE undo entry.
+   * Idempotent.
+   */
+  resume: () => void;
 }
 
 // ===========================================================================
