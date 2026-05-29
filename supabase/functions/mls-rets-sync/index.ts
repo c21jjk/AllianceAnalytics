@@ -291,11 +291,73 @@ class RETSClient {
     }
   }
 
+  /**
+   * Search a RETS resource/class, paginating past the per-request SEARCH_LIMIT
+   * so classes with more than 5000 matching records sync in full.
+   *
+   * 2026-05-28 (Phase 4 #4) — previously this issued ONE request with
+   * Limit=5000 and no Offset, so any class with >5000 matches was silently
+   * truncated (we even read the server's true <COUNT Records="N"> into
+   * rawCount but never fetched records 5001+). Now we loop with a 1-based
+   * Offset, accumulating pages until the server returns a short/empty page or
+   * we've collected the reported total.
+   *
+   * Guards:
+   *   • MAX_PAGES ceiling — defends against an unexpectedly huge resultset or
+   *     a server that never signals "done".
+   *   • Offset-ignored detection — some servers ignore Offset and re-return
+   *     page 1 forever. If a page's first record matches the previous page's
+   *     first record, we assume Offset is unsupported and stop (taking the
+   *     first page rather than looping on duplicates).
+   */
   async search(resource: string, cls: string, query: string): Promise<{ rows: RowMap[]; rawCount: number }> {
+    const all: RowMap[] = [];
+    let serverTotal = 0;
+    let offset = 1; // RETS Offset is 1-based
+    let prevFirstRowKey: string | null = null;
+    const MAX_PAGES = 40; // 40 × 5000 = 200k row safety ceiling
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const { rows, rawCount } = await this.searchPage(resource, cls, query, offset);
+      if (page === 0) serverTotal = rawCount;
+      if (rows.length === 0) break;
+
+      // Offset-ignored guard: if this page starts with the same record as the
+      // last page, the server isn't honoring Offset — stop to avoid a dupe loop.
+      const firstRowKey = JSON.stringify(rows[0]);
+      if (prevFirstRowKey !== null && firstRowKey === prevFirstRowKey) {
+        console.warn(
+          `[search ${resource}/${cls}] server appears to ignore Offset; stopping at ${all.length} rows (server reported ${serverTotal})`,
+        );
+        break;
+      }
+      prevFirstRowKey = firstRowKey;
+
+      all.push(...rows);
+
+      // Done when the server returned a partial page, or we've collected the
+      // full reported total.
+      if (rows.length < SEARCH_LIMIT) break;
+      if (serverTotal > 0 && all.length >= serverTotal) break;
+
+      offset += rows.length;
+    }
+
+    return { rows: all, rawCount: serverTotal || all.length };
+  }
+
+  /** Fetch a single page of search results at the given 1-based Offset. */
+  private async searchPage(
+    resource: string,
+    cls: string,
+    query: string,
+    offset: number,
+  ): Promise<{ rows: RowMap[]; rawCount: number }> {
     const baseUrl = this.absoluteUrl(this.capabilities["Search"]);
     const params = new URLSearchParams({
       SearchType: resource, Class: cls, Query: query, QueryType: "DMQL2",
-      Format: "COMPACT-DECODED", Count: "1", StandardNames: "0", Limit: String(SEARCH_LIMIT),
+      Format: "COMPACT-DECODED", Count: "1", StandardNames: "0",
+      Limit: String(SEARCH_LIMIT), Offset: String(offset),
     });
     const sep = baseUrl.includes("?") ? "&" : "?";
     const url = `${baseUrl}${sep}${params.toString()}`;
@@ -1089,9 +1151,16 @@ async function replicateToProperties(client: SupabaseClient, rows: MappedListing
     source_mls: r.source_mls,
     updated_at: new Date().toISOString(),
   }));
+  // 2026-05-28 (Phase 4 #3) — composite conflict target so a property
+  // cross-listed in two feeds (CMC + SJSR) keeps a row per source instead of
+  // the feeds clobbering each other on a global mls_number unique. Requires
+  // the composite UNIQUE(mls_number, source_mls) on properties (added in the
+  // properties_add_composite_mls_source_unique migration). NOTE: this only
+  // takes effect once this function is redeployed; until then the live
+  // function still uses onConflict "mls_number".
   const { error } = await client
     .from("properties")
-    .upsert(propertyRows, { onConflict: "mls_number" });
+    .upsert(propertyRows, { onConflict: "mls_number,source_mls" });
   if (error) console.error("properties replication failed:", error.message);
 }
 

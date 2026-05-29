@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireAdmin, requireUser } from "@/lib/auth";
+import { requireAdmin, requireUser, type AuthProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getFBTokenStatus,
@@ -19,6 +19,7 @@ import {
 import {
   updateTemplate as updateBuilderTemplate,
   setStudioTemplateDefault,
+  getTemplateById,
 } from "@/lib/template-builder/storage";
 import type { Json } from "@/lib/supabase/types";
 import type {
@@ -3166,6 +3167,36 @@ export type SaveCustomTemplateResult =
  *   6. Revalidate /post-builder + /templates so the new template
  *      appears in the variant grid + Manage Templates UI on next render.
  */
+/**
+ * 2026-05-28 (Phase 4 #7) — ownership guard for template mutations.
+ *
+ * The unified `template_definitions` catalog mixes admin-authored builder
+ * templates (`source='builder'`) and per-user Studio saves
+ * (`source='studio'`). The mutation actions below previously only called
+ * `requireUser()`, and the storage layer's UPDATE filters solely by `id`
+ * (the actor id is stamped as `updated_by`, not used as an ownership filter).
+ * That let any signed-in user rename, archive, re-default, or overwrite ANY
+ * template — including the shared admin catalog and other users' saves.
+ *
+ * Policy: admins may mutate anything; everyone else may only mutate templates
+ * they created. Returns a structured error the caller surfaces verbatim.
+ */
+async function assertTemplateMutationAllowed(
+  id: string,
+  profile: AuthProfile,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (profile.role === "admin") return { ok: true };
+  const def = await getTemplateById(id);
+  if (!def) return { ok: false, error: "Template not found" };
+  if (def.created_by !== profile.id) {
+    return {
+      ok: false,
+      error: "You can only modify templates you created.",
+    };
+  }
+  return { ok: true };
+}
+
 export async function saveCustomTemplateAction(
   input: SaveCustomTemplateInput,
 ): Promise<SaveCustomTemplateResult> {
@@ -3177,6 +3208,14 @@ export async function saveCustomTemplateAction(
       ok: false,
       error: `Not authenticated: ${e instanceof Error ? e.message : String(e)}`,
     };
+  }
+
+  // ---- Ownership guard (editing an existing template) ----
+  // INSERT (input.id === null) is open to any signed-in author; only an
+  // UPDATE to an existing row needs the ownership check.
+  if (input.id) {
+    const allowed = await assertTemplateMutationAllowed(input.id, profile);
+    if (!allowed.ok) return allowed;
   }
 
   // ---- Validation ----
@@ -3503,6 +3542,8 @@ export async function archiveCustomTemplateAction(
   // 2026-05-28 unification — archive = publish_state 'archived' in the
   // unified catalog, and clear the default flag so the slot falls back.
   const profile = await requireUser();
+  const allowed = await assertTemplateMutationAllowed(id, profile);
+  if (!allowed.ok) return allowed;
   const updated = await updateBuilderTemplate(
     id,
     { publish_state: "archived", is_default: false },
@@ -3547,6 +3588,8 @@ export async function setCustomTemplateDefaultAction(
   // catalog; setStudioTemplateDefault clears any other default in the same
   // (post_type, format) slot first.
   const profile = await requireUser();
+  const allowed = await assertTemplateMutationAllowed(id, profile);
+  if (!allowed.ok) return allowed;
   const ok = await setStudioTemplateDefault(id, isDefault, profile.id);
   if (!ok) {
     return { ok: false, error: "Update failed (template not found)" };
@@ -3588,6 +3631,8 @@ export async function renameCustomTemplateAction(
 
   // 2026-05-28 unification — rename patches the unified catalog row.
   const profile = await requireUser();
+  const allowed = await assertTemplateMutationAllowed(id, profile);
+  if (!allowed.ok) return allowed;
   const updated = await updateBuilderTemplate(id, { name: trimmed }, profile.id);
   if (!updated) {
     return { ok: false, error: "Rename failed" };

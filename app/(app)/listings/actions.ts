@@ -105,7 +105,10 @@ async function replicateToAnalytics(
           source_mls: listing.source_mls,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "mls_number" },
+        // 2026-05-28 (Phase 4 #3) — composite conflict target, matching the
+        // composite UNIQUE(mls_number, source_mls) on properties so a
+        // cross-listed MLS keeps one row per feed instead of clobbering.
+        { onConflict: "mls_number,source_mls" },
       );
     if (error) {
       console.error("replicateToAnalytics:", error);

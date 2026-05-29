@@ -151,7 +151,11 @@ export async function GET(request: Request): Promise<NextResponse> {
       // Now route. Falls back to legacy `caption` when the map is empty.
       // 2026-05-16 — media_type + video_url added so the cron can branch
       // between image and reel publishing in processRow.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url, test_mode",
+      // 2026-05-28 — updated_at added: used as an optimistic-concurrency
+      // version token to CLAIM a due row before publishing, so two
+      // overlapping cron ticks (or a manual trigger racing the scheduled
+      // one) can't publish the same row twice. See the claim step in processRow.
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url, test_mode, updated_at",
     )
     .neq("scheduled_for", "{}")
     .or(orPredicate)
@@ -260,6 +264,49 @@ async function processRow(
   if (duePlatforms.length === 0) {
     // Row matched the SQL filter but no platform is actually due — could
     // happen on clock skew. Skip and move on.
+    return summary;
+  }
+
+  // ---- CLAIM the due platforms (double-publish guard) ------------------
+  // why: without an atomic claim, two overlapping cron ticks (or a manual
+  // trigger racing the scheduled one) both SELECT this row as due, both
+  // publish, and the listing goes out twice. We claim by removing the due
+  // platform keys from scheduled_for in a SINGLE conditional UPDATE guarded
+  // by the row's current `updated_at` (an optimistic-concurrency version
+  // token). Postgres serializes the two writers: the first flips updated_at
+  // and gets the row back; the second's `.eq(updated_at, <stale>)` no longer
+  // matches, returns no row, and we bail BEFORE publishing. Failed platforms
+  // are re-added to scheduled_for by the merge write below so they still
+  // retry next tick — the claim only removes them up-front.
+  const claimStamp = new Date().toISOString();
+  const claimedSched: ScheduledFor = { ...schedMap };
+  for (const p of duePlatforms) delete claimedSched[p];
+  // Guard on the exact current updated_at. Handle legacy rows whose
+  // updated_at is null (PostgREST `.eq` never matches null, so use `.is`).
+  const claimQuery = supabase
+    .from("generated_posts")
+    .update({
+      scheduled_for: claimedSched as unknown as Json,
+      updated_at: claimStamp,
+    })
+    .eq("id", row.id);
+  const guardedClaim =
+    row.updated_at === null
+      ? claimQuery.is("updated_at", null)
+      : claimQuery.eq("updated_at", row.updated_at);
+  const { data: claimedRow, error: claimErr } = await guardedClaim
+    .select("id")
+    .maybeSingle();
+  if (claimErr) {
+    console.error(
+      `[cron/publish-scheduled] claim failed for ${row.id}:`,
+      claimErr.message,
+    );
+    return summary;
+  }
+  if (!claimedRow) {
+    // Lost the race — another tick already claimed these platforms. Skipping
+    // is exactly the desired outcome: no double publish.
     return summary;
   }
 

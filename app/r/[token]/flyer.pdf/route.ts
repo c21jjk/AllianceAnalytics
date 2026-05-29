@@ -37,6 +37,13 @@ export async function GET(req: Request, ctx: RouteContext) {
   // 1) Resolve the report — try report_token on the reports table first
   let reportId: string | null = null;
   let propertyId: string | null = null;
+  // 2026-05-28 (Phase 4 #6) — track WHICH delivery the token matched. When the
+  // flyer is opened via a specific delivery's share_token, the view must be
+  // credited to THAT delivery, not "the most recent delivery for the report"
+  // (the previous behavior misattributed every view to the newest delivery,
+  // so a report sent to two sellers via two share links credited both opens
+  // to whichever was sent last).
+  let matchedDeliveryId: string | null = null;
   const { data: reportRow } = await supabase
     .from("reports")
     .select("id, property_id")
@@ -51,11 +58,12 @@ export async function GET(req: Request, ctx: RouteContext) {
   if (!reportId) {
     const { data: deliveryRow } = await supabase
       .from("report_deliveries")
-      .select("report_id")
+      .select("id, report_id")
       .eq("share_token", token)
       .maybeSingle();
     if (deliveryRow) {
       reportId = deliveryRow.report_id;
+      matchedDeliveryId = deliveryRow.id;
       const { data: indirectReport } = await supabase
         .from("reports")
         .select("id, property_id")
@@ -69,24 +77,38 @@ export async function GET(req: Request, ctx: RouteContext) {
     return new NextResponse("Report not found", { status: 404 });
   }
 
-  // 3) Best-effort bump view_count on the most recent delivery for this report
+  // 3) Best-effort bump view_count. Credit the SPECIFIC delivery the token
+  //    matched (share_token access); only fall back to the most-recent
+  //    delivery when the flyer was opened via a bare report_token, which
+  //    isn't tied to any single delivery.
   try {
-    const { data: latestDelivery } = await supabase
-      .from("report_deliveries")
-      .select("id, view_count")
-      .eq("report_id", reportId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latestDelivery) {
+    let target: { id: string; view_count: number | null } | null = null;
+    if (matchedDeliveryId) {
+      const { data } = await supabase
+        .from("report_deliveries")
+        .select("id, view_count")
+        .eq("id", matchedDeliveryId)
+        .maybeSingle();
+      target = data ?? null;
+    } else {
+      const { data } = await supabase
+        .from("report_deliveries")
+        .select("id, view_count")
+        .eq("report_id", reportId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      target = data ?? null;
+    }
+    if (target) {
       await supabase
         .from("report_deliveries")
         .update({
-          view_count: (latestDelivery.view_count ?? 0) + 1,
+          view_count: (target.view_count ?? 0) + 1,
           viewed_at: new Date().toISOString(),
           status: "viewed",
         })
-        .eq("id", latestDelivery.id);
+        .eq("id", target.id);
     }
   } catch {
     // best-effort; never block the flyer on telemetry

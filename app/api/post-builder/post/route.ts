@@ -141,7 +141,10 @@ export async function POST(request: Request) {
       // multi-OH events (prefix `multi_oh_event_`) and suppress the hero
       // image from the published carousel; the hero is a Studio-only
       // visual preview, not a slide.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode, template_id",
+      // 2026-05-28 — posted_at + posted_by added so a partial-success RETRY
+      // preserves a prior successful publish's timestamp/author instead of
+      // nulling them when the current attempt has zero successes.
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, posted_by, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode, template_id",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -441,8 +444,17 @@ export async function POST(request: Request) {
     .update({
       posted_to: newPostedTo,
       platform_post_ids: newPlatformPostIds,
-      posted_at: successResults.length > 0 ? new Date().toISOString() : null,
-      posted_by: successResults.length > 0 ? profile.id : null,
+      // 2026-05-28 — posted_at marks the FIRST successful publish and must
+      // never be cleared by a later attempt. Previously this nulled both
+      // fields whenever the CURRENT attempt had no successes, so retrying a
+      // failed platform on an already-published post (e.g. IG up, TikTok
+      // retry fails) wiped the real publish timestamp + author. Now: keep an
+      // existing value untouched; only stamp now()/profile on the first
+      // success; leave null only when the post has never published.
+      posted_at:
+        gp.posted_at ?? (successResults.length > 0 ? new Date().toISOString() : null),
+      posted_by:
+        gp.posted_by ?? (successResults.length > 0 ? profile.id : null),
       last_post_error: lastError,
     })
     .eq("id", gp.id);

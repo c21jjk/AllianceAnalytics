@@ -262,11 +262,27 @@ export function getReportWindow(now: Date = new Date()) {
   const weekYoYEndDate = shiftDays(weekEndDate, -7 * 52);
 
   // YTD: Jan 1 (NY) of weekEnd's year → weekEnd.
-  // YTD YoY: Jan 1 of last year (NY) → weekEnd shifted back 52 weeks.
+  // YTD YoY: Jan 1 of last year (NY) → the SAME CALENDAR DATE as weekEnd, one
+  // year prior.
+  //
+  // 2026-05-28 (Phase 4 #5) — previously ytdYoYEnd was weekEnd shifted back
+  // 52 weeks (-364 days). That mixed conventions with the calendar Jan-1
+  // start: the this-year YTD span (Jan 1 → weekEnd) and the last-year span
+  // (Jan 1 → weekEnd-364) were unequal, and the end drifted ~1 day off the
+  // true anniversary every year (2 in a leap year). YTD is a calendar
+  // cumulative, so the correct last-year endpoint is the calendar anniversary
+  // of weekEnd. (The WEEK YoY above intentionally keeps the 52-week shift so
+  // the Mon→Sun window lines up on the same weekdays last year.)
   const weekEndYear = weekEndDate.getUTCFullYear();
   const ytdStartDate = new Date(Date.UTC(weekEndYear, 0, 1));
   const ytdYoYStartDate = new Date(Date.UTC(weekEndYear - 1, 0, 1));
-  const ytdYoYEndDate = shiftDays(weekEndDate, -7 * 52);
+  const ytdYoYEndDate = new Date(
+    Date.UTC(
+      weekEndYear - 1,
+      weekEndDate.getUTCMonth(),
+      weekEndDate.getUTCDate(),
+    ),
+  );
 
   return {
     weekStartIso: nyMidnightIso(weekStartDate),
