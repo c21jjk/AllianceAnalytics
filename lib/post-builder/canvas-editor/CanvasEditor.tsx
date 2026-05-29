@@ -974,24 +974,32 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     };
     fabricCanvas.on("object:added", bumpVersion);
     fabricCanvas.on("object:removed", bumpVersion);
-    fabricCanvas.on("object:modified", bumpVersion);
 
+    // why (2026-05-29 — Phase 1 collapse): previously TWO separate
+    // `object:modified` listeners fired on every drag/scale end — one
+    // bumped layerVersion, the other rebuilt the image clipPath. That
+    // double-traversed Fabric's observer array per gesture and left the
+    // bump/rebuild ordering implicit. They're now a single handler:
+    // rebuild the clipPath first (images only, outside crop mode), then
+    // bump the version EXACTLY once. Every code path below must end with
+    // a single bumpVersion() so the layer panel / autosave stay in sync.
+    //
     // why (2026-05-23 — Cover/Contain/Stretch fix): when the user
     // resizes or moves a FabricImage via Fabric handles, sync the
     // image's BOX dims and clipPath to match the new displayed bounds.
-    //
     // This is what makes the user-resize feel natural (the box follows
-    // the image, Canva-style). Without this, the box stays fixed and
-    // the image would slide/scale inside it — surprising on resize.
-    //
-    // Pairs with the new always-on clipPath in fabric-factory.ts:
-    // because the clipPath is absolutePositioned, it does NOT follow
-    // the image's transform automatically — we have to write the new
-    // canvas-space rect on every modify event.
+    // the image, Canva-style). Pairs with the always-on clipPath in
+    // fabric-factory.ts: because the clipPath is absolutePositioned, it
+    // does NOT follow the image's transform automatically — we write the
+    // new canvas-space rect here.
     fabricCanvas.on("object:modified", (e) => {
       if (cancelled) return;
       const obj = e.target;
-      if (!(obj instanceof FabricImage)) return;
+      // Non-image (or no target): nothing to re-clip, just bump once.
+      if (!(obj instanceof FabricImage)) {
+        bumpVersion();
+        return;
+      }
       // 2026-05-25 — Crop mode short-circuit. When the user is
       // repositioning the photo inside its fixed frame, the clipPath
       // MUST NOT follow the image (that would defeat the whole point
@@ -1001,6 +1009,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const activeCrop = cropModeRef.current;
       const data = getLayerData(obj);
       if (activeCrop && data?.layerId === activeCrop.layerId) {
+        bumpVersion();
         return;
       }
       // Current displayed bounds in canvas px.
@@ -1012,6 +1021,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const dispH = naturalH * scaleY;
       const left = obj.left ?? 0;
       const top = obj.top ?? 0;
+      // 2026-05-29 — skip the Rect re-allocation + render when nothing
+      // actually moved or resized. Fabric fires object:modified for some
+      // no-op interactions (e.g. a select that it counts as a transform);
+      // rebuilding an identical clipPath every time is wasted work that
+      // contributes to the per-gesture stutter.
+      const existing = obj.clipPath instanceof Rect ? obj.clipPath : null;
+      const unchanged =
+        existing != null &&
+        Math.abs((existing.left ?? 0) - left) < 0.5 &&
+        Math.abs((existing.top ?? 0) - top) < 0.5 &&
+        Math.abs((existing.width ?? 0) - dispW) < 0.5 &&
+        Math.abs((existing.height ?? 0) - dispH) < 0.5;
+      if (unchanged) {
+        bumpVersion();
+        return;
+      }
       // Write new box dims into the data bag. Preserve all other
       // data-bag fields (layerId etc.) by spreading what's there.
       const bag = (obj as unknown as { data?: Record<string, unknown> })
@@ -1023,7 +1048,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       };
       // Rebuild the clipPath at the new canvas position + dims.
       // Preserve the user's corner radius if one was set.
-      const existing = obj.clipPath instanceof Rect ? obj.clipPath : null;
       const rx =
         existing && typeof existing.rx === "number" ? existing.rx : 0;
       const ry =
@@ -1040,6 +1064,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         absolutePositioned: true,
       });
       fabricCanvas.requestRenderAll();
+      bumpVersion();
     });
 
     // 2026-05-25 — Crop mode: enter via double-click on an image layer.
@@ -1851,10 +1876,46 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     return () => {
       document.removeEventListener("keydown", onKey);
       canvas.off("mouse:down", onCanvasClick);
-      // why: don't auto-exit here on cleanup — that would fire
-      // whenever cropMode toggles or the component unmounts mid-edit
-      // and could overwrite a legitimate state. The user-driven exit
-      // paths (Enter / Escape / click outside) handle all cases.
+      border.off("scaling", syncFrameFromBorder);
+      border.off("moving", syncFrameFromBorder);
+      // why: we still DON'T re-fire object:modified or call
+      // setCropMode here — doing that on every dep-tick could overwrite
+      // legitimate state. The user-driven exit paths (Enter / Escape /
+      // click outside → exitFn) own the committing semantics.
+      //
+      // 2026-05-29 — strand safety. exitFn clears cropOverlayRef to
+      // { border: null, dimmers: [] } before it returns, so if the
+      // overlay refs are still populated here it means this effect is
+      // tearing down WITHOUT a user-driven exit (template dims changed
+      // mid-crop, or the editor unmounted). In that case the canvas is
+      // still extended 2× + dimmed and the photo is unclipped — restore
+      // geometry so we never strand a blown-up, dimmed canvas.
+      const overlay = cropOverlayRef.current;
+      const stranded = Boolean(overlay.border) || overlay.dimmers.length > 0;
+      if (stranded) {
+        if (overlay.border) canvas.remove(overlay.border);
+        for (const d of overlay.dimmers) canvas.remove(d);
+        cropOverlayRef.current = { border: null, dimmers: [] };
+        // Restore canvas geometry (entry extended it for the matboard).
+        canvas.setDimensions({ width: savedCanvasW, height: savedCanvasH });
+        canvas.setViewportTransform(savedViewportTransform);
+        // Re-apply the photo's saved clipPath (entry removed it so the
+        // full extent showed) so the image isn't left unclipped.
+        if (!targetImage.clipPath && savedClipPath) {
+          targetImage.clipPath = savedClipPath;
+        }
+        // Restore the photo's chrome + every layer's interactivity.
+        (
+          targetImage as unknown as {
+            setControlsVisibility: (v: Record<string, boolean>) => void;
+          }
+        ).setControlsVisibility(priorControlsVisibility);
+        targetImage.set({ hasBorders: priorHasBorders });
+        for (const r of restoreList) {
+          r.obj.set({ selectable: r.selectable, evented: r.evented });
+        }
+        canvas.requestRenderAll();
+      }
       exitCropModeRef.current = null;
     };
   }, [cropMode, template.width, template.height]);
