@@ -71,8 +71,17 @@ export const runtime = "nodejs";
 // 120s mirrors multi-oh-generate's ceiling.
 export const maxDuration = 120;
 
-// Bounded parallelism — same rationale as multi-oh-generate's RENDER_CONCURRENCY.
-const RERENDER_CONCURRENCY = 4;
+// Bounded parallelism. 2026-05-28 — lowered from 4 to 2 after a live test
+// where 3 simultaneous headless renders stalled (resource contention) and the
+// route blew past maxDuration. Two-at-a-time is gentler on the function's
+// memory/CPU while still finishing a typical 3–9 slide carousel in a couple
+// of chunks.
+const RERENDER_CONCURRENCY = 2;
+
+// Per-slide hard ceiling. A single hung headless render is failed at this mark
+// (the slide keeps its old image) so it can't consume the whole function
+// budget and block the other slides from persisting.
+const SLIDE_RENDER_TIMEOUT_MS = 40_000;
 
 const VALID_FORMATS: readonly PostFormat[] = ["square_1x1", "story_9x16"];
 
@@ -224,6 +233,22 @@ export async function POST(request: Request): Promise<Response> {
       const newImages: AdditionalImage[] = oldImages.map((img) => ({ ...img }));
       const failedIndices: number[] = [];
 
+      // Persist the current url array. Called after EACH chunk (not just at
+      // the end) so completed slides survive even if a later slide hangs and
+      // the function hits its maxDuration ceiling — previously the single
+      // end-of-run write meant one stalled render discarded ALL re-renders.
+      const persistProgress = async (): Promise<string | null> => {
+        const { error } = await supabase
+          .from("generated_posts")
+          .update({
+            additional_images: newImages as unknown as Json,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", body.generated_post_id)
+          .eq("created_by", profile.id);
+        return error ? error.message : null;
+      };
+
       const allIndexes = oldImages.map((_, i) => i);
       for (let start = 0; start < allIndexes.length; start += RERENDER_CONCURRENCY) {
         const chunk = allIndexes.slice(start, start + RERENDER_CONCURRENCY);
@@ -231,15 +256,26 @@ export async function POST(request: Request): Promise<Response> {
           chunk.map(async (i) => {
             await writeLine({ type: "slide_started", index: i });
             try {
-              const url = await rerenderSlide({
-                supabase,
-                gpId: body.generated_post_id,
-                index: i,
-                meta: slideMeta[i],
-                hostsByIndex,
-                rowFormat,
-                overrides,
-              });
+              // Per-slide timeout: one hung headless render must not eat the
+              // whole function budget (and block the other slides' persistence).
+              // Fail this slide fast and keep its old image instead.
+              const url = await Promise.race([
+                rerenderSlide({
+                  supabase,
+                  gpId: body.generated_post_id,
+                  index: i,
+                  meta: slideMeta[i],
+                  hostsByIndex,
+                  rowFormat,
+                  overrides,
+                }),
+                new Promise<never>((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error("slide render timed out (40s)")),
+                    SLIDE_RENDER_TIMEOUT_MS,
+                  ),
+                ),
+              ]);
               newImages[i] = { ...newImages[i], url };
               await writeLine({ type: "slide_done", index: i, url });
             } catch (err) {
@@ -252,20 +288,13 @@ export async function POST(request: Request): Promise<Response> {
             }
           }),
         );
-      }
-
-      // ---- Persist the updated url array. NO revalidatePath. ----
-      const { error: updError } = await supabase
-        .from("generated_posts")
-        .update({
-          additional_images: newImages as unknown as Json,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", body.generated_post_id)
-        .eq("created_by", profile.id);
-      if (updError) {
-        await writeLine({ type: "fatal", error: `update_failed: ${updError.message}` });
-        return;
+        // Persist incrementally so this chunk's successes are durable even if
+        // a later chunk stalls / the function is killed.
+        const persistErr = await persistProgress();
+        if (persistErr) {
+          await writeLine({ type: "fatal", error: `update_failed: ${persistErr}` });
+          return;
+        }
       }
 
       await writeLine({

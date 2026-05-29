@@ -732,6 +732,11 @@ export default function PostBuilderClient({
                   ? r.hosting_agent_name
                   : null,
               layer_tree: r.layer_tree ?? null,
+              // 2026-05-28 — carry the autosaved Fabric snapshot through so
+              // reopen restores the user's latest design via initialFabricJson.
+              // Without this the parser dropped fabric_json and the slide
+              // re-hydrated from the canonical template, losing autosaved edits.
+              fabric_json: r.fabric_json ?? null,
             });
           } else {
             // why: pad with a sensible default so indexes still line up
