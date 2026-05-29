@@ -3531,11 +3531,27 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           <span aria-hidden="true" className="h-5 w-px bg-[var(--studio-border)] mx-1" />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* 2026-05-28 — Resize / +Reel / Save as Template / Save Post were
-              removed from the top toolbar in this pass. Save as Template +
-              the primary Save CTA now live in the bottom action bar (see
-              below). Close stays here as the standard top-right dismiss
-              affordance. */}
+          {/* 2026-05-29 — Resize re-homed here (Phase 2 build-out). It was
+              removed from the top toolbar on 2026-05-28 during a chrome
+              cleanup and never re-mounted, which left the whole resize/
+              reformat feature unreachable even though handleResizePicked +
+              the parent onResize handler were fully wired. The menu emits a
+              target PostFormat; handleResizePicked swaps to the sibling
+              template and the parent treats it as a new sibling post.
+              (Save as Template + primary Save still live in the bottom bar.) */}
+          <ResizeMenu
+            currentFormat={currentTemplate.format}
+            options={buildResizeMenuOptions(
+              currentTemplate.category,
+              currentTemplate.variant,
+              currentTemplate.format,
+            )}
+            onPick={handleResizePicked}
+          />
+          <span
+            aria-hidden="true"
+            className="h-5 w-px bg-[var(--studio-border)] mx-0.5"
+          />
           {onClose ? (
             <button
               type="button"
