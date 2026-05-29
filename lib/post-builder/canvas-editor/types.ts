@@ -1158,4 +1158,16 @@ export interface CanvasEditorProps {
     | { ok: true; slide_count: number }
     | { ok: false; error: string }
   >;
+  /**
+   * 2026-05-28 — Server autosave of the slide/hero design.
+   *
+   * When provided, the editor calls this ~1s after the last edit with a
+   * Fabric `toObject` snapshot of the current canvas (the same shape the
+   * explicit Save captures as `fabricJson`). The parent persists it design-
+   * only (no PNG re-render) so reopening restores the latest work with no
+   * "restore?" prompt. This replaced the old localStorage draft + restore
+   * banner. Fire-and-forget from the editor's POV; the parent owns
+   * persistence + error handling. Omit to disable autosave for a consumer.
+   */
+  onAutosaveDesign?: (design: unknown) => void | Promise<void>;
 }

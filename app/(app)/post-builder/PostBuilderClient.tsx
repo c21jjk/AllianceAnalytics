@@ -41,6 +41,7 @@ import {
   archiveBrandAssetAction,
   listCustomTemplatesAction,
   revertAiDesignAction,
+  autosaveDesignAction,
   propagateCarouselLayoutAction,
   reorderCarouselSlidesAction,
   resolveOpenHouseWindowAction,
@@ -1481,6 +1482,12 @@ export default function PostBuilderClient({
             new_layer_tree: result.schema as unknown as Parameters<
               typeof updateGeneratedPostSlideAction
             >[0]["new_layer_tree"],
+            // 2026-05-28 — persist the fabric snapshot so reopen (which loads
+            // slide_metadata[i].fabric_json via initialFabricJson) reflects
+            // this save even if it beat the autosave debounce.
+            new_fabric_json: (result.fabricJson ?? null) as unknown as Parameters<
+              typeof updateGeneratedPostSlideAction
+            >[0]["new_fabric_json"],
           });
           if (!updRes.ok) {
             setError(`Slide row update failed: ${updRes.error}`);
@@ -1507,6 +1514,7 @@ export default function PostBuilderClient({
               next[editingSlideIndex] = {
                 ...prior,
                 layer_tree: result.schema as unknown,
+                fabric_json: result.fabricJson ?? null,
               };
             }
             return next;
@@ -2105,7 +2113,24 @@ export default function PostBuilderClient({
         }
       }
 
-      setStudioContext({ template, listing: payload });
+      // 2026-05-28 — restore the slide's autosaved design. The debounced
+      // server autosave persists a Fabric snapshot to slide_metadata[i].
+      // fabric_json on every edit; loading it via initialFabricJson re-applies
+      // the user's exact layout/text on top of the canonically-resolved
+      // template (same round-trip the hero uses). This intentionally overrides
+      // the older "Bug 3" behavior that dropped slide edits on reopen — John
+      // explicitly chose edit-persistence. The canonical `template` still
+      // drives bound-field resolution where the snapshot didn't override.
+      const slideFabricJson =
+        meta.fabric_json && typeof meta.fabric_json === "object"
+          ? meta.fabric_json
+          : undefined;
+
+      setStudioContext({
+        template,
+        listing: payload,
+        initialFabricJson: slideFabricJson,
+      });
       setEditingSlideIndex(slideIndex);
       setStudioOpen(true);
     },
@@ -4697,6 +4722,22 @@ export default function PostBuilderClient({
         }
         customTemplate={studioContext?.customTemplate}
         initialFabricJson={studioContext?.initialFabricJson}
+        // 2026-05-28 — debounced server autosave of the design (replaces the
+        // localStorage draft + restore prompt). editingSlideIndex is the slide
+        // being edited, or null for the hero — exactly the shape the action
+        // wants. Only wired once the post has a row to write to; a brand-new
+        // unsaved post autosaves after its first explicit Save creates the row.
+        onAutosaveDesign={
+          generatedPostId
+            ? (design) => {
+                void autosaveDesignAction({
+                  generated_post_id: generatedPostId,
+                  slide_index: editingSlideIndex,
+                  design,
+                });
+              }
+            : undefined
+        }
         onSaveAsTemplate={async (input) => {
           const res = await saveCustomTemplateAction(input);
           if (res.ok) {

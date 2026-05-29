@@ -46,7 +46,6 @@ import {
   Check as LCheck,
   ChevronsLeft as LChevronsLeft,
   ChevronsRight as LChevronsRight,
-  Clock as LClock,
   Eye as LEye,
   EyeOff as LEyeOff,
   FileText as LFileText,
@@ -108,13 +107,6 @@ import {
   setLayerData,
 } from "./fabric-factory";
 import { createCanvaStyleControls, BRAND_GOLD } from "./canva-style-controls";
-import {
-  clearAutosave,
-  formatAutosaveAge,
-  readAutosave,
-  writeAutosave,
-  type AutosavePayload,
-} from "./autosave";
 
 // === Phase 2 panel integrations ===
 // why: imported here at the orchestrator so the integration surface is
@@ -212,46 +204,6 @@ interface EditorError {
   message: string;
 }
 
-/**
- * 2026-05-28 (Bonus B) — normalized layer-geometry signature used to decide
- * whether a localStorage autosave is a GENUINE unsaved delta versus a stale
- * snapshot that merely captured the same layout the canvas already hydrates
- * to (the common case right after generation, which made the "Unsaved
- * changes — restore them?" banner nag on nearly every open).
- *
- * Works for BOTH live Fabric objects (instance props) and serialized
- * autosave objects (plain JSON) because both expose left/top/width/height/
- * scaleX/scaleY/text/fontSize and our `data` metadata bag. Geometry is
- * rounded to whole pixels so sub-pixel jitter from a hydrate→serialize
- * round-trip doesn't read as a delta. The hover-preview rect is excluded.
- */
-function layerGeometrySignature(
-  objects: ReadonlyArray<unknown>,
-): string {
-  const parts: string[] = [];
-  for (const raw of objects) {
-    const o = raw as Record<string, unknown> & {
-      data?: { layerId?: string };
-    };
-    const layerId = o.data?.layerId ?? "";
-    if (typeof layerId === "string" && layerId.startsWith("__hover_preview__")) {
-      continue;
-    }
-    const num = (v: unknown): number => (typeof v === "number" ? v : 0);
-    const left = Math.round(num(o.left));
-    const top = Math.round(num(o.top));
-    const w = Math.round(num(o.width) * (typeof o.scaleX === "number" ? o.scaleX : 1));
-    const h = Math.round(num(o.height) * (typeof o.scaleY === "number" ? o.scaleY : 1));
-    const text = typeof o.text === "string" ? o.text : "";
-    const fontSize = Math.round(num(o.fontSize));
-    parts.push(`${layerId}|${left},${top},${w},${h}|${fontSize}|${text}`);
-  }
-  // Sort so object-array ordering differences (which aren't a visual delta)
-  // don't register as a change.
-  parts.sort();
-  return parts.join("\n");
-}
-
 export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // why: keep the raw prop as `initialTemplate` and introduce a stateful
   // `currentTemplate` underneath. This lets the in-editor Templates panel
@@ -277,6 +229,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     customTemplate,
     initialFabricJson,
     onApplyLayoutToSiblings,
+    onAutosaveDesign,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -2363,93 +2316,37 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const hoverHighlightRef = useRef<Rect | null>(null);
 
   // -------------------------------------------------------------------------
-  // Phase B.6 — Autosave to localStorage
+  // Server autosave (design-only)
   // -------------------------------------------------------------------------
   //
-  // Two halves:
-  //   1. Read on mount — if a (template, mls) autosave exists, surface a
-  //      banner offering to restore. The banner is non-blocking; the user
-  //      can ignore it and the autosave keeps writing.
-  //   2. Debounced write — every time layerVersion bumps, schedule a write
-  //      3s after the last bump. Cancels any pending write so we never
-  //      flood localStorage during a slider drag.
-  //
-  // Both halves are gated on the (template.id, listing.mlsNumber) pair so
-  // a listing or template switch resets the autosave channel cleanly.
-
-  const [pendingAutosave, setPendingAutosave] = useState<AutosavePayload | null>(
-    null,
-  );
-  // why: persist the banner-dismissed state per session so a user who
-  // declines the restore once doesn't see it re-appear on every layerVersion
-  // bump. Not stored in localStorage — a closed tab forgets the dismissal.
-  const [autosaveBannerDismissed, setAutosaveBannerDismissed] = useState<boolean>(false);
+  // 2026-05-28 — replaced the old localStorage draft + "Unsaved changes —
+  // restore them?" banner with a debounced SERVER autosave. John found the
+  // restore prompt confusing and wanted edits to just persist. Every change
+  // (layerVersion bump) schedules a serialize-and-persist of the canvas
+  // design (a Fabric `toObject` snapshot — the same shape the explicit Save
+  // captures as `fabricJson`) ~1s after the last edit, via the
+  // parent-supplied `onAutosaveDesign` callback. NO PNG re-render here —
+  // that still happens on explicit Save/Publish. The parent persists the
+  // snapshot to the slide (slide_metadata[i].fabric_json) or hero
+  // (generated_posts.fabric_json); reopen restores it via initialFabricJson,
+  // so there's never a "restore?" prompt.
   const autosaveWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Read on mount (and on template/listing change). The Fabric canvas may
-  // not be fully hydrated yet, but the read is sync from localStorage so
-  // it's fine to do early — the banner just shows while the hydration
-  // finishes in the background.
+  // Hold the latest callback in a ref so the debounced effect doesn't reset
+  // its timer every time the parent re-creates the callback (which would
+  // prevent the debounce from ever firing). The effect depends only on
+  // layerVersion.
+  const onAutosaveDesignRef = useRef(onAutosaveDesign);
   useEffect(() => {
-    const found = readAutosave(currentTemplate.id, listing.mlsNumber);
-    if (!found) {
-      setPendingAutosave(null);
-      return;
-    }
-    // 2026-05-28 (Bonus B) — only surface the restore banner when the
-    // autosave is a GENUINE unsaved delta. A stale snapshot that captured
-    // the same layout the canvas already hydrates to (common right after
-    // generation, or after closing without edits) otherwise nags on nearly
-    // every open. We defer until Fabric has hydrated, then compare layer
-    // geometry signatures; on a no-delta match we drop the stale autosave
-    // silently so it stops re-appearing. If hydration never lands (we can't
-    // verify), we fail SAFE and show the banner.
-    let cancelled = false;
-    let attempts = 0;
-    const tryCompare = (): void => {
-      if (cancelled) return;
-      const canvas = fabricRef.current;
-      const liveObjs = canvas?.getObjects() ?? [];
-      if (liveObjs.length === 0 && attempts < 12) {
-        attempts += 1;
-        window.setTimeout(tryCompare, 150);
-        return;
-      }
-      const savedJson = found.fabricJson as { objects?: unknown[] } | null;
-      const savedObjs = Array.isArray(savedJson?.objects)
-        ? (savedJson!.objects as unknown[])
-        : [];
-      const liveSig = layerGeometrySignature(liveObjs);
-      const savedSig = layerGeometrySignature(savedObjs);
-      if (liveObjs.length > 0 && liveSig === savedSig) {
-        // No genuine delta — clear the stale autosave + suppress the banner.
-        clearAutosave(currentTemplate.id, listing.mlsNumber);
-        setPendingAutosave(null);
-      } else {
-        setPendingAutosave(found);
-        setAutosaveBannerDismissed(false);
-      }
-    };
-    tryCompare();
-    return () => {
-      cancelled = true;
-    };
-    // why: depend on the identity-pair, not on every prop bump. A listing
-    // detail change (e.g., agent name) shouldn't blow away the autosave.
-  }, [currentTemplate.id, listing.mlsNumber]);
+    onAutosaveDesignRef.current = onAutosaveDesign;
+  }, [onAutosaveDesign]);
 
-  // Debounced write. Triggers on every layerVersion bump; clears any
-  // pending timer first so we end up writing only once per 3s of silence.
   useEffect(() => {
-    // why: skip the initial bump (layerVersion === 0) — writing an
-    // unmutated canvas state right after hydration is wasted work AND
-    // would mark a fresh canvas as "has an autosave," confusing the
-    // restore flow on a future open.
+    // Skip the initial hydration bump — the user hasn't changed anything yet.
     if (layerVersion === 0) return;
+    const persist = onAutosaveDesignRef.current;
+    if (!persist) return;
     const canvas = fabricRef.current;
     if (!canvas) return;
-    // Belt-and-suspenders: don't autosave the hover-preview rect. Filter
-    // it out by checking its layer-id marker before serializing.
     if (autosaveWriteTimerRef.current) {
       clearTimeout(autosaveWriteTimerRef.current);
     }
@@ -2459,11 +2356,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // Strip the hover-preview rect (if any) so it doesn't get persisted.
       const hover = hoverHighlightRef.current;
       if (hover) current.remove(hover);
+      let json: unknown = null;
       try {
-        // why: Fabric v6 `toJSON()` takes no args; the supported way to
-        // include custom properties (our `data` metadata) is to call
-        // `toObject(propertiesToInclude)` directly. Mirrors the pattern
-        // in useUndoRedoHistory's captureSnapshot.
+        // Fabric v6: toObject(propertiesToInclude) preserves our `data`
+        // metadata — crucially `boundField` — so the snapshot re-hydrates
+        // with fresh listing data on reopen. Same propsToInclude as the
+        // explicit-save handler (handleExport) so autosave and Save produce
+        // an identical snapshot shape.
         const propsToInclude: string[] = [
           "data",
           "selectable",
@@ -2471,18 +2370,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           "lockMovementX",
           "lockMovementY",
         ];
-        const json = current.toObject(propsToInclude);
-        writeAutosave(currentTemplate.id, listing.mlsNumber, json);
-      } catch {
-        // best-effort
+        json = current.toObject(propsToInclude);
+      } catch (err) {
+        console.warn("[CanvasEditor] autosave toObject failed:", err);
       } finally {
-        // Re-add the hover preview if we just removed it for the snapshot.
         if (hover) {
           current.add(hover);
           current.bringObjectToFront(hover);
         }
       }
-    }, 3_000);
+      if (json) {
+        // Fire-and-forget; the parent owns persistence + error handling.
+        void Promise.resolve(persist(json)).catch((e) => {
+          console.warn("[CanvasEditor] onAutosaveDesign failed:", e);
+        });
+      }
+    }, 1_000);
 
     return () => {
       if (autosaveWriteTimerRef.current) {
@@ -2490,47 +2393,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         autosaveWriteTimerRef.current = null;
       }
     };
-  }, [layerVersion, currentTemplate.id, listing.mlsNumber]);
-
-  /** Apply the pending autosave to the live Fabric canvas. */
-  const handleRestoreAutosave = useCallback((): void => {
-    const canvas = fabricRef.current;
-    if (!canvas || !pendingAutosave) return;
-    // why: defensive — re-verify the autosave matches the current
-    // (template, mls). The pendingAutosave state was set when the
-    // identifier pair last changed; if a race somehow lands a stale
-    // payload, we'd rather no-op than overwrite the canvas with
-    // unrelated data.
-    if (
-      pendingAutosave.templateId !== currentTemplate.id ||
-      pendingAutosave.mlsNumber !== listing.mlsNumber
-    ) {
-      setPendingAutosave(null);
-      return;
-    }
-    // Clear active selection + hover preview before reloading so they
-    // don't reference soon-to-be-stale Fabric objects.
-    canvas.discardActiveObject();
-    if (hoverHighlightRef.current) {
-      canvas.remove(hoverHighlightRef.current);
-      hoverHighlightRef.current = null;
-    }
-    // why: loadFromJSON returns a Promise<Canvas> in Fabric v6.
-    void canvas
-      .loadFromJSON(pendingAutosave.fabricJson as object)
-      .then(() => {
-        canvas.requestRenderAll();
-        setLayerVersion((v) => v + 1);
-      });
-    setPendingAutosave(null);
-  }, [pendingAutosave, currentTemplate.id, listing.mlsNumber]);
-
-  /** Discard the autosave entry and dismiss the banner. */
-  const handleDiscardAutosave = useCallback((): void => {
-    clearAutosave(currentTemplate.id, listing.mlsNumber);
-    setPendingAutosave(null);
-    setAutosaveBannerDismissed(true);
-  }, [currentTemplate.id, listing.mlsNumber]);
+  }, [layerVersion]);
 
   const handleHoverEntry = useCallback(
     (layerId: string | null): void => {
@@ -2845,13 +2708,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // why: await the parent's onSave so we can surface upload failures.
       // If onSave is sync (returns void, not Promise), `await` is a no-op.
       await Promise.resolve(onSave(exportResult));
-      // Phase B.6 — the DB row is now authoritative; the localStorage copy
-      // can be cleared so a future open of the same (template, mls) won't
-      // offer a stale restore. Only fired on a successful onSave —
-      // failures throw above and skip this line, preserving the autosave
-      // as a safety net.
-      clearAutosave(currentTemplate.id, listing.mlsNumber);
-      setPendingAutosave(null);
     } catch (err) {
       setEditorError({
         kind: "export",
@@ -3863,45 +3719,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           <div
             className="canvas-bg-pattern relative flex flex-1 flex-col items-center justify-center overflow-auto p-6"
           >
-            {/* Phase B.6 — autosave restore banner. Renders only when we
-                detected a recent localStorage autosave for this (template,
-                mls) pair AND the user hasn't dismissed it yet. Non-blocking;
-                sits at the top of the canvas surround above the canvas
-                itself. */}
-            {pendingAutosave && !autosaveBannerDismissed ? (
-              <div className="mb-3 flex w-full max-w-2xl items-center justify-between rounded-lg border border-amber-500/30 bg-[var(--studio-popover)] px-3 py-2 text-[12px] text-white shadow-lg shadow-black/40">
-                <div className="flex min-w-0 items-center gap-2">
-                  <LClock size={16} className="shrink-0" />
-                  <span className="truncate">
-                    Unsaved changes from{" "}
-                    <strong className="font-semibold">
-                      {formatAutosaveAge(pendingAutosave.savedAt)}
-                    </strong>{" "}
-                    — restore them?
-                  </span>
-                </div>
-                <div className="ml-3 flex shrink-0 items-center gap-1">
-                  {/* 2026-05-25 — Restore primary recolored from amber-900 to
-                      neutral-800 for consistency with the rest of Studio (gold
-                      is reserved for the actual Save Post CTA; banner action
-                      stays as a quieter dark-neutral). */}
-                  <button
-                    type="button"
-                    onClick={handleRestoreAutosave}
-                    className="focus-ring-dark rounded-md bg-gold-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gold-600"
-                  >
-                    Restore
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDiscardAutosave}
-                    className="focus-ring-dark rounded-md border border-[var(--studio-border)] bg-transparent px-2 py-1 text-[11px] font-medium text-white hover:bg-[var(--studio-hover)]"
-                  >
-                    Discard
-                  </button>
-                </div>
-              </div>
-            ) : null}
+            {/* 2026-05-28 — the localStorage autosave "restore?" banner that
+                used to sit here was removed. Edits now persist via a debounced
+                SERVER autosave (onAutosaveDesign) and are restored silently on
+                reopen, so there's no prompt to confuse the user. */}
 
             {/* 2026-05-26 — the floating Add Layer Toolbar that used to sit
                 here was removed. Its four affordances (Text / Rect / Circle /

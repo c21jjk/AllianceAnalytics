@@ -104,6 +104,12 @@ export interface CanvasEditorOverlayProps {
    */
   onApplyLayoutToSiblings?: CanvasEditorProps["onApplyLayoutToSiblings"];
   /**
+   * 2026-05-28 — Server autosave of the design. Forwarded verbatim to
+   * CanvasEditor; called ~1s after the last edit with a Fabric snapshot.
+   * See CanvasEditorProps.onAutosaveDesign for the full contract.
+   */
+  onAutosaveDesign?: CanvasEditorProps["onAutosaveDesign"];
+  /**
    * Phase 2 AI Design provenance. When non-null, the overlay renders a
    * floating "✨ Designed by Claude" badge in the top-left + a small
    * "Revert to template default" link. Clicking Revert pops a
@@ -286,6 +292,7 @@ export default function CanvasEditorOverlay(
           customTemplate={props.customTemplate}
           initialFabricJson={props.initialFabricJson}
           onApplyLayoutToSiblings={props.onApplyLayoutToSiblings}
+          onAutosaveDesign={props.onAutosaveDesign}
         />
       </div>
 

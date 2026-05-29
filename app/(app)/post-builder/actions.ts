@@ -626,6 +626,15 @@ export interface UpdateGeneratedPostSlideInput {
    * template.
    */
   new_layer_tree: Json | null;
+  /**
+   * 2026-05-28 — Fabric `toObject` snapshot of the edited slide, written to
+   * slide_metadata[slide_index].fabric_json. This is what reopen restores via
+   * initialFabricJson, so persisting it on explicit Save (in addition to the
+   * debounced autosave) guarantees the latest edits survive even if the Save
+   * fires before the autosave debounce. Optional — omit to leave fabric_json
+   * untouched.
+   */
+  new_fabric_json?: Json | null;
 }
 
 export interface UpdateGeneratedPostSlideOk {
@@ -769,6 +778,11 @@ export async function updateGeneratedPostSlideAction(
       ? { ...(priorMeta as Record<string, unknown>) }
       : {};
   mergedMeta.layer_tree = input.new_layer_tree;
+  // Persist the fabric snapshot too (when provided) so reopen — which loads
+  // slide_metadata[i].fabric_json via initialFabricJson — reflects this save.
+  if (input.new_fabric_json !== undefined) {
+    mergedMeta.fabric_json = input.new_fabric_json;
+  }
   nextSlideMetadata[input.slide_index] = mergedMeta;
 
   // ---- Atomic update: additional_images + slide_metadata in one statement ----
@@ -930,6 +944,128 @@ export async function propagateCarouselLayoutAction(
   // overlay, ejecting the user to Final Review mid-edit. The client mirrors
   // the propagated overrides in state, so no server revalidation is needed.
   return { ok: true, slide_count: slideCount };
+}
+
+// ---------------------------------------------------------------------------
+// Autosave the slide/hero DESIGN (design-only, no PNG re-render)
+// ---------------------------------------------------------------------------
+
+export interface AutosaveDesignInput {
+  generated_post_id: string;
+  /** 0-based carousel slide index, or null for the hero. */
+  slide_index: number | null;
+  /** Fabric `toObject` snapshot of the current canvas. */
+  design: unknown;
+}
+
+export type AutosaveDesignResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/**
+ * 2026-05-28 — Persist the user's in-progress Studio design WITHOUT
+ * re-rendering the PNG. Called by the editor's debounced autosave (~1s after
+ * the last edit). Replaces the old localStorage draft + "restore?" prompt:
+ * the design is stored server-side and restored silently on reopen via
+ * `initialFabricJson`.
+ *
+ *   • slide  → slide_metadata[slide_index].fabric_json
+ *   • hero   → generated_posts.fabric_json
+ *
+ * Design-only: the published image is unchanged until an explicit
+ * Save/Publish re-renders it. Ownership-checked. NO revalidatePath (a route
+ * revalidation would tear down the open Studio overlay).
+ *
+ * Best-effort by contract — the editor fires-and-forgets — so a transient
+ * failure just means that one keystroke's snapshot didn't land; the next
+ * edit's autosave supersedes it.
+ */
+export async function autosaveDesignAction(
+  input: AutosaveDesignInput,
+): Promise<AutosaveDesignResult> {
+  const profile = await requireUser();
+
+  if (!input.generated_post_id) {
+    return { ok: false, error: "missing generated_post_id" };
+  }
+  // Require an object snapshot — a null/garbage design would wipe the saved
+  // work. (An empty object is technically allowed but the editor never sends
+  // one; the toObject snapshot always has at least { version, objects }.)
+  if (!input.design || typeof input.design !== "object" || Array.isArray(input.design)) {
+    return { ok: false, error: "design must be a Fabric snapshot object" };
+  }
+
+  const supabase = createAdminClient();
+
+  // ---- Hero path ----
+  if (input.slide_index === null) {
+    const { data: existing, error: fetchError } = await supabase
+      .from("generated_posts")
+      .select("id, created_by")
+      .eq("id", input.generated_post_id)
+      .maybeSingle();
+    if (fetchError) return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+    if (!existing) return { ok: false, error: "row not found" };
+    if (existing.created_by !== profile.id) return { ok: false, error: "not owner" };
+
+    const { error: updErr } = await supabase
+      .from("generated_posts")
+      .update({
+        fabric_json: input.design as unknown as Json,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", input.generated_post_id)
+      .eq("created_by", profile.id);
+    if (updErr) return { ok: false, error: `update_failed: ${updErr.message}` };
+    return { ok: true };
+  }
+
+  // ---- Slide path ----
+  if (
+    !Number.isInteger(input.slide_index) ||
+    input.slide_index < 0
+  ) {
+    return { ok: false, error: "slide_index must be a non-negative integer or null" };
+  }
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("generated_posts")
+    .select("id, created_by, slide_metadata, additional_images")
+    .eq("id", input.generated_post_id)
+    .maybeSingle();
+  if (fetchError) return { ok: false, error: `lookup_failed: ${fetchError.message}` };
+  if (!existing) return { ok: false, error: "row not found" };
+  if (existing.created_by !== profile.id) return { ok: false, error: "not owner" };
+
+  const slideMeta = Array.isArray(existing.slide_metadata)
+    ? (existing.slide_metadata as unknown[])
+    : [];
+  if (input.slide_index >= slideMeta.length) {
+    return {
+      ok: false,
+      error: `slide_index ${input.slide_index} out of bounds (slide_metadata length=${slideMeta.length})`,
+    };
+  }
+
+  // Merge fabric_json into the target slide's metadata entry, preserving every
+  // other field (listing_mls, db_template_id, variant, format, host, layer_tree).
+  const nextMeta = slideMeta.slice();
+  const target =
+    nextMeta[input.slide_index] && typeof nextMeta[input.slide_index] === "object"
+      ? (nextMeta[input.slide_index] as Record<string, unknown>)
+      : {};
+  nextMeta[input.slide_index] = { ...target, fabric_json: input.design };
+
+  const { error: updErr } = await supabase
+    .from("generated_posts")
+    .update({
+      slide_metadata: nextMeta as unknown as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.generated_post_id)
+    .eq("created_by", profile.id);
+  if (updErr) return { ok: false, error: `update_failed: ${updErr.message}` };
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

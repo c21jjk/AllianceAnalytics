@@ -49,6 +49,14 @@ import { getCurrentProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { renderDbTemplate } from "@/lib/template-builder";
 import { getOpenHousesForProperty } from "@/lib/data/open-houses";
+import { fetchDefaultCustomTemplate } from "@/lib/data/custom-templates-db";
+import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
+import {
+  applyOverridesToSchema,
+  parseCarouselLayoutOverrides,
+  type CarouselLayoutOverrides,
+} from "@/lib/post-builder/canvas-editor/layout-delta";
 import type {
   PostBuilderListing,
   PostFormat,
@@ -185,6 +193,14 @@ export async function POST(request: Request): Promise<Response> {
     ? (existing.format as PostFormat)
     : "square_1x1";
 
+  // The layout-overrides bag pushed by "Apply layout to all slides". For the
+  // variant/canvas path we apply these in-process onto the resolved template
+  // before rendering; for DB-template slides the render page applies them via
+  // gp_id. Parse once and reuse across slides.
+  const overrides: CarouselLayoutOverrides = parseCarouselLayoutOverrides(
+    existing.carousel_layout_overrides,
+  );
+
   // ---- NDJSON streaming setup (mirrors multi-oh-generate) ----
   const encoder = new TextEncoder();
   const stream = new TransformStream<Uint8Array, Uint8Array>();
@@ -222,6 +238,7 @@ export async function POST(request: Request): Promise<Response> {
                 meta: slideMeta[i],
                 hostsByIndex,
                 rowFormat,
+                overrides,
               });
               newImages[i] = { ...newImages[i], url };
               await writeLine({ type: "slide_done", index: i, url });
@@ -283,10 +300,20 @@ export async function POST(request: Request): Promise<Response> {
 
 /**
  * Re-render a single carousel slide's PNG with the row's stored layout
- * overrides applied (forwarded via the token's `gp_id`) and the open-house
- * window re-resolved from the `open_houses` table. Returns the new image
- * url. Throws on any unrecoverable per-slide condition; the caller turns
- * that into a `slide_failed` event and keeps the slide's old url.
+ * overrides applied and the open-house window re-resolved from the
+ * `open_houses` table. Returns the new image url. Throws on any unrecoverable
+ * per-slide condition; the caller turns that into a `slide_failed` event and
+ * keeps the slide's old url.
+ *
+ * Two render paths, matching how multi-oh-generate produced the slide:
+ *   • Variant / canvas path (the common case — slide_metadata.db_template_id
+ *     is null): resolve the SAME schema the generator used
+ *     (`fetchDefaultCustomTemplate("open_house", format, "v1")` ??
+ *     `findCanvasTemplate("open_house","v1",format)`), apply the layout
+ *     overrides IN-PROCESS via applyOverridesToSchema, then render through
+ *     renderCanvasSchema (the canvas-template → PNG pipeline).
+ *   • DB-template path (db_template_id set): renderDbTemplate, with the
+ *     overrides applied by the render page via gp_id.
  */
 async function rerenderSlide(args: {
   supabase: ReturnType<typeof createAdminClient>;
@@ -295,18 +322,14 @@ async function rerenderSlide(args: {
   meta: SlideMetadata | undefined;
   hostsByIndex: HostingAgentEntry[];
   rowFormat: PostFormat;
+  overrides: CarouselLayoutOverrides;
 }): Promise<string> {
-  const { supabase, gpId, index, meta, hostsByIndex, rowFormat } = args;
+  const { supabase, gpId, index, meta, hostsByIndex, rowFormat, overrides } = args;
 
   if (!meta || !meta.listing_mls) {
     throw new Error("slide has no listing_mls in slide_metadata");
   }
-  if (!meta.db_template_id) {
-    // why: only DB-template slides flow through renderDbTemplate. Legacy
-    // variant-only slides have no admin template to re-render against;
-    // re-rendering them isn't in scope for the layout-propagation fix.
-    throw new Error("slide has no db_template_id — re-render only supports DB-template slides");
-  }
+  const format = meta.format ?? rowFormat;
 
   // Resolve the slide's property. mls_number is globally unique today; once
   // the Phase-4 composite (mls_number, source_mls) key lands, narrow this by
@@ -325,7 +348,7 @@ async function rerenderSlide(args: {
   // Re-resolve the open-house window. The wizard's original selection wasn't
   // persisted, so we take the property's earliest upcoming/just-ended OH
   // session as the window. Empty → leave null (the listing row's own
-  // oh_start_at, if any, still resolves on the render page).
+  // oh_start_at, if any, still resolves at render time).
   const ohs = await getOpenHousesForProperty(prop.id);
   const earliest = ohs.length > 0 ? ohs[0] : null;
 
@@ -333,8 +356,45 @@ async function rerenderSlide(args: {
   // than re-querying Alliance Dash.
   const host = hostsByIndex.find((h) => h.index === index) ?? null;
 
+  // ---- Variant / canvas-template path (the common multi-OH case) ----
+  if (!meta.db_template_id) {
+    // Resolve the SAME schema multi-oh-generate uses for a per-property slide:
+    // Larissa's saved default OH template if she has one, else the factory
+    // open_house/v1 canvas template. The variant axis is cosmetic (every
+    // variant maps to open_house/v1), mirroring the generator.
+    const baseSchema =
+      (await fetchDefaultCustomTemplate("open_house", format, "v1")) ??
+      findCanvasTemplate("open_house", "v1", format);
+    if (!baseSchema) {
+      throw new Error(`no canvas template for open_house/${format}`);
+    }
+    // Bake the propagated layout overrides into the schema before rendering.
+    // Layout-only deltas keyed by layer id; per-slide listing/host/OH data is
+    // still resolved by the bound-field resolvers downstream.
+    const schema = applyOverridesToSchema(baseSchema, overrides);
+
+    const rendered = await renderCanvasSchema({
+      schema,
+      listingId: prop.id,
+      mlsNumber: prop.mls_number ?? meta.listing_mls,
+      format,
+      logLabel: `rerender-carousel:${gpId.slice(0, 8)}:${index}`,
+      hostingAgentName: host?.name ?? meta.hosting_agent_name ?? null,
+      hostingAgentPhone: host?.phone ?? null,
+      hostingAgentPhotoUrl: host?.photo_url ?? null,
+      openHouseStartUtc: earliest?.start_at ?? null,
+      openHouseEndUtc: earliest?.end_at ?? null,
+    });
+    if (!rendered.ok) {
+      throw new Error(`${rendered.stage} failed: ${rendered.error}`);
+    }
+    return rendered.image_url;
+  }
+
+  // ---- DB-template path (db_template_id set) ----
   // renderDbTemplate only reads listing.id (token) + listing.mls_number
-  // (storage path). The render page re-fetches the full listing by id.
+  // (storage path). The render page re-fetches the full listing by id and
+  // applies the overrides via gp_id.
   const listing = {
     id: prop.id,
     mls_number: prop.mls_number ?? meta.listing_mls,
@@ -343,14 +403,12 @@ async function rerenderSlide(args: {
   const result = await renderDbTemplate({
     template_id: meta.db_template_id,
     listing,
-    format: meta.format ?? rowFormat,
+    format,
     hosting_agent_name: host?.name ?? meta.hosting_agent_name ?? null,
     hosting_agent_phone: host?.phone ?? null,
     hosting_agent_photo_url: host?.photo_url ?? null,
     open_house_start_utc: earliest?.start_at ?? null,
     open_house_end_utc: earliest?.end_at ?? null,
-    // The key bit: gp_id tells the render page to fetch + apply this row's
-    // carousel_layout_overrides onto the schema before screenshotting.
     gp_id: gpId,
   });
 

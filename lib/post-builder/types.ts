@@ -519,6 +519,14 @@ export interface SlideMetadata {
    * Same role as generated_posts.layer_tree plays for the hero.
    */
   layer_tree?: unknown | null;
+  /**
+   * 2026-05-28 — Fabric `toObject` snapshot of the user's latest slide
+   * design, written by the debounced server autosave (and on explicit
+   * Save). Same role `generated_posts.fabric_json` plays for the hero:
+   * reopen restores it via `initialFabricJson` so edits survive without a
+   * "restore?" prompt. Null until the slide has been edited in Studio.
+   */
+  fabric_json?: unknown | null;
 }
 
 // ---------------------------------------------------------------------------
