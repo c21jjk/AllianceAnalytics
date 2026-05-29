@@ -1892,29 +1892,55 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // geometry so we never strand a blown-up, dimmed canvas.
       const overlay = cropOverlayRef.current;
       const stranded = Boolean(overlay.border) || overlay.dimmers.length > 0;
-      if (stranded) {
-        if (overlay.border) canvas.remove(overlay.border);
-        for (const d of overlay.dimmers) canvas.remove(d);
-        cropOverlayRef.current = { border: null, dimmers: [] };
-        // Restore canvas geometry (entry extended it for the matboard).
-        canvas.setDimensions({ width: savedCanvasW, height: savedCanvasH });
-        canvas.setViewportTransform(savedViewportTransform);
-        // Re-apply the photo's saved clipPath (entry removed it so the
-        // full extent showed) so the image isn't left unclipped.
-        if (!targetImage.clipPath && savedClipPath) {
-          targetImage.clipPath = savedClipPath;
-        }
-        // Restore the photo's chrome + every layer's interactivity.
-        (
-          targetImage as unknown as {
-            setControlsVisibility: (v: Record<string, boolean>) => void;
+      // 2026-05-29 — only restore when the canvas is STILL MOUNTED. On
+      // unmount (closing Studio mid-crop) React tears down this effect AND
+      // disposes the Fabric canvas; dispose() nulls the lower canvas
+      // element, and calling setDimensions on a disposed canvas throws
+      // ("Cannot destructure property 'el' of 'this.lower'") which
+      // white-screens the app. Restoration is pointless when the canvas is
+      // going away anyway, so skip it. The guard targets the genuine case:
+      // an in-place effect re-run (e.g. template dims change) where the
+      // canvas survives and would otherwise be left extended + dimmed.
+      // why: detect a disposed canvas safely. Reading `lowerCanvasEl`
+      // post-dispose can itself throw (its getter touches `this.lower`,
+      // which dispose() nulls), so the access is wrapped — a throw here
+      // means the canvas is gone and we must skip.
+      let disposed = false;
+      try {
+        disposed = !(canvas as unknown as { lowerCanvasEl?: unknown })
+          .lowerCanvasEl;
+      } catch {
+        disposed = true;
+      }
+      if (stranded && !disposed) {
+        try {
+          if (overlay.border) canvas.remove(overlay.border);
+          for (const d of overlay.dimmers) canvas.remove(d);
+          cropOverlayRef.current = { border: null, dimmers: [] };
+          // Restore canvas geometry (entry extended it for the matboard).
+          canvas.setDimensions({ width: savedCanvasW, height: savedCanvasH });
+          canvas.setViewportTransform(savedViewportTransform);
+          // Re-apply the photo's saved clipPath (entry removed it so the
+          // full extent showed) so the image isn't left unclipped.
+          if (!targetImage.clipPath && savedClipPath) {
+            targetImage.clipPath = savedClipPath;
           }
-        ).setControlsVisibility(priorControlsVisibility);
-        targetImage.set({ hasBorders: priorHasBorders });
-        for (const r of restoreList) {
-          r.obj.set({ selectable: r.selectable, evented: r.evented });
+          // Restore the photo's chrome + every layer's interactivity.
+          (
+            targetImage as unknown as {
+              setControlsVisibility: (v: Record<string, boolean>) => void;
+            }
+          ).setControlsVisibility(priorControlsVisibility);
+          targetImage.set({ hasBorders: priorHasBorders });
+          for (const r of restoreList) {
+            r.obj.set({ selectable: r.selectable, evented: r.evented });
+          }
+          canvas.requestRenderAll();
+        } catch {
+          // why: defensive — if the canvas became unusable between the
+          // disposed check and here (teardown race), swallow rather than
+          // crash the editor. A failed best-effort restore is recoverable.
         }
-        canvas.requestRenderAll();
       }
       exitCropModeRef.current = null;
     };
