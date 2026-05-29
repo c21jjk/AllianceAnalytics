@@ -180,7 +180,13 @@ function readTextState(canvas: Canvas | null): TextState | null {
     rawStyle === "italic" ? "italic" : "normal";
   return {
     fontFamily: active.fontFamily ?? ALLIANCE_FONTS.bodySans,
-    fontSize: typeof active.fontSize === "number" ? active.fontSize : 32,
+    // why (2026-05-29 font-size readout fix): show the EFFECTIVE size
+    // (fontSize × scaleY), matching what's rendered on canvas. A scaled text
+    // box keeps a raw fontSize that diverges from the rendered size; applyMutation
+    // converts the effective value back to raw on write.
+    fontSize:
+      (typeof active.fontSize === "number" ? active.fontSize : 32) *
+      (Number(active.scaleY) || 1),
     fontWeight: coerceFontWeight(active.fontWeight),
     fontStyle: style,
     fill: typeof active.fill === "string" ? active.fill : "#000000",
@@ -266,7 +272,17 @@ export default function TextPropertiesControls(
       // why: pass through ONLY defined keys to Fabric. Spreading the full
       // local state would overwrite Textbox props the user already edited
       // through Fabric's own input (in-place text editing) with stale values.
-      active.set(partial);
+      //
+      // fontSize in `partial` is the EFFECTIVE size shown to the user; a
+      // scaled Textbox renders at fontSize × scaleY, so convert back to raw
+      // fontSize for Fabric. Without this the readout and rendered size
+      // diverge (e.g. raw 234 shown for a box rendered at ~30).
+      const fabricPatch: Partial<TextState> = { ...partial };
+      if (typeof partial.fontSize === "number") {
+        const sy = (active.scaleY ?? 1) || 1;
+        fabricPatch.fontSize = partial.fontSize / sy;
+      }
+      active.set(fabricPatch);
       canvas.requestRenderAll();
       onCanvasMutated?.();
       if (shouldRecord) recordHistory?.();

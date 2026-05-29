@@ -315,7 +315,14 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
         : "left";
     setState({
       fontFamily: String(active.fontFamily ?? ALLIANCE_FONTS.bodySans),
-      fontSize: Number(active.fontSize ?? 48),
+      // why (2026-05-29 font-size readout fix): the size the user sees on
+      // canvas is the EFFECTIVE size = fontSize × scaleY. A text box scaled
+      // via the corner handles (or authored scaled by the AI layout) keeps a
+      // raw fontSize that diverges wildly from what's rendered — e.g. raw 234
+      // on a box scaled to ~0.13 renders at ~30. Show the effective size so
+      // the readout matches the canvas. handleFontSize/handleSizeStep convert
+      // back to raw on write.
+      fontSize: Number(active.fontSize ?? 48) * (Number(active.scaleY) || 1),
       fontWeight: Number(active.fontWeight ?? 400),
       fontStyle: (active.fontStyle === "italic" ? "italic" : "normal") as
         | "normal"
@@ -362,10 +369,20 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
     commit(canvas, onCanvasMutated, recordHistory);
   };
 
+  // why: `next` is the EFFECTIVE size the user typed/sees. Convert back to a
+  // raw fontSize through the object's scaleY so the rendered glyph size equals
+  // the number shown. Leaving scale untouched keeps the box layout stable; the
+  // readout stays correct because it re-derives effective = fontSize × scaleY.
+  const rawFontSizeFor = (effective: number): number => {
+    const active = readActive(canvas);
+    const scaleY = active instanceof Textbox ? Number(active.scaleY) || 1 : 1;
+    return effective / scaleY;
+  };
+
   const handleFontSize = (next: number): void => {
     if (!Number.isFinite(next) || next < 4 || next > 400) return;
     setState((prev) => (prev ? { ...prev, fontSize: next } : prev));
-    applyToActive({ fontSize: next });
+    applyToActive({ fontSize: rawFontSizeFor(next) });
     canvas?.requestRenderAll();
     onCanvasMutated?.();
   };
@@ -373,7 +390,7 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
   const handleSizeStep = (delta: number): void => {
     const next = Math.max(4, Math.min(400, Math.round(state.fontSize + delta)));
     setState((prev) => (prev ? { ...prev, fontSize: next } : prev));
-    applyToActive({ fontSize: next });
+    applyToActive({ fontSize: rawFontSizeFor(next) });
     commit(canvas, onCanvasMutated, recordHistory);
   };
 
