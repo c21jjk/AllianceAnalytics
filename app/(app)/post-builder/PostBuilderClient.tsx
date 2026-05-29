@@ -2375,8 +2375,29 @@ export default function PostBuilderClient({
     // explicitly to open a per-property SLIDE for fine-tuning; the hero
     // itself stays as the rendered PNG until we ship a hero canvas
     // template.
-    if (isMultiOHPost) {
-      resumeAutoOpenedRef.current = true;
+    //
+    // 2026-05-28 — Multi-OH first-open host fix. Detect multi-OH from the
+    // resume's template_id (not the derived `isMultiOHPost`, which is computed
+    // from `renderResult` and isn't reliably set during the editing phase).
+    // The parent-listing open path below builds its payload with NO per-slide
+    // hosting-agent injection, so the FIRST slide opened that way shows the
+    // agent name (it equals the listing agent) but no phone or photo — the
+    // long-standing bug that "fixed itself" when you clicked another slide and
+    // back (the strip's pencil routes through handleSlideEditClick, which DOES
+    // inject the per-index host + OH window). So for multi-OH we open slide 0
+    // through that SAME handler instead. Wait for the per-slide arrays
+    // (populated by the resume-parse effect) to hydrate; this effect re-runs
+    // when they land. When `isMultiOHPost` ends up true the Studio overlay
+    // isn't rendered (MultiOhFinalStage takes over) so the open is a harmless
+    // no-op — matching the previous bail behavior.
+    const resumeIsMultiOH =
+      typeof initialResume.template_id === "string" &&
+      initialResume.template_id.startsWith("multi_oh_event_");
+    if (resumeIsMultiOH) {
+      if (carouselSlides.length > 0 && slideMetadata.length > 0) {
+        resumeAutoOpenedRef.current = true;
+        void handleSlideEditClick(0);
+      }
       return;
     }
 
@@ -2424,6 +2445,12 @@ export default function PostBuilderClient({
     photosLoading,
     availablePhotos,
     editedFabricJson,
+    // 2026-05-28 — multi-OH first-open routes through handleSlideEditClick(0);
+    // depend on the per-slide arrays + handler so the effect re-runs once they
+    // hydrate and uses the current closure.
+    carouselSlides,
+    slideMetadata,
+    handleSlideEditClick,
   ]);
 
   // Fetch photos when the selected listing changes.
