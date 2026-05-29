@@ -23,6 +23,10 @@
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
+import {
+  applyOverridesToSchema,
+  parseCarouselLayoutOverrides,
+} from "@/lib/post-builder/canvas-editor/layout-delta";
 import { verifyRenderToken } from "@/lib/template-builder/render-token";
 import { getTemplateById } from "@/lib/template-builder";
 import type { PostBuilderListing, PostFormat } from "@/lib/post-builder/types";
@@ -88,6 +92,21 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
           Template {payload.template_id} has no schema for format {payload.format}
         </pre>
       );
+    }
+  }
+
+  // Carousel re-render (2026-05-28) — when the token carries a gp_id, merge
+  // that post's `carousel_layout_overrides` onto the schema BEFORE the canvas
+  // mounts. This is how a "Apply layout to all slides" push reaches the
+  // re-rendered PNG: the same overrides bag the editor applies on slide-open
+  // (PostBuilderClient.handleSlideEditClick) is applied here for the headless
+  // render. Layout-only deltas — per-slide listing/host data still resolves
+  // from the bound fields below, so each slide stays distinct. Empty / absent
+  // overrides → no-op pass-through.
+  if (payload.gp_id) {
+    const overrides = await fetchCarouselLayoutOverrides(payload.gp_id);
+    if (overrides) {
+      schema = applyOverridesToSchema(schema, overrides);
     }
   }
 
@@ -220,6 +239,30 @@ async function fetchAiSchemaFromCache(
     });
 
   return data.schema as unknown as CanvasTemplateSchema;
+}
+
+/**
+ * Carousel re-render (2026-05-28) — load the `carousel_layout_overrides`
+ * JSONB for a generated_posts row and coerce it to a safe overrides map.
+ * Returns null when the row is missing, the column is null, or the JSON
+ * parses to an empty map (so the caller can skip the schema walk entirely).
+ *
+ * No ownership check here — the signed token already gates access (the
+ * server-side re-render route minted it with this gp_id), same trust model
+ * as the ai_schema_cache_id path above.
+ */
+async function fetchCarouselLayoutOverrides(
+  gpId: string,
+): Promise<ReturnType<typeof parseCarouselLayoutOverrides> | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("generated_posts")
+    .select("carousel_layout_overrides")
+    .eq("id", gpId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const overrides = parseCarouselLayoutOverrides(data.carousel_layout_overrides);
+  return Object.keys(overrides).length > 0 ? overrides : null;
 }
 
 async function fetchListingById(

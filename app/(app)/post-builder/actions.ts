@@ -8,6 +8,7 @@ import {
   loadMetaCredentials,
 } from "@/lib/post-builder/publish";
 import { getPublishTestMode } from "@/lib/data/system-config";
+import { getOpenHousesForProperty } from "@/lib/data/open-houses";
 // 2026-05-28 unification — Studio "Save as Template" now persists into the
 // admin Template Builder catalog (template_definitions) instead of the
 // retired custom_templates table. See lib/template-builder/registry.ts.
@@ -928,6 +929,54 @@ export async function propagateCarouselLayoutAction(
   // overlay, ejecting the user to Final Review mid-edit. The client mirrors
   // the propagated overrides in state, so no server revalidation is needed.
   return { ok: true, slide_count: slideCount };
+}
+
+// ---------------------------------------------------------------------------
+// Resolve a property's open-house window — Studio per-slide edit hydration
+// ---------------------------------------------------------------------------
+
+export type ResolveOpenHouseWindowResult =
+  | { ok: true; start_at: string | null; end_at: string | null }
+  | { ok: false; error: string };
+
+/**
+ * 2026-05-28 — Return the earliest near-term open-house session window for a
+ * property. Used by Studio's per-slide edit handler so the editor preview
+ * shows the SAME date/time the headless render does, instead of the raw
+ * `{open_house_date}` / `{open_house_time}` placeholder tokens.
+ *
+ * Why this exists: the multi-OH wizard's per-slide OH window was computed
+ * from the wizard input at generation time and never persisted on the row,
+ * and `properties.oh_start_at` is frequently NULL in production data. So the
+ * source of truth at edit time is the `open_houses` table — same place the
+ * re-render path (app/api/post-builder/rerender-carousel) re-resolves it.
+ *
+ * Returns nulls (ok: true) when the property has no upcoming OH — the caller
+ * then leaves the payload's OH fields null and the template's hideIfEmpty /
+ * fallback handling takes over, same as before.
+ */
+export async function resolveOpenHouseWindowAction(
+  propertyId: string,
+): Promise<ResolveOpenHouseWindowResult> {
+  await requireUser();
+  if (!propertyId) {
+    return { ok: false, error: "missing propertyId" };
+  }
+  try {
+    const ohs = await getOpenHousesForProperty(propertyId);
+    if (ohs.length === 0) {
+      return { ok: true, start_at: null, end_at: null };
+    }
+    // getOpenHousesForProperty returns chronologically sorted rows — the
+    // first is the earliest upcoming/just-ended session, which matches what
+    // the re-render path forwards into the render token.
+    return { ok: true, start_at: ohs[0].start_at, end_at: ohs[0].end_at };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------

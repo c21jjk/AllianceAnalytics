@@ -84,6 +84,25 @@ export interface RenderInput {
   hosting_agent_photo_url?: string | null;
   /** Pre-formatted OH window label. Forwarded to the render-page route. */
   oh_window?: string | null;
+  /**
+   * Open-House session window (UTC ISO). Forwarded into the token so the
+   * render page stamps `openHouseStartUtc` / `openHouseEndUtc` onto the
+   * MLSListingPayload before hydration — that's what the `open_house_date`
+   * / `open_house_time` bound-field resolvers read. Without these, slides
+   * whose `properties.oh_start_at` column is NULL render the raw
+   * `{open_house_date}` / `{open_house_time}` placeholder tokens. The
+   * multi-OH re-render path re-resolves these from the `open_houses` table
+   * and passes them here. Optional; the first-generation path leaves them
+   * unset (the wizard's window reaches the render via the listing row).
+   */
+  open_house_start_utc?: string | null;
+  open_house_end_utc?: string | null;
+  /**
+   * Carousel re-render (2026-05-28) — `generated_posts` row id to pull
+   * `carousel_layout_overrides` from. Forwarded into the token; the render
+   * page merges the overrides onto the schema before mounting the canvas.
+   */
+  gp_id?: string | null;
 }
 
 /**
@@ -128,6 +147,9 @@ export async function renderDbTemplate(
       hosting_agent_phone: input.hosting_agent_phone ?? null,
       hosting_agent_photo_url: input.hosting_agent_photo_url ?? null,
       oh_window: input.oh_window ?? null,
+      open_house_start_utc: input.open_house_start_utc ?? null,
+      open_house_end_utc: input.open_house_end_utc ?? null,
+      gp_id: input.gp_id ?? null,
     });
   } catch (e) {
     return {

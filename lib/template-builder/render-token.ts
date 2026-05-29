@@ -88,6 +88,17 @@ export interface RenderTokenPayload {
    * renderer. Optional; absent on every existing DB-template render path.
    */
   ai_schema_cache_id?: string | null;
+  /**
+   * Carousel re-render (2026-05-28) — the `generated_posts` row id whose
+   * `carousel_layout_overrides` should be merged onto the resolved schema
+   * before the canvas mounts. When set, the render page fetches the
+   * overrides bag itself (via `parseCarouselLayoutOverrides` +
+   * `applyOverridesToSchema`) so a "Apply layout to all slides" push is
+   * reflected in the re-rendered PNG. We carry the gp_id (not the full
+   * overrides bag) to keep the signed token / URL small. Optional; absent
+   * on every first-generation render path.
+   */
+  gp_id?: string | null;
   /** Unix epoch seconds. Token is invalid once now() > exp. */
   exp: number;
 }

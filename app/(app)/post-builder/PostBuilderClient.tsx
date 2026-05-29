@@ -43,6 +43,7 @@ import {
   revertAiDesignAction,
   propagateCarouselLayoutAction,
   reorderCarouselSlidesAction,
+  resolveOpenHouseWindowAction,
   saveCustomTemplateAction,
   saveGeneratedPostAction,
   schedulePostAction,
@@ -560,6 +561,18 @@ export default function PostBuilderClient({
         initialResume?.carousel_layout_overrides ?? null,
       ),
     );
+  // 2026-05-28 — Carousel re-render progress (the PNG side of "Apply layout
+  // to all slides"). Non-null while /api/post-builder/rerender-carousel is
+  // streaming; drives the small progress overlay near the end of the tree.
+  // `done` increments per slide_done|slide_failed so the overlay reads
+  // "Re-rendering 2 of 3…". We DON'T block the editor's "✓ Applied to N
+  // slides" pill on this — the propagate write already succeeded; this is
+  // the slower headless-render follow-up.
+  const [rerenderState, setRerenderState] = useState<{
+    total: number;
+    done: number;
+    failed: number;
+  } | null>(null);
   // === AI Magic Design (Phase C.1) ===
   // why: when non-null, the MagicDesignModal mounts at the bottom of the
   // tree and fires the action against this listing. Photos for the listing
@@ -1884,7 +1897,7 @@ export default function PostBuilderClient({
   // `editingSlideIndex` and the save handler branches on it. The studio
   // overlay itself is the same component instance both ways.
   const handleSlideEditClick = useCallback(
-    (slideIndex: number): void => {
+    async (slideIndex: number): Promise<void> => {
       // why: bounds-check defensively — the strip's click handler should
       // already guarantee a valid index, but Studio is downstream of the
       // user's last action and the carousel might have been mutated
@@ -2070,6 +2083,28 @@ export default function PostBuilderClient({
         };
       }
 
+      // ---- Inject the open-house window so the editor matches the render ----
+      // 2026-05-28 (Bonus A) — the multi-OH wizard's per-slide OH window was
+      // never persisted on the row, and `properties.oh_start_at` is commonly
+      // NULL in prod, so mapListingToPayload above leaves openHouse*Utc null
+      // and the editor preview shows raw `{open_house_date}` / `{open_house_time}`
+      // tokens. Re-resolve from the `open_houses` table — the SAME source the
+      // headless re-render path uses — so the editor and the rendered PNG
+      // agree. Only fetch when the listing didn't already carry a window
+      // (cheap guard); a failure / no-OH result leaves the fields null and
+      // the template's fallback handling takes over, same as before.
+      if (!payload.openHouseStartUtc && slideListing.id) {
+        try {
+          const oh = await resolveOpenHouseWindowAction(slideListing.id);
+          if (oh.ok && oh.start_at) {
+            payload.openHouseStartUtc = oh.start_at;
+            payload.openHouseEndUtc = oh.end_at;
+          }
+        } catch {
+          // non-fatal — fall through with null OH fields
+        }
+      }
+
       setStudioContext({ template, listing: payload });
       setEditingSlideIndex(slideIndex);
       setStudioOpen(true);
@@ -2141,6 +2176,128 @@ export default function PostBuilderClient({
       }
     },
     [carouselSlides, slideMetadata, generatedPostId],
+  );
+
+  // 2026-05-28 — Re-render every sibling slide's PNG after an "Apply layout
+  // to all slides" push. The propagate write only stores the overrides bag;
+  // the published slide images were pre-rendered server-side and would
+  // otherwise still show the OLD layout in Final Review + the posted
+  // carousel. This consumes the /api/post-builder/rerender-carousel NDJSON
+  // stream, swapping each slide's url into local state as its fresh PNG
+  // lands (so the carousel tiles update live), then mirrors the final
+  // server-confirmed array on `completed`.
+  //
+  // Not awaited by the editor's apply handler — the success pill shows
+  // immediately off the propagate result; this slower headless step runs
+  // in the background with its own progress overlay.
+  const runCarouselRerender = useCallback(
+    async (gpId: string): Promise<void> => {
+      let res: Response;
+      try {
+        res = await fetch("/api/post-builder/rerender-carousel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ generated_post_id: gpId }),
+        });
+      } catch {
+        // Network blip kicking off the stream — nothing rendered yet, so
+        // there's nothing to undo. The editor already showed the layout was
+        // applied; the user can reopen the post to retry.
+        return;
+      }
+      if (!res.ok || !res.body) {
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let total = carouselSlides.length;
+      let done = 0;
+      let failed = 0;
+      setRerenderState({ total, done, failed });
+
+      const handleEvent = (evt: unknown): void => {
+        if (typeof evt !== "object" || evt === null) return;
+        const e = evt as Record<string, unknown>;
+        switch (e.type) {
+          case "started": {
+            if (typeof e.totalSlides === "number") total = e.totalSlides;
+            setRerenderState({ total, done, failed });
+            break;
+          }
+          case "slide_done": {
+            done += 1;
+            if (typeof e.index === "number" && typeof e.url === "string") {
+              const idx = e.index;
+              const url = e.url;
+              setCarouselSlides((prev) =>
+                prev.map((s, i) => (i === idx ? { ...s, url } : s)),
+              );
+            }
+            setRerenderState({ total, done, failed });
+            break;
+          }
+          case "slide_failed": {
+            done += 1;
+            failed += 1;
+            setRerenderState({ total, done, failed });
+            break;
+          }
+          case "completed": {
+            // Mirror the server-confirmed array so any slide whose live
+            // event we missed (disconnect, race) still lands correct.
+            const imgs = e.additional_images;
+            if (Array.isArray(imgs)) {
+              setCarouselSlides(
+                imgs.map((raw) => {
+                  const r = raw as Partial<CarouselSlide>;
+                  return {
+                    id: typeof r.id === "string" ? r.id : crypto.randomUUID(),
+                    url: typeof r.url === "string" ? r.url : "",
+                    source: r.source === "upload" ? "upload" : "listing",
+                    listingPhotoSequence:
+                      typeof r.listingPhotoSequence === "number"
+                        ? r.listingPhotoSequence
+                        : undefined,
+                  };
+                }),
+              );
+            }
+            break;
+          }
+          default:
+            break;
+        }
+      };
+
+      try {
+        for (;;) {
+          const { done: streamDone, value } = await reader.read();
+          if (streamDone) break;
+          buffer += decoder.decode(value, { stream: true });
+          let nl = buffer.indexOf("\n");
+          while (nl !== -1) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (line.length > 0) {
+              try {
+                handleEvent(JSON.parse(line));
+              } catch {
+                // skip malformed line
+              }
+            }
+            nl = buffer.indexOf("\n");
+          }
+        }
+      } finally {
+        // Brief lingering "done" state so the overlay doesn't vanish the
+        // instant the last slide lands, then clear.
+        setRerenderState({ total, done, failed });
+        window.setTimeout(() => setRerenderState(null), 1200);
+      }
+    },
+    [carouselSlides.length],
   );
 
   // The current set of photo URLs to send to the render API. For single-
@@ -4637,6 +4794,16 @@ export default function PostBuilderClient({
                   setCarouselLayoutOverrides(
                     overrides as CarouselLayoutOverrides,
                   );
+                  // 2026-05-28 — kick off the PNG re-render so Final Review
+                  // + the posted carousel reflect the new layout (the
+                  // overrides write alone only updates the editor view).
+                  // Fire-and-forget: the success pill shows off this return
+                  // immediately; the re-render streams progress on its own
+                  // overlay. Guarded by generatedPostId (the outer ternary
+                  // already requires it).
+                  if (generatedPostId) {
+                    void runCarouselRerender(generatedPostId);
+                  }
                   return { ok: true, slide_count: res.slide_count };
                 }
                 return { ok: false, error: res.error };
@@ -4656,6 +4823,26 @@ export default function PostBuilderClient({
           onMakeReel={() => navigateToReelStudio(makeReelPromptState.mls)}
           onSkip={() => setMakeReelPromptState(null)}
         />
+      ) : null}
+      {/* 2026-05-28 — Carousel re-render progress. A small non-blocking
+          toast in the corner while /api/post-builder/rerender-carousel
+          streams. The editor stays interactive; the carousel tiles swap
+          in their new PNGs as each slide completes. */}
+      {rerenderState ? (
+        <div
+          className="fixed bottom-4 right-4 z-[60] flex items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-900/95 px-4 py-3 text-sm text-neutral-100 shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-neutral-500 border-t-[#C9A84C]" />
+          <span>
+            {rerenderState.done < rerenderState.total
+              ? `Re-rendering slides ${rerenderState.done} of ${rerenderState.total}…`
+              : rerenderState.failed > 0
+                ? `Re-rendered ${rerenderState.total - rerenderState.failed} of ${rerenderState.total} (${rerenderState.failed} failed)`
+                : `Re-rendered ${rerenderState.total} slides ✓`}
+          </span>
+        </div>
       ) : null}
     </div>
   );

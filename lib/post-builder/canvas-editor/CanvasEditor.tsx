@@ -212,6 +212,46 @@ interface EditorError {
   message: string;
 }
 
+/**
+ * 2026-05-28 (Bonus B) — normalized layer-geometry signature used to decide
+ * whether a localStorage autosave is a GENUINE unsaved delta versus a stale
+ * snapshot that merely captured the same layout the canvas already hydrates
+ * to (the common case right after generation, which made the "Unsaved
+ * changes — restore them?" banner nag on nearly every open).
+ *
+ * Works for BOTH live Fabric objects (instance props) and serialized
+ * autosave objects (plain JSON) because both expose left/top/width/height/
+ * scaleX/scaleY/text/fontSize and our `data` metadata bag. Geometry is
+ * rounded to whole pixels so sub-pixel jitter from a hydrate→serialize
+ * round-trip doesn't read as a delta. The hover-preview rect is excluded.
+ */
+function layerGeometrySignature(
+  objects: ReadonlyArray<unknown>,
+): string {
+  const parts: string[] = [];
+  for (const raw of objects) {
+    const o = raw as Record<string, unknown> & {
+      data?: { layerId?: string };
+    };
+    const layerId = o.data?.layerId ?? "";
+    if (typeof layerId === "string" && layerId.startsWith("__hover_preview__")) {
+      continue;
+    }
+    const num = (v: unknown): number => (typeof v === "number" ? v : 0);
+    const left = Math.round(num(o.left));
+    const top = Math.round(num(o.top));
+    const w = Math.round(num(o.width) * (typeof o.scaleX === "number" ? o.scaleX : 1));
+    const h = Math.round(num(o.height) * (typeof o.scaleY === "number" ? o.scaleY : 1));
+    const text = typeof o.text === "string" ? o.text : "";
+    const fontSize = Math.round(num(o.fontSize));
+    parts.push(`${layerId}|${left},${top},${w},${h}|${fontSize}|${text}`);
+  }
+  // Sort so object-array ordering differences (which aren't a visual delta)
+  // don't register as a change.
+  parts.sort();
+  return parts.join("\n");
+}
+
 export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // why: keep the raw prop as `initialTemplate` and introduce a stateful
   // `currentTemplate` underneath. This lets the in-editor Templates panel
@@ -2352,12 +2392,48 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // finishes in the background.
   useEffect(() => {
     const found = readAutosave(currentTemplate.id, listing.mlsNumber);
-    if (found) {
-      setPendingAutosave(found);
-      setAutosaveBannerDismissed(false);
-    } else {
+    if (!found) {
       setPendingAutosave(null);
+      return;
     }
+    // 2026-05-28 (Bonus B) — only surface the restore banner when the
+    // autosave is a GENUINE unsaved delta. A stale snapshot that captured
+    // the same layout the canvas already hydrates to (common right after
+    // generation, or after closing without edits) otherwise nags on nearly
+    // every open. We defer until Fabric has hydrated, then compare layer
+    // geometry signatures; on a no-delta match we drop the stale autosave
+    // silently so it stops re-appearing. If hydration never lands (we can't
+    // verify), we fail SAFE and show the banner.
+    let cancelled = false;
+    let attempts = 0;
+    const tryCompare = (): void => {
+      if (cancelled) return;
+      const canvas = fabricRef.current;
+      const liveObjs = canvas?.getObjects() ?? [];
+      if (liveObjs.length === 0 && attempts < 12) {
+        attempts += 1;
+        window.setTimeout(tryCompare, 150);
+        return;
+      }
+      const savedJson = found.fabricJson as { objects?: unknown[] } | null;
+      const savedObjs = Array.isArray(savedJson?.objects)
+        ? (savedJson!.objects as unknown[])
+        : [];
+      const liveSig = layerGeometrySignature(liveObjs);
+      const savedSig = layerGeometrySignature(savedObjs);
+      if (liveObjs.length > 0 && liveSig === savedSig) {
+        // No genuine delta — clear the stale autosave + suppress the banner.
+        clearAutosave(currentTemplate.id, listing.mlsNumber);
+        setPendingAutosave(null);
+      } else {
+        setPendingAutosave(found);
+        setAutosaveBannerDismissed(false);
+      }
+    };
+    tryCompare();
+    return () => {
+      cancelled = true;
+    };
     // why: depend on the identity-pair, not on every prop bump. A listing
     // detail change (e.g., agent name) shouldn't blow away the autosave.
   }, [currentTemplate.id, listing.mlsNumber]);
