@@ -1689,7 +1689,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // transform starts clean), clamp to matboard bounds, and
     // update the dimmers + currentClipRect React state so the
     // Done bar follows.
-    const syncFrameFromBorder = (): void => {
+    // P2c — frame dims captured at the start of a resize gesture, used to
+    // lock the aspect ratio while Shift is held (set on border mousedown).
+    let gestureStartW = 0;
+    let gestureStartH = 0;
+
+    const syncFrameFromBorder = (opt?: { e?: Event }): void => {
       const rawW = (border.width ?? 0) * (border.scaleX ?? 1);
       const rawH = (border.height ?? 0) * (border.scaleY ?? 1);
       const newLeft = border.left ?? 0;
@@ -1700,16 +1705,65 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const matMinY = -ty;
       const matMaxX = template.width + tx;
       const matMaxY = template.height + ty;
-      const clampedW = Math.max(MIN, Math.min(rawW, matMaxX - newLeft));
-      const clampedH = Math.max(MIN, Math.min(rawH, matMaxY - newTop));
-      const clampedLeft = Math.max(
-        matMinX,
-        Math.min(newLeft, matMaxX - clampedW),
+
+      // P2c — Shift locks the frame to its aspect ratio at gesture start.
+      // Follow the dominant drag axis: whichever dimension changed more
+      // drives the other.
+      let lockedW = rawW;
+      let lockedH = rawH;
+      const shiftHeld = Boolean(
+        (opt?.e as { shiftKey?: boolean } | undefined)?.shiftKey,
       );
-      const clampedTop = Math.max(
-        matMinY,
-        Math.min(newTop, matMaxY - clampedH),
-      );
+      if (shiftHeld && gestureStartW > 0 && gestureStartH > 0) {
+        const ratio = gestureStartW / gestureStartH;
+        if (
+          Math.abs(rawW - gestureStartW) >= Math.abs(rawH - gestureStartH)
+        ) {
+          lockedH = lockedW / ratio;
+        } else {
+          lockedW = lockedH * ratio;
+        }
+      }
+
+      let clampedW = Math.max(MIN, Math.min(lockedW, matMaxX - newLeft));
+      let clampedH = Math.max(MIN, Math.min(lockedH, matMaxY - newTop));
+      let clampedLeft = Math.max(matMinX, Math.min(newLeft, matMaxX - clampedW));
+      let clampedTop = Math.max(matMinY, Math.min(newTop, matMaxY - clampedH));
+
+      // P2b — snap the frame edges + center to the TEMPLATE (slide) guides so
+      // the crop aligns to the slide boundaries / center. Small threshold;
+      // an edge snap wins over the center snap on the same axis.
+      const SNAP = 7;
+      const near = (a: number, b: number): boolean => Math.abs(a - b) <= SNAP;
+      let snappedX = false;
+      let snappedY = false;
+      if (near(clampedLeft, 0)) {
+        const r = clampedLeft + clampedW;
+        clampedLeft = 0;
+        clampedW = r - clampedLeft;
+        snappedX = true;
+      } else if (near(clampedLeft + clampedW, template.width)) {
+        clampedW = template.width - clampedLeft;
+        snappedX = true;
+      }
+      if (near(clampedTop, 0)) {
+        const b = clampedTop + clampedH;
+        clampedTop = 0;
+        clampedH = b - clampedTop;
+        snappedY = true;
+      } else if (near(clampedTop + clampedH, template.height)) {
+        clampedH = template.height - clampedTop;
+        snappedY = true;
+      }
+      if (!snappedX && near(clampedLeft + clampedW / 2, template.width / 2)) {
+        clampedLeft = template.width / 2 - clampedW / 2;
+      }
+      if (!snappedY && near(clampedTop + clampedH / 2, template.height / 2)) {
+        clampedTop = template.height / 2 - clampedH / 2;
+      }
+      clampedW = Math.max(MIN, clampedW);
+      clampedH = Math.max(MIN, clampedH);
+
       border.set({
         left: clampedLeft,
         top: clampedTop,
@@ -1759,6 +1813,33 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     };
     border.on("scaling", syncFrameFromBorder);
     border.on("moving", syncFrameFromBorder);
+    // P2c — capture the frame dims when a resize gesture begins so Shift can
+    // lock to that aspect ratio.
+    const captureGestureStart = (): void => {
+      gestureStartW = border.width ?? 0;
+      gestureStartH = border.height ?? 0;
+    };
+    border.on("mousedown", captureGestureStart);
+    // P2b — snap the photo's edges to the frame edges while panning, so the
+    // photo aligns cleanly to the crop window instead of leaving a sliver.
+    const snapPhotoPan = (): void => {
+      const frame = currentClipRectRef.current;
+      if (!frame) return;
+      const SNAP = 7;
+      const near = (a: number, b: number): boolean => Math.abs(a - b) <= SNAP;
+      const w = (targetImage.width ?? 0) * (targetImage.scaleX ?? 1);
+      const h = (targetImage.height ?? 0) * (targetImage.scaleY ?? 1);
+      let nl = targetImage.left ?? 0;
+      let nt = targetImage.top ?? 0;
+      if (near(nl, frame.left)) nl = frame.left;
+      else if (near(nl + w, frame.left + frame.width))
+        nl = frame.left + frame.width - w;
+      if (near(nt, frame.top)) nt = frame.top;
+      else if (near(nt + h, frame.top + frame.height))
+        nt = frame.top + frame.height - h;
+      targetImage.set({ left: nl, top: nt });
+    };
+    targetImage.on("moving", snapPhotoPan);
 
     // P2a (2026-05-29) — aspect-ratio presets. Resize the crop frame to a
     // target ratio (w/h), centered on the frame's current center, fit within
@@ -1913,6 +1994,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       canvas.off("mouse:down", onCanvasClick);
       border.off("scaling", syncFrameFromBorder);
       border.off("moving", syncFrameFromBorder);
+      border.off("mousedown", captureGestureStart);
+      targetImage.off("moving", snapPhotoPan);
       // why: we still DON'T re-fire object:modified or call
       // setCropMode here — doing that on every dep-tick could overwrite
       // legitimate state. The user-driven exit paths (Enter / Escape /
