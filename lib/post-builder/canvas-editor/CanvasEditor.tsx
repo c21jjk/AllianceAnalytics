@@ -1094,13 +1094,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if ((obj as unknown as { lockMovementX?: boolean }).lockMovementX)
         return;
 
-      const clip = obj.clipPath;
-      if (!(clip instanceof Rect)) return;
-      const clipLeft = (clip as unknown as { left?: number }).left ?? 0;
-      const clipTop = (clip as unknown as { top?: number }).top ?? 0;
-      const clipW = (clip as unknown as { width?: number }).width ?? 0;
-      const clipH = (clip as unknown as { height?: number }).height ?? 0;
-
       const next: CropModeState = {
         layerId: data.layerId,
         originalImagePose: {
@@ -1109,12 +1102,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           scaleX: obj.scaleX ?? 1,
           scaleY: obj.scaleY ?? 1,
         },
-        originalClipRect: {
-          left: clipLeft,
-          top: clipTop,
-          width: clipW,
-          height: clipH,
-        },
+        // P1.1: works whether or not the image already has a Rect clipPath.
+        originalClipRect: deriveCropFrameRect(obj),
       };
       setCropMode(next);
     });
@@ -1432,6 +1421,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   //   5. Push a single object:modified event so the undo history
   //      treats the crop as one step.
   const exitCropModeRef = useRef<((cancel: boolean) => void) | null>(null);
+  // P2a (2026-05-29): apply an aspect-ratio preset to the crop frame.
+  // ratio = width/height; null = the image's natural aspect ("Original").
+  // Set inside the crop effect (where the frame border + matboard math are
+  // in scope); called from the crop bar's preset buttons.
+  const cropAspectRef = useRef<((ratio: number | null) => void) | null>(null);
   useEffect(() => {
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -1766,6 +1760,47 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     border.on("scaling", syncFrameFromBorder);
     border.on("moving", syncFrameFromBorder);
 
+    // P2a (2026-05-29) — aspect-ratio presets. Resize the crop frame to a
+    // target ratio (w/h), centered on the frame's current center, fit within
+    // the matboard, then reuse syncFrameFromBorder to propagate to the
+    // dimmers + Done-bar state. ratio === null → the image's natural aspect.
+    const applyAspect = (ratio: number | null): void => {
+      const cur = currentClipRectRef.current ?? cropMode.originalClipRect;
+      const cx = cur.left + cur.width / 2;
+      const cy = cur.top + cur.height / 2;
+      const naturalW = targetImage.width ?? 1;
+      const naturalH = targetImage.height ?? 1;
+      const r =
+        ratio ?? (naturalW > 0 && naturalH > 0 ? naturalW / naturalH : 1);
+      // Matboard bounds (scene coords) — same as syncFrameFromBorder.
+      const matMinX = -tx;
+      const matMinY = -ty;
+      const matMaxX = template.width + tx;
+      const matMaxY = template.height + ty;
+      const maxW = matMaxX - matMinX;
+      const maxH = matMaxY - matMinY;
+      // Anchor on the current frame width, derive height from the ratio,
+      // then shrink to fit the matboard if either axis overflows.
+      let newW = cur.width;
+      let newH = newW / r;
+      if (newW > maxW) {
+        newW = maxW;
+        newH = newW / r;
+      }
+      if (newH > maxH) {
+        newH = maxH;
+        newW = newH * r;
+      }
+      let left = cx - newW / 2;
+      let top = cy - newH / 2;
+      left = Math.max(matMinX, Math.min(left, matMaxX - newW));
+      top = Math.max(matMinY, Math.min(top, matMaxY - newH));
+      border.set({ left, top, width: newW, height: newH, scaleX: 1, scaleY: 1 });
+      // Reuse the existing sync so dimmers + currentClipRect + render update.
+      syncFrameFromBorder();
+    };
+    cropAspectRef.current = applyAspect;
+
     // 4 — define the exit function. Cancel=true restores image pose
     // AND clipPath rect; cancel=false commits both.
     const exitFn = (cancel: boolean): void => {
@@ -1943,6 +1978,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         }
       }
       exitCropModeRef.current = null;
+      cropAspectRef.current = null;
     };
   }, [cropMode, template.width, template.height]);
 
@@ -1960,12 +1996,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     if (!(active instanceof FabricImage)) return;
     const data = getLayerData(active);
     if (!data?.layerId) return;
-    const clip = active.clipPath;
-    if (!(clip instanceof Rect)) return;
-    const clipLeft = (clip as unknown as { left?: number }).left ?? 0;
-    const clipTop = (clip as unknown as { top?: number }).top ?? 0;
-    const clipW = (clip as unknown as { width?: number }).width ?? 0;
-    const clipH = (clip as unknown as { height?: number }).height ?? 0;
     setCropMode({
       layerId: data.layerId,
       originalImagePose: {
@@ -1974,12 +2004,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         scaleX: active.scaleX ?? 1,
         scaleY: active.scaleY ?? 1,
       },
-      originalClipRect: {
-        left: clipLeft,
-        top: clipTop,
-        width: clipW,
-        height: clipH,
-      },
+      // P1.1: works whether or not the image already has a Rect clipPath.
+      originalClipRect: deriveCropFrameRect(active),
     });
   }, []);
 
@@ -3995,6 +4021,30 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                       zoom,
                   }}
                 >
+                  {/* P2a — aspect-ratio presets. "Orig" = the image's
+                      natural ratio; the rest are the common social formats. */}
+                  {(
+                    [
+                      { label: "Orig", ratio: null },
+                      { label: "1:1", ratio: 1 },
+                      { label: "4:5", ratio: 4 / 5 },
+                      { label: "9:16", ratio: 9 / 16 },
+                    ] as const
+                  ).map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => cropAspectRef.current?.(p.ratio)}
+                      title={`Crop to ${p.label}`}
+                      className="focus-ring-dark inline-flex items-center rounded-md border border-[var(--studio-border)] bg-transparent px-2 py-1 text-[11px] font-medium text-white hover:border-gold-400 hover:bg-[var(--studio-hover)]"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  <span
+                    aria-hidden="true"
+                    className="mx-0.5 w-px self-stretch bg-[var(--studio-border)]"
+                  />
                   <button
                     type="button"
                     onClick={() => exitCropModeRef.current?.(false)}
@@ -4395,6 +4445,40 @@ function LayerKindIcon({ kind }: { kind: CanvasLayer["kind"] }): JSX.Element {
 // variant only ships at 2 of 3 formats during an in-progress factory port.
 // Keeps the menu honest: we never let the user pick an option that would
 // fail in `handleResizePicked`'s `findCanvasTemplate` lookup.
+/**
+ * Derive the crop frame rect (canvas-space) for an image entering crop mode.
+ *
+ * 2026-05-29 (Canva-parity P1.1): crop used to bail when the image had no
+ * Rect clipPath — AI-designed / older images silently couldn't be cropped.
+ * Now, when there's no Rect clip, we synthesize the frame from the image's
+ * current DISPLAYED bounds (left/top + natural dims × scale), so ANY image
+ * can be cropped. On crop exit a real Rect clipPath is built at the frame.
+ */
+function deriveCropFrameRect(img: FabricImage): {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+} {
+  const clip = img.clipPath;
+  if (clip instanceof Rect) {
+    return {
+      left: (clip as unknown as { left?: number }).left ?? 0,
+      top: (clip as unknown as { top?: number }).top ?? 0,
+      width: (clip as unknown as { width?: number }).width ?? 0,
+      height: (clip as unknown as { height?: number }).height ?? 0,
+    };
+  }
+  const scaleX = img.scaleX ?? 1;
+  const scaleY = img.scaleY ?? 1;
+  return {
+    left: img.left ?? 0,
+    top: img.top ?? 0,
+    width: (img.width ?? 0) * scaleX,
+    height: (img.height ?? 0) * scaleY,
+  };
+}
+
 function buildResizeMenuOptions(
   category: CanvasTemplateSchema["category"],
   variant: CanvasTemplateSchema["variant"],

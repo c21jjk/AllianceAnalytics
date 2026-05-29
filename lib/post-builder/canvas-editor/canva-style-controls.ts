@@ -180,13 +180,33 @@ function renderRotationCircle(
  *                    user generous click targets.
  *   touchSizeX/Y   — same for touch devices.
  */
-export function createCanvaStyleControls(): Record<string, Control> {
+export function createCanvaStyleControls(options?: {
+  /**
+   * When true, the side midpoint handles (ml/mr/mt/mb) scale UNIFORMLY
+   * instead of single-axis. Used for image layers: a one-axis scale
+   * stretches the photo (and the object:modified clipPath rebuild bakes
+   * that distortion in). Corners already scale equally; this makes the
+   * sides safe too, so a photo can never be distorted by a frame drag.
+   */
+  uniformSides?: boolean;
+}): Record<string, Control> {
   // Generous hit areas: 24x24 for corners and pills so the user has a
   // comfortable click target. Visual size stays at CORNER_SIZE /
   // PILL_LENGTH × PILL_THICKNESS.
   const cornerHit = 24;
   const pillHitThick = 16;
   const pillHitLong = 32;
+
+  // 2026-05-29 — side-handle action depends on caller. Images pass
+  // uniformSides so dragging a side scales the whole photo proportionally
+  // (no distortion); text/shapes keep the single-axis scale/skew.
+  const uniform = options?.uniformSides === true;
+  const sideXAction = uniform
+    ? controlsUtils.scalingEqually
+    : controlsUtils.scalingXOrSkewingY;
+  const sideYAction = uniform
+    ? controlsUtils.scalingEqually
+    : controlsUtils.scalingYOrSkewingX;
 
   return {
     // ---- corners ----
@@ -238,7 +258,7 @@ export function createCanvaStyleControls(): Record<string, Control> {
     ml: new Control({
       x: -0.5,
       y: 0,
-      actionHandler: controlsUtils.scalingXOrSkewingY,
+      actionHandler: sideXAction,
       cursorStyleHandler: controlsUtils.scaleSkewCursorStyleHandler,
       render: renderPillVertical,
       sizeX: pillHitThick,
@@ -249,7 +269,7 @@ export function createCanvaStyleControls(): Record<string, Control> {
     mr: new Control({
       x: 0.5,
       y: 0,
-      actionHandler: controlsUtils.scalingXOrSkewingY,
+      actionHandler: sideXAction,
       cursorStyleHandler: controlsUtils.scaleSkewCursorStyleHandler,
       render: renderPillVertical,
       sizeX: pillHitThick,
@@ -260,7 +280,7 @@ export function createCanvaStyleControls(): Record<string, Control> {
     mt: new Control({
       x: 0,
       y: -0.5,
-      actionHandler: controlsUtils.scalingYOrSkewingX,
+      actionHandler: sideYAction,
       cursorStyleHandler: controlsUtils.scaleSkewCursorStyleHandler,
       render: renderPillHorizontal,
       sizeX: pillHitLong,
@@ -271,7 +291,7 @@ export function createCanvaStyleControls(): Record<string, Control> {
     mb: new Control({
       x: 0,
       y: 0.5,
-      actionHandler: controlsUtils.scalingYOrSkewingX,
+      actionHandler: sideYAction,
       cursorStyleHandler: controlsUtils.scaleSkewCursorStyleHandler,
       render: renderPillHorizontal,
       sizeX: pillHitLong,

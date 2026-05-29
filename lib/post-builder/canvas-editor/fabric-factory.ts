@@ -589,7 +589,7 @@ export async function createFabricImage(
     });
     (
       img as unknown as { controls: Record<string, unknown> }
-    ).controls = createCanvaStyleControls();
+    ).controls = createCanvaStyleControls({ uniformSides: true });
 
     // why (2026-05-23 — Cover/Contain/Stretch bug fix): ALWAYS attach a
     // clipPath at the BOX dimensions (layer.width × layer.height),
