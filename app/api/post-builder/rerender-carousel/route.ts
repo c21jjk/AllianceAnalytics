@@ -71,12 +71,16 @@ export const runtime = "nodejs";
 // 120s mirrors multi-oh-generate's ceiling.
 export const maxDuration = 120;
 
-// Bounded parallelism. 2026-05-28 — lowered from 4 to 2 after a live test
-// where 3 simultaneous headless renders stalled (resource contention) and the
-// route blew past maxDuration. Two-at-a-time is gentler on the function's
-// memory/CPU while still finishing a typical 3–9 slide carousel in a couple
-// of chunks.
-const RERENDER_CONCURRENCY = 2;
+// Render ONE slide at a time. 2026-05-28 — a live test surfaced
+// `spawn ETXTBSY` failures: launching headless Chromium for two slides at
+// once races on the Chromium binary (one process is still writing/extracting
+// it to /tmp while the other tries to exec it → "text file busy"), so a
+// random slide fails its render every run. Serializing the spawns eliminates
+// the race. The per-slide timeout + incremental per-slide persistence below
+// keep a longer (up to 9-slide) run safe inside the function budget — each
+// finished slide is durable even if a later one stalls or the function is
+// killed.
+const RERENDER_CONCURRENCY = 1;
 
 // Per-slide hard ceiling. A single hung headless render is failed at this mark
 // (the slide keeps its old image) so it can't consume the whole function
