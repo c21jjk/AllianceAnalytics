@@ -43,6 +43,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import { resolveTemplateForStatus } from "@/lib/data/custom-templates-db";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
 import { runDesignPipeline } from "@/lib/post-builder/canvas-editor/ai/design-pipeline";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
@@ -173,11 +174,15 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // ---- Resolve the factory canvas template for this variant ----
-  // why: AI Design hydrates from the existing factory canvas templates
-  // (the same ones Studio uses). If a variant has no canvas template
-  // (currently all 6 active variants do, but be defensive), fail fast.
-  const factorySchema = findCanvasTemplate(v.post_type, v.variant, v.format);
+  // ---- Resolve the base canvas template for this slot (library-first) ----
+  // why: AI Design hydrates from a base schema, then redesigns it. Prefer
+  // the approved LIBRARY template for this (post_type, format) so AI Design
+  // starts from Larissa's current design; fall back to the hidden current-
+  // code factory schema when no approved library template defines the
+  // format. If neither exists, fail fast.
+  const factorySchema =
+    (await resolveTemplateForStatus(v.post_type, v.format)) ??
+    findCanvasTemplate(v.post_type, v.variant, v.format);
   if (!factorySchema) {
     return NextResponse.json(
       {

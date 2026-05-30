@@ -3878,10 +3878,16 @@ export default function PostBuilderClient({
                     the API branches into renderDbTemplate(). */}
                 {!isMultiOHPost && dbTemplates.length > 0 ? (
                   <div>
-                    <div className="eyebrow mb-2">Templates</div>
+                    <div className="eyebrow mb-2">Choose a template</div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {dbTemplates.map((t) => {
-                        const active = activeDbTemplateId === t.id;
+                        // Pre-select the default until the user actively picks
+                        // a card (changeable). Once they click one,
+                        // activeDbTemplateId owns the highlight. why: "default
+                        // pre-selected but changeable before generating".
+                        const active = activeDbTemplateId
+                          ? activeDbTemplateId === t.id
+                          : t.is_default;
                         const disabled = generating || !selectedListing;
                         return (
                           <button
@@ -3907,9 +3913,15 @@ export default function PostBuilderClient({
                               <span className="text-sm font-semibold text-neutral-900 line-clamp-1">
                                 {t.name}
                               </span>
-                              <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-gold-500/95 px-2 py-0.5 text-neutral-900">
-                                Admin
-                              </span>
+                              {t.is_default ? (
+                                <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-gold-500/95 px-2 py-0.5 text-neutral-900">
+                                  Default
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-neutral-200 px-2 py-0.5 text-neutral-700">
+                                  Template
+                                </span>
+                              )}
                             </div>
                             {t.description ? (
                               <div className="text-xs text-neutral-600 line-clamp-2">
@@ -3924,8 +3936,14 @@ export default function PostBuilderClient({
                 ) : null}
 
                 {/* Step 3 · Variant — hidden in multi-OH mode (per-property
-                    card variant was chosen in the wizard). */}
-                {!isMultiOHPost && mergedVariantCards.length > 0 ? (
+                    card variant was chosen in the wizard).
+                    2026-05-30 library-first consolidation — this grid is the
+                    legacy FACTORY-variant picker. Factory variants are empty
+                    post-V1-purge and approved templates now live in the
+                    unified "Choose a template" picker above, so the section
+                    only renders when real factory variants exist (never today,
+                    kept as a guard rather than dead-deleted). */}
+                {!isMultiOHPost && variants.length > 0 && mergedVariantCards.length > 0 ? (
                 <div>
                   <div className="eyebrow mb-2">Variant</div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

@@ -4,18 +4,17 @@
  * Renders a Post Builder template to a PNG via headless Chromium and uploads
  * to Supabase Storage. Returns the public image URL.
  *
- * Three render paths, tried in order:
+ * Two render paths, tried in order (legacy V1 HTML primitives were removed
+ * 2026-05-30):
  *
- *   1. **Legacy V1 HTML primitives** (`getTemplate`) — always returns null
- *      after the 2026-05-24 V1 purge but kept in the dispatcher as a
- *      defensive first check in case a stale client passes a legacy id.
- *   2. **DB-authored templates** (`renderDbTemplate`) — fires when
- *      `template_id` looks like a UUID. Used by the admin-authored
- *      templates flow.
- *   3. **Factory canvas templates** (`findCanvasTemplate` +
- *      `renderCanvasSchema`) — the default Generate-button path post-
- *      2026-05-24. Requires `post_type` + `format` in the body; ignores
- *      `template_id` (which now lives only for legacy / DB paths).
+ *   1. **DB-authored templates** (`renderDbTemplate`) — fires when
+ *      `template_id` looks like a UUID. Used by the "Choose a template"
+ *      picker (any approved library template).
+ *   2. **Library/factory canvas templates** (`resolveTemplateForStatus` ??
+ *      `findCanvasTemplate` + `renderCanvasSchema`) — the default
+ *      Generate-button path. Requires `post_type` + `format`; resolves the
+ *      approved library default, falling back to the hidden current-code
+ *      factory schema when no approved design defines the format.
  *
  * Auth: requires a signed-in Alliance user (any role).
  *
@@ -24,11 +23,9 @@
  */
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { renderTemplate } from "@/lib/post-builder/render";
-import { getTemplate } from "@/lib/post-builder/templates/registry";
 import { renderDbTemplate } from "@/lib/template-builder";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
-import { fetchDefaultCustomTemplate } from "@/lib/data/custom-templates-db";
+import { resolveTemplateForStatus } from "@/lib/data/custom-templates-db";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
   getAgentAttribution,
@@ -134,38 +131,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // ---- Branch 1: legacy V1 HTML primitives ----
-  // why: getTemplate returns null for everything after the 2026-05-24
-  // V1 purge, but the lookup is cheap and lets the rare stale client
-  // get a clean 404-style error rather than silently falling through.
-  if (body.template_id && typeof body.template_id === "string") {
-    const legacy = getTemplate(body.template_id);
-    if (legacy) {
-      const hasArray =
-        Array.isArray(body.hero_image_urls) && body.hero_image_urls.length > 0;
-      const hasSingle =
-        typeof body.hero_image_url === "string" && body.hero_image_url.length > 0;
-      if (!hasArray && !hasSingle) {
-        return NextResponse.json(
-          { ok: false, error: "hero_image_url or hero_image_urls required" },
-          { status: 400 },
-        );
-      }
-      const result = await renderTemplate({
-        template_id: body.template_id,
-        listing: body.listing,
-        hero_image_url: body.hero_image_url,
-        hero_image_urls: body.hero_image_urls,
-        customizations: body.customizations,
-      });
-      if (!result.ok) {
-        return NextResponse.json(result, { status: 500 });
-      }
-      return NextResponse.json(result);
-    }
-  }
-
-  // ---- Branch 2: DB-authored templates (UUID template_ids) ----
+  // ---- Branch 1: DB-authored templates (UUID template_ids) ----
   // why: DB template ids are v4 UUIDs. Only invoke renderDbTemplate when
   // the template_id matches that pattern, otherwise we'd waste a Supabase
   // lookup on every factory-canvas render.
@@ -203,7 +169,7 @@ export async function POST(request: Request) {
     return NextResponse.json(dbResult);
   }
 
-  // ---- Branch 3: factory canvas template (default post-2026-05-24) ----
+  // ---- Branch 2: library/factory canvas template (default path) ----
   // why: every non-UUID template_id falls through here. We resolve the
   // schema via findCanvasTemplate(post_type, "v1", format) — variant is
   // pinned to "v1" because the variant axis was soft-deprecated.
@@ -234,7 +200,7 @@ export async function POST(request: Request) {
   // schema_json is null. (Variant pinned to "v1" — see the soft-
   // deprecation note above.)
   const schema =
-    (await fetchDefaultCustomTemplate(body.post_type, body.format, "v1")) ??
+    (await resolveTemplateForStatus(body.post_type, body.format)) ??
     findCanvasTemplate(body.post_type, "v1", body.format);
   if (!schema) {
     return NextResponse.json(

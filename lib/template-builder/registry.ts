@@ -44,12 +44,18 @@ export async function listTemplatesForPostType(
   const rows = await storage.listPublishedTemplatesForPostType(post_type);
   return rows
     .filter((row) => templateSupportsFormat(row.schema, format))
-    // 2026-05-28 unification — Studio-saved templates live in the SAME
-    // table now but render in the picker's dedicated "your saved" lane
-    // (fed by listStudioTemplatesForSlot). Exclude them here so the
-    // builder lane doesn't show the same card twice.
-    .filter((row) => row.source !== "studio")
-    .map(templateMetaFromDefinition);
+    // 2026-05-30 library-first consolidation — surface EVERY approved
+    // (published) template for the slot in the single picker, regardless of
+    // author (studio or builder). Larissa picks from approved designs only;
+    // the picker is the start of post creation. Default first so it reads as
+    // the pre-selected choice, then display_order, then name.
+    .map(templateMetaFromDefinition)
+    .sort((a, b) => {
+      if (a.is_default !== b.is_default) return a.is_default ? -1 : 1;
+      if (a.display_order !== b.display_order)
+        return a.display_order - b.display_order;
+      return a.name.localeCompare(b.name);
+    });
 }
 
 /**

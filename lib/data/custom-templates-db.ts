@@ -1,48 +1,31 @@
 /**
- * custom-templates-db — server-side reads for user-authored canvas templates.
+ * custom-templates-db — server-side resolution of the LIBRARY template for a
+ * status, with a hidden current-code factory fallback.
  * ---------------------------------------------------------------------------
  *
  * Why this file exists
  *   `findCanvasTemplate(category, variant, format)` in
  *   `lib/post-builder/canvas-editor/templates/index.ts` is a SYNCHRONOUS,
- *   in-memory lookup over the factory `CANVAS_TEMPLATES` array. The vast
- *   majority of call sites (the editor's mount path, the parent post-builder
- *   client, the Reel studio) are synchronous and need to stay that way to
- *   keep render flows fast and React-friendly.
+ *   in-memory lookup over the factory `CANVAS_TEMPLATES` array. It's kept as
+ *   a FROZEN hidden fallback only (never surfaced in the picker), so client
+ *   call sites that need a synchronous schema can stay synchronous.
  *
- *   Server-side render routes, however, MUST consult the
- *   `custom_templates` table first: when Larissa saves a tuned Open House
- *   layout and marks it as default, every subsequent OH render should pick
- *   up HER layout, not the factory placeholder. This helper performs that
- *   async DB-read at the route boundary and falls back to the synchronous
- *   factory lookup when no default custom template exists for the tuple.
+ *   Server-side render routes resolve the LIBRARY template first (the
+ *   `template_definitions` source of truth) via `resolveTemplateForStatus`,
+ *   falling back to the synchronous factory lookup only when no approved
+ *   library template defines the format. Keeping the async DB read OUT of
+ *   `findCanvasTemplate` avoids rippling `await` through client call sites
+ *   (editor mount, PostBuilderClient selectors, Reel manifest) that can't
+ *   reach `createAdminClient()` anyway.
  *
- *   Keeping the async path OUT of `findCanvasTemplate` is intentional:
- *     • Async ripple would force callers across the codebase to await — the
- *       editor's mount path, useMemo selectors in PostBuilderClient, the
- *       Reel template manifest, etc.
- *     • Server contexts (render routes, the multi-OH generate route) are
- *       the only ones that can/should hit the DB. Client contexts can't
- *       reach `createAdminClient()` at all.
- *
- * Integration pattern
+ * Integration pattern (server routes only)
  *   ```ts
  *   const schema =
- *     (await fetchDefaultCustomTemplate("open_house", input.format, "v1")) ??
+ *     (await resolveTemplateForStatus("open_house", input.format)) ??
  *     findCanvasTemplate("open_house", "v1", input.format);
  *   ```
- *   The custom-template wins when present; the factory placeholder is the
- *   ultimate fallback.
- *
- * Back-compat
- *   Rows saved before 2026-05-28 have `fabric_json` populated but
- *   `schema_json = null`. This helper IGNORES those rows — they can't be
- *   re-hydrated with fresh listing data (the saved Fabric snapshot bakes
- *   in the original photos + text). The factory placeholder runs instead,
- *   which is the SAME behavior those rows had pre-2026-05-28 (no lookup
- *   existed at all). When Larissa re-saves a custom template under the
- *   new flow, the row's `schema_json` is populated and the lookup picks
- *   it up automatically.
+ *   The approved library template wins when present; the hidden factory
+ *   schema is the ultimate fallback.
  */
 
 import "server-only";
@@ -51,87 +34,94 @@ import type {
   CanvasTemplateSchema,
   PostFormat,
   PostType,
-  PostVariant,
 } from "@/lib/post-builder/canvas-editor/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
- * Look up the user-authored DEFAULT custom template for a given
- * (post_type, format, based_on_variant) tuple.
- *
- * Returns null when no default exists OR the row has no `schema_json`
- * populated (pre-2026-05-28 fabric_json-only rows are ignored — see the
- * file-level docblock for why).
- *
- * Defensive shape check: the returned schema must have an `id`, a
- * `layers` array, and numeric `width`/`height`. Malformed rows are
- * treated as misses so the caller falls through to the factory template
- * rather than crashing downstream.
+ * Extract + validate the per-format CanvasTemplateSchema out of a
+ * `template_definitions.schema` family JSON. Returns null when the family
+ * doesn't define the format or the stored schema is malformed (the caller
+ * then falls through to the next candidate / the factory). The shape check
+ * mirrors the factory invariants: id (string), width/height (number),
+ * layers (array).
  */
-export async function fetchDefaultCustomTemplate(
-  postType: PostType,
+function extractFormatSchema(
+  family: unknown,
   format: PostFormat,
-  variant: PostVariant,
-): Promise<CanvasTemplateSchema | null> {
-  // 2026-05-28 unification — default custom templates now live in the
-  // unified `template_definitions` catalog as published, studio-sourced
-  // rows (the retired custom_templates table is no longer read). The
-  // per-format CanvasTemplateSchema lives under schema[format]. We match by
-  // the (post_type, format) slot; `variant` is retained in the signature
-  // for back-compat but the unified default is keyed per post_type+format.
-  void variant;
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("template_definitions")
-    .select("schema")
-    .contains("post_types", [postType])
-    .eq("source", "studio")
-    .eq("is_default", true)
-    .neq("publish_state", "archived")
-    .maybeSingle();
-
-  if (error) {
-    // why: a transient DB error shouldn't break rendering. Log and let
-    // the caller fall through to the factory schema. This matches the
-    // memory rule about avoiding hidden state — we surface the failure
-    // in logs rather than silently swapping to a different design.
-    console.warn(
-      "[custom-templates-db] fetchDefaultCustomTemplate query failed",
-      {
-        postType,
-        format,
-        variant,
-        error: error.message,
-      },
-    );
+): CanvasTemplateSchema | null {
+  if (!family || typeof family !== "object" || Array.isArray(family)) {
     return null;
   }
-
-  const family =
-    data && data.schema && typeof data.schema === "object" && !Array.isArray(data.schema)
-      ? (data.schema as Record<string, unknown>)
-      : null;
-  if (!family || !family[format]) {
+  const entry = (family as Record<string, unknown>)[format];
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     return null;
   }
-
-  const schema = family[format] as unknown;
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
-    return null;
-  }
-  const s = schema as Record<string, unknown>;
+  const s = entry as Record<string, unknown>;
   if (
     typeof s.id !== "string" ||
     typeof s.width !== "number" ||
     typeof s.height !== "number" ||
     !Array.isArray(s.layers)
   ) {
-    console.warn(
-      "[custom-templates-db] default custom template has malformed schema_json; falling back to factory",
-      { postType, format, variant },
-    );
+    return null;
+  }
+  return entry as CanvasTemplateSchema;
+}
+
+/**
+ * Resolve the LIBRARY template for a (post_type, format) slot.
+ *
+ * Library-first consolidation (2026-05-30): every status-driven render
+ * resolves its design from `template_definitions` — the single source of
+ * truth — before falling back to the in-code factory schema.
+ *
+ * Resolution order among PUBLISHED rows tagged for the post type
+ * (source-agnostic: studio- and builder-authored both count as "approved"):
+ *   1. the row flagged `is_default`
+ *   2. then lowest `display_order`
+ *   3. then most recently created
+ * The first candidate that actually DEFINES the requested format wins (a
+ * default that only defines square won't block a portrait render — we keep
+ * scanning for a published row that defines portrait).
+ *
+ * Returns null when no published library template defines the format; the
+ * caller falls through to `findCanvasTemplate` (the current-code factory),
+ * which is NEVER surfaced in the user picker. The factory is a hidden
+ * generation fallback only, so statuses without an approved design still
+ * render rather than 404.
+ */
+export async function resolveTemplateForStatus(
+  postType: PostType,
+  format: PostFormat,
+): Promise<CanvasTemplateSchema | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("template_definitions")
+    .select("schema, is_default, display_order, created_at")
+    .contains("post_types", [postType])
+    .eq("publish_state", "published")
+    .order("is_default", { ascending: false })
+    .order("display_order", { ascending: true })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    // why: a transient DB error shouldn't break rendering. Log and let the
+    // caller fall through to the factory schema rather than silently
+    // swapping to a different design.
+    console.warn("[custom-templates-db] resolveTemplateForStatus query failed", {
+      postType,
+      format,
+      error: error.message,
+    });
     return null;
   }
 
-  return schema as CanvasTemplateSchema;
+  for (const row of data ?? []) {
+    const schema = extractFormatSchema(
+      (row as { schema?: unknown }).schema,
+      format,
+    );
+    if (schema) return schema;
+  }
+  return null;
 }

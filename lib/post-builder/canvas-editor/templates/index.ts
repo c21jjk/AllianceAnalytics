@@ -60,16 +60,17 @@ export const CANVAS_TEMPLATES: readonly CanvasTemplateSchema[] = [
  * Find the FACTORY template that matches a (category, variant, format)
  * tuple. SYNCHRONOUS — in-memory lookup over `CANVAS_TEMPLATES`.
  *
- * 2026-05-28 — Custom Templates note
- *   This function does NOT consult the `custom_templates` table. Server-
- *   side render contexts (multi-OH route, single-listing render route)
- *   should layer a DB lookup IN FRONT of this call:
+ * 2026-05-30 — Library-first note
+ *   This function is a FROZEN hidden fallback; it does NOT consult the
+ *   `template_definitions` library and is never surfaced in the picker.
+ *   Server-side render contexts (multi-OH route, single-listing render
+ *   route) resolve the approved library template IN FRONT of this call:
  *
  *       const schema =
- *         (await fetchDefaultCustomTemplate(category, format, variant)) ??
+ *         (await resolveTemplateForStatus(category, format)) ??
  *         findCanvasTemplate(category, variant, format);
  *
- *   The async helper lives at `lib/data/custom-templates-db.ts`. Keeping
+ *   The async resolver lives at `lib/data/custom-templates-db.ts`. Keeping
  *   the factory path synchronous avoids rippling `await` through every
  *   client-side caller (editor mount, useMemo selectors in
  *   PostBuilderClient, Reel manifest, etc.) where DB access isn't even

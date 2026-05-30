@@ -3,8 +3,7 @@ import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
 import {
   formatDisplayMeta,
   listSupportedFormats,
-  listVariantsForPostType,
-} from "@/lib/post-builder/templates/registry";
+} from "@/lib/post-builder/format-meta";
 import {
   getTemplateById,
   listTemplatesForPostType,
@@ -123,11 +122,11 @@ export default async function PostBuilderPage({
       VariantOption[]
     >;
     for (const fmt of formats) {
-      // 2026-05-24 — listVariantsForPostType returns TemplateMeta[] after
-      // the V1 primitives purge; in practice it returns [] because no V1
-      // templates exist anymore. Cast to satisfy the local VariantOption
-      // shape; runtime is always empty so the field-name mismatch is moot.
-      byFormat[fmt] = listVariantsForPostType(pt, fmt) as unknown as VariantOption[];
+      // 2026-05-30 — factory/V1 variants are gone; the legacy variant grid
+      // is retired in favor of the unified "Choose a template" picker. Always
+      // empty; kept as a slot so the prop shape PostBuilderClient expects
+      // stays stable.
+      byFormat[fmt] = [] as VariantOption[];
     }
     variantsByPostTypeAndFormat[pt] = byFormat;
   }

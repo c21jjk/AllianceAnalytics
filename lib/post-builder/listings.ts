@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PostBuilderListing, PostType } from "./types";
-import type { PostBuilderListingWithOH } from "./templates/primitives/_shared";
+import type { PostBuilderListingWithOH } from "./listing-html-utils";
 
 /**
  * Status-aware listing fetcher for the Post Builder UI.

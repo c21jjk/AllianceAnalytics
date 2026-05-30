@@ -49,7 +49,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { renderDbTemplate } from "@/lib/template-builder";
 import { getOpenHousesForProperty } from "@/lib/data/open-houses";
-import { fetchDefaultCustomTemplate } from "@/lib/data/custom-templates-db";
+import { resolveTemplateForStatus } from "@/lib/data/custom-templates-db";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
@@ -396,7 +396,7 @@ async function rerenderSlide(args: {
     // open_house/v1 canvas template. The variant axis is cosmetic (every
     // variant maps to open_house/v1), mirroring the generator.
     const baseSchema =
-      (await fetchDefaultCustomTemplate("open_house", format, "v1")) ??
+      (await resolveTemplateForStatus("open_house", format)) ??
       findCanvasTemplate("open_house", "v1", format);
     if (!baseSchema) {
       throw new Error(`no canvas template for open_house/${format}`);

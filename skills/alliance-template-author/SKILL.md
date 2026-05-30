@@ -7,6 +7,8 @@ description: Author or modify a CanvasTemplateSchema for the AllianceSocialAnaly
 
 You are authoring a `CanvasTemplateSchema` for the AllianceSocialAnalytics Post Builder canvas editor. This is the layer-tree JSON document that the Fabric.js-based editor consumes to render an editable post, with MLS listing data bound into placeholder fields.
 
+**Where templates live now (2026-05-30 library-first consolidation).** The single source of truth for approved templates is the `template_definitions` Supabase table, not code files. Each row stores a per-format schema family (`schema[format]` is a `CanvasTemplateSchema`) and is what the "Choose a template" picker and the status-driven render path resolve. The old in-code factory registry (`lib/post-builder/canvas-editor/templates/`) is now a FROZEN hidden fallback only — do NOT add new templates there. Author the schema with this skill, then land it as a `template_definitions` row (see "Where the finished template goes" below). The schema-authoring craft in this skill is unchanged; only the destination moved from a `.ts` file to a DB row.
+
 This skill assumes you already understand: the project tech stack (Next.js 15, strict TS, Tailwind), the brand (Alliance gold #C9A961, Obsessed grey #18181B, Inter + Georgia type), and the Post Builder structure. Read those from the project's CLAUDE.md and memory if you don't.
 
 ## When to use this skill
@@ -14,7 +16,6 @@ This skill assumes you already understand: the project tech stack (Next.js 15, s
 Trigger this skill whenever the user asks to:
 
 - Create a new template (any category × variant × format)
-- Port a V1 template (the headless-Chromium templates under `lib/post-builder/templates/`) into the canvas editor schema
 - Add a new aspect ratio of an existing variant
 - Fix a template that errors on load or export
 - Audit an existing template for brand/MLS-binding correctness
@@ -32,11 +33,9 @@ Always start by reading the schema source-of-truth so you reference real type na
 
 Skip this step at your peril — type names, exact enum values, and tokens change as the project evolves, and templates that reference stale names won't compile.
 
-## Pattern: factory vs. hand-authored
+## Reference the factory only as a STARTING POINT
 
-For variants where the visual language is constant across post types and formats (like v1 Hero Editorial), prefer the **factory pattern**: one function that takes `(postType, format)` and returns the schema. The registry calls `buildAllHeroEditorialTemplates()` at module-load time to produce all 15 combos. Adding a 6th post type is a single config entry in `POST_TYPE_CONFIGS` — no new files.
-
-For variants with genuinely different layouts per post type (rare — usually a sign the variants should be separate), fall back to hand-authored files following the original `just-listed-hero-*.ts` shape (those files were deleted on 2026-05-14 when the factory shipped; recover from git history if needed).
+The frozen factory schemas (`lib/post-builder/canvas-editor/templates/`, e.g. `hero-editorial-factory.ts`) are still the best canonical reference for a correct, on-brand `CanvasTemplateSchema` across the 5 post types × 2 formats. Read them to copy the layout numbers, theming config, and layer structure. But they are now a frozen fallback, not a destination — you are authoring a schema to store in a `template_definitions` row (see step 10), not adding to that registry. Treat the factory output as the shape your row's `schema[format]` should match.
 
 ## Authoring procedure
 
@@ -150,28 +149,22 @@ The type system requires this — the field is `"anonymous"` literal. The reason
 
 If a future image source doesn't send `Access-Control-Allow-Origin` headers, the fix is server-side (proxy through Supabase Storage or a CORS-correct endpoint) — never `crossOrigin: undefined`.
 
-### 10. Write the file
+### 10. Where the finished template goes — a `template_definitions` row
 
-Save to `lib/post-builder/canvas-editor/templates/<category>-<variant-name>-<format-short>.ts`. Conventions:
+Approved templates live in the `template_definitions` table, NOT in a code file. The schema you authored becomes the row's `schema[format]` value. Two ways to land it, in order of preference:
 
-- File name uses kebab-case and includes the format suffix (`-portrait`, `-story`)
-- Export a single named const, camelCase: `justListedHeroPortrait`, `openHouseStatsStory`, etc.
-- The exported `id` is snake_case prefixed with `canvas_`: `canvas_just_listed_v1_portrait`
+1. **Admin Template Builder (recommended for humans).** `/admin/templates` → New template → open the canvas editor (the SAME `CanvasEditor`), paste/build the layout, set post type(s) + format, then publish. Saving there writes the `template_definitions` row directly.
+2. **Studio "Save as Template."** From the Post Builder, open a listing in Studio, build the layout, and use "Save as Template" — it writes a `source='studio'`, published row via `saveStudioTemplate`.
 
-### 11. Register in the index
+If you must insert programmatically (e.g., seeding), write the row through the Supabase MCP (`apply_migration` / `execute_sql`) into `template_definitions` with: `post_types` (array), `schema` = `{ "<format>": <CanvasTemplateSchema> }`, `publish_state='published'`, `source` (`'builder'` or `'studio'`), and `is_default` only if it should be the slot's pre-selected pick. Never paste SQL into the Supabase web editor.
 
-Open `lib/post-builder/canvas-editor/templates/index.ts` and:
+Do NOT add the template to `lib/post-builder/canvas-editor/templates/index.ts`. That factory registry is a frozen hidden fallback; new entries there will not appear in the picker (which reads `template_definitions`).
 
-1. Add the import for your new template
-2. Add it to the `CANVAS_TEMPLATES` array
+### 11. Validate the schema before saving
 
-Without this, `findCanvasTemplate()` returns null for the tuple and the "Edit in Studio" button doesn't appear.
+The CanvasEditor enforces the same invariants at load/export that the old factory's `validateCanvasTemplates` did: exact `PLATFORM_DIMENSIONS[format]` dimensions, non-empty layers, unique layer ids, a `hero_photo`-bound image layer, `schemaVersion: 1`, and well-formed gradient fills. If you authored the schema as a temporary `.ts` object to typecheck it, run `npx tsc --noEmit` (zero errors means bound-field names + dimensions are correct types) — but the file is scratch only; the deliverable is the `template_definitions` row. A malformed schema shows as a disabled Save button + red warning in the editor.
 
-### 12. Verify with tsc
-
-Run `npx tsc --noEmit` from the repo root. Zero errors means the schema is well-formed, all bound-field names are valid, and dimensions are correct types.
-
-If you see errors like `Type '"adress_line1"' is not assignable to type 'TextBoundField'`, fix the typo and re-run. Do not commit until tsc is clean — this is a project standing rule.
+Do not finalize until the editor accepts it and tsc (if used for scratch validation) is clean — committing clean is a project standing rule.
 
 ## Common footguns
 

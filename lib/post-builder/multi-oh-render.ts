@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { screenshotHtml } from "./chromium";
-import { escapeHtml } from "./templates/primitives/_shared";
+import { escapeHtml } from "./listing-html-utils";
 import {
   PLATFORM_DIMENSIONS,
 } from "./canvas-editor/types";

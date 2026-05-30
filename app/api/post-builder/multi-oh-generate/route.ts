@@ -75,9 +75,9 @@ import {
   type MultiOHRenderResult,
 } from "@/lib/post-builder/multi-oh-render";
 import { renderDbTemplate } from "@/lib/template-builder";
-import { formatShortName } from "@/lib/post-builder/templates/registry";
+import { formatShortName } from "@/lib/post-builder/format-meta";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
-import { fetchDefaultCustomTemplate } from "@/lib/data/custom-templates-db";
+import { resolveTemplateForStatus } from "@/lib/data/custom-templates-db";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
   synthesizeMultiOHCaption,
@@ -868,7 +868,7 @@ async function renderPerPropertyCards(
         // each render. Falls back to the factory placeholder when no
         // default custom template exists or its schema_json is null.
         const schema =
-          (await fetchDefaultCustomTemplate("open_house", input.format, "v1")) ??
+          (await resolveTemplateForStatus("open_house", input.format)) ??
           findCanvasTemplate("open_house", "v1", input.format);
         if (!schema) {
           const err = `no canvas template for open_house/${input.format}`;

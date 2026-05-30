@@ -42,7 +42,11 @@ export default function TemplateListClient({ templates }: Props) {
   const counts = useMemo(() => {
     const c = { all: 0, draft: 0, published: 0, archived: 0, unused: 0 };
     for (const t of templates) {
-      c.all += 1;
+      // "All" is the default working view and intentionally EXCLUDES
+      // archived rows — archived is reachable only via its own pill (the
+      // "view archived" toggle). Keeps the day-to-day list free of retired
+      // test/old templates.
+      if (t.publish_state !== "archived") c.all += 1;
       if (t.publish_state === "draft") c.draft += 1;
       else if (t.publish_state === "published") c.published += 1;
       else if (t.publish_state === "archived") c.archived += 1;
@@ -52,7 +56,9 @@ export default function TemplateListClient({ templates }: Props) {
   }, [templates]);
 
   const visible = useMemo(() => {
-    if (filter === "all") return templates;
+    // Default "All" hides archived — they only appear under the Archived pill.
+    if (filter === "all")
+      return templates.filter((t) => t.publish_state !== "archived");
     if (filter === "unused") {
       // why: orthogonal to publish_state — "unused" surfaces every
       // template that hasn't generated a post, regardless of whether it's
