@@ -212,7 +212,7 @@ export default async function PostBuilderPage({
         <PageHeader
           eyebrow={`${totalEligible} eligible listings · 60 legacy templates · 2 formats`}
           title="Post Builder"
-          description="Pick a post type, listing, and variant. Every post auto-renders in both formats — Portrait 4:5 for IG/FB feed, Story 9:16 for Stories/Reels/TikTok — with the MLS hashtag baked in for auto-attribution."
+          description="Pick a post type, listing, and variant. Every post auto-renders in both formats — Square 1080 × 1080 for IG/FB feed, Story 9:16 for Stories/Reels/TikTok — with the MLS hashtag baked in for auto-attribution."
           phaseTag="Phase 3"
           actions={
             <div className="flex flex-wrap items-center gap-2">

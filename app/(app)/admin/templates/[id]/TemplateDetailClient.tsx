@@ -170,7 +170,7 @@ export default function TemplateDetailClient({ template }: Props) {
             className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-gold-600 transition-colors"
           >
             <PencilIcon />
-            Open visual editor
+            Edit in Studio
           </Link>
           <button
             type="button"
