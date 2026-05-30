@@ -9,6 +9,7 @@ import SendTestEmailButton from "@/components/SendTestEmailButton";
 import SendWeeklyReportPreviewButton from "@/components/SendWeeklyReportPreviewButton";
 import SendWeeklyReportDistributionButton from "@/components/SendWeeklyReportDistributionButton";
 import SendOfficePostAnnouncementPreviewButton from "@/components/SendOfficePostAnnouncementPreviewButton";
+import SendOwnerStoryPreviewButton from "@/components/SendOwnerStoryPreviewButton";
 import { getWeeklySocialReportRecipientEmails } from "@/lib/data/email-subscribers";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -357,6 +358,23 @@ export default async function SettingsPage() {
               <strong className="text-neutral-700">Open in browser</strong> for
               the same render inline. The real cron fires every morning at
               8&nbsp;AM ET and emails the roster one message per new campaign.
+            </p>
+          </div>
+
+          <div className="border-t border-neutral-100 pt-5">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                Owner Story email — design preview
+              </h3>
+            </div>
+            <SendOwnerStoryPreviewButton />
+            <p className="mt-3 text-[11px] text-neutral-500">
+              Picks the first eligible listing (active, with social posts at
+              least a week old) and emails its live Owner Story to{" "}
+              <strong className="text-neutral-700">c21jjk@gmail.com</strong>{" "}
+              only — without consuming that listing&apos;s real Monday slot. The
+              cron fires Mondays at 9:15&nbsp;AM ET and emails each active
+              listing&apos;s agent until the listing leaves &ldquo;active.&rdquo;
             </p>
           </div>
         </div>

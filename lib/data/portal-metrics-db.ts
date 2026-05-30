@@ -327,15 +327,20 @@ export async function fetchPortalTrafficForListing(
 }
 
 // ---------------------------------------------------------------------------
-//  Portal Strip — 5 fixed slots: Zillow / Realtor.com / Trulia / Redfin / CIH
+//  Portal Strip — 5 fixed slots: Zillow / Realtor.com / Trulia / CIH / Other
 // ---------------------------------------------------------------------------
 //
 // Used by the post card, main property card, and Owner Story. Always returns
 // all 5 slots so the UI never has to handle a "portal didn't come back" case
 // — missing portals just render as zero/empty.
+//
+// Redfin + Homes.com were removed 2026-05-29: ListTrac returns zero rows for
+// both for this org (phantom slots). Every portal that isn't Zillow/Realtor/
+// Trulia/CIH now rolls into the "Other Portals" catch-all so real traffic
+// (BHHS, CoreLogic OneHome, RE/MAX, etc.) is never silently dropped.
 
 /** Stable keys used by the UI to pick logos + colors. */
-export type PortalStripKey = "zillow" | "realtor" | "trulia" | "redfin" | "cih";
+export type PortalStripKey = "zillow" | "realtor" | "trulia" | "cih" | "other";
 
 export interface PortalStripSlot {
   /** Stable identity for the UI (logo lookup, sort order). */
@@ -348,9 +353,11 @@ export interface PortalStripSlot {
   /** True only if we have any non-zero metric for this slot in window. */
   has_data: boolean;
   /**
-   * Whether saves are *trackable* for this portal. Zillow/Realtor/Trulia
-   * and Redfin never pass saves through ListTrac; only certain IDX/MLS
-   * sources do. UI uses this to render "—" + tooltip instead of "0".
+   * Whether saves are *trackable* for this portal. The big consumer portals
+   * (Zillow/Realtor/Trulia) never pass saves through ListTrac; only certain
+   * IDX/MLS sources do. Retained on the data shape for completeness, but the
+   * UI no longer surfaces saves — across the whole org ListTrac has reported
+   * ~20 saves ever vs. 117k+ views, so views is the only meaningful metric.
    */
   saves_trackable: boolean;
 }
@@ -400,12 +407,6 @@ const STRIP_PORTAL_MAP: Array<{
     key: "trulia",
     display_name: "Trulia",
     members: ["Trulia", "trulia.com"],
-    saves_trackable: false,
-  },
-  {
-    key: "redfin",
-    display_name: "Redfin",
-    members: ["Redfin", "redfin.com"],
     saves_trackable: false,
   },
   {
@@ -512,8 +513,9 @@ export async function fetchPortalStrip(
   let maxDate: string | null = null;
 
   for (const r of rows) {
-    const key = memberToKey.get(r.portal_name);
-    if (!key) continue;
+    // Anything not explicitly mapped to a named slot rolls into "other" so
+    // real traffic (BHHS, OneHome, RE/MAX, the long tail) is never dropped.
+    const key: PortalStripKey = memberToKey.get(r.portal_name) ?? "other";
     const v = Number(r.views) || 0;
     const s = Number(r.favorites) || 0;
     let entry = sums.get(key);
@@ -529,7 +531,21 @@ export async function fetchPortalStrip(
     if (!maxDate || r.metric_date > maxDate) maxDate = r.metric_date;
   }
 
-  const slots: PortalStripSlot[] = STRIP_PORTAL_MAP.map((def) => {
+  // Named slots first (in map order), then the "Other Portals" catch-all.
+  const slotDefs: Array<{
+    key: PortalStripKey;
+    display_name: string;
+    saves_trackable: boolean;
+  }> = [
+    ...STRIP_PORTAL_MAP.map((d) => ({
+      key: d.key,
+      display_name: d.display_name,
+      saves_trackable: d.saves_trackable,
+    })),
+    { key: "other", display_name: "Other Portals", saves_trackable: false },
+  ];
+
+  const slots: PortalStripSlot[] = slotDefs.map((def) => {
     const got = sums.get(def.key) ?? { views: 0, saves: 0 };
     return {
       key: def.key,
@@ -669,8 +685,8 @@ export async function fetchBuildingPortalTraffic(
     zillow:  { views: 0, saves: 0, saves_trackable: false },
     realtor: { views: 0, saves: 0, saves_trackable: false },
     trulia:  { views: 0, saves: 0, saves_trackable: false },
-    redfin:  { views: 0, saves: 0, saves_trackable: false },
     cih:     { views: 0, saves: 0, saves_trackable: true },
+    other:   { views: 0, saves: 0, saves_trackable: false },
   };
   let totalViews = 0;
   let totalSaves = 0;
@@ -705,12 +721,13 @@ export async function fetchBuildingPortalTraffic(
     });
   }
 
-  const slotOrder: PortalStripKey[] = ["zillow", "realtor", "trulia", "redfin", "cih"];
+  const slotOrder: PortalStripKey[] = ["zillow", "realtor", "trulia", "cih", "other"];
   const slots = slotOrder.map((k) => ({
     key: k,
     display_name:
       k === "realtor" ? "Realtor.com" :
       k === "cih"     ? "CIH brand network" :
+      k === "other"   ? "Other Portals" :
       k.charAt(0).toUpperCase() + k.slice(1),
     views: combinedSlots[k].views,
     saves: combinedSlots[k].saves_trackable ? combinedSlots[k].saves : null,

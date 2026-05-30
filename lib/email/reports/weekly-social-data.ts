@@ -32,7 +32,7 @@ export type WeeklyPlatform = "facebook" | "instagram" | "tiktok";
 const PLATFORMS: WeeklyPlatform[] = ["facebook", "instagram", "tiktok"];
 
 /** Portal slot keys mirror lib/data/portal-metrics-db.ts. */
-export type WeeklyPortalKey = "zillow" | "realtor" | "trulia" | "redfin" | "cih";
+export type WeeklyPortalKey = "zillow" | "realtor" | "trulia" | "cih" | "other";
 
 const PORTAL_STRIP_DEFS: Array<{
   key: WeeklyPortalKey;
@@ -42,7 +42,6 @@ const PORTAL_STRIP_DEFS: Array<{
   { key: "zillow",  display_name: "Zillow",        members: ["Zillow.com","Zillow","zillow.com"] },
   { key: "realtor", display_name: "Realtor.com",   members: ["Realtor.com","realtor.com"] },
   { key: "trulia",  display_name: "Trulia",        members: ["Trulia","trulia.com"] },
-  { key: "redfin",  display_name: "Redfin",        members: ["Redfin","redfin.com"] },
   { key: "cih",     display_name: "CIH",
     members: [
       "century21.com","century21global.com","Coldwell Banker","coldwellbanker.com","coldwellbankerhomes.com",
@@ -51,6 +50,19 @@ const PORTAL_STRIP_DEFS: Array<{
     ],
   },
 ];
+
+// Display order for the email strip: the four named slots, then the
+// "Other Portals" catch-all (BHHS, CoreLogic OneHome, RE/MAX, and the long
+// tail). Redfin + Homes.com were removed 2026-05-29 — ListTrac returns zero
+// rows for both, so they were phantom slots.
+const PORTAL_SLOT_ORDER: Array<{ key: WeeklyPortalKey; display_name: string }> = [
+  ...PORTAL_STRIP_DEFS.map((d) => ({ key: d.key, display_name: d.display_name })),
+  { key: "other", display_name: "Other Portals" },
+];
+
+function zeroBySlot(): Record<WeeklyPortalKey, number> {
+  return { zillow: 0, realtor: 0, trulia: 0, cih: 0, other: 0 };
+}
 
 export interface WeeklyPortalSlot {
   key: WeeklyPortalKey;
@@ -72,7 +84,7 @@ export interface WeeklyPortalTraffic {
   has_data: boolean;
   /** Org-wide total across every listing + every portal in the window. */
   total_views: number;
-  /** Always-5-entries breakdown (Zillow, Realtor, Trulia, Redfin, CIH). */
+  /** Always-5-entries breakdown (Zillow, Realtor, Trulia, CIH, Other). */
   by_slot: WeeklyPortalSlot[];
   /** Top 5 listings by total views in the window. */
   top_listings: WeeklyPortalListing[];
@@ -82,7 +94,7 @@ function emptyPortalTraffic(): WeeklyPortalTraffic {
   return {
     has_data: false,
     total_views: 0,
-    by_slot: PORTAL_STRIP_DEFS.map((d) => ({
+    by_slot: PORTAL_SLOT_ORDER.map((d) => ({
       key: d.key,
       display_name: d.display_name,
       views: 0,
@@ -799,17 +811,15 @@ async function loadWeeklyPortalTraffic(
     total_views: number;
     by_slot: Record<WeeklyPortalKey, number>;
   };
-  const slotTotals: Record<WeeklyPortalKey, number> = {
-    zillow: 0, realtor: 0, trulia: 0, redfin: 0, cih: 0,
-  };
+  const slotTotals: Record<WeeklyPortalKey, number> = zeroBySlot();
   const perListing = new Map<string, ListingAgg>();
   let grandTotal = 0;
 
   for (const r of rows) {
     const v = Number(r.views) || 0;
     if (v <= 0) continue;
-    const slot = memberToSlot.get(r.portal_name);
-    if (!slot) continue;
+    // Unmapped portals roll into "Other Portals" rather than being dropped.
+    const slot: WeeklyPortalKey = memberToSlot.get(r.portal_name) ?? "other";
     slotTotals[slot] += v;
     grandTotal += v;
     let entry = perListing.get(r.mls_number);
@@ -817,7 +827,7 @@ async function loadWeeklyPortalTraffic(
       entry = {
         mls_number: r.mls_number,
         total_views: 0,
-        by_slot: { zillow: 0, realtor: 0, trulia: 0, redfin: 0, cih: 0 },
+        by_slot: zeroBySlot(),
       };
       perListing.set(r.mls_number, entry);
     }
@@ -863,7 +873,7 @@ async function loadWeeklyPortalTraffic(
   return {
     has_data: true,
     total_views: grandTotal,
-    by_slot: PORTAL_STRIP_DEFS.map((d) => ({
+    by_slot: PORTAL_SLOT_ORDER.map((d) => ({
       key: d.key,
       display_name: d.display_name,
       views: slotTotals[d.key],

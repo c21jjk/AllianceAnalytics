@@ -107,6 +107,10 @@ export function useUndoRedoHistory(
   // why: during loadFromJSON, Fabric re-emits object:added etc. for each
   // restored layer. We DON'T want those to push new history entries.
   const isReplayingRef = useRef<boolean>(false);
+  // why: pause recording during multi-step canvas surgery (crop mode) so the
+  // intermediate states (image clipPath removed, overlay rects added) don't
+  // pollute the undo stack. Toggled via suspend()/resume().
+  const isSuspendedRef = useRef<boolean>(false);
   // why: keep the latest pre-start snapshot so `start()` has something to
   // push as the baseline. Updated by event handlers while not started.
   const pendingBaselineRef = useRef<string | null>(null);
@@ -179,6 +183,7 @@ export function useUndoRedoHistory(
   const record = useCallback((): void => {
     if (!isStartedRef.current) return;
     if (isReplayingRef.current) return;
+    if (isSuspendedRef.current) return;
     if (debounceTimerRef.current !== null) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
@@ -304,6 +309,7 @@ export function useUndoRedoHistory(
      */
     const onMutation = (): void => {
       if (isReplayingRef.current) return;
+      if (isSuspendedRef.current) return;
       if (debounceTimerRef.current !== null) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -347,6 +353,19 @@ export function useUndoRedoHistory(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasRef.current, captureSnapshot, pushSnapshot]);
 
+  // why: pause/resume auto-snapshot during crop mode. suspend() also drops any
+  // pending debounced snapshot so a pre-crop tick doesn't land mid-crop.
+  const suspend = useCallback((): void => {
+    isSuspendedRef.current = true;
+    if (debounceTimerRef.current !== null) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+  }, []);
+  const resume = useCallback((): void => {
+    isSuspendedRef.current = false;
+  }, []);
+
   return {
     canUndo,
     canRedo,
@@ -354,6 +373,8 @@ export function useUndoRedoHistory(
     redo,
     record,
     start,
+    suspend,
+    resume,
   };
 }
 

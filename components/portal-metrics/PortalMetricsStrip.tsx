@@ -3,11 +3,13 @@
  *
  *   variant="compact" — Post cards. Two-line, tiny.
  *   variant="card"    — Main property cards. Five mini-tiles with views.
- *   variant="story"   — Owner Story. Larger lockups, full numbers + saves.
+ *   variant="story"   — Owner Story. Larger lockups, full view counts.
  *
- * Saves are shown as "—" when the portal doesn't pass saves through
- * ListTrac (Zillow / Realtor / Trulia / Redfin). CIH does in some cases.
- * UI explains via title-attribute tooltip on hover.
+ * Slots: Zillow / Realtor.com / Trulia / CIH / Other Portals.
+ *
+ * Views only. ListTrac reports saves/inquiries/shares so sparsely for this
+ * org (~20 saves ever vs. 117k+ views) that surfacing them would just be a
+ * column of zeros — so the strip shows views and nothing else (2026-05-29).
  */
 import clsx from "clsx";
 import type { PortalStrip, PortalStripSlot } from "@/lib/data/portal-metrics-db";
@@ -133,7 +135,6 @@ function CardStrip({
                 views
               </span>
             </div>
-            <SavesRow slot={slot} compact />
           </li>
         ))}
       </ul>
@@ -191,7 +192,6 @@ function StoryStrip({
                 {slot.views === 1 ? "view" : "views"}
               </span>
             </div>
-            <SavesRow slot={slot} compact={false} />
           </li>
         ))}
       </ul>
@@ -199,55 +199,9 @@ function StoryStrip({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Saves row — shared across card + story variants
-// ---------------------------------------------------------------------------
-function SavesRow({
-  slot,
-  compact,
-}: {
-  slot: PortalStripSlot;
-  compact: boolean;
-}) {
-  // Slot doesn't track saves at all → render a subtle "—" with explainer.
-  if (!slot.saves_trackable) {
-    return (
-      <span
-        className={clsx(
-          compact
-            ? "text-[9px] text-neutral-400"
-            : "text-[11px] text-neutral-400",
-        )}
-        title="Saves aren't reported through this portal's syndication feed."
-      >
-        — saves
-      </span>
-    );
-  }
-  const n = slot.saves ?? 0;
-  return (
-    <span
-      className={clsx(
-        "tabular-nums",
-        n > 0 ? "text-neutral-700" : "text-neutral-400",
-        compact ? "text-[9px]" : "text-[11px]",
-      )}
-    >
-      {n} {n === 1 ? "save" : "saves"}
-    </span>
-  );
-}
-
 function slotTooltip(slot: PortalStripSlot): string {
   if (slot.views === 0) {
-    if (slot.key === "redfin") {
-      return `${slot.display_name}: data not yet flowing through ListTrac.`;
-    }
     return `${slot.display_name}: no portal traffic in this window.`;
   }
-  const savesBit =
-    slot.saves_trackable && slot.saves !== null
-      ? `, ${slot.saves} save${slot.saves === 1 ? "" : "s"}`
-      : "";
-  return `${slot.display_name}: ${slot.views.toLocaleString()} view${slot.views === 1 ? "" : "s"}${savesBit}`;
+  return `${slot.display_name}: ${slot.views.toLocaleString()} view${slot.views === 1 ? "" : "s"}`;
 }

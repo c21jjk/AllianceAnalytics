@@ -14,6 +14,10 @@
       "schedule": "0 13 * * 1"
     },
     {
+      "path": "/api/cron/owner-story-weekly",
+      "schedule": "15 13 * * 1"
+    },
+    {
       "path": "/api/cron/office-post-announcements",
       "schedule": "0 13 * * *"
     }

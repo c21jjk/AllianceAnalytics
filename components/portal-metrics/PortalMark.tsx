@@ -10,8 +10,8 @@
  *   - Zillow:        #006AFF (Zillow blue)
  *   - Realtor.com:   #D92228 (Realtor red)
  *   - Trulia:        #00A35C (Trulia green)
- *   - Redfin:        #A02021 (Redfin red)
  *   - CIH:           #C9A84C (Alliance Relentless Gold — neutral umbrella mark)
+ *   - Other Portals: #6B7280 (neutral grey — catch-all rollup)
  */
 import clsx from "clsx";
 import type { PortalStripKey } from "@/lib/data/portal-metrics-db";
@@ -54,17 +54,17 @@ const PORTAL_CONFIGS: Record<PortalStripKey, PortalConfig> = {
     chipText: "#FFFFFF",
     chipBg: "#00A35C",
   },
-  redfin: {
-    label: "Redfin",
-    color: "#A02021",
-    chipText: "#FFFFFF",
-    chipBg: "#A02021",
-  },
   cih: {
     label: "CIH",
     color: "#C9A84C",
     chipText: "#3B2F0E",
     chipBg: "#FDF6DC",
+  },
+  other: {
+    label: "Other Portals",
+    color: "#6B7280",
+    chipText: "#FFFFFF",
+    chipBg: "#6B7280",
   },
 };
 

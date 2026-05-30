@@ -1444,6 +1444,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       return;
     }
 
+    // #10 fix — pause undo history for the whole crop session. Entering crop
+    // removes the image clipPath and adds overlay rects; without this those
+    // intermediate mutations pollute the stack (and broke undo). We record a
+    // SINGLE entry on commit (see exitFn).
+    history.suspend();
+
     // 1 — snapshot pre-crop interactivity so we can restore on exit.
     interface Restorable {
       obj: import("fabric").FabricObject;
@@ -1949,6 +1955,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         c.fire("object:modified", { target: targetImage });
       }
       c.requestRenderAll();
+      // #10 fix — resume history, then capture the net crop as ONE undo entry
+      // on commit. On cancel the pre-crop state was restored, so there's
+      // nothing new to record (the stack's current IS the pre-crop state).
+      history.resume();
+      if (!cancel) history.record();
       setCurrentClipRect(null);
       setCropMode(null);
     };
@@ -2060,6 +2071,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           // crash the editor. A failed best-effort restore is recoverable.
         }
       }
+      // #10 safety — never leave history suspended if crop tears down without
+      // a user-driven exit (e.g. template dims change, unmount mid-crop).
+      history.resume();
       exitCropModeRef.current = null;
       cropAspectRef.current = null;
     };

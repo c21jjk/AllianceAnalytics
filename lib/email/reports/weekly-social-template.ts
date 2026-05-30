@@ -284,7 +284,7 @@ function topCampaignRow(campaign: WeeklyTopCampaign, rank: number): string {
  *                                                                          *
  *  Three blocks:                                                           *
  *    1. Hero tile — single weekly total across all listings + portals      *
- *    2. Per-portal stripe — Zillow / Realtor / Trulia / Redfin / CIH mini  *
+ *    2. Per-portal stripe — Zillow / Realtor / Trulia / CIH / Other mini   *
  *    3. Top 5 listings table — address + per-portal mini split             *
  *                                                                          *
  *  Suppressed entirely when has_data=false (avoids empty box on first      *
@@ -293,14 +293,14 @@ function topCampaignRow(campaign: WeeklyTopCampaign, rank: number): string {
 
 // Tier-1 portal brand colors (mirrors components/portal-metrics/PortalMark.tsx).
 const PORTAL_COLOR: Record<
-  "zillow" | "realtor" | "trulia" | "redfin" | "cih",
+  "zillow" | "realtor" | "trulia" | "cih" | "other",
   string
 > = {
   zillow: "#006AFF",
   realtor: "#D92228",
   trulia: "#00A35C",
-  redfin: "#A02021",
   cih: "#C9A84C",
+  other: "#6B7280",
 };
 
 function renderPortalTraffic(d: WeeklySocialReportData): string {
@@ -382,7 +382,7 @@ function renderPortalTraffic(d: WeeklySocialReportData): string {
       ${formatNumber(pt.total_views)}
     </div>
     <div style="margin-top:6px;font-size:13px;color:#3f3f46;line-height:1.4;">
-      Buyers viewed Alliance listings ${formatNumber(pt.total_views)} ${pluralize(pt.total_views, "time")} across the Zillow, Realtor.com, Trulia, Redfin, and CIH brand network this week.
+      Buyers viewed Alliance listings ${formatNumber(pt.total_views)} ${pluralize(pt.total_views, "time")} across Zillow, Realtor.com, Trulia, the CIH brand network, and other syndication portals this week.
     </div>
     ${stripeTable}
     ${topTableHtml}

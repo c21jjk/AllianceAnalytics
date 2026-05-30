@@ -322,7 +322,7 @@ function PropertyCard({ property, isAdmin, portalStrip }: PropertyCardProps) {
           ) : null}
 
           {/* Portal strip — 5-slot views breakdown across Zillow / Realtor /
-              Trulia / Redfin / CIH. pointer-events-auto so the title-attribute
+              Trulia / CIH / Other Portals. pointer-events-auto so the title-attribute
               tooltips on each chip are reachable even though the card link
               covers the article. */}
           {portalStrip ? (
