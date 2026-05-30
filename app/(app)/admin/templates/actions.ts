@@ -301,6 +301,99 @@ export async function saveTemplateSchemaForFormatAction(
 }
 
 /**
+ * Save the editor's schema as a BRAND-NEW template ("Create New Template
+ * with these Changes"). Clones the source row's post_types + description,
+ * stores the edited schema under the active format, and publishes it so it
+ * shows up in the picker immediately. When makeDefault is set, it becomes
+ * the slot's default (clearing any prior default in that post_type+format).
+ */
+export async function saveTemplateAsNewAction(
+  sourceTemplateId: string,
+  format: PostFormat,
+  schemaForFormat: unknown,
+  name: string,
+  makeDefault: boolean,
+): Promise<ActionResult> {
+  const profile = await requireAdmin();
+
+  if (!VALID_FORMATS.has(format)) {
+    return { ok: false, error: `Invalid format: ${format}` };
+  }
+  const trimmed = name.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "Name is required for a new template." };
+  }
+  if (
+    schemaForFormat !== null &&
+    (typeof schemaForFormat !== "object" || Array.isArray(schemaForFormat))
+  ) {
+    return { ok: false, error: "Schema must be a JSON object or null." };
+  }
+
+  const source = await storage.getTemplateById(sourceTemplateId);
+  if (!source) return { ok: false, error: "Source template not found." };
+
+  const created = await storage.createTemplate(
+    {
+      name: trimmed,
+      description: source.description,
+      post_types: source.post_types,
+      schema: { [format]: schemaForFormat } as TemplateSchemaFamily,
+      // why: published so the new template is immediately pickable in the
+      // Post Builder. The author explicitly chose "save as new," so this is
+      // a deliberate, live template, not a draft.
+      publish_state: "published",
+      source: "builder",
+      is_default: false,
+    },
+    profile.id,
+  );
+  if (!created) return { ok: false, error: "Failed to create new template." };
+
+  if (makeDefault) {
+    await storage.setStudioTemplateDefault(created.id, true, profile.id);
+  }
+
+  revalidatePath("/admin/templates");
+  revalidatePath(`/admin/templates/${created.id}`);
+  return { ok: true, id: created.id };
+}
+
+/**
+ * Flip a template's "default for this post type + format" flag. Setting
+ * default=true clears any other default in the same slot (handled in
+ * storage) AND publishes the template, because a draft can never be the
+ * slot default the picker resolves.
+ */
+export async function setTemplateDefaultAction(
+  templateId: string,
+  isDefault: boolean,
+): Promise<ActionResult> {
+  const profile = await requireAdmin();
+
+  const ok = await storage.setStudioTemplateDefault(
+    templateId,
+    isDefault,
+    profile.id,
+  );
+  if (!ok) return { ok: false, error: "Failed to update default." };
+
+  if (isDefault) {
+    // A default must be published to be resolved by the picker / render path.
+    await storage.updateTemplate(
+      templateId,
+      { publish_state: "published" },
+      profile.id,
+    );
+  }
+
+  revalidatePath("/admin/templates");
+  revalidatePath(`/admin/templates/${templateId}`);
+  revalidatePath(`/admin/templates/${templateId}/edit`);
+  return { ok: true, id: templateId };
+}
+
+/**
  * Hard delete. Only DRAFTS should be hard-deleted; published templates
  * should be archived instead. The action enforces this at the storage
  * level: we refetch the row first to confirm it's still in draft state.
