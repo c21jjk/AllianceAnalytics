@@ -227,6 +227,65 @@ async function syncPostListings(
 }
 
 /**
+ * Caption-independent fallback linker. Open House posts deliberately omit MLS#
+ * hashtags (IG hashtag limits), so caption matching returns nothing for them.
+ * When that happens, resolve the post back to the `generated_posts` row that
+ * produced it (matched by platform_post_id) and use the properties the builder
+ * recorded there: `linked_property_ids` (multi-OH carousels) or, failing that,
+ * the single `property_id`. Returns [] on any miss so ingest is never blocked.
+ */
+async function resolveBuilderMatches(
+  client: SupabaseClient,
+  platform: string,
+  platformPostId: string | null,
+): Promise<PropertyMatch[]> {
+  if (!platformPostId) return [];
+  try {
+    const { data: gp } = await client
+      .from("generated_posts")
+      .select("property_id, linked_property_ids")
+      .eq(`platform_post_ids->>${platform}`, platformPostId)
+      .maybeSingle();
+    if (!gp) return [];
+
+    const ids: string[] = [];
+    if (Array.isArray(gp.linked_property_ids)) {
+      for (const id of gp.linked_property_ids) {
+        if (typeof id === "string" && id.length > 0) ids.push(id);
+      }
+    }
+    if (ids.length === 0 && typeof gp.property_id === "string" && gp.property_id) {
+      ids.push(gp.property_id);
+    }
+    if (ids.length === 0) return [];
+
+    const { data: props } = await client
+      .from("properties")
+      .select("id, mls_number, source_mls")
+      .in("id", ids);
+    const byId = new Map((props ?? []).map((r) => [r.id, r]));
+
+    const out: PropertyMatch[] = [];
+    for (const id of ids) {
+      const p = byId.get(id);
+      if (!p) continue;
+      const src =
+        p.source_mls === "bright" || p.source_mls === "cmc" || p.source_mls === "sjsr"
+          ? p.source_mls
+          : "cmc";
+      out.push({ property_id: id, mls_number: p.mls_number ?? "", source_mls: src });
+    }
+    return out;
+  } catch (e) {
+    console.warn(
+      "[_shared/db] resolveBuilderMatches failed:",
+      (e as Error).message,
+    );
+    return [];
+  }
+}
+
+/**
  * Upsert a post + its latest metrics snapshot + a post_metrics_daily row.
  * Returns whether the row was newly inserted vs updated.
  */
@@ -237,7 +296,17 @@ export async function upsertPost(
   // why: multi-match — autoLinkAllProperties returns every MLS hit in
   // caption order; matches[0] is the anchor that lands on posts.property_id
   // for backward compat, every match feeds the post_listings join table.
-  const matches = await autoLinkAllProperties(client, post.caption);
+  let matches = await autoLinkAllProperties(client, post.caption);
+  // Caption had no MLS (e.g. an Open House post) — fall back to the builder's
+  // recorded property selection so the post still links to its home(s).
+  if (matches.length === 0) {
+    const builderMatches = await resolveBuilderMatches(
+      client,
+      post.platform,
+      post.platform_post_id,
+    );
+    if (builderMatches.length > 0) matches = builderMatches;
+  }
   const propertyId = matches[0]?.property_id ?? null;
 
   // Check existence by (platform, platform_post_id)

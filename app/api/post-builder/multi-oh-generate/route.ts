@@ -1386,12 +1386,33 @@ export async function POST(request: Request): Promise<Response> {
         synthesized = synthesizeMultiOHCaption(captionInput);
       }
 
-      const { data: inserted, error: insertError } = await supabase
+      // Caption-independent property linkage. Open House captions omit MLS#
+      // hashtags, so we persist every featured property here; the sync ingest
+      // fans these into post_listings when the caption yields no MLS match, so
+      // all homes in the event surface in their Owner Stories.
+      const UUID_RE =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const linkedPropertyIds = Array.from(
+        new Set(
+          input.properties
+            .map((p) => p.listing_id)
+            .filter((id): id is string => typeof id === "string" && UUID_RE.test(id)),
+        ),
+      );
+
+      // linked_property_ids isn't in the generated Database types yet; use a
+      // permissive client for this insert (mirrors the untyped-client pattern
+      // already used for the new owner-story + portal tables).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sbAny = supabase as any;
+      const { data: inserted, error: insertError } = await sbAny
         .from("generated_posts")
         .insert({
           mls_number: firstProp.mls_number,
           source_mls: firstProp.source_mls,
           property_id: firstProp.listing_id,
+          linked_property_ids:
+            linkedPropertyIds.length > 0 ? linkedPropertyIds : null,
           post_type: "open_house",
           // why: persist the wizard's chosen per-property variant (v2/v3/v6/v8).
           // 2026-05-21 — used to hardcode "v1" here back when v1 was the
