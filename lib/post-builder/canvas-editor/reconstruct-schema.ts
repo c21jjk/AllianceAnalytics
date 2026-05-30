@@ -386,7 +386,10 @@ function reconstructOrphan(
       hideIfEmpty: data?.hideIfEmpty ?? undefined,
       objectFit: data?.objectFit ?? "cover",
       crossOrigin: "anonymous",
-      cornerRadius: 0,
+      // why: an inserted image placeholder stamps its intended corner radius
+      // (half the box for a circular agent frame). Honor it so the rounding
+      // survives save; literal/legacy orphans default to 0 as before.
+      cornerRadius: data?.cornerRadius ?? 0,
       borderColor: "",
       borderWidth: 0,
     } satisfies ImageLayer;

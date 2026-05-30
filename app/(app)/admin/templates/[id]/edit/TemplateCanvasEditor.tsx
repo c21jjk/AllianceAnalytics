@@ -204,6 +204,8 @@ export default function TemplateCanvasEditor({
         onSave={handleSave}
         saveLabel="Save template"
         isSaving={pending}
+        templateAuthoring
+        isAdmin
       />
       {pendingSchema !== null ? (
         <SaveOptionsModal

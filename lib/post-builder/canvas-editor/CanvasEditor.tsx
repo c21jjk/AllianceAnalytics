@@ -47,6 +47,7 @@ import {
   ChevronsLeft as LChevronsLeft,
   ChevronsRight as LChevronsRight,
   Eye as LEye,
+  Braces as LBraces,
   EyeOff as LEyeOff,
   FileText as LFileText,
   Film as LFilm,
@@ -104,8 +105,13 @@ import {
   getLayerData,
   resolveImageBoundField,
   resolveTextBoundField,
+  setLayerBoundField,
   setLayerData,
 } from "./fabric-factory";
+import {
+  buildPlaceholderObject,
+  type PlaceholderField,
+} from "./placeholder-insert";
 import { createCanvaStyleControls, BRAND_GOLD } from "./canva-style-controls";
 
 // === Phase 2 panel integrations ===
@@ -131,6 +137,7 @@ import {
 import { useUndoRedoHistory } from "./history/useUndoRedoHistory";
 import AgentPanel from "./panels/AgentPanel";
 import BrandPanel from "./panels/BrandPanel";
+import PlaceholdersPanel from "./panels/PlaceholdersPanel";
 import FloatingToolbar from "./panels/FloatingToolbar";
 import ColorPickerPanel, { type ColorTarget } from "./panels/ColorPickerPanel";
 import EffectsPanel from "./panels/EffectsPanel";
@@ -395,7 +402,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // unchanged — Canva-mindset call: highlight the new affordance without
   // disrupting the established opening behavior.
   const [sidebarTab, setSidebarTab] = useState<
-    "templates" | "brand" | "agents" | "photos" | "tools"
+    "templates" | "brand" | "agents" | "photos" | "tools" | "placeholders"
   >("brand");
   // why: ToolsPanel (Canva-parity Tools tab — 2026-05-23) owns its own
   // popout but the active TOOL state (Select vs Draw) lives here at the
@@ -2500,6 +2507,56 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     [],
   );
 
+  // Template Builder — insert a bound-field placeholder. Mirrors the
+  // shape-spawn flow (add → select → bump version → record history).
+  const handlePlaceholderPicked = useCallback(
+    (field: PlaceholderField): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const obj = buildPlaceholderObject(
+        field,
+        template.width,
+        template.height,
+      );
+      canvas.add(obj);
+      handleLayerAdded(obj);
+      history.record?.();
+    },
+    [template.width, template.height, handleLayerAdded, history],
+  );
+
+  // Phase C — bind the currently selected text/image layer to a field,
+  // turning a literal/manual layer into a placeholder that re-resolves on
+  // every post. The panel only offers "Bind" when the selected layer's kind
+  // matches the field's kind, so we don't text-bind an image or vice versa.
+  const handleBindSelectedToField = useCallback(
+    (field: PlaceholderField): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const active = canvas.getActiveObject();
+      if (!active) return;
+      setLayerBoundField(active, field.field);
+      canvas.requestRenderAll();
+      setLayerVersion((v) => v + 1);
+      history.record?.();
+    },
+    [history],
+  );
+
+  // Kind of the currently selected single layer (text/image), used to gate
+  // the Placeholders panel's "Bind selected" affordance. Null when nothing
+  // bindable is selected.
+  const selectedBindableKind = useMemo<"text" | "image" | null>(() => {
+    if (selection.isMulti || !selection.layerId) return null;
+    const canvas = fabricRef.current;
+    if (!canvas) return null;
+    const obj = canvas
+      .getObjects()
+      .find((o) => getLayerData(o)?.layerId === selection.layerId);
+    const kind = obj ? getLayerData(obj)?.layerKind : null;
+    return kind === "text" || kind === "image" ? kind : null;
+  }, [selection]);
+
   // why: SelectionPropertiesPanel's "Back to layers" button calls this so the
   // orchestrator can swap the right-side panel back to LayerListPanel.
   const handleClearSelection = useCallback((): void => {
@@ -3790,6 +3847,25 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 }
               }}
             />
+            {/* Placeholders tab — Template Builder ONLY. Lets an author drop
+                bound-field placeholders that re-populate on each post. Gated
+                on templateAuthoring so Larissa's post-building Studio never
+                sees it. */}
+            {props.templateAuthoring ? (
+              <SidebarRailButton
+                label="Placeholders"
+                icon={<LBraces size={22} />}
+                active={sidebarExpanded && sidebarTab === "placeholders"}
+                onClick={() => {
+                  if (sidebarExpanded && sidebarTab === "placeholders") {
+                    setSidebarExpanded(false);
+                  } else {
+                    setSidebarTab("placeholders");
+                    setSidebarExpanded(true);
+                  }
+                }}
+              />
+            ) : null}
             {/* Tools tab — Canva-parity Draw/Shapes/Lines/Text popout.
                 Lives at the BOTTOM of the rail (matches Canva's placement)
                 so it doesn't push the established Templates/Brand/Agents/
@@ -3834,7 +3910,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                         ? "Agents"
                         : sidebarTab === "photos"
                           ? "Photos"
-                          : "Tools"}
+                          : sidebarTab === "placeholders"
+                            ? "Placeholders"
+                            : "Tools"}
                 </span>
                 <button
                   type="button"
@@ -3888,6 +3966,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     photos={listingPhotos}
                     isLoading={listingPhotosLoading}
                     onPhotoPicked={(p) => void handleListingPhotoPicked(p)}
+                  />
+                ) : sidebarTab === "placeholders" ? (
+                  <PlaceholdersPanel
+                    onInsert={handlePlaceholderPicked}
+                    selectedKind={selectedBindableKind}
+                    onBindSelected={handleBindSelectedToField}
                   />
                 ) : (
                   <ToolsPanel

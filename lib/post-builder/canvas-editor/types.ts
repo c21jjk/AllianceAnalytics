@@ -1041,6 +1041,14 @@ export interface CanvasEditorProps {
    * want to enable management UX.
    */
   isAdmin?: boolean;
+  /**
+   * 2026-05-30 — template authoring mode. When true (Template Builder only),
+   * the editor surfaces the "Placeholders" sidebar tab so authors can drop
+   * bound-field placeholders that re-populate on every post. Larissa's
+   * post-building Studio leaves this false/undefined — she fills real data,
+   * she doesn't bind fields.
+   */
+  templateAuthoring?: boolean;
   onUploadBrandAsset?: (input: {
     kind: "logo" | "partner_logo";
     label: string;

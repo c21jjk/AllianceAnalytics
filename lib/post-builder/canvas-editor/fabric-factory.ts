@@ -399,6 +399,13 @@ export interface FabricLayerData {
    * leaving a hole. Defaults to false (keep the frame / fallback).
    */
   hideIfEmpty?: boolean;
+  /**
+   * Image-only: corner radius in px the saved ImageLayer should carry. Lets
+   * an inserted image placeholder (e.g., a circular agent-photo frame, where
+   * this equals half the box size) preserve its rounding through save, since
+   * the placeholder is authored as a rounded Rect rather than a real image.
+   */
+  cornerRadius?: number;
 }
 
 /**

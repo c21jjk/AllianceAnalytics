@@ -79,6 +79,9 @@ export interface CanvasEditorOverlayProps {
    * through to <CanvasEditor>. See its prop docs.
    */
   isAdmin?: CanvasEditorProps["isAdmin"];
+  /** 2026-05-30 — Template Builder authoring mode. Forwarded to CanvasEditor
+   *  to surface the Placeholders sidebar tab. See CanvasEditorProps. */
+  templateAuthoring?: CanvasEditorProps["templateAuthoring"];
   onUploadBrandAsset?: CanvasEditorProps["onUploadBrandAsset"];
   onArchiveBrandAsset?: CanvasEditorProps["onArchiveBrandAsset"];
   /**
@@ -286,6 +289,7 @@ export default function CanvasEditorOverlay(
           carousel={props.carousel}
           onMakeReel={props.onMakeReel}
           isAdmin={props.isAdmin}
+          templateAuthoring={props.templateAuthoring}
           onUploadBrandAsset={props.onUploadBrandAsset}
           onArchiveBrandAsset={props.onArchiveBrandAsset}
           onSaveAsTemplate={props.onSaveAsTemplate}
