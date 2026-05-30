@@ -28,7 +28,7 @@ import { loadAgentEmailResolver } from "@/lib/data/agent-email-resolver";
 /** Minimum days since the first post before the first Owner Story email. */
 const MIN_DAYS_SINCE_FIRST_POST = 7;
 
-const APP_BASE_URL = "https://alliance-analytics.vercel.app";
+const APP_BASE_URL = "https://www.alliancesocialanalytics.com";
 
 /**
  * `owner_story_email_sends` is new and not yet in the generated `Database`

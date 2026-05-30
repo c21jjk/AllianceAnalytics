@@ -6,7 +6,7 @@ import { removeSellerRecipientByEmail } from "@/lib/email/reports/owner-story-we
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const APP_BASE_URL = "https://alliance-analytics.vercel.app";
+const APP_BASE_URL = "https://www.alliancesocialanalytics.com";
 
 /** Where John gets the heads-up when a seller opts out. */
 const UNSUBSCRIBE_NOTICE_TO = "c21jjk@gmail.com";

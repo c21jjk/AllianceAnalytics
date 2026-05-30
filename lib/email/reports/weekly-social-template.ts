@@ -32,7 +32,7 @@ import {
  * placeholder rather than rendering a half-broken row.
  */
 
-const APP_BASE_URL = "https://alliance-analytics.vercel.app";
+const APP_BASE_URL = "https://www.alliancesocialanalytics.com";
 
 const PLATFORM_LABEL: Record<WeeklyPlatform, string> = {
   facebook: "Facebook",

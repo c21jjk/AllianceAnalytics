@@ -78,7 +78,7 @@ export function buildOutboxMailto(row: AgentOutboxRow): {
     );
     if (row.story_url_path) {
       lines.push(
-        `  https://alliance-analytics.vercel.app${row.story_url_path}`,
+        `  https://www.alliancesocialanalytics.com${row.story_url_path}`,
       );
     }
     lines.push("");
@@ -107,7 +107,7 @@ export function buildOutboxMailto(row: AgentOutboxRow): {
       lines.push("");
       lines.push(`Owner Story page for the seller (forward this too):`);
       lines.push(
-        `  https://alliance-analytics.vercel.app${row.story_url_path}`,
+        `  https://www.alliancesocialanalytics.com${row.story_url_path}`,
       );
     }
   }

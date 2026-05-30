@@ -28,7 +28,7 @@ const PLATFORM_COLOR: Record<Platform, string> = {
   tiktok: "#000000",
 };
 
-const APP_BASE_URL = "https://alliance-analytics.vercel.app";
+const APP_BASE_URL = "https://www.alliancesocialanalytics.com";
 
 const GOLD = "#C9A84C";
 const GOLD_SOFT_BG = "#FBF7EE";
