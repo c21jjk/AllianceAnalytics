@@ -435,15 +435,29 @@ export async function POST(request: Request) {
   for (const r of successResults) {
     newPlatformPostIds[r.platform] = r.platform_post_id;
   }
+  // Capture each platform's public permalink. The sync ingest joins a synced
+  // post back to this builder row by permalink (stable, identical on both
+  // sides), which is what links Open House posts (no MLS# in caption) to their
+  // homes. Stored on platform_permalinks (jsonb), keyed by platform.
+  const newPermalinks: Record<string, string> = {};
+  for (const r of successResults) {
+    if (r.permalink) newPermalinks[r.platform] = r.permalink;
+  }
   const lastError = failureResults.length > 0
     ? failureResults.map((r) => `[${r.platform}] ${r.error}`).join(" | ")
     : null;
 
-  const { error: updateErr } = await supabase
+  // platform_permalinks isn't in the generated Database types yet; use a
+  // permissive client for this update (mirrors the untyped-client pattern
+  // used elsewhere for new columns).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sbAny = supabase as any;
+  const { error: updateErr } = await sbAny
     .from("generated_posts")
     .update({
       posted_to: newPostedTo,
       platform_post_ids: newPlatformPostIds,
+      platform_permalinks: newPermalinks,
       // 2026-05-28 — posted_at marks the FIRST successful publish and must
       // never be cleared by a later attempt. Previously this nulled both
       // fields whenever the CURRENT attempt had no successes, so retrying a

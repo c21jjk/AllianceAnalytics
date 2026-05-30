@@ -238,14 +238,33 @@ async function resolveBuilderMatches(
   client: SupabaseClient,
   platform: string,
   platformPostId: string | null,
+  permalink: string | null,
 ): Promise<PropertyMatch[]> {
-  if (!platformPostId) return [];
+  if (!platformPostId && !permalink) return [];
   try {
-    const { data: gp } = await client
-      .from("generated_posts")
-      .select("property_id, linked_property_ids")
-      .eq(`platform_post_ids->>${platform}`, platformPostId)
-      .maybeSingle();
+    // Permalink is the reliable join key: it's identical on both sides (the
+    // publish step and the sync both read it from the platform). The
+    // platform_post_id stored at publish doesn't reliably match the id the
+    // sync ingests (e.g. IG container vs media id), so it's only a fallback.
+    let gp:
+      | { property_id: string | null; linked_property_ids: unknown }
+      | null = null;
+    if (permalink) {
+      const { data } = await client
+        .from("generated_posts")
+        .select("property_id, linked_property_ids")
+        .eq(`platform_permalinks->>${platform}`, permalink)
+        .maybeSingle();
+      gp = data ?? null;
+    }
+    if (!gp && platformPostId) {
+      const { data } = await client
+        .from("generated_posts")
+        .select("property_id, linked_property_ids")
+        .eq(`platform_post_ids->>${platform}`, platformPostId)
+        .maybeSingle();
+      gp = data ?? null;
+    }
     if (!gp) return [];
 
     const ids: string[] = [];
@@ -304,6 +323,7 @@ export async function upsertPost(
       client,
       post.platform,
       post.platform_post_id,
+      post.permalink,
     );
     if (builderMatches.length > 0) matches = builderMatches;
   }
