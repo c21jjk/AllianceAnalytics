@@ -44,7 +44,7 @@ export default async function PortalTrafficSection({
           </h2>
           <p className="text-sm text-neutral-500">
             Where buyers are seeing this listing across syndicated portals,
-            powered by ListTrac (Golden Ruler). Last {windowDays} days.
+            powered by ListTrac. Last {windowDays} days.
           </p>
         </div>
         {data.first_date && data.last_date ? (

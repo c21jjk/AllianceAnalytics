@@ -25,7 +25,7 @@ function relativeTime(iso: string | null): string {
 }
 
 /**
- * ListTrac (Golden Ruler) manual sync card on /settings.
+ * ListTrac manual sync card on /settings.
  *
  * Fires `syncListtracAction()` which invokes the `listtrac-sync` Edge
  * Function. Shows last-sync status (pill) and a Sync now button. After a run,
@@ -79,7 +79,7 @@ export default function ListtracSyncCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-base font-semibold text-neutral-900">
-            ListTrac (Golden Ruler)
+            ListTrac
           </h3>
           <p className="mt-1 text-xs text-neutral-500 max-w-md">
             Pulls portal traffic counts for every active, pending, and recently

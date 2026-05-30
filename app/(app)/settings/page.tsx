@@ -182,7 +182,7 @@ export default async function SettingsPage() {
       <section>
         <SectionHeading
           title="Portal traffic — ListTrac"
-          subtitle="Golden Ruler portal-traffic ingestion. Pulls Zillow, Realtor.com, Trulia, CIH brand sites, and IDX feeds for every active, pending, and recently sold listing."
+          subtitle="ListTrac portal-traffic ingestion. Pulls Zillow, Realtor.com, Trulia, CIH brand sites, and IDX feeds for every active, pending, and recently sold listing."
         />
         <ListtracSyncCard
           lastSyncAt={listtracCred?.last_validated_at ?? null}
