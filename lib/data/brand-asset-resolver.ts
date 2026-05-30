@@ -68,3 +68,39 @@ export async function resolveAgentHeadshotUrl(
   const chosen = sameOffice ?? matches[0];
   return typeof chosen.public_url === "string" ? chosen.public_url : null;
 }
+
+/**
+ * Resolve the public URL of a brand logo from the brand_assets library by
+ * EXACT label match (kind='logo', status='active'). Unlike agent headshots,
+ * logos are org-wide (office_id is null on every row) and have no per-listing
+ * key — the caller picks the canonical label (e.g. "C21 ALLIANCE White" or
+ * "Excellence Collection - 2") and this resolves its current URL so a
+ * re-uploaded/re-cropped logo flows automatically without editing
+ * brand-logos.ts. Returns null when no active row carries that label (the
+ * caller then falls back to the frozen brand-logos.ts constant).
+ */
+export async function resolveBrandLogoUrl(
+  label: string | null | undefined,
+): Promise<string | null> {
+  if (!label) return null;
+  const target = label.trim().toLowerCase();
+  if (!target) return null;
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("brand_assets")
+    .select("label, public_url, status")
+    .eq("kind", "logo")
+    .eq("status", "active");
+
+  if (error || !data) return null;
+
+  const match = data.find(
+    (row) =>
+      typeof row.label === "string" &&
+      typeof row.public_url === "string" &&
+      row.public_url.length > 0 &&
+      row.label.trim().toLowerCase() === target,
+  );
+  return match && typeof match.public_url === "string" ? match.public_url : null;
+}

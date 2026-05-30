@@ -333,6 +333,13 @@ export function resolveImageBoundField(
       // Alliance lockup. This is a hard brand rule from John: premium
       // listings carry the premium brand mark wherever a brokerage
       // logo appears.
+      //
+      // 2026-05-30 — when the headless render route resolved this listing's
+      // canonical logo from the brand_assets library, it's already on
+      // brokerageLogoUrl; use it so re-uploaded logos flow without a code
+      // edit. Null in the editor preview → fall through to the frozen
+      // tier-based constant below.
+      if (listing.brokerageLogoUrl) return listing.brokerageLogoUrl;
       if ((listing.priceList ?? 0) >= EXCELLENCE_PRICE_THRESHOLD) {
         return EXCELLENCE_COLLECTION_LOGO;
       }

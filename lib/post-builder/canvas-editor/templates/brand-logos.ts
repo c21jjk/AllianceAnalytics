@@ -50,13 +50,17 @@ export const C21_ALLIANCE_WHITE_LOGO =
   "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/1243286b-f208-47fb-a8f3-7fa1367951a2.png";
 
 /**
- * Excellence Collection sub-brand wordmark (variant 1).
+ * Excellence Collection sub-brand wordmark (variant 2).
  * Use ONLY in v3 Excellence Collection templates (premium tier, $949k+).
- * Source: brand_assets row id `e5dd9558-62e1-431b-9eed-1a0585b1e17e`,
- * label "Excellence Collection - 1".
+ * Canonical anchor per John's choice 2026-05-30 (switched from variant 1).
+ * The headless render route resolves this same label from brand_assets at
+ * render time (resolveBrandLogoUrl); this constant is the editor-preview /
+ * AI-Design / safety fallback.
+ * Source: brand_assets row id `7ea3877f-7559-45d2-8dcd-07904cabc778`,
+ * label "Excellence Collection - 2".
  */
 export const EXCELLENCE_COLLECTION_LOGO =
-  "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/f07233b0-a22b-4595-bc06-98cddd65e993.png";
+  "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/488d325e-10d2-40ce-92bc-1a4ce9ef9370.png";
 
 /**
  * C21 seal (gold, full lockup). Decorative accent — pair sparingly with

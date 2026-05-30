@@ -190,6 +190,9 @@ export function mapListingToPayload(
     // office
     officeName: ctx.officeName ?? listing.listing_office_name ?? null,
     officeLogoUrl: ctx.officeLogoUrl ?? null,
+    // Filled by the headless render route from the brand_assets logo library;
+    // null here so the editor preview falls back to the brand-logos.ts constant.
+    brokerageLogoUrl: null,
 
     // open house
     openHouseStartUtc: listing.oh_start_at ?? null,

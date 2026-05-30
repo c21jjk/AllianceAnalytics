@@ -23,7 +23,11 @@
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
-import { resolveAgentHeadshotUrl } from "@/lib/data/brand-asset-resolver";
+import {
+  resolveAgentHeadshotUrl,
+  resolveBrandLogoUrl,
+} from "@/lib/data/brand-asset-resolver";
+import { EXCELLENCE_PRICE_THRESHOLD } from "@/lib/post-builder/excellence-collection";
 import {
   applyOverridesToSchema,
   parseCarouselLayoutOverrides,
@@ -60,6 +64,24 @@ function schemaBindsAgentPhoto(
   return schema.layers.some(
     (layer) =>
       layer.kind === "image" && layer.boundField === "agent_photo",
+  );
+}
+
+/**
+ * True when the schema has any image layer bound to a brokerage/office logo —
+ * i.e. the template expects the C21 Alliance / Excellence Collection lockup.
+ * Drives the brand_assets logo lookup so re-uploaded logos flow at render
+ * without a code edit. Defensive against malformed schemas.
+ */
+function schemaBindsBrandLogo(
+  schema: CanvasTemplateSchema | null | undefined,
+): boolean {
+  if (!schema || !Array.isArray(schema.layers)) return false;
+  return schema.layers.some(
+    (layer) =>
+      layer.kind === "image" &&
+      (layer.boundField === "office_logo" ||
+        layer.boundField === "brokerage_logo"),
   );
 }
 
@@ -154,6 +176,37 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
           }" for listing ${payload.listing_id}. Add the agent's photo to the Agents library.`,
         );
       }
+    }
+  }
+
+  // 2026-05-30 — Brand-logo placeholder resolution. When a template binds
+  // office_logo / brokerage_logo, resolve the canonical logo from the
+  // brand_assets library (kind='logo') by its price-tier label so a
+  // re-uploaded/re-cropped logo flows automatically without editing
+  // brand-logos.ts. Tier rule mirrors fabric-factory: Excellence Collection
+  // wordmark at-or-above $949k, standard C21 Alliance lockup below.
+  // Flag-for-review: if the schema binds a logo but no active row carries the
+  // canonical label, we log a warning and fall through to the frozen
+  // brand-logos.ts constant (resolveImageField does that when the payload URL
+  // is null) so the render never fails.
+  if (schemaBindsBrandLogo(schema)) {
+    const isExcellence =
+      (mlsPayload.priceList ?? 0) >= EXCELLENCE_PRICE_THRESHOLD;
+    const canonicalLabel = isExcellence
+      ? "Excellence Collection - 2"
+      : "C21 ALLIANCE White";
+    const logoUrl = await resolveBrandLogoUrl(canonicalLabel);
+    if (logoUrl) {
+      mlsPayload.brokerageLogoUrl = logoUrl;
+      // office_logo prefers a real per-office override; only fill from the
+      // library when the listing didn't carry its own office logo.
+      if (!mlsPayload.officeLogoUrl) {
+        mlsPayload.officeLogoUrl = logoUrl;
+      }
+    } else {
+      console.warn(
+        `[render][FLAG-FOR-REVIEW] brand logo placeholder unresolved — no active brand_assets logo labeled "${canonicalLabel}" for listing ${payload.listing_id}. Falling back to the frozen brand-logos.ts constant.`,
+      );
     }
   }
 

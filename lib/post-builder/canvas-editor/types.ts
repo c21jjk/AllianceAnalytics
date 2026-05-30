@@ -685,6 +685,15 @@ export interface MLSListingPayload {
   officeName: string | null;
   /** Office logo URL — typically a static asset path like "/public/brand/c21-alliance.svg". */
   officeLogoUrl: string | null;
+  /**
+   * Brokerage logo URL resolved from the brand_assets library at render time
+   * (the canonical C21 Alliance / Excellence Collection lockup for this
+   * listing's price tier). Null in the editor preview, where the
+   * brokerage_logo bound field falls back to the frozen brand-logos.ts
+   * constant. Filled by the headless render route so re-uploaded logos flow
+   * without a code edit.
+   */
+  brokerageLogoUrl: string | null;
 
   // --- open house (only populated when status implies an open house) ---
   /** Open house start in ISO 8601 UTC. The editor formats to "Friday, April 3". */
