@@ -337,12 +337,18 @@ function reconstructOrphan(
 
   // Textbox / Text / IText
   if (data?.layerKind === "text" || fabricType === "textbox" || fabricType === "text" || fabricType === "i-text") {
+    // why: a layer inserted/bound as a placeholder in Template Builder stamps
+    // its boundField on the data bag. Honor it so a NEW bound text layer
+    // round-trips as a real placeholder (the current text becomes its
+    // fallback). Literal layers leave this undefined — unchanged behavior.
+    const textBound = data?.boundField as TextLayer["boundField"] | undefined;
     return {
       ...baseLayer,
       kind: "text",
       width: rawWidth * scaleX,
       height: rawHeight * scaleY,
       text: asStr(readProp(obj, "text"), ""),
+      boundField: textBound,
       fontFamily: asStr(readProp(obj, "fontFamily"), "Arial"),
       fontSize: asNum(readProp(obj, "fontSize"), 32),
       fontWeight: 400,
@@ -359,20 +365,25 @@ function reconstructOrphan(
   }
   // FabricImage
   if (data?.layerKind === "image" || fabricType === "image") {
+    // why: an image inserted/bound as a placeholder stamps its boundField on
+    // the data bag. When bound, force src=null so the next render pulls the
+    // live photo (agent headshot, hero, logo) instead of baking in whatever
+    // was on the canvas. Literal images keep their URL — unchanged behavior.
+    const imageBound = data?.boundField as ImageLayer["boundField"] | undefined;
+    const literalSrc = ((): string | null => {
+      const el = (
+        obj as unknown as { _originalElement?: { src?: string } }
+      )._originalElement;
+      return typeof el?.src === "string" && el.src.length > 0 ? el.src : null;
+    })();
     return {
       ...baseLayer,
       kind: "image",
       width: data?.targetBoxWidth ?? rawWidth * scaleX,
       height: data?.targetBoxHeight ?? rawHeight * scaleY,
-      // why: orphan literal image. We pull the URL off the Fabric image's
-      // native HTMLImageElement; null when unavailable so factories surface
-      // a placeholder rather than a broken render.
-      src: ((): string | null => {
-        const el = (
-          obj as unknown as { _originalElement?: { src?: string } }
-        )._originalElement;
-        return typeof el?.src === "string" && el.src.length > 0 ? el.src : null;
-      })(),
+      src: imageBound ? null : literalSrc,
+      boundField: imageBound,
+      hideIfEmpty: data?.hideIfEmpty ?? undefined,
       objectFit: data?.objectFit ?? "cover",
       crossOrigin: "anonymous",
       cornerRadius: 0,

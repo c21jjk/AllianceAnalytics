@@ -50,6 +50,7 @@ import {
 } from "fabric";
 
 import {
+  type BoundField,
   type CanvasLayer,
   type GradientFill,
   type ImageBoundField,
@@ -382,6 +383,22 @@ export interface FabricLayerData {
    * fields live in one place.
    */
   objectFit?: "cover" | "contain" | "stretch";
+  /**
+   * Placeholder binding (text or image). Stamped when a layer is inserted
+   * as a placeholder or an existing layer is "bound to a field" in Template
+   * Builder. The save path (reconstruct-schema) reads this so a layer added
+   * on the canvas — not just one matched to a pre-existing schema layer —
+   * round-trips as a real bound placeholder that re-resolves on each post.
+   * Absent on literal layers (the common case); behavior is unchanged when
+   * unset.
+   */
+  boundField?: BoundField;
+  /**
+   * Placeholder-only: when true, the render drops this layer entirely if its
+   * bound value resolves empty (e.g., agent photo missing) instead of
+   * leaving a hole. Defaults to false (keep the frame / fallback).
+   */
+  hideIfEmpty?: boolean;
 }
 
 /**
@@ -398,6 +415,31 @@ export function getLayerData(obj: FabricObject): FabricLayerData | null {
 
 export function setLayerData(obj: FabricObject, data: FabricLayerData): void {
   (obj as unknown as { data: FabricLayerData }).data = data;
+}
+
+/**
+ * Stamp (or clear) the placeholder `boundField` on a Fabric object's data
+ * bag without disturbing the rest of its metadata. Pass `null` to unbind
+ * (turn a placeholder back into a literal layer). Used by the Template
+ * Builder placeholder panel + the "convert selected layer to placeholder"
+ * action. No-op when the object has no existing layer-data bag.
+ */
+export function setLayerBoundField(
+  obj: FabricObject,
+  boundField: BoundField | null,
+  hideIfEmpty?: boolean,
+): void {
+  const current = getLayerData(obj);
+  if (!current) return;
+  const next: FabricLayerData = { ...current };
+  if (boundField === null) {
+    delete next.boundField;
+    delete next.hideIfEmpty;
+  } else {
+    next.boundField = boundField;
+    if (hideIfEmpty !== undefined) next.hideIfEmpty = hideIfEmpty;
+  }
+  setLayerData(obj, next);
 }
 
 // ---------------------------------------------------------------------------
