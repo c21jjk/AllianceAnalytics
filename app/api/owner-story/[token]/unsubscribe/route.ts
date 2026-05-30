@@ -46,7 +46,7 @@ export async function GET(
     // Best-effort notice to John — never block the unsubscribe on it.
     await sendEmail({
       to: UNSUBSCRIBE_NOTICE_TO,
-      subject: `Owner Story unsubscribe — ${address}`,
+      subject: `A seller opted out — ${address}`,
       text: `${who} unsubscribed from the weekly Owner Story email for ${address}. They've been removed from future Monday sends.`,
       html: `<p>${escapeHtml(who)} unsubscribed from the weekly Owner Story email for <strong>${escapeHtml(
         address,

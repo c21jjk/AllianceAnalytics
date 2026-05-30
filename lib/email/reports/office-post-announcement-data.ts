@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { loadAgentEmailResolver } from "@/lib/data/agent-email-resolver";
 
 /**
  * Data layer for the office post announcement email — one email per
@@ -279,6 +280,10 @@ export async function findEligibleAnnouncements(opts?: {
     .eq("receives_office_post_alerts", true);
   const activeSubs = (subRows ?? []) as SubRow[];
 
+  // 7b) Agent-email resolver — properties.agent_email is empty (RETS writes
+  // NULL), so fall back to an unambiguous name match against mls_agents.
+  const resolveAgentEmail = await loadAgentEmailResolver();
+
   // 8) Materialize one candidate per group.
   const candidates: AnnouncementCandidate[] = [];
   for (const group of withPosts) {
@@ -316,10 +321,13 @@ export async function findEligibleAnnouncements(opts?: {
       (s) => s.office_id && scopedOfficeIds.has(s.office_id),
     );
     // Always include the listing agent (per Larissa's rule) — Alliance creates
-    // on their behalf, so the alert IS the heads-up.
+    // on their behalf, so the alert IS the heads-up. Resolve the agent email
+    // from mls_agents when the property row's is empty.
+    const agentEmail =
+      prop.agent_email?.trim() || resolveAgentEmail(prop.agent_name);
     const recipientEmails = dedupeEmails([
       ...matchedSubs.map((s) => s.email),
-      prop.agent_email,
+      agentEmail,
     ]);
     if (recipientEmails.length === 0) continue;
 
@@ -465,9 +473,12 @@ export async function resolveSingleCandidate(
   const matchedSubs = subs.filter(
     (s) => s.office_id && scopedOfficeIds.has(s.office_id),
   );
+  const resolveAgentEmail = await loadAgentEmailResolver();
+  const agentEmail =
+    prop.agent_email?.trim() || resolveAgentEmail(prop.agent_name);
   const recipientEmails = dedupeEmails([
     ...matchedSubs.map((s) => s.email),
-    prop.agent_email,
+    agentEmail,
   ]);
 
   // Stable platform order, one row per platform.

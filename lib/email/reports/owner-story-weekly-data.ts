@@ -5,6 +5,7 @@ import {
   fetchOwnerStoryByToken,
 } from "@/lib/data/owner-story-db";
 import { fetchPortalStrip } from "@/lib/data/portal-metrics-db";
+import { loadAgentEmailResolver } from "@/lib/data/agent-email-resolver";
 
 /**
  * Data layer for the weekly Owner Story email to listing agents.
@@ -90,89 +91,6 @@ interface ActivePropertyRow {
   alliance_role: string;
 }
 
-interface MlsAgentRow {
-  first_name: string | null;
-  last_name: string | null;
-  full_name: string | null;
-  email: string | null;
-}
-
-/**
- * Normalize a name fragment for matching: lowercase, drop parenthetical
- * nicknames ("Kathleen(Kathy)" → "kathleen"), strip punctuation/middle
- * initials, collapse whitespace.
- */
-function normalizeNamePart(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/\(.*?\)/g, "")
-    .replace(/[.,]/g, "")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-/** Build a "first|last" key from a full name, or null if it can't be parsed. */
-function nameKeyFromFullName(fullName: string): string | null {
-  const cleaned = normalizeNamePart(fullName);
-  const parts = cleaned.split(" ").filter(Boolean);
-  if (parts.length < 2) return null;
-  return `${parts[0]}|${parts[parts.length - 1]}`;
-}
-
-/**
- * Build a resolver: normalized "first|last" name → the single agent email,
- * but ONLY when that key maps to exactly one distinct non-null email. Names
- * that collide across multiple real emails are treated as unresolvable
- * (skipped) so we never email the wrong agent a seller's story.
- *
- * Exists because properties.agent_email is unreliable (the RETS property sync
- * writes NULL), while mls_agents carries the real emails — but the only bridge
- * between the two tables is the agent's name.
- */
-function buildAgentEmailResolver(
-  agents: MlsAgentRow[],
-): (agentName: string | null) => string | null {
-  const keyToEmails = new Map<string, Set<string>>();
-  for (const a of agents) {
-    const email = a.email?.trim();
-    if (!email) continue;
-    let key: string | null = null;
-    if (a.first_name && a.last_name) {
-      key = `${normalizeNamePart(a.first_name)}|${normalizeNamePart(a.last_name)}`;
-    } else if (a.full_name) {
-      key = nameKeyFromFullName(a.full_name);
-    }
-    if (!key || key === "|") continue;
-    const set = keyToEmails.get(key) ?? new Set<string>();
-    set.add(email.toLowerCase());
-    keyToEmails.set(key, set);
-  }
-
-  // Keep a representative original-case email per unambiguous key.
-  const keyToEmail = new Map<string, string>();
-  for (const a of agents) {
-    const email = a.email?.trim();
-    if (!email) continue;
-    let key: string | null = null;
-    if (a.first_name && a.last_name) {
-      key = `${normalizeNamePart(a.first_name)}|${normalizeNamePart(a.last_name)}`;
-    } else if (a.full_name) {
-      key = nameKeyFromFullName(a.full_name);
-    }
-    if (!key) continue;
-    if ((keyToEmails.get(key)?.size ?? 0) === 1 && !keyToEmail.has(key)) {
-      keyToEmail.set(key, email);
-    }
-  }
-
-  return (agentName: string | null): string | null => {
-    if (!agentName) return null;
-    const key = nameKeyFromFullName(agentName);
-    if (!key) return null;
-    return keyToEmail.get(key) ?? null;
-  };
-}
-
 /**
  * Find every active listing whose Owner Story is due to be emailed to its
  * listing agent this week. Returns fully-resolved candidates; the orchestrator
@@ -206,12 +124,7 @@ export async function findEligibleOwnerStoryEmails(
 
   // 2b) Agent-email resolver (properties.agent_email is unreliable; fall back
   // to an unambiguous name match against mls_agents).
-  const { data: agentRows } = await supabase
-    .from("mls_agents")
-    .select("first_name, last_name, full_name, email");
-  const resolveAgentEmail = buildAgentEmailResolver(
-    (agentRows ?? []) as MlsAgentRow[],
-  );
+  const resolveAgentEmail = await loadAgentEmailResolver();
 
   // 3) Resolve each property → token → hydrated story → eligibility.
   const candidates: OwnerStoryEmailCandidate[] = [];

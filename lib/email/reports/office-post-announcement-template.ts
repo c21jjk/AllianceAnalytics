@@ -11,9 +11,9 @@ import type {
  * (whichever platforms actually ran for the campaign). Brand band header
  * matches the Owner Story styling.
  *
- * Subject: `📍 New {Audience Label} post — {Address}`
- *   - Office:   📍 New Wildwood Crest post — 110 W Garfield Avenue
- *   - Division: 📍 New Shore Division post — 110 W Garfield Avenue
+ * Subject: `New listing post is live — share it to your pages`
+ *   (the CTA — reposting to the agent's own pages — is the whole point, so
+ *   it leads the subject rather than the address.)
  */
 
 const PLATFORM_LABEL: Record<Platform, string> = {
@@ -50,7 +50,7 @@ export function renderOfficePostAnnouncement(
   c: AnnouncementCandidate,
 ): RenderedAnnouncement {
   const addressLine = (c.listing.address ?? "your listing").trim();
-  const subject = `📍 New ${c.audience.label} post — ${addressLine}`;
+  const subject = `New listing post is live — share it to your pages`;
   return {
     subject,
     html: renderHtml(c, addressLine),
@@ -135,7 +135,7 @@ function renderCta(): string {
   // thing read after the listing identity.
   return `<div style="margin:18px 20px 16px;padding:18px 20px;background:${GOLD_SOFT_BG};border:1px solid ${GOLD_BORDER};border-radius:12px;">
     <p style="margin:0;font-size:17px;font-weight:600;color:${INK};line-height:1.5;text-align:left;">
-      Help boost these posts — every like, comment, and <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">share</strong> grows the listing&apos;s reach and increases <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">your</strong> potential lead capture.
+      <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">Share this to your own pages.</strong> Reposting to your Facebook and Instagram puts the listing in front of your sphere — every repost grows its reach and sends leads back to <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">you</strong>.
     </p>
   </div>`;
 }
@@ -173,7 +173,7 @@ function platformCard(post: AnnouncementPostVariant): string {
         </div>
       </div>
       <a href="${escapeAttr(post.permalink ?? "#")}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:6px;padding:10px 14px;border-radius:999px;background:${GOLD};color:#ffffff;font-weight:600;font-size:13px;text-decoration:none;white-space:nowrap;min-height:36px;">
-        View & engage →
+        Open & repost →
       </a>
     </div>
   </div>`;
@@ -221,7 +221,7 @@ function renderText(c: AnnouncementCandidate, addressLine: string): string {
   if (c.listing.agent_name) lines.push(`Listed by ${c.listing.agent_name}`);
   lines.push(``);
   lines.push(
-    `Help boost these posts — every like, comment, and SHARE grows the listing's reach and increases YOUR potential lead capture.`,
+    `SHARE THIS TO YOUR OWN PAGES. Reposting to your Facebook and Instagram puts the listing in front of your sphere — every repost grows its reach and sends leads back to YOU.`,
   );
   lines.push(``);
   for (const p of c.posts) {

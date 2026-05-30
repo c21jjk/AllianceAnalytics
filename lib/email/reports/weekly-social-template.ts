@@ -59,7 +59,7 @@ export function renderWeeklySocialEmail(
   data: WeeklySocialReportData,
   aiTakeaway: string,
 ): RenderedWeeklyReport {
-  const subject = `Alliance Social — Week of ${data.weekStartLabel}–${data.weekEndLabel}`;
+  const subject = `Alliance's social media reach — week of ${data.weekStartLabel}`;
   return {
     subject,
     html: renderHtml(data, aiTakeaway),

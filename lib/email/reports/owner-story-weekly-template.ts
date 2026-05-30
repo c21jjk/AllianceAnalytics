@@ -72,9 +72,16 @@ export function renderOwnerStoryEmail(
     ? firstNameOf(opts.recipientName)
     : firstNameOf(c.agent_name);
 
+  // Below this reach, the number-led seller subject would read weak, so we
+  // fall back to a non-numeric line.
+  const SELLER_REACH_MIN = 100;
   const subject = isSeller
-    ? `Your home's Owner Story — ${c.address}`
-    : `${c.address}: this week's Owner Story for your seller`;
+    ? c.social_reach >= SELLER_REACH_MIN
+      ? `${formatNumber(c.social_reach)} people saw your home this week`
+      : `See who's been viewing ${c.address} this week`
+    : hasSellers
+      ? `${c.address} — your seller just got this week's update`
+      : `Your seller's weekly exposure report for ${c.address}`;
 
   const intro = isSeller
     ? `Hi ${escapeHtml(greetName)}, here's the live Owner Story for your home at <strong>${escapeHtml(c.address)}</strong> — a page that shows every social post and portal working to sell it, updating automatically. It's been running for <strong>${c.days_running} ${c.days_running === 1 ? "day" : "days"}</strong>.`
