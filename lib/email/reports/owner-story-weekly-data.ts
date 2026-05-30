@@ -243,41 +243,164 @@ export async function findEligibleOwnerStoryEmails(
     }
     if (story.totals.post_count === 0) continue;
 
-    // Portal views — best-effort headline metric (since first post). Never
-    // let a portal-read hiccup drop the listing from the send.
-    let portalViews = 0;
-    try {
-      if (story.listing.source_mls) {
-        const strip = await fetchPortalStrip(
-          story.listing.mls_number,
-          story.listing.source_mls,
-          { since: story.first_post_at },
-        );
-        portalViews = strip.total_views;
-      }
-    } catch {
-      portalViews = 0;
-    }
-
-    candidates.push({
-      report_id: story.report_id,
-      property_id: prop.id,
-      token,
-      story_url: `${APP_BASE_URL}/home/${token}`,
-      address: story.listing.address ?? "your listing",
-      city: story.listing.city,
-      agent_name: story.listing.agent_name,
-      agent_email: agentEmail,
-      hero_image_url: story.listing.hero_image_url,
-      social_reach: story.totals.reach,
-      post_count: story.totals.post_count,
-      portal_views: portalViews,
-      days_running: story.days_since_launch,
-      week_start: weekStart,
-    });
+    candidates.push(
+      await assembleCandidate(story, token, weekStart, agentEmail),
+    );
   }
 
   return candidates;
+}
+
+/**
+ * Assemble a candidate from a hydrated story — shared by the cron (after
+ * eligibility gating) and the capture path (no gating). Portal views are a
+ * best-effort headline; a portal-read hiccup never blocks the send.
+ */
+async function assembleCandidate(
+  story: NonNullable<Awaited<ReturnType<typeof fetchOwnerStoryByToken>>>,
+  token: string,
+  weekStart: string,
+  agentEmail: string,
+): Promise<OwnerStoryEmailCandidate> {
+  let portalViews = 0;
+  try {
+    if (story.listing.source_mls) {
+      const strip = await fetchPortalStrip(
+        story.listing.mls_number,
+        story.listing.source_mls,
+        { since: story.first_post_at },
+      );
+      portalViews = strip.total_views;
+    }
+  } catch {
+    portalViews = 0;
+  }
+
+  return {
+    report_id: story.report_id,
+    property_id: story.listing.id,
+    token,
+    story_url: `${APP_BASE_URL}/home/${token}`,
+    address: story.listing.address ?? "your listing",
+    city: story.listing.city,
+    agent_name: story.listing.agent_name,
+    agent_email: agentEmail,
+    hero_image_url: story.listing.hero_image_url,
+    social_reach: story.totals.reach,
+    post_count: story.totals.post_count,
+    portal_views: portalViews,
+    days_running: story.days_since_launch ?? 0,
+    week_start: weekStart,
+  };
+}
+
+/**
+ * Build a candidate straight from a story token, no eligibility gating —
+ * used by the public capture endpoint to send a seller their first copy the
+ * moment the agent shares it. Returns null if the token doesn't resolve.
+ */
+export async function buildOwnerStoryCandidateFromToken(
+  token: string,
+  now: Date = new Date(),
+): Promise<OwnerStoryEmailCandidate | null> {
+  const story = await fetchOwnerStoryByToken(token);
+  if (!story) return null;
+  return assembleCandidate(story, token, etMondayIso(now), "");
+}
+
+/* ----------------------------------------------------------------------- *
+ *  Seller recipients — captured via the agent's "send to your seller" form
+ * ----------------------------------------------------------------------- */
+
+export interface SellerRecipient {
+  email: string;
+  name: string | null;
+}
+
+/** Load the seller recipients attached to a report, deduped by email. */
+export async function loadSellerRecipients(
+  reportId: string,
+): Promise<SellerRecipient[]> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("report_recipients")
+    .select("email, name")
+    .eq("report_id", reportId);
+  const seen = new Set<string>();
+  const out: SellerRecipient[] = [];
+  for (const r of (data ?? []) as Array<{ email: string; name: string | null }>) {
+    const email = r.email?.trim();
+    if (!email) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ email, name: r.name });
+  }
+  return out;
+}
+
+/**
+ * Add (or update) a seller recipient on a report. Idempotent on
+ * (report_id, email) — re-submitting the same seller just refreshes the name.
+ */
+export async function addSellerRecipient(input: {
+  report_id: string;
+  email: string;
+  name: string | null;
+}): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase.from("report_recipients").upsert(
+    {
+      report_id: input.report_id,
+      email: input.email.trim(),
+      name: input.name?.trim() || null,
+    },
+    { onConflict: "report_id,email" },
+  );
+}
+
+/** Set of "report_id|loweremail" already sent in the given week. */
+export async function loadSellerSendKeysForWeek(
+  weekStart: string,
+): Promise<Set<string>> {
+  const { data } = await untypedClient()
+    .from("owner_story_seller_sends")
+    .select("report_id, recipient_email")
+    .eq("week_start", weekStart);
+  return new Set(
+    ((data ?? []) as Array<{ report_id: string; recipient_email: string }>).map(
+      (r) => `${r.report_id}|${r.recipient_email.toLowerCase()}`,
+    ),
+  );
+}
+
+/** Record a seller send (idempotent on report_id + recipient_email + week). */
+export async function recordSellerSend(input: {
+  report_id: string;
+  property_id: string;
+  recipient_email: string;
+  week_start: string;
+  social_reach: number;
+  portal_views: number;
+  post_count: number;
+  last_error?: string | null;
+}): Promise<void> {
+  await untypedClient()
+    .from("owner_story_seller_sends")
+    .upsert(
+      {
+        report_id: input.report_id,
+        property_id: input.property_id,
+        recipient_email: input.recipient_email.trim(),
+        week_start: input.week_start,
+        social_reach: input.social_reach,
+        portal_views: input.portal_views,
+        post_count: input.post_count,
+        sent_at: new Date().toISOString(),
+        last_error: input.last_error ?? null,
+      },
+      { onConflict: "report_id,recipient_email,week_start" },
+    );
 }
 
 /**

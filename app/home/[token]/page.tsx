@@ -761,11 +761,6 @@ function MarketingSnapshot({
           label="People Reached"
         />
         <StatTile
-          icon={<HeartGlyph />}
-          value={formatNumber(totals.engagements)}
-          label="Engagements"
-        />
-        <StatTile
           icon={<PencilGlyph />}
           value={formatNumber(totals.post_count)}
           label="Posts Published"
@@ -807,7 +802,10 @@ function StatTile({
         >
           {icon}
         </span>
-        <div>
+        {/* minWidth:0 lets this flex child shrink below its content width so a
+            long label wraps inside the card instead of overflowing on narrow
+            mobile columns. */}
+        <div style={{ minWidth: 0 }}>
           <div
             style={{
               fontSize: 26,
@@ -824,6 +822,8 @@ function StatTile({
               fontSize: 12,
               color: INK_SOFT,
               fontWeight: 500,
+              overflowWrap: "break-word",
+              wordBreak: "break-word",
             }}
           >
             {label}
@@ -1333,9 +1333,8 @@ function buildSummaryParagraph(
     return "Your home is queued up for the Alliance social media campaign. Reach and engagement stats will appear here as soon as Facebook, Instagram, and TikTok posts go live.";
   }
   const reachLabel = formatNumber(totals.reach);
-  const engLabel = formatNumber(totals.engagements);
   const topLabel = formatNumber(topReach);
-  return `Your home is gaining meaningful visibility across Facebook, Instagram, and TikTok. Since launch, the campaign has reached ${reachLabel} people and generated ${engLabel} engagements. The strongest post reached ${topLabel} people, showing solid exposure beyond standard MLS visibility.`;
+  return `Your home is gaining meaningful visibility across Facebook, Instagram, and TikTok. Since launch, the campaign has reached ${reachLabel} people. The strongest post reached ${topLabel} people, showing solid exposure beyond standard MLS visibility.`;
 }
 
 /* ----------------------------------------------------------------------- *
@@ -1852,13 +1851,6 @@ function PeopleGlyph() {
       <circle cx="9" cy="7" r="4" />
       <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-function HeartGlyph() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 21s-7-4.35-9.5-9.27C1 8 3.5 4 7.5 4c2 0 3.5 1 4.5 2.5C13 5 14.5 4 16.5 4c4 0 6.5 4 5 7.73C19 16.65 12 21 12 21z" />
     </svg>
   );
 }

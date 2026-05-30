@@ -3,9 +3,19 @@ import { sendEmail } from "@/lib/email/send";
 import {
   findEligibleOwnerStoryEmails,
   recordOwnerStorySend,
+  loadSellerRecipients,
+  loadSellerSendKeysForWeek,
+  recordSellerSend,
   type OwnerStoryEmailCandidate,
 } from "./owner-story-weekly-data";
 import { renderOwnerStoryEmail } from "./owner-story-weekly-template";
+
+/** Minimal unsubscribe mechanism for seller sends (replies route to John). */
+function unsubscribeMailto(c: OwnerStoryEmailCandidate): string {
+  return `mailto:SocialMediaReport@c21anj.com?subject=${encodeURIComponent(
+    `Unsubscribe Owner Story — ${c.address}`,
+  )}`;
+}
 
 /**
  * Orchestrator for the weekly Owner Story email to listing agents.
@@ -26,6 +36,8 @@ export interface OwnerStoryRunResult {
   candidates: number;
   emails_sent: number;
   emails_failed: number;
+  seller_emails_sent: number;
+  seller_emails_failed: number;
   errors: string[];
 }
 
@@ -39,16 +51,33 @@ export async function runOwnerStoryWeeklyCron(opts?: {
     candidates: candidates.length,
     emails_sent: 0,
     emails_failed: 0,
+    seller_emails_sent: 0,
+    seller_emails_failed: 0,
     errors: [],
   };
 
+  // Seller-send dedupe set for the week, loaded once.
+  const weekStart = candidates[0]?.week_start;
+  const sellerSentKeys = weekStart
+    ? await loadSellerSendKeysForWeek(weekStart)
+    : new Set<string>();
+
   for (const c of candidates) {
-    const { subject, html, text } = renderOwnerStoryEmail(c);
+    // Sellers captured for this listing — loaded first so the agent copy can
+    // acknowledge them ("this was just sent to your seller") instead of
+    // nudging the agent to forward.
+    const sellers = await loadSellerRecipients(c.report_id);
+
+    // --- Agent send -------------------------------------------------------
+    const agentEmail = renderOwnerStoryEmail(c, {
+      audience: "agent",
+      sellersOnFile: sellers,
+    });
     const send = await sendEmail({
       to: c.agent_email,
-      subject,
-      html,
-      text,
+      subject: agentEmail.subject,
+      html: agentEmail.html,
+      text: agentEmail.text,
       tag: "owner-story-weekly",
     });
 
@@ -56,12 +85,9 @@ export async function runOwnerStoryWeeklyCron(opts?: {
       result.emails_sent += 1;
     } else {
       result.emails_failed += 1;
-      result.errors.push(`${c.address}: ${send.error ?? "unknown error"}`);
+      result.errors.push(`${c.address} (agent): ${send.error ?? "unknown error"}`);
     }
 
-    // Record regardless of send outcome so a hard-failing recipient doesn't
-    // get retried every cron tick within the same week; last_error preserves
-    // the reason for the admin view.
     await recordOwnerStorySend({
       report_id: c.report_id,
       property_id: c.property_id,
@@ -72,6 +98,47 @@ export async function runOwnerStoryWeeklyCron(opts?: {
       post_count: c.post_count,
       last_error: send.ok ? null : (send.error ?? "unknown error"),
     });
+
+    // --- Direct-to-seller sends ------------------------------------------
+    const sellers = await loadSellerRecipients(c.report_id);
+    for (const seller of sellers) {
+      const key = `${c.report_id}|${seller.email.toLowerCase()}`;
+      if (sellerSentKeys.has(key)) continue;
+
+      const sellerEmail = renderOwnerStoryEmail(c, {
+        audience: "seller",
+        recipientName: seller.name,
+        unsubscribeUrl: unsubscribeMailto(c),
+      });
+      const sSend = await sendEmail({
+        to: seller.email,
+        subject: sellerEmail.subject,
+        html: sellerEmail.html,
+        text: sellerEmail.text,
+        tag: "owner-story-weekly-seller",
+      });
+
+      if (sSend.ok) {
+        result.seller_emails_sent += 1;
+      } else {
+        result.seller_emails_failed += 1;
+        result.errors.push(
+          `${c.address} (seller ${seller.email}): ${sSend.error ?? "unknown error"}`,
+        );
+      }
+
+      await recordSellerSend({
+        report_id: c.report_id,
+        property_id: c.property_id,
+        recipient_email: seller.email,
+        week_start: c.week_start,
+        social_reach: c.social_reach,
+        portal_views: c.portal_views,
+        post_count: c.post_count,
+        last_error: sSend.ok ? null : (sSend.error ?? "unknown error"),
+      });
+      sellerSentKeys.add(key);
+    }
   }
 
   return result;

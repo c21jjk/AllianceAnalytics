@@ -2,12 +2,18 @@ import "server-only";
 import type { OwnerStoryEmailCandidate } from "./owner-story-weekly-data";
 
 /**
- * HTML + plaintext renderer for the weekly Owner Story email to listing agents.
+ * HTML + plaintext renderer for the weekly Owner Story email.
  *
- * The email is a Monday-morning nudge: "here's the live, seller-facing Owner
- * Story for your listing — forward it to your seller." The story page itself
- * (the CTA target) carries the full detail; this email is a branded summary
- * with the two headline numbers (portal views + social reach) and one button.
+ * Two audiences (the page they link to is identical; only the framing differs):
+ *
+ *   - "agent"  → Monday nudge to the listing agent: "here's the live Owner
+ *     Story for your listing — forward it to your seller (email or text)."
+ *   - "seller" → the seller themselves, once the agent has shared it: a warm
+ *     "here's how your home is performing" with no forwarding ask and an
+ *     unsubscribe line.
+ *
+ * The story page (the CTA target) carries the full detail; this email is a
+ * branded summary with the headline numbers (portal views + social reach).
  */
 
 const BRAND_GREY = "#252526";
@@ -19,12 +25,84 @@ export interface RenderedOwnerStoryEmail {
   text: string;
 }
 
+export interface SellerOnFile {
+  name: string | null;
+  email: string;
+}
+
+export interface OwnerStoryEmailOptions {
+  audience?: "agent" | "seller";
+  /** Seller's name(s) for the greeting, e.g. "John & Jane". Seller only. */
+  recipientName?: string | null;
+  /** One-click unsubscribe URL for seller sends (omitted for agents). */
+  unsubscribeUrl?: string | null;
+  /**
+   * Sellers already captured for this listing. AGENT email only: when present,
+   * the copy switches from "please forward this" to "this was just sent to
+   * your seller" so the agent knows it's handled.
+   */
+  sellersOnFile?: SellerOnFile[];
+}
+
+function formatSellerList(sellers: SellerOnFile[]): string {
+  return sellers
+    .map((s) => (s.name?.trim() ? escapeHtml(s.name.trim()) : escapeHtml(s.email)))
+    .join(", ");
+}
+
+function firstNameOf(name: string | null | undefined): string {
+  const n = name?.trim();
+  if (!n) return "there";
+  // Keep "John & Jane" intact for sellers; for a single name take the first token.
+  if (n.includes("&") || n.includes(" and ")) return n;
+  return n.split(/\s+/)[0];
+}
+
 export function renderOwnerStoryEmail(
   c: OwnerStoryEmailCandidate,
+  opts: OwnerStoryEmailOptions = {},
 ): RenderedOwnerStoryEmail {
-  const firstName = c.agent_name?.trim().split(/\s+/)[0] ?? "there";
+  const audience = opts.audience ?? "agent";
+  const isSeller = audience === "seller";
+  const sellers = opts.sellersOnFile ?? [];
+  const hasSellers = !isSeller && sellers.length > 0;
   const locationLine = c.city ? `${c.address}, ${c.city}` : c.address;
-  const subject = `${c.address}: this week's Owner Story for your seller`;
+
+  const greetName = isSeller
+    ? firstNameOf(opts.recipientName)
+    : firstNameOf(c.agent_name);
+
+  const subject = isSeller
+    ? `Your home's Owner Story — ${c.address}`
+    : `${c.address}: this week's Owner Story for your seller`;
+
+  const intro = isSeller
+    ? `Hi ${escapeHtml(greetName)}, here's the live Owner Story for your home at <strong>${escapeHtml(c.address)}</strong> — a page that shows every social post and portal working to sell it, updating automatically. It's been running for <strong>${c.days_running} ${c.days_running === 1 ? "day" : "days"}</strong>.`
+    : `Hi ${escapeHtml(greetName)}, here's the live Owner Story for your listing — a status-aware page showing every social post and portal that's working behind <strong>${escapeHtml(c.address)}</strong>. It's been running for <strong>${c.days_running} ${c.days_running === 1 ? "day" : "days"}</strong> and updates automatically.`;
+
+  const calloutBlock = isSeller
+    ? `<div style="font-size:15px;color:#3f3f46;line-height:1.55;margin-top:12px;">
+            Bookmark it and check back any time — the numbers grow as your home keeps getting exposure across Facebook, Instagram, TikTok, and the major listing portals.
+          </div>`
+    : hasSellers
+      ? `<div style="font-size:15px;color:${BRAND_GREY};line-height:1.55;margin-top:14px;padding:12px 14px;background:#EAF6EE;border-left:3px solid #2E9E5B;border-radius:6px;">
+            <strong>&#10003; This was just emailed directly to your seller</strong> (${formatSellerList(sellers)}). No need to forward it — they'll keep getting it automatically every Monday while the listing is active. You can still open and share the link yourself anytime.
+          </div>`
+      : `<div style="font-size:15px;color:${BRAND_GREY};line-height:1.55;margin-top:14px;padding:12px 14px;background:#FBF7E9;border-left:3px solid ${BRAND_GOLD};border-radius:6px;">
+            <strong>Please forward this to your seller</strong> — paste the link into an email or a text message. It's a live page they can bookmark and re-open any time to watch their home's exposure build, week over week. You'll get this reminder every Monday while the listing is active.
+          </div>`;
+
+  const ctaLabel = isSeller
+    ? "View your Owner Story &rarr;"
+    : "View &amp; share the Owner Story &rarr;";
+
+  const footerLine = isSeller
+    ? `Sent from SocialMediaReport@c21anj.com · Alliance Social Analytics on behalf of your listing agent.${
+        opts.unsubscribeUrl
+          ? ` <a href="${escapeAttr(opts.unsubscribeUrl)}" style="color:#a1a1aa;text-decoration:underline;">Unsubscribe</a> from these weekly updates.`
+          : ""
+      }`
+    : `Sent from SocialMediaReport@c21anj.com · Alliance Social Analytics. You're receiving this because you're the listing agent. The link is live and forwardable.`;
 
   const heroBlock = c.hero_image_url
     ? `<tr><td style="padding:0;">
@@ -67,11 +145,9 @@ export function renderOwnerStoryEmail(
         <!-- Body -->
         <tr><td style="padding:24px 28px;">
           <div style="font-size:15px;color:#3f3f46;line-height:1.55;">
-            Hi ${escapeHtml(firstName)}, here's the live Owner Story for your listing — a status-aware page showing every social post and portal that's working behind <strong>${escapeHtml(c.address)}</strong>. It's been running for <strong>${c.days_running} ${c.days_running === 1 ? "day" : "days"}</strong> and updates automatically.
+            ${intro}
           </div>
-          <div style="font-size:15px;color:#3f3f46;line-height:1.55;margin-top:12px;">
-            Forward it to your seller — they can bookmark it and watch the exposure build week over week.
-          </div>
+          ${calloutBlock}
 
           ${statsTable}
 
@@ -79,19 +155,32 @@ export function renderOwnerStoryEmail(
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:22px;">
             <tr><td align="center" bgcolor="${BRAND_GOLD}" style="border-radius:10px;">
               <a href="${escapeAttr(c.story_url)}" target="_blank" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:${BRAND_GREY};text-decoration:none;border-radius:10px;">
-                View &amp; share the Owner Story &rarr;
+                ${ctaLabel}
               </a>
             </td></tr>
           </table>
           <div style="font-size:12px;color:#a1a1aa;margin-top:12px;word-break:break-all;">
             ${escapeHtml(c.story_url)}
           </div>
+          ${
+            isSeller
+              ? ""
+              : hasSellers
+                ? `<div style="margin-top:18px;padding-top:16px;border-top:1px solid #f0f0f0;font-size:14px;color:#3f3f46;line-height:1.5;">
+            Need to add another seller to the weekly send?
+            <a href="${escapeAttr(c.story_url)}/share" target="_blank" style="color:#9a7d2e;font-weight:700;text-decoration:underline;">Add another email &rarr;</a>
+          </div>`
+                : `<div style="margin-top:18px;padding-top:16px;border-top:1px solid #f0f0f0;font-size:14px;color:#3f3f46;line-height:1.5;">
+            Want it sent to your seller for you, every Monday automatically?
+            <a href="${escapeAttr(c.story_url)}/share" target="_blank" style="color:#9a7d2e;font-weight:700;text-decoration:underline;">Add your seller&rsquo;s email &rarr;</a>
+          </div>`
+          }
         </td></tr>
 
         <!-- Footer -->
         <tr><td style="padding:18px 28px;border-top:1px solid #f0f0f0;">
           <div style="font-size:11px;color:#a1a1aa;line-height:1.5;">
-            Sent from SocialMediaReport@c21anj.com · Alliance Social Analytics. You're receiving this because you're the listing agent. The link is live and forwardable.
+            ${footerLine}
           </div>
         </td></tr>
 
@@ -101,22 +190,31 @@ export function renderOwnerStoryEmail(
 </body>
 </html>`;
 
-  const text = [
+  const textLines = [
     `Owner Story — ${locationLine}`,
     ``,
-    `Hi ${firstName}, here's the live Owner Story for your listing — a status-aware page showing every social post and portal working behind ${c.address}. It's been running ${c.days_running} ${c.days_running === 1 ? "day" : "days"} and updates automatically.`,
+    isSeller
+      ? `Hi ${greetName}, here's the live Owner Story for your home at ${c.address} — every social post and portal working to sell it, updating automatically. It's been running ${c.days_running} ${c.days_running === 1 ? "day" : "days"}.`
+      : `Hi ${greetName}, here's the live Owner Story for your listing — every social post and portal working behind ${c.address}. It's been running ${c.days_running} ${c.days_running === 1 ? "day" : "days"} and updates automatically.`,
     ``,
     `Portal views: ${formatNumber(c.portal_views)}`,
     `Social reach: ${formatNumber(c.social_reach)}`,
     `Posts: ${formatNumber(c.post_count)}`,
     ``,
-    `Forward it to your seller — they can bookmark it and watch the exposure build:`,
+    isSeller
+      ? `Bookmark it and check back any time — the numbers grow as your home keeps getting exposure:`
+      : hasSellers
+        ? `THIS WAS JUST EMAILED DIRECTLY TO YOUR SELLER (${sellers.map((s) => s.name?.trim() || s.email).join(", ")}). No need to forward it — they'll keep getting it every Monday while the listing is active. You can still open and share it yourself here:`
+        : `PLEASE FORWARD THIS TO YOUR SELLER — paste the link into an email or a text. It's a live page they can bookmark and re-open any time. You'll get this reminder every Monday while the listing is active:`,
     c.story_url,
     ``,
+    isSeller && opts.unsubscribeUrl
+      ? `Unsubscribe from these weekly updates: ${opts.unsubscribeUrl}`
+      : ``,
     `Sent from SocialMediaReport@c21anj.com · Alliance Social Analytics`,
-  ].join("\n");
+  ].filter((line, i, arr) => !(line === "" && arr[i - 1] === ""));
 
-  return { subject, html, text };
+  return { subject, html, text: textLines.join("\n") };
 }
 
 function formatNumber(n: number): string {
