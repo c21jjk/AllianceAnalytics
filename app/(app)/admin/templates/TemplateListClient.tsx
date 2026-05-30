@@ -37,6 +37,11 @@ export default function TemplateListClient({ templates }: Props) {
   const [filter, setFilter] = useState<StateFilter>("all");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Lightbox preview — click a row thumbnail to see the full template image
+  // without opening Studio.
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(
+    null,
+  );
 
   // Counts per state for the filter pills.
   const counts = useMemo(() => {
@@ -113,6 +118,9 @@ export default function TemplateListClient({ templates }: Props) {
                 <th className="px-4 py-2.5 text-left font-semibold w-20">
                   Order
                 </th>
+                <th className="px-4 py-2.5 text-left font-semibold w-20">
+                  Preview
+                </th>
                 <th className="px-4 py-2.5 text-left font-semibold">Name</th>
                 <th className="px-4 py-2.5 text-left font-semibold">
                   Post types
@@ -132,6 +140,7 @@ export default function TemplateListClient({ templates }: Props) {
                   key={t.id}
                   template={t}
                   onMove={onMove}
+                  onPreview={setPreview}
                   disabled={pending}
                 />
               ))}
@@ -139,6 +148,93 @@ export default function TemplateListClient({ templates }: Props) {
           </table>
         </div>
       )}
+
+      {preview ? (
+        <PreviewLightbox
+          url={preview.url}
+          name={preview.name}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ThumbCell({
+  template,
+  onPreview,
+}: {
+  template: TemplateMeta;
+  onPreview: (p: { url: string; name: string }) => void;
+}) {
+  const url = template.preview_image_url;
+  if (!url) {
+    return (
+      <div className="flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-neutral-300 bg-neutral-50 text-[9px] font-medium uppercase tracking-wide text-neutral-400">
+        None
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onPreview({ url, name: template.name })}
+      title={`Preview ${template.name}`}
+      aria-label={`Preview ${template.name}`}
+      className="block h-12 w-12 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100 transition hover:ring-2 hover:ring-gold-400/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={`Preview of ${template.name}`}
+        className="h-full w-full object-cover"
+        loading="lazy"
+      />
+    </button>
+  );
+}
+
+function PreviewLightbox({
+  url,
+  name,
+  onClose,
+}: {
+  url: string;
+  name: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Preview of ${name}`}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/70 p-6 backdrop-blur-sm"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative flex max-h-[90vh] max-w-[90vw] flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between gap-4 border-b border-neutral-200 px-4 py-2.5">
+          <span className="text-sm font-semibold text-neutral-900">{name}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close preview"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex items-center justify-center overflow-auto bg-neutral-50 p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={`Preview of ${name}`}
+            className="max-h-[78vh] max-w-full object-contain"
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -197,10 +293,12 @@ function FilterPills({
 function TemplateRow({
   template,
   onMove,
+  onPreview,
   disabled,
 }: {
   template: TemplateMeta;
   onMove: (t: TemplateMeta, dir: "up" | "down") => void;
+  onPreview: (p: { url: string; name: string }) => void;
   disabled: boolean;
 }) {
   return (
@@ -231,6 +329,9 @@ function TemplateRow({
             <ArrowDownIcon />
           </button>
         </div>
+      </td>
+      <td className="px-4 py-3">
+        <ThumbCell template={template} onPreview={onPreview} />
       </td>
       <td className="px-4 py-3">
         <Link
