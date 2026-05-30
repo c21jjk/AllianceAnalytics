@@ -23,6 +23,7 @@
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { mapListingToPayload } from "@/lib/post-builder/canvas-editor/mapListingToPayload";
+import { resolveAgentHeadshotUrl } from "@/lib/data/brand-asset-resolver";
 import {
   applyOverridesToSchema,
   parseCarouselLayoutOverrides,
@@ -45,6 +46,21 @@ export const metadata = {
 
 interface PageProps {
   params: Promise<{ token: string }>;
+}
+
+/**
+ * True when the schema has any image layer bound to `agent_photo` — i.e. the
+ * template expects a listing-agent headshot. Drives the brand_assets lookup +
+ * flag-for-review. Defensive against malformed schemas.
+ */
+function schemaBindsAgentPhoto(
+  schema: CanvasTemplateSchema | null | undefined,
+): boolean {
+  if (!schema || !Array.isArray(schema.layers)) return false;
+  return schema.layers.some(
+    (layer) =>
+      layer.kind === "image" && layer.boundField === "agent_photo",
+  );
 }
 
 /** Canvas dimensions per format. Mirrors lib/post-builder/canvas-editor/types.ts. */
@@ -117,6 +133,29 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
   // internal listing shape). The headless renderer consumes this shape
   // exactly like the editor does, so identical bound-field resolution.
   const mlsPayload = mapListingToPayload(listing);
+
+  // 2026-05-30 — Agent-photo placeholder resolution. When a template binds
+  // `agent_photo`, fill the LISTING agent's headshot from the Studio "Agents"
+  // library (brand_assets) by name match, so the placeholder populates per
+  // listing. Skipped when a hosting agent overrides below (OH renders set
+  // their own photo via hosting_agent_photo). Flag-for-review: if the schema
+  // binds agent_photo but no headshot matches, we log a clear warning (visible
+  // in Vercel runtime logs) and leave the frame empty rather than failing the
+  // render.
+  if (!payload.hosting_agent_name && schemaBindsAgentPhoto(schema)) {
+    if (!mlsPayload.agentPhotoUrl) {
+      const headshot = await resolveAgentHeadshotUrl(mlsPayload.agentName);
+      if (headshot) {
+        mlsPayload.agentPhotoUrl = headshot;
+      } else {
+        console.warn(
+          `[render][FLAG-FOR-REVIEW] agent_photo placeholder is unfilled — no active brand_assets headshot matched agent "${
+            mlsPayload.agentName ?? "(unknown)"
+          }" for listing ${payload.listing_id}. Add the agent's photo to the Agents library.`,
+        );
+      }
+    }
+  }
 
   // Inject hosting_agent / oh_window overrides from the token payload.
   // These come from the Multi-OH wizard's per-property context and only
