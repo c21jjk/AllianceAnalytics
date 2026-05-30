@@ -359,6 +359,36 @@ export async function addSellerRecipient(input: {
   );
 }
 
+/** Absolute one-click unsubscribe URL for a seller on a given story. */
+export function buildUnsubscribeUrl(token: string, email: string): string {
+  return `${APP_BASE_URL}/api/owner-story/${token}/unsubscribe?e=${encodeURIComponent(
+    email,
+  )}`;
+}
+
+/**
+ * Remove a seller recipient by email (case-insensitive) for a report. Deleting
+ * the report_recipients row is what stops future Monday cron sends. Returns the
+ * removed recipient's display name (or null) when a row matched, or undefined
+ * when nothing matched.
+ */
+export async function removeSellerRecipientByEmail(
+  reportId: string,
+  email: string,
+): Promise<{ removed: boolean; name: string | null }> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("report_recipients")
+    .select("id, email, name")
+    .eq("report_id", reportId);
+  const target = (
+    (data ?? []) as Array<{ id: string; email: string; name: string | null }>
+  ).find((r) => r.email.trim().toLowerCase() === email.trim().toLowerCase());
+  if (!target) return { removed: false, name: null };
+  await supabase.from("report_recipients").delete().eq("id", target.id);
+  return { removed: true, name: target.name };
+}
+
 /** Set of "report_id|loweremail" already sent in the given week. */
 export async function loadSellerSendKeysForWeek(
   weekStart: string,

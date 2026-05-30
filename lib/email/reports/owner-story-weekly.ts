@@ -6,16 +6,10 @@ import {
   loadSellerRecipients,
   loadSellerSendKeysForWeek,
   recordSellerSend,
+  buildUnsubscribeUrl,
   type OwnerStoryEmailCandidate,
 } from "./owner-story-weekly-data";
 import { renderOwnerStoryEmail } from "./owner-story-weekly-template";
-
-/** Minimal unsubscribe mechanism for seller sends (replies route to John). */
-function unsubscribeMailto(c: OwnerStoryEmailCandidate): string {
-  return `mailto:SocialMediaReport@c21anj.com?subject=${encodeURIComponent(
-    `Unsubscribe Owner Story — ${c.address}`,
-  )}`;
-}
 
 /**
  * Orchestrator for the weekly Owner Story email to listing agents.
@@ -100,7 +94,6 @@ export async function runOwnerStoryWeeklyCron(opts?: {
     });
 
     // --- Direct-to-seller sends ------------------------------------------
-    const sellers = await loadSellerRecipients(c.report_id);
     for (const seller of sellers) {
       const key = `${c.report_id}|${seller.email.toLowerCase()}`;
       if (sellerSentKeys.has(key)) continue;
@@ -108,7 +101,7 @@ export async function runOwnerStoryWeeklyCron(opts?: {
       const sellerEmail = renderOwnerStoryEmail(c, {
         audience: "seller",
         recipientName: seller.name,
-        unsubscribeUrl: unsubscribeMailto(c),
+        unsubscribeUrl: buildUnsubscribeUrl(c.token, seller.email),
       });
       const sSend = await sendEmail({
         to: seller.email,

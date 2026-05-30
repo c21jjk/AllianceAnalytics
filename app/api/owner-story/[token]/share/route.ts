@@ -4,6 +4,7 @@ import {
   buildOwnerStoryCandidateFromToken,
   addSellerRecipient,
   recordSellerSend,
+  buildUnsubscribeUrl,
 } from "@/lib/email/reports/owner-story-weekly-data";
 import { renderOwnerStoryEmail } from "@/lib/email/reports/owner-story-weekly-template";
 
@@ -25,12 +26,6 @@ export const runtime = "nodejs";
  */
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-
-function unsubscribeMailto(address: string): string {
-  return `mailto:SocialMediaReport@c21anj.com?subject=${encodeURIComponent(
-    `Unsubscribe Owner Story — ${address}`,
-  )}`;
-}
 
 export async function POST(
   req: Request,
@@ -69,7 +64,7 @@ export async function POST(
   const rendered = renderOwnerStoryEmail(candidate, {
     audience: "seller",
     recipientName: name || null,
-    unsubscribeUrl: unsubscribeMailto(candidate.address),
+    unsubscribeUrl: buildUnsubscribeUrl(token, email),
   });
   const send = await sendEmail({
     to: email,
