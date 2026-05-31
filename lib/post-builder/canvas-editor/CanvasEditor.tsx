@@ -2166,6 +2166,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       .map((obj): LayerEntry | null => {
         const data = getLayerData(obj);
         if (!data) return null;
+        // 2026-05-31 (crash fix) — crop mode (and other tool overlays) add
+        // helper Fabric objects that carry partial layer-data WITHOUT a
+        // layerId. Calling `.startsWith` on an undefined layerId threw
+        // "Cannot read properties of undefined (reading 'startsWith')",
+        // crashing the whole editor (white screen) the moment Crop was opened.
+        // Skip any object without a stable layerId — it isn't a real layer.
+        if (!data.layerId) return null;
         // 2026-05-29 (bug fix) — never surface transient/leaked hover-preview
         // highlight rects in the layer list.
         if (data.layerId.startsWith("__hover_preview__")) return null;
