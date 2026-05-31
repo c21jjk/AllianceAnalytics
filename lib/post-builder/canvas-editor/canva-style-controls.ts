@@ -39,14 +39,17 @@ export const BRAND_OBSESSED = "#252526";
 // into cream/gold templates and the 2px stroke was too thin to read. Tripled
 // every size and inverted the look to a SOLID violet fill with a bold white
 // ring, so the corner circles and side handles pop on any background.
+// 2026-05-31: John found the 3x-larger handles too big. Halved every size
+// (keeping the violet fill + white ring + connector line he liked). These land
+// at ~1.5x the original pre-enlargement sizes — visible but not bulky.
 /** Diameter (px) of corner circles in canvas-space, post-zoom. */
-const CORNER_SIZE = 48;
+const CORNER_SIZE = 24;
 /** Width of side capsule pills along their thin axis (px). */
-const PILL_THICKNESS = 24;
+const PILL_THICKNESS = 12;
 /** Length of side capsule pills along their long axis (px). */
-const PILL_LENGTH = 84;
+const PILL_LENGTH = 42;
 /** Diameter of the rotation handle (px) — smaller to read as secondary. */
-const ROTATION_SIZE = 28;
+const ROTATION_SIZE = 14;
 
 /** Handle fill — solid violet so the control reads as a bold blob (was white). */
 const HANDLE_FILL = CANVA_VIOLET;
@@ -204,9 +207,9 @@ export function createCanvaStyleControls(options?: {
   // Generous hit areas: 24x24 for corners and pills so the user has a
   // comfortable click target. Visual size stays at CORNER_SIZE /
   // PILL_LENGTH × PILL_THICKNESS.
-  const cornerHit = 52;
-  const pillHitThick = 30;
-  const pillHitLong = 88;
+  const cornerHit = 26;
+  const pillHitThick = 16;
+  const pillHitLong = 44;
 
   // 2026-05-29 — side-handle action depends on caller. Images pass
   // uniformSides so dragging a side scales the whole photo proportionally
