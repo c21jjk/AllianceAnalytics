@@ -85,6 +85,45 @@ function readProp(obj: FabricObject, key: string): unknown {
   return (obj as unknown as Record<string, unknown>)[key];
 }
 
+/**
+ * The object's TRUE top-left corner in canvas space, regardless of its
+ * originX/originY.
+ *
+ * Why this matters (2026-05-31 save-stick fix): the schema and the hydrators
+ * (`createFabricTextbox` / `createFabricImage`) treat `left`/`top` as the
+ * TOP-LEFT corner and never set an origin (so Fabric defaults to left/top).
+ * BUT inserted placeholders and separators are built with
+ * `originX:"center", originY:"center"` (see placeholder-insert.ts) — their raw
+ * `left`/`top` is the CENTER. Persisting that raw value verbatim shifted the
+ * layer DOWN-RIGHT by half its size on every reload — the "my placeholder
+ * jumped / my changes didn't stick" bug. Normalize to top-left here so every
+ * layer round-trips at the exact spot the user placed it, no matter which
+ * origin it was authored with.
+ *
+ * Angle is intentionally ignored: inserted placeholders are unrotated, and
+ * already-top-left layers (factory + previously-saved) pass through unchanged.
+ */
+function topLeftOf(
+  obj: FabricObject,
+  fallbackLeft: number,
+  fallbackTop: number,
+): { left: number; top: number } {
+  const left = asNum(readProp(obj, "left"), fallbackLeft);
+  const top = asNum(readProp(obj, "top"), fallbackTop);
+  const originX = asStr(readProp(obj, "originX"), "left");
+  const originY = asStr(readProp(obj, "originY"), "top");
+  const w = asNum(readProp(obj, "width"), 0) * asNum(readProp(obj, "scaleX"), 1);
+  const h =
+    asNum(readProp(obj, "height"), 0) * asNum(readProp(obj, "scaleY"), 1);
+  let l = left;
+  let t = top;
+  if (originX === "center") l = left - w / 2;
+  else if (originX === "right") l = left - w;
+  if (originY === "center") t = top - h / 2;
+  else if (originY === "bottom") t = top - h;
+  return { left: l, top: t };
+}
+
 // ---------------------------------------------------------------------------
 // Per-kind reconstruction — preserves schema metadata, copies user edits
 // ---------------------------------------------------------------------------
@@ -133,8 +172,7 @@ function reconstructTextLayer(
     name: original.name,
     locked: original.locked,
     visible: asBool(readProp(obj, "visible"), original.visible),
-    left: asNum(readProp(obj, "left"), original.left),
-    top: asNum(readProp(obj, "top"), original.top),
+    ...topLeftOf(obj, original.left, original.top),
     width: rawWidth * scaleX,
     height: rawHeight * scaleY,
     angle: asNum(readProp(obj, "angle"), original.angle),
@@ -225,8 +263,7 @@ function reconstructImageLayer(
     name: original.name,
     locked: original.locked,
     visible: asBool(readProp(obj, "visible"), original.visible),
-    left: asNum(readProp(obj, "left"), original.left),
-    top: asNum(readProp(obj, "top"), original.top),
+    ...topLeftOf(obj, original.left, original.top),
     width: boxWidth,
     height: boxHeight,
     angle: asNum(readProp(obj, "angle"), original.angle),
@@ -283,8 +320,7 @@ function reconstructShapeLayer(
     name: original.name,
     locked: original.locked,
     visible: asBool(readProp(obj, "visible"), original.visible),
-    left: asNum(readProp(obj, "left"), original.left),
-    top: asNum(readProp(obj, "top"), original.top),
+    ...topLeftOf(obj, original.left, original.top),
     width: rawWidth * scaleX,
     height: rawHeight * scaleY,
     angle: asNum(readProp(obj, "angle"), original.angle),
@@ -324,8 +360,7 @@ function reconstructOrphan(
     name: layerName,
     locked: false,
     visible: asBool(readProp(obj, "visible"), true),
-    left: asNum(readProp(obj, "left"), 0),
-    top: asNum(readProp(obj, "top"), 0),
+    ...topLeftOf(obj, 0, 0),
     angle: asNum(readProp(obj, "angle"), 0),
     opacity: asNum(readProp(obj, "opacity"), 1),
     z: zIndex,
