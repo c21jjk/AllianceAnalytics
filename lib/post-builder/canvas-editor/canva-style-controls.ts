@@ -35,14 +35,25 @@ export const BRAND_GOLD = "#C9A84C";
 /** Brand — Obsessed Grey. Single source of truth for the brand dark. */
 export const BRAND_OBSESSED = "#252526";
 
+// 2026-05-31 (John) — the handles were nearly invisible: a white fill blended
+// into cream/gold templates and the 2px stroke was too thin to read. Tripled
+// every size and inverted the look to a SOLID violet fill with a bold white
+// ring, so the corner circles and side handles pop on any background.
 /** Diameter (px) of corner circles in canvas-space, post-zoom. */
-const CORNER_SIZE = 16;
+const CORNER_SIZE = 48;
 /** Width of side capsule pills along their thin axis (px). */
-const PILL_THICKNESS = 8;
+const PILL_THICKNESS = 24;
 /** Length of side capsule pills along their long axis (px). */
-const PILL_LENGTH = 28;
+const PILL_LENGTH = 84;
 /** Diameter of the rotation handle (px) — smaller to read as secondary. */
-const ROTATION_SIZE = 12;
+const ROTATION_SIZE = 28;
+
+/** Handle fill — solid violet so the control reads as a bold blob (was white). */
+const HANDLE_FILL = CANVA_VIOLET;
+/** Handle outline — a white ring for contrast on dark photos / bands. */
+const HANDLE_STROKE = "#FFFFFF";
+/** Handle outline width (px). */
+const HANDLE_STROKE_WIDTH = 3;
 
 // ---------------------------------------------------------------------------
 // Renderers — drawn into the canvas 2D context
@@ -62,9 +73,9 @@ function renderCornerCircle(
   size: number = CORNER_SIZE,
 ): void {
   ctx.save();
-  ctx.fillStyle = "#FFFFFF";
-  ctx.strokeStyle = CANVA_VIOLET;
-  ctx.lineWidth = 2;
+  ctx.fillStyle = HANDLE_FILL;
+  ctx.strokeStyle = HANDLE_STROKE;
+  ctx.lineWidth = HANDLE_STROKE_WIDTH;
   ctx.beginPath();
   ctx.arc(left, top, size / 2, 0, Math.PI * 2);
   ctx.fill();
@@ -88,9 +99,9 @@ function renderPillVertical(
   const h = PILL_LENGTH;
   const r = w / 2;
   ctx.save();
-  ctx.fillStyle = "#FFFFFF";
-  ctx.strokeStyle = CANVA_VIOLET;
-  ctx.lineWidth = 2;
+  ctx.fillStyle = HANDLE_FILL;
+  ctx.strokeStyle = HANDLE_STROKE;
+  ctx.lineWidth = HANDLE_STROKE_WIDTH;
   // Build a rounded rect manually — roundRect isn't reliable across all
   // browser canvas implementations until Chrome 99/Safari 16. We use
   // four arcs + two lines for max compat. Centered on (left, top).
@@ -127,9 +138,9 @@ function renderPillHorizontal(
   const h = PILL_THICKNESS;
   const r = h / 2;
   ctx.save();
-  ctx.fillStyle = "#FFFFFF";
-  ctx.strokeStyle = CANVA_VIOLET;
-  ctx.lineWidth = 2;
+  ctx.fillStyle = HANDLE_FILL;
+  ctx.strokeStyle = HANDLE_STROKE;
+  ctx.lineWidth = HANDLE_STROKE_WIDTH;
   const x = left - w / 2;
   const y = top - h / 2;
   ctx.beginPath();
@@ -193,9 +204,9 @@ export function createCanvaStyleControls(options?: {
   // Generous hit areas: 24x24 for corners and pills so the user has a
   // comfortable click target. Visual size stays at CORNER_SIZE /
   // PILL_LENGTH × PILL_THICKNESS.
-  const cornerHit = 24;
-  const pillHitThick = 16;
-  const pillHitLong = 32;
+  const cornerHit = 52;
+  const pillHitThick = 30;
+  const pillHitLong = 88;
 
   // 2026-05-29 — side-handle action depends on caller. Images pass
   // uniformSides so dragging a side scales the whole photo proportionally
