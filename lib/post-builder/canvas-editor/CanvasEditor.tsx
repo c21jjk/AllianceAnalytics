@@ -1004,6 +1004,28 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     fabricCanvas.on("object:modified", (e) => {
       if (cancelled) return;
       const obj = e.target;
+      // 2026-05-31 — TEXT: bake any residual scale into fontSize + width so
+      // the glyphs are never left stretched/squished and the size readout
+      // (which derives effective = fontSize × scaleY) stays truthful. Corner
+      // handles scale uniformly (sx === sy) → font + box grow proportionally;
+      // ml/mr use changeWidth so they don't scale at all. After baking we
+      // reset scaleX/scaleY to 1 so the object renders crisp at its true size.
+      if (obj instanceof Textbox) {
+        const sx = obj.scaleX ?? 1;
+        const sy = obj.scaleY ?? 1;
+        if (Math.abs(sx - 1) > 1e-3 || Math.abs(sy - 1) > 1e-3) {
+          obj.set({
+            width: (obj.width ?? 0) * sx,
+            fontSize: (obj.fontSize ?? 1) * sy,
+            scaleX: 1,
+            scaleY: 1,
+          });
+          obj.setCoords();
+          fabricCanvas.requestRenderAll();
+        }
+        bumpVersion();
+        return;
+      }
       // Non-image (or no target): nothing to re-clip, just bump once.
       if (!(obj instanceof FabricImage)) {
         bumpVersion();

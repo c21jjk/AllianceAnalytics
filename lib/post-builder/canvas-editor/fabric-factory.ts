@@ -541,11 +541,11 @@ export function createFabricTextbox(
   });
   // why: replace Fabric's default 8-circle control set with pills on
   // the side midpoints + larger circles on the corners. Visual + UX
-  // match Canva. Apply after construction so each instance gets its
-  // own Control objects (Fabric mutates them per-object).
+  // match Canva. textResize=true so side handles change WIDTH (reflow)
+  // and top/bottom handles are removed — text never gets stretched.
   (
     tb as unknown as { controls: Record<string, unknown> }
-  ).controls = createCanvaStyleControls();
+  ).controls = createCanvaStyleControls({ textResize: true });
   setLayerData(tb, {
     layerId: layer.id,
     layerKind: "text",

@@ -203,6 +203,16 @@ export function createCanvaStyleControls(options?: {
    * sides safe too, so a photo can never be distorted by a frame drag.
    */
   uniformSides?: boolean;
+  /**
+   * When true (TEXT layers), the left/right midpoint handles change the box
+   * WIDTH (text reflows inside) instead of single-axis scaling, and the
+   * top/bottom handles are removed entirely. Single-axis scaling physically
+   * stretches/squishes the glyphs (the bug John reported); width-resize +
+   * corner uniform-scale never distort the letters. The corner handles keep
+   * scalingEqually (proportional) and the object:modified handler bakes that
+   * uniform scale back into fontSize so the readout stays honest.
+   */
+  textResize?: boolean;
 }): Record<string, Control> {
   // Generous hit areas: 24x24 for corners and pills so the user has a
   // comfortable click target. Visual size stays at CORNER_SIZE /
@@ -215,14 +225,18 @@ export function createCanvaStyleControls(options?: {
   // uniformSides so dragging a side scales the whole photo proportionally
   // (no distortion); text/shapes keep the single-axis scale/skew.
   const uniform = options?.uniformSides === true;
-  const sideXAction = uniform
-    ? controlsUtils.scalingEqually
-    : controlsUtils.scalingXOrSkewingY;
+  const textResize = options?.textResize === true;
+  // Text: left/right handles resize the box width (reflow), never scale glyphs.
+  const sideXAction = textResize
+    ? controlsUtils.changeWidth
+    : uniform
+      ? controlsUtils.scalingEqually
+      : controlsUtils.scalingXOrSkewingY;
   const sideYAction = uniform
     ? controlsUtils.scalingEqually
     : controlsUtils.scalingYOrSkewingX;
 
-  return {
+  const controls: Record<string, Control> = {
     // ---- corners ----
     tl: new Control({
       x: -0.5,
@@ -328,4 +342,14 @@ export function createCanvaStyleControls(options?: {
       withConnection: true,
     }),
   };
+
+  // Text boxes auto-fit their height to the content, so a top/bottom handle
+  // can only mean a vertical-only scale — which stretches the glyphs. Remove
+  // them for text; width (ml/mr) + proportional corners cover every real need.
+  if (textResize) {
+    delete controls.mt;
+    delete controls.mb;
+  }
+
+  return controls;
 }
