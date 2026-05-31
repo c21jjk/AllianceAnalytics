@@ -8,10 +8,10 @@ import {
   formatRelativeTime,
 } from "@/lib/format";
 import {
-  listDistinctOfficeLabels,
   normalizeOfficeName,
   type PropertySortKey,
 } from "@/lib/data/properties-db";
+import { listOffices } from "@/lib/data/offices";
 import {
   fetchPortalStripsForListings,
   type PortalStrip,
@@ -52,10 +52,21 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
   const queryRaw = (rawQ ?? "").trim();
   const queryLower = queryRaw.toLowerCase();
 
-  const [allProperties, officeLabels] = await Promise.all([
+  const [allProperties, offices] = await Promise.all([
     getProperties({ sort, office: officeFilter }),
-    listDistinctOfficeLabels(),
+    // 2026-05-31 — Office filter chips are the curated C21 office roster
+    // (the `offices` table), NOT distinct office names off the listing feed.
+    // The feed-derived list leaked non-C21 co-listing offices (e.g. "Keller
+    // Williams Realty - Washington Twp") and Paragon junk codes (e.g. "S104i"),
+    // and dropped C21 offices with no current active listings (LBI, Medford,
+    // etc.). `office.name` equals normalizeOfficeName() output, so the
+    // `?office=` filter still resolves correctly for offices that have listings.
+    listOffices(),
   ]);
+  const officeLabels = offices
+    .map((o) => o.name)
+    .filter((n): n is string => typeof n === "string" && n.trim().length > 0)
+    .sort((a, b) => a.localeCompare(b));
 
   // In-memory text filter — runs against MLS, address, city, agent. Inventory
   // is ~21 today (cap 500 from the fetcher), so this is fine; revisit if we
