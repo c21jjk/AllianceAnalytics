@@ -19,7 +19,6 @@ import {
   Flag,
   Download,
   HelpCircle,
-  Film,
 } from "lucide-react";
 import type {
   AiDesignProvenance,
@@ -493,15 +492,6 @@ export default function PostBuilderClient({
     void refetchCustomTemplates();
   }, [refetchCustomTemplates]);
 
-  // Part 2 (Phase D) — Make-a-Reel follow-up prompt state. Populated by a
-  // successful Studio save; when non-null, surfaces a modal asking the user
-  // whether they want to also create a Reel version of the post they just
-  // saved. The mls field deep-links into /post-builder/reel; gpId is kept
-  // for future "open the saved post's Reel sibling" wiring (Phase D+).
-  const [makeReelPromptState, setMakeReelPromptState] = useState<{
-    mls: string;
-    gpId: string | null;
-  } | null>(null);
 
   // Next.js router — used by the Make-a-Reel and "+ Reel" entry points to
   // navigate from Post Builder → Reel Studio without a full page reload.
@@ -1808,16 +1798,6 @@ export default function PostBuilderClient({
         // Skipped on per-slide saves (editingSlideIndex non-null) since
         // the user is in the middle of editing a carousel, not finishing
         // a full post.
-        if (
-          editingSlideIndex === null &&
-          selectedListing?.mls_number &&
-          upsertRes.ok
-        ) {
-          setMakeReelPromptState({
-            mls: selectedListing.mls_number,
-            gpId: upsertRes.id ?? generatedPostId ?? null,
-          });
-        }
       } catch (e) {
         setError(
           `Studio save threw: ${e instanceof Error ? e.message : String(e)}`,
@@ -1850,28 +1830,6 @@ export default function PostBuilderClient({
     setEditingSlideIndex(null);
   }, []);
 
-  // Part 2 (Phase D) — pivot from Post Builder to Reel Studio. Closes the
-  // canvas overlay (if open), dismisses any pending Make-a-Reel prompt,
-  // and navigates to /post-builder/reel?mls=<mls> so Reel Studio mounts
-  // with the listing already selected. Used by BOTH the in-Studio "+
-  // Reel" button AND the post-save prompt's "Make a Reel" action.
-  const navigateToReelStudio = useCallback(
-    (mls: string): void => {
-      setStudioOpen(false);
-      setEditingSlideIndex(null);
-      setMakeReelPromptState(null);
-      router.push(`/post-builder/reel?mls=${encodeURIComponent(mls)}`);
-    },
-    [router],
-  );
-
-  // why: bind the +Reel button to the currently-selected listing. Returns
-  // undefined when there's no listing, which makes CanvasEditor hide the
-  // button entirely (a +Reel without a listing has nothing to seed).
-  const handleMakeReelFromStudio = useMemo<(() => void) | undefined>(() => {
-    if (!selectedListing) return undefined;
-    return () => navigateToReelStudio(selectedListing.mls_number);
-  }, [selectedListing, navigateToReelStudio]);
 
   // why: Phase 4 — when the user swaps templates inside Studio via the
   // Templates panel, sync the parent's post-type / variant / format state
@@ -4665,7 +4623,6 @@ export default function PostBuilderClient({
         saveLabel="Continue to Final Review"
         onTemplateSwitched={handleStudioTemplateSwitched}
         onResize={handleStudioResize}
-        onMakeReel={handleMakeReelFromStudio}
         isAdmin={isAdmin}
         // Phase 2 AI Design — surface the badge + Revert link in the
         // overlay shell whenever a session is on an AI design. Hydrated
@@ -4935,19 +4892,6 @@ export default function PostBuilderClient({
             : undefined
         }
       />
-      {/* Part 2 (Phase D) — Make-a-Reel follow-up prompt. Renders only
-          when a Studio save just completed for a real listing. The user
-          dismisses by clicking either button; "Skip" closes the prompt
-          while "Make a Reel" navigates to Reel Studio with the listing
-          pre-selected. Non-blocking modal — backdrop click dismisses to
-          Skip. */}
-      {makeReelPromptState ? (
-        <MakeReelPromptModal
-          mls={makeReelPromptState.mls}
-          onMakeReel={() => navigateToReelStudio(makeReelPromptState.mls)}
-          onSkip={() => setMakeReelPromptState(null)}
-        />
-      ) : null}
       {/* 2026-05-28 — Carousel re-render progress. A small non-blocking
           toast in the corner while /api/post-builder/rerender-carousel
           streams. The editor stays interactive; the carousel tiles swap
@@ -5859,97 +5803,6 @@ function formatHumanScheduleHint(iso: string): string {
   });
 }
 
-/**
- * Part 2 (Phase D) — Make-a-Reel follow-up prompt.
- *
- * Non-blocking modal that surfaces after a successful Studio save asking
- * whether the user wants to also create a Reel version of the post they
- * just saved. Connects the canvas Studio flow to Reel Studio so the two
- * stop feeling disconnected.
- *
- * Why a modal (not a toast): The choice is consequential ("do I want to
- * spend another 2 minutes making a Reel?"), and toasts auto-dismiss on
- * timer — bad for an ADHD user who might miss the prompt entirely. The
- * modal stays until explicitly resolved.
- *
- * Three resolution paths, all equivalent dismissals:
- *   • Click "Make a Reel" — navigates to Reel Studio, mls pre-selected.
- *   • Click "Skip" — closes the prompt; the saved post stays as-is.
- *   • Click the backdrop / ESC — same as Skip.
- */
-interface MakeReelPromptModalProps {
-  mls: string;
-  onMakeReel: () => void;
-  onSkip: () => void;
-}
-
-function MakeReelPromptModal(props: MakeReelPromptModalProps) {
-  // ESC dismisses to Skip — standard modal contract.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        props.onSkip();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
-
-  return (
-    <div
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="make-reel-prompt-title"
-      onClick={(e) => {
-        // Backdrop click → Skip. Inner card stops propagation below.
-        if (e.target === e.currentTarget) props.onSkip();
-      }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/60 backdrop-blur-sm animate-fade-in-up"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="mx-4 w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 shadow-2xl"
-      >
-        <div className="mb-4 flex items-center gap-3">
-          {/* Film/play glyph — visual cue that we're talking about Reels. */}
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold-100 text-gold-700">
-            <Film size={20} aria-hidden="true" />
-          </span>
-          <div>
-            <h3
-              id="make-reel-prompt-title"
-              className="text-base font-semibold text-neutral-900"
-            >
-              Make a Reel from this post?
-            </h3>
-            <p className="mt-0.5 text-xs text-neutral-600">
-              Static posts get a fraction of the reach Reels do on IG, FB,
-              and TikTok. Same listing, ~7 seconds of motion, ready in a
-              minute.
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={props.onSkip}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50"
-          >
-            Skip
-          </button>
-          <button
-            type="button"
-            onClick={props.onMakeReel}
-            className="rounded-md bg-gold-500 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gold-600"
-          >
-            Make a Reel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function EmptyPreview() {
   return (

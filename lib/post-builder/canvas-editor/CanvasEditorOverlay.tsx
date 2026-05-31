@@ -69,12 +69,6 @@ export interface CanvasEditorOverlayProps {
    */
   carousel?: CanvasEditorProps["carousel"];
   /**
-   * Forwarded to <CanvasEditor onMakeReel>. When provided, the editor
-   * renders a "+ Reel" affordance in its header so the user can pivot from
-   * still-image Studio to Reel Studio for the same listing.
-   */
-  onMakeReel?: CanvasEditorProps["onMakeReel"];
-  /**
    * 2026-05-17 — admin-only brand library management. Forwarded straight
    * through to <CanvasEditor>. See its prop docs.
    */
@@ -287,7 +281,6 @@ export default function CanvasEditorOverlay(
           onTemplateSwitched={props.onTemplateSwitched}
           onResize={props.onResize}
           carousel={props.carousel}
-          onMakeReel={props.onMakeReel}
           isAdmin={props.isAdmin}
           templateAuthoring={props.templateAuthoring}
           onUploadBrandAsset={props.onUploadBrandAsset}
