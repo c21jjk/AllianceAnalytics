@@ -40,6 +40,7 @@ interface PropertyRow {
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
+  square_feet: number | null;
   property_type: string | null;
   public_remarks: string | null;
   hero_image_url: string | null;
@@ -61,7 +62,7 @@ export async function fetchListingsForPostBuilder(
   let q = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
     )
     .not("hero_image_url", "is", null)
     .limit(limit);
@@ -176,6 +177,7 @@ function toListing(r: PropertyRow): PostBuilderListingWithOH {
     bedrooms: r.bedrooms,
     bathrooms_full: r.bathrooms_full,
     bathrooms_half: r.bathrooms_half,
+    square_feet: r.square_feet,
     property_type: r.property_type,
     public_remarks: r.public_remarks,
     hero_image_url: r.hero_image_url,

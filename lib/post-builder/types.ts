@@ -67,6 +67,8 @@ export interface PostBuilderListing {
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
+  /** Living-area square footage. CMC L_SquareFeet / SJSR LM_Int4_2. NULL when feed omits it. */
+  square_feet?: number | null;
   property_type: string | null;
   public_remarks: string | null;
   hero_image_url: string | null;

@@ -651,6 +651,26 @@ function mapBedsBaths(row: RowMap, sourceMls: "cmc" | "sjsr"): {
 }
 
 /**
+ * Living-area square footage. Field differs by feed (verified 2026-05-31
+ * against the cross-listed twin 430 S Shore Road — CMC L_SquareFeet=1012
+ * matched SJSR LM_Int4_2=1012):
+ *   - CMC:  L_SquareFeet
+ *   - SJSR: LM_Int4_2   (LM_Int4_7=lot size, LM_Int4_1/_8=year built — NOT this)
+ * Feeds frequently leave it blank or "0" → return null so the placeholder
+ * falls back to its layer text instead of rendering "0 Sq Ft".
+ */
+function mapSquareFeet(row: RowMap, sourceMls: "cmc" | "sjsr"): number | null {
+  const raw = (sourceMls === "cmc" ? row["L_SquareFeet"] : row["LM_Int4_2"]) ?? "";
+  const trimmed = String(raw).trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = parseInt(trimmed, 10);
+  // Guard against junk: 0 means "not provided"; cap at 100k to drop stray
+  // lot-size / parcel values that occasionally land in the wrong slot.
+  if (!Number.isFinite(n) || n <= 0 || n > 100000) return null;
+  return n;
+}
+
+/**
  * Public remarks — CMC: LR_remarks33, SJSR: LR_remarks22.
  * NEVER pull LR_remarks44 (broker-only / private comments containing seller info).
  */
@@ -879,6 +899,8 @@ interface MappedListing {
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
+  /** Living-area square footage. CMC L_SquareFeet / SJSR LM_Int4_2. NULL when blank/0. */
+  square_feet: number | null;
   public_remarks: string | null;
   hero_image_url: string | null;
   /** Settlement / closing date (Paragon L_ClosingDate). NULL for active listings. */
@@ -988,6 +1010,7 @@ function mapRow(
     bedrooms: beds.bedrooms,
     bathrooms_full: beds.bathrooms_full,
     bathrooms_half: beds.bathrooms_half,
+    square_feet: mapSquareFeet(row, sourceMls),
     public_remarks: readPublicRemarks(row, sourceMls),
     hero_image_url: null, // populated by syncPhotosForRows after upsert
     close_date: readCloseDate(row),
@@ -1140,6 +1163,7 @@ async function replicateToProperties(client: SupabaseClient, rows: MappedListing
     bedrooms: r.bedrooms,
     bathrooms_full: r.bathrooms_full,
     bathrooms_half: r.bathrooms_half,
+    square_feet: r.square_feet,
     public_remarks: r.public_remarks,
     hero_image_url: r.hero_image_url,
     close_date: r.close_date,

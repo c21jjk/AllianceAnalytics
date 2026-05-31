@@ -118,6 +118,29 @@ export function formatBedsBaths(
   return bedsPart || bathsPart;
 }
 
+export function formatBedsLabeled(beds: number | null): string {
+  // "4 Bedrooms" / "1 Bedroom". Empty when missing so the layer label shows.
+  if (beds === null || beds <= 0) return "";
+  return `${beds} ${beds === 1 ? "Bedroom" : "Bedrooms"}`;
+}
+
+export function formatBathsLabeled(
+  bathsFull: number | null,
+  bathsHalf: number | null,
+): string {
+  // "3 Bathrooms" / "2.5 Bathrooms" / "1 Bathroom". Half-baths count as 0.5.
+  const total =
+    (bathsFull ?? 0) + (bathsHalf !== null ? bathsHalf * 0.5 : 0);
+  if (total <= 0) return "";
+  return `${total} ${total === 1 ? "Bathroom" : "Bathrooms"}`;
+}
+
+export function formatSquareFeet(sqft: number | null): string {
+  // "2,144 Sq Ft". Empty when missing/0 so the layer label shows instead.
+  if (sqft === null || sqft <= 0 || Number.isNaN(sqft)) return "";
+  return `${sqft.toLocaleString("en-US")} Sq Ft`;
+}
+
 const OPEN_HOUSE_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   weekday: "long",
   month: "long",
@@ -213,6 +236,12 @@ export function resolveTextBoundField(
         listing.bathsFull,
         listing.bathsHalf,
       );
+    case "beds_labeled":
+      return formatBedsLabeled(listing.beds);
+    case "baths_labeled":
+      return formatBathsLabeled(listing.bathsFull, listing.bathsHalf);
+    case "square_feet":
+      return formatSquareFeet(listing.squareFeet);
     case "property_type":
       return listing.propertyType ?? "";
     case "mls_number":

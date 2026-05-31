@@ -23,6 +23,7 @@ import { type JSX } from "react";
 import {
   PLACEHOLDER_GROUPS,
   type PlaceholderField,
+  type SeparatorChar,
 } from "../placeholder-insert";
 
 export interface PlaceholdersPanelProps {
@@ -37,12 +38,15 @@ export interface PlaceholdersPanelProps {
   selectedKind: "text" | "image" | null;
   /** Bind the currently selected layer to the field (Phase C). */
   onBindSelected: (field: PlaceholderField) => void;
+  /** Insert a literal separator ("—" or "|") text layer to divide inline stats. */
+  onInsertSeparator: (char: SeparatorChar) => void;
 }
 
 export default function PlaceholdersPanel({
   onInsert,
   selectedKind,
   onBindSelected,
+  onInsertSeparator,
 }: PlaceholdersPanelProps): JSX.Element {
   return (
     <div className="flex h-full flex-col overflow-y-auto px-3 py-3">
@@ -57,6 +61,36 @@ export default function PlaceholdersPanel({
           </>
         ) : null}
       </p>
+
+      <div className="mb-4">
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
+          Separators
+        </div>
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={() => onInsertSeparator("—")}
+            title="Insert an em-dash to separate stats (e.g. Bedrooms — Bathrooms — Square Ft)"
+            className="focus-ring-dark flex w-full items-center justify-between rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2.5 py-1.5 text-left text-sm text-[var(--studio-text)] transition-colors hover:bg-[var(--studio-hover)]"
+          >
+            <span>Em Dash &nbsp;—</span>
+            <span className="ml-2 shrink-0 rounded bg-[var(--studio-hover)] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--studio-text-muted)]">
+              text
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onInsertSeparator("|")}
+            title="Insert a vertical bar to separate stats (e.g. Bedrooms | Bathrooms | Square Ft)"
+            className="focus-ring-dark flex w-full items-center justify-between rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2.5 py-1.5 text-left text-sm text-[var(--studio-text)] transition-colors hover:bg-[var(--studio-hover)]"
+          >
+            <span>Vertical Bar &nbsp;|</span>
+            <span className="ml-2 shrink-0 rounded bg-[var(--studio-hover)] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--studio-text-muted)]">
+              text
+            </span>
+          </button>
+        </div>
+      </div>
 
       {PLACEHOLDER_GROUPS.map((group) => (
         <div key={group.group} className="mb-4">

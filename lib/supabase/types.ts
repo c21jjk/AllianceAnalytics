@@ -1379,6 +1379,7 @@ export type Database = {
           bathrooms_full: number | null
           bathrooms_half: number | null
           bedrooms: number | null
+          square_feet: number | null
           buyer_agent_name: string | null
           buyer_office_name: string | null
           city: string | null
@@ -1419,6 +1420,7 @@ export type Database = {
           bathrooms_full?: number | null
           bathrooms_half?: number | null
           bedrooms?: number | null
+          square_feet?: number | null
           buyer_agent_name?: string | null
           buyer_office_name?: string | null
           city?: string | null
@@ -1459,6 +1461,7 @@ export type Database = {
           bathrooms_full?: number | null
           bathrooms_half?: number | null
           bedrooms?: number | null
+          square_feet?: number | null
           buyer_agent_name?: string | null
           buyer_office_name?: string | null
           city?: string | null

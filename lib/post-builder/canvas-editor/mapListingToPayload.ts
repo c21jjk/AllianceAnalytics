@@ -166,10 +166,10 @@ export function mapListingToPayload(
     beds: listing.bedrooms,
     bathsFull: listing.bathrooms_full,
     bathsHalf: listing.bathrooms_half,
-    // why: V1 doesn't carry squareFeet on PostBuilderListing. When the editor
-    // binds to {{sqft}}, it gets null → falls back to layer.text. Adding sqft
-    // to the V1 row is a Step 3+ enhancement.
-    squareFeet: null,
+    // squareFeet now flows from the RETS sync (properties.square_feet — CMC
+    // L_SquareFeet / SJSR LM_Int4_2). Null when the feed omits it, in which
+    // case the bound text layer falls back to its authored label.
+    squareFeet: listing.square_feet ?? null,
     propertyType: listing.property_type,
 
     // marketing

@@ -110,7 +110,9 @@ import {
 } from "./fabric-factory";
 import {
   buildPlaceholderObject,
+  buildSeparatorObject,
   type PlaceholderField,
+  type SeparatorChar,
 } from "./placeholder-insert";
 import { createCanvaStyleControls, BRAND_GOLD } from "./canva-style-controls";
 
@@ -2525,6 +2527,20 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     [template.width, template.height, handleLayerAdded, history],
   );
 
+  // Insert a literal separator ("—" or "|") as a plain text layer. Same
+  // add → select → bump → record flow as a placeholder, but unbound.
+  const handleSeparatorInserted = useCallback(
+    (char: SeparatorChar): void => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const obj = buildSeparatorObject(template.width, template.height, char);
+      canvas.add(obj);
+      handleLayerAdded(obj);
+      history.record?.();
+    },
+    [template.width, template.height, handleLayerAdded, history],
+  );
+
   // Phase C — bind the currently selected text/image layer to a field,
   // turning a literal/manual layer into a placeholder that re-resolves on
   // every post. The panel only offers "Bind" when the selected layer's kind
@@ -3972,6 +3988,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     onInsert={handlePlaceholderPicked}
                     selectedKind={selectedBindableKind}
                     onBindSelected={handleBindSelectedToField}
+                    onInsertSeparator={handleSeparatorInserted}
                   />
                 ) : (
                   <ToolsPanel

@@ -55,8 +55,10 @@ export const PLACEHOLDER_GROUPS: readonly PlaceholderGroup[] = [
       { field: "price", label: "Price", kind: "text" },
       { field: "close_price", label: "Sold Price", kind: "text" },
       { field: "address_line1", label: "Street Address", kind: "text" },
-      { field: "city_state_zip", label: "City, State ZIP", kind: "text" },
-      { field: "beds_baths", label: "Beds / Baths", kind: "text" },
+      { field: "city", label: "City", kind: "text" },
+      { field: "beds_labeled", label: "Bedrooms", kind: "text" },
+      { field: "baths_labeled", label: "Bathrooms", kind: "text" },
+      { field: "square_feet", label: "Square Ft", kind: "text" },
       { field: "property_type", label: "Property Type", kind: "text" },
       { field: "mls_number", label: "MLS #", kind: "text" },
       { field: "tagline", label: "Tagline", kind: "text" },
@@ -101,6 +103,54 @@ export const PLACEHOLDER_GROUPS: readonly PlaceholderGroup[] = [
     ],
   },
 ];
+
+/** Separator glyphs offered in the Placeholders panel. */
+export type SeparatorChar = "—" | "|";
+
+const SEPARATOR_NAMES: Record<SeparatorChar, string> = {
+  "—": "Em Dash",
+  "|": "Vertical Bar",
+};
+
+/**
+ * Build a literal separator text layer (em-dash "—" or pipe "|") used to
+ * divide inline stats like Bedrooms / Bathrooms / Square Ft (e.g. "4 Bedrooms
+ * — 3 Bathrooms — 2,144 Sq Ft" or "4 Bedrooms | 3 Bathrooms | 2,144 Sq Ft").
+ * It is NOT a bound placeholder — it carries no boundField, so it round-trips
+ * as a plain TextLayer and renders verbatim on every post.
+ */
+export function buildSeparatorObject(
+  canvasWidth: number,
+  canvasHeight: number,
+  char: SeparatorChar = "—",
+): FabricObject {
+  const tb = new Textbox(char, {
+    left: canvasWidth / 2,
+    top: canvasHeight / 2,
+    originX: "center",
+    originY: "center",
+    fontFamily: ALLIANCE_FONTS.bodySans,
+    fontSize: 48,
+    fontWeight: 600,
+    fill: ALLIANCE_COLORS.ink900,
+    textAlign: "center",
+    editable: true,
+    selectable: true,
+    evented: true,
+    cornerStyle: "circle",
+    cornerSize: 10,
+    transparentCorners: false,
+    borderColor: ALLIANCE_COLORS.gold500,
+    cornerColor: ALLIANCE_COLORS.gold500,
+    padding: 2,
+  });
+  setLayerData(tb, {
+    layerId: makeId("sep"),
+    layerKind: "text",
+    displayName: SEPARATOR_NAMES[char],
+  });
+  return tb;
+}
 
 function makeId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random()

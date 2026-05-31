@@ -114,6 +114,9 @@ export type TextBoundField =
   | "beds" // "4"
   | "baths" // "3" (sum of full + half/2)
   | "beds_baths" // "4 BR / 3 BA"
+  | "beds_labeled" // "4 Bedrooms" (spelled out, singular at 1)
+  | "baths_labeled" // "3 Bathrooms" (spelled out; half-baths → "2.5 Bathrooms")
+  | "square_feet" // "2,144 Sq Ft"
   | "property_type" // "Single Family", "Condo", etc.
   | "mls_number" // "607680"
   | "tagline" // marketing line (auto-generated upstream, see captions.ts)
