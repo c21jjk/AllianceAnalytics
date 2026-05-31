@@ -123,6 +123,14 @@ interface Props {
     Record<PostFormat, TemplateMeta[]>
   >;
   /**
+   * 2026-05-30 — Full DB template definitions (schema included) for every
+   * template surfaced in the picker above, keyed by id. The list prop is the
+   * slim TemplateMeta shape (no schema), so without this "Edit in Studio"
+   * couldn't mount the DB template that produced a render and fell back to the
+   * factory. Used to resolve `activeDbTemplateSchema`.
+   */
+  dbTemplateDefsById: Record<string, TemplateDefinition>;
+  /**
    * Phase 2F (2026-05-22) — DB templates referenced by the resuming row's
    * slide_metadata, keyed by template id. Studio's "Edit slide" handler
    * looks here when a slide carries `db_template_id` so it mounts the
@@ -288,6 +296,7 @@ export default function PostBuilderClient({
   listingsByPostType,
   variantsByPostTypeAndFormat,
   dbTemplatesByPostTypeAndFormat,
+  dbTemplateDefsById,
   dbTemplatesForSlides,
   formatMeta,
   isAdmin,
@@ -1079,14 +1088,33 @@ export default function PostBuilderClient({
   // types × 3 formats (45 templates total). v6 Magazine Cover, v7 Polaroid,
   // and v8 Minimal Frame variant cards still return null and hide the button
   // until those factories are ported from the V1 HTML primitives.
-  // why: AI Design wins. When aiDesign is set (the ✨ button was used for
-  // the current (post_type, variant, format) tuple), Studio opens to the
-  // Claude-redesigned schema instead of the factory template. Clicking a
-  // different variant card / changing format / etc. clears aiDesign back
-  // to null so the next openStudio falls through to the factory lookup.
+  // 2026-05-30 — Generate ↔ Edit-in-Studio parity. When the current preview
+  // was rendered from a DB template (Bold etc.), `renderResult.template_id` is
+  // that template's UUID and `dbTemplateDefsById` carries its full schema.
+  // Build the CanvasTemplateSchema for the active format so "Edit in Studio"
+  // opens the SAME design that was generated instead of the factory fallback.
+  // renderResult is the single source of truth for "what's on screen"
+  // (activeDbTemplateId is set but never cleared, so it can't be trusted here).
+  const activeDbTemplateSchema = useMemo<CanvasTemplateSchema | null>(() => {
+    const tid = renderResult?.template_id;
+    if (!tid) return null;
+    const def = dbTemplateDefsById[tid];
+    if (!def) return null;
+    return normalizeOrBuildStarter(def, format);
+  }, [renderResult?.template_id, dbTemplateDefsById, format]);
+
+  // why: AI Design wins, then the active DB template (the one that produced
+  // the render), then the factory template. When aiDesign is set (the ✨
+  // button was used for the current tuple), Studio opens to the Claude
+  // redesign. Otherwise, if a DB template generated the preview, open it.
+  // Otherwise fall through to the factory lookup. Changing variant/format/etc.
+  // clears aiDesign and re-derives renderResult so the precedence stays honest.
   const studioTemplate = useMemo<CanvasTemplateSchema | null>(
-    () => aiDesign?.schema ?? findCanvasTemplate(postType, variantId, format),
-    [aiDesign, postType, variantId, format],
+    () =>
+      aiDesign?.schema ??
+      activeDbTemplateSchema ??
+      findCanvasTemplate(postType, variantId, format),
+    [aiDesign, activeDbTemplateSchema, postType, variantId, format],
   );
 
   // why: any change to the user's intent (different listing, post type,
@@ -1239,7 +1267,7 @@ export default function PostBuilderClient({
         ct.post_type === postType &&
         ct.format === format,
     );
-    if (customDefault) {
+    if (customDefault && !activeDbTemplateSchema) {
       setStudioContext({
         template: studioTemplate,
         listing: payload,
@@ -1267,6 +1295,7 @@ export default function PostBuilderClient({
   }, [
     selectedListing,
     studioTemplate,
+    activeDbTemplateSchema,
     availablePhotos,
     customTemplates,
     variantId,
@@ -3035,6 +3064,10 @@ export default function PostBuilderClient({
     setCaptionResult(null);
     setEditedCaption("");
     setActiveDbTemplateId(template.id);
+    // 2026-05-30 — drop any prior in-session Studio edits so "Edit in Studio"
+    // opens this freshly-generated DB template, not a stale fabric snapshot
+    // from a different design.
+    setEditedFabricJson(null);
 
     try {
       const heroUrls = currentHeroUrls;

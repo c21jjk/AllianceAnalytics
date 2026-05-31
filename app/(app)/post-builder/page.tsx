@@ -167,6 +167,29 @@ export default async function PostBuilderPage({
   // format) bucket; PostBuilderClient renders them in the same grid as
   // legacy variant cards. See PostBuilderClient's "DB templates" branch.
 
+  // 2026-05-30 — Generate ↔ Edit-in-Studio parity. The picker list above is
+  // the slim TemplateMeta shape (no schema body), so when a DB template like
+  // "Bold" produced the render, "Edit in Studio" had no schema to mount and
+  // fell back to the in-code factory template (a DIFFERENT design). Pre-fetch
+  // each surfaced DB template's FULL definition (schema included), keyed by id,
+  // so the client can open the SAME template that generated the preview.
+  // Mirrors the dbTemplatesForSlides pattern used by the resume path.
+  const dbTemplateDefIds = new Set<string>();
+  for (const pt of POST_TYPES) {
+    for (const fmt of formats) {
+      for (const meta of dbTemplatesByPostTypeAndFormat[pt][fmt]) {
+        dbTemplateDefIds.add(meta.id);
+      }
+    }
+  }
+  const dbTemplateDefsById: Record<string, TemplateDefinition> = {};
+  const dbTemplateDefs = await Promise.all(
+    [...dbTemplateDefIds].map((id) => getTemplateById(id)),
+  );
+  for (const def of dbTemplateDefs) {
+    if (def) dbTemplateDefsById[def.id] = def;
+  }
+
   const totalEligible = POST_TYPES.reduce(
     (sum, t) => sum + listingsByPostType[t].length,
     0,
@@ -243,6 +266,7 @@ export default async function PostBuilderPage({
         listingsByPostType={listingsByPostType}
         variantsByPostTypeAndFormat={variantsByPostTypeAndFormat}
         dbTemplatesByPostTypeAndFormat={dbTemplatesByPostTypeAndFormat}
+        dbTemplateDefsById={dbTemplateDefsById}
         dbTemplatesForSlides={dbTemplatesForSlides}
         formatMeta={formatMeta}
         isAdmin={isAdmin}
