@@ -35,10 +35,35 @@ export interface OwnerStoryRunResult {
   errors: string[];
 }
 
+/**
+ * Go-live hold (2026-05-31, John): delay the Owner Story email launch one more
+ * week while ListTrac portal coverage is being fixed. The Monday Vercel cron
+ * stays scheduled but sends NOTHING before this date, then resumes
+ * automatically on the first Monday on/after it. The /settings preview button
+ * (sendOwnerStoryPreview) is intentionally NOT gated — John can still preview.
+ * Delete this guard (or move the date) to launch.
+ */
+const OWNER_STORY_GO_LIVE = new Date("2026-06-08T00:00:00Z");
+
 export async function runOwnerStoryWeeklyCron(opts?: {
   now?: Date;
 }): Promise<OwnerStoryRunResult> {
   const now = opts?.now ?? new Date();
+
+  if (now < OWNER_STORY_GO_LIVE) {
+    console.log(
+      `[owner-story-weekly] held until ${OWNER_STORY_GO_LIVE.toISOString()} — skipping send (now=${now.toISOString()})`,
+    );
+    return {
+      candidates: 0,
+      emails_sent: 0,
+      emails_failed: 0,
+      seller_emails_sent: 0,
+      seller_emails_failed: 0,
+      errors: [],
+    };
+  }
+
   const candidates = await findEligibleOwnerStoryEmails(now);
 
   const result: OwnerStoryRunResult = {
