@@ -882,6 +882,26 @@ export interface CanvasExportResult {
    * Shape: opaque to consumers. Treat as JSON; do not introspect.
    */
   fabricJson: unknown;
+  /**
+   * The user's edits as a real `CanvasTemplateSchema`, reconstructed from the
+   * LIVE Fabric canvas at export time via `reconstructSchemaFromCanvas`
+   * (the same serializer the Save-as-Template path uses — it overlays the
+   * canvas layout onto the template while preserving boundField/token
+   * metadata). UNLIKE `schema` (which is the ORIGINAL hydrated template),
+   * this reflects every move/resize/recolor/font change and added/removed
+   * layer.
+   *
+   * Why this exists: template-authoring saves (Template Builder → Edit in
+   * Studio) must persist the EDITED design, not the original. Reading
+   * `schema` there silently discarded all edits (the row was rewritten with
+   * the pre-edit template). Post-generation consumers still key off `schema`
+   * for template identity (id/category/variant/format) + the original layer
+   * tree, so this is a SEPARATE field rather than a redefinition of `schema`.
+   *
+   * Null only when reconstruction throws (logged); callers should fall back
+   * to `schema` in that case.
+   */
+  editedSchema?: CanvasTemplateSchema | null;
   /** Output dimensions (post retina multiplier). */
   width: number;
   height: number;

@@ -132,7 +132,20 @@ export default function TemplateCanvasEditor({
   // only the schema.
   async function handleSave(result: CanvasExportResult): Promise<void> {
     setError(null);
-    setPendingSchema(result.schema as unknown);
+    // why: persist the EDITED design, not the original. `result.schema` is the
+    // template the editor was hydrated from (pre-edit); the user's actual edits
+    // live in `result.editedSchema` (reconstructed from the live canvas). Save
+    // the reconstructed schema; fall back to the original only if reconstruction
+    // failed (null) so we never write nothing. Before this fix the save read
+    // `result.schema` and silently discarded every edit.
+    const schemaToSave = result.editedSchema ?? result.schema;
+    if (!schemaToSave) {
+      setError(
+        "Could not read your edits from the canvas. Nothing was saved — please try again.",
+      );
+      return;
+    }
+    setPendingSchema(schemaToSave as unknown);
   }
 
   // "Save Changes to Existing Template" (+ optional set-default).

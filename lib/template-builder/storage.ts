@@ -206,7 +206,14 @@ export async function updateTemplate(
   actor_id: string,
 ): Promise<TemplateDefinition | null> {
   const supabase = createAdminClient();
-  const update: Record<string, unknown> = { updated_by: actor_id };
+  // why: stamp updated_at explicitly. The column only defaults now() on
+  // INSERT and there's no BEFORE UPDATE trigger, so without this an edit
+  // leaves the timestamp frozen — which masked a save bug (the row looked
+  // untouched even after a successful write). Set it on every patch.
+  const update: Record<string, unknown> = {
+    updated_by: actor_id,
+    updated_at: new Date().toISOString(),
+  };
   if (patch.name !== undefined) update.name = patch.name;
   if (patch.description !== undefined) update.description = patch.description;
   if (patch.post_types !== undefined) update.post_types = patch.post_types;

@@ -2978,8 +2978,26 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         );
       for (const o of leakedHoversExport) canvas.remove(o);
       let fabricJson: unknown;
+      // why: reconstruct a real CanvasTemplateSchema from the LIVE canvas so
+      // template-authoring saves persist the user's edits (layout, colors,
+      // fonts, added/removed layers) instead of the original hydrated
+      // template. Same serializer the Save-as-Template path uses; it
+      // preserves boundField/token metadata. Computed here inside the
+      // hover-stripped, selection-discarded window so editor artifacts don't
+      // leak into the saved schema. Null on failure → caller falls back to
+      // `schema`.
+      let editedSchema: CanvasTemplateSchema | null = null;
       try {
         fabricJson = canvas.toObject(propsToInclude);
+        try {
+          editedSchema = reconstructSchemaFromCanvas(canvas, currentTemplate);
+        } catch (schemaErr) {
+          console.warn(
+            "[CanvasEditor.handleExport] reconstructSchemaFromCanvas failed:",
+            schemaErr,
+          );
+          editedSchema = null;
+        }
       } catch (jsonErr) {
         // why: toObject doesn't normally throw, but if a layer carries a
         // non-serializable value in `data` we'd lose the snapshot. Log,
@@ -3007,6 +3025,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         // serializer so both fields hold the same edited source of truth.
         schema: template,
         fabricJson,
+        editedSchema,
         width: template.width * EXPORT_RESOLUTION_MULTIPLIER,
         height: template.height * EXPORT_RESOLUTION_MULTIPLIER,
         mimeType: "image/jpeg",
