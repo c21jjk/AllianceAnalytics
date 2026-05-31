@@ -667,7 +667,7 @@ function StatusBadge({ post }: { post: CreatedPostRow }) {
 }
 
 function fmtFormat(f: CreatedPostRow["format"]): string {
-  if (f === "square_1x1") return "4:5";
+  if (f === "square_1x1") return "Square 1080×1080";
   return "9:16";
 }
 

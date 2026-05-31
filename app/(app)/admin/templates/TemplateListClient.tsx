@@ -418,11 +418,9 @@ function EmptyState({ filter }: { filter: StateFilter }) {
 
 function FormatChip({ format }: { format: string }) {
   const label =
-    format === "portrait_4x5"
-      ? "4:5"
-      : format === "story_9x16"
-        ? "9:16"
-        : format;
+    format === "story_9x16"
+      ? "9:16"
+      : "Square 1080×1080";
   return (
     <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-mono font-medium text-neutral-700">
       {label}

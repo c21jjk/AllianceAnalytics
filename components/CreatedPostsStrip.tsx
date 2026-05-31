@@ -257,7 +257,7 @@ function CreatedPostThumb({ post, pending, onDelete }: CreatedPostThumbProps) {
         </div>
         <div className="px-2 py-2">
           <div className="text-[11px] font-mono text-neutral-500">
-            {post.format === "square_1x1" ? "4:5" : "9:16"}{" "}
+            {post.format === "square_1x1" ? "Square 1080×1080" : "9:16"}{" "}
             · {post.variant}
           </div>
           <div className="mt-1 text-[11px] text-neutral-500">
