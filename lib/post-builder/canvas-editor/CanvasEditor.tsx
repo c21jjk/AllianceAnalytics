@@ -2198,12 +2198,21 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         // 2026-05-29 (bug fix) — never surface transient/leaked hover-preview
         // highlight rects in the layer list.
         if (data.layerId.startsWith("__hover_preview__")) return null;
+        // why (2026-05-31 fix): Fabric's enterEditing() sets selectable=false
+        // on a text box for the DURATION of editing (so it can't be dragged
+        // while you type). The layer list keyed "locked" off selectable===false,
+        // so the instant any edit bumped layerVersion, the text box you were
+        // editing got flagged locked — which hid the floating toolbar and its
+        // font-size control mid-edit. A box that's merely in edit mode is NOT a
+        // locked layer, so exclude that transient state.
+        const isEditingText =
+          obj instanceof Textbox && (obj as Textbox).isEditing === true;
         return {
           id: data.layerId,
           name: data.displayName,
           kind: data.layerKind,
           visible: obj.visible !== false,
-          locked: obj.selectable === false,
+          locked: obj.selectable === false && !isEditingText,
         };
       })
       .filter((entry): entry is LayerEntry => entry !== null);
