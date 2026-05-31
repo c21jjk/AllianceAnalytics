@@ -321,10 +321,15 @@ async function runLayoutPass(
   try {
     response = await client.messages.create({
       model: ANTHROPIC_MODELS.sonnet,
-      // Schema output is large — give Sonnet headroom. A 6-layer template
-      // serializes to ~1500-2500 tokens, with critique-and-revise we want
-      // 4000 to be safe.
-      max_tokens: 4000,
+      // Schema output is large and varies a lot by design richness. A plain
+      // 6-layer template serializes to ~1500-2500 tokens, but a full
+      // Excellence Collection layout (gradients, shadows, framing, many
+      // layers) blows well past 4000 and gets TRUNCATED mid-JSON — which
+      // surfaced as "layout pass returned malformed JSON" because the cut-off
+      // output has no closing brace/fence to parse. Sonnet 4.6 supports far
+      // more output, so give generous headroom. max_tokens is only a ceiling;
+      // it doesn't raise cost when the real output is small.
+      max_tokens: 16000,
       system: LAYOUT_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -337,11 +342,19 @@ async function runLayoutPass(
   const textBlock = response.content.find((b) => b.type === "text");
   const raw = textBlock && textBlock.type === "text" ? textBlock.text : "";
   const parsed = extractJson(raw);
-  const plan = validateLayoutPlan(parsed);
-  if (!plan) {
+  if (parsed === null) {
+    // Couldn't parse at all — almost always a truncated response.
     return {
       ok: false,
-      error: `layout pass returned malformed JSON. First 400 chars: ${raw.slice(0, 400)}`,
+      error: `layout pass returned unparseable JSON (likely truncated; raw length ${raw.length} chars). First 400 chars: ${raw.slice(0, 400)}`,
+    };
+  }
+  const plan = validateLayoutPlan(parsed);
+  if (!plan) {
+    // Parsed fine but the structure didn't match the LayoutPlan contract.
+    return {
+      ok: false,
+      error: `layout pass JSON parsed but failed LayoutPlan validation. First 400 chars: ${raw.slice(0, 400)}`,
     };
   }
   return { ok: true, plan };
@@ -394,7 +407,10 @@ async function runCritiquePass(
   try {
     response = await client.messages.create({
       model: ANTHROPIC_MODELS.opus,
-      max_tokens: 4500,
+      // Critique-and-revise can re-emit the full revised schema, so it needs
+      // the same headroom as the layout pass to avoid truncation. Ceiling
+      // only — no cost impact when the critique is short.
+      max_tokens: 16000,
       system: CRITIQUE_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
     });

@@ -74,8 +74,15 @@ function asArray(v: unknown): unknown[] | null {
  */
 export function extractJson(raw: string): unknown {
   const trimmed = raw.trim();
+  // Prefer a fully fenced ```json … ``` block. If only an OPENING fence is
+  // present (the model's JSON was truncated before it could close the fence),
+  // strip the leading fence so an otherwise-complete response still parses. A
+  // genuinely truncated body still won't parse here — that's the signal the
+  // caller surfaces as "unparseable / likely truncated".
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  const candidate = fenced ? fenced[1] : trimmed;
+  const candidate = fenced
+    ? fenced[1]
+    : trimmed.replace(/^```(?:json)?\s*/i, "");
   try {
     return JSON.parse(candidate);
   } catch {
