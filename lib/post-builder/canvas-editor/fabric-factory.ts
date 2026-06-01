@@ -783,8 +783,15 @@ export async function createFabricImage(
  * frame reads as artwork rather than UI, and is captured by both toDataURL and
  * the page screenshot in the render pipeline.
  */
-export function drawImageBorders(canvas: Canvas): void {
-  const ctx = canvas.getContext();
+export function drawImageBorders(
+  canvas: Canvas,
+  targetCtx?: CanvasRenderingContext2D,
+): void {
+  // why: prefer the context the render pass hands us (the after:render event's
+  // ctx). For a normal editor render that's the live lower context; for an
+  // export render (toCanvasElement) it's the offscreen context, so the frames
+  // land in the exported image too. Fall back to the live context.
+  const ctx = targetCtx ?? canvas.getContext();
   if (!ctx) return;
   const vpt = canvas.viewportTransform;
   ctx.save();

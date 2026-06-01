@@ -237,8 +237,17 @@ export async function renderSchemaHeadless(
   }
 
   // why: paint image frame borders on every render tick, the same way the
-  // editor does (shared fn), so the published PNG matches Studio exactly.
-  canvas.on("after:render", () => drawImageBorders(canvas));
+  // editor does (shared fn), so the published PNG matches Studio exactly. Pass
+  // the render pass's target context (the after:render event ctx) so frames
+  // land in toDataURL/screenshot output too. Guarded so a draw error can't
+  // abort the render.
+  canvas.on("after:render", (e) => {
+    try {
+      drawImageBorders(canvas, (e as { ctx?: CanvasRenderingContext2D }).ctx);
+    } catch (err) {
+      console.warn("[headless-render] border paint failed:", err);
+    }
+  });
 
   canvas.requestRenderAll();
   // Force a single render tick so toDataURL/screenshot sees the result.

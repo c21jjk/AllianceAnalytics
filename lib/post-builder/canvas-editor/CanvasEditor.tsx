@@ -272,6 +272,18 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // why: track export-in-progress separately from React state so the export
   // handler can early-return without a stale-closure issue.
   const isExportingRef = useRef<boolean>(false);
+  // why (2026-05-31): editor-only render hooks (alignment-guides extension +
+  // border paint) attach before/after:render listeners. Fabric's toDataURL
+  // renders the scene to an OFFSCREEN context via toCanvasElement, firing those
+  // same events; the guide extension's before:render clears the live
+  // selection context, which during that offscreen pass throws ("clearRect" on
+  // an undefined context) and aborts the render mid-resize — leaving the canvas
+  // blank. handleExport suspends these hooks for the export pass (restoring the
+  // pre-overlay render path) and resumes after.
+  const overlayHooksRef = useRef<{
+    suspend: () => void;
+    resume: () => void;
+  } | null>(null);
 
   // -------------------------------------------------------------------------
   // State
@@ -965,34 +977,82 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // while dash is clear) stay solid. Color comes through the extension config.
     // Returns a teardown we call on dispose so listeners don't leak across
     // canvas re-inits.
-    let teardownGuides: (() => void) | null = null;
-    try {
-      const guideCtx = fabricCanvas.getSelectionContext();
-      const setGuideDash = (): void => guideCtx.setLineDash([7, 5]);
-      const clearGuideDash = (): void => guideCtx.setLineDash([]);
-      fabricCanvas.on("after:render", setGuideDash); // runs before ext draw
-      const teardownExt = initAligningGuidelines(fabricCanvas, {
-        margin: 8,
-        width: 1.5,
-        color: "#9747FF", // Canva-style violet
-      });
-      fabricCanvas.on("after:render", clearGuideDash); // runs after ext draw
-      teardownGuides = (): void => {
-        fabricCanvas.off("after:render", setGuideDash);
-        fabricCanvas.off("after:render", clearGuideDash);
-        teardownExt();
-      };
-    } catch (err) {
-      // Non-fatal: snapping is an enhancement, not a requirement. If the
-      // extension ever fails to init, the editor still works without guides.
-      console.warn("[canvas-editor] aligning guidelines init failed:", err);
-    }
-
-    // why (2026-05-31): paint image frame borders every render. Shared with the
-    // headless pipeline (same fn) so a photo's frame is identical in Studio and
-    // the published PNG. Drawn on the lower context after objects render.
-    const paintBorders = (): void => drawImageBorders(fabricCanvas);
+    // Border paint hook — draws image frames into whichever context the render
+    // pass targets (live lower context, or the offscreen export context the
+    // after:render event hands us, so frames appear in the saved image too).
+    // Wrapped so a draw error can never abort the render cycle (which would
+    // corrupt canvas state mid-export). Attached for the whole editor lifetime.
+    const paintBorders = (e?: { ctx?: CanvasRenderingContext2D }): void => {
+      try {
+        drawImageBorders(fabricCanvas, e?.ctx);
+      } catch (err) {
+        console.warn("[canvas-editor] border paint failed:", err);
+      }
+    };
     fabricCanvas.on("after:render", paintBorders);
+
+    // Alignment-guide hooks. These are EDITOR-ONLY: the extension's
+    // before:render clears the live selection context, which throws on Fabric's
+    // offscreen export render (toCanvasElement) and blanks the canvas. So they
+    // live behind attach/detach and are suspended for the export pass.
+    const guideCtx = fabricCanvas.getSelectionContext();
+    const setGuideDash = (): void => {
+      try {
+        guideCtx?.setLineDash([7, 5]);
+      } catch {
+        /* best effort */
+      }
+    };
+    const clearGuideDash = (): void => {
+      try {
+        guideCtx?.setLineDash([]);
+      } catch {
+        /* best effort */
+      }
+    };
+    let teardownExt: (() => void) | null = null;
+    let guidesAttached = false;
+    const attachGuides = (): void => {
+      if (guidesAttached) return;
+      try {
+        fabricCanvas.on("after:render", setGuideDash); // before ext draw
+        teardownExt = initAligningGuidelines(fabricCanvas, {
+          margin: 8,
+          width: 1.5,
+          color: "#9747FF", // Canva-style violet
+        });
+        fabricCanvas.on("after:render", clearGuideDash); // after ext draw
+        guidesAttached = true;
+      } catch (err) {
+        // Non-fatal: snapping is an enhancement, not a requirement.
+        console.warn("[canvas-editor] aligning guidelines init failed:", err);
+      }
+    };
+    const detachGuides = (): void => {
+      if (!guidesAttached) return;
+      fabricCanvas.off("after:render", setGuideDash);
+      fabricCanvas.off("after:render", clearGuideDash);
+      try {
+        teardownExt?.();
+      } catch {
+        /* best effort */
+      }
+      teardownExt = null;
+      guidesAttached = false;
+    };
+    attachGuides();
+    // Expose suspend/resume so handleExport can render the export pass without
+    // the guide hooks (their before:render throws on the offscreen export
+    // context). The border hook stays attached — it targets the export ctx.
+    overlayHooksRef.current = {
+      suspend: detachGuides,
+      resume: attachGuides,
+    };
+    const teardownGuides = (): void => {
+      detachGuides();
+      fabricCanvas.off("after:render", paintBorders);
+      overlayHooksRef.current = null;
+    };
 
     // why: wire selection events FIRST so they're armed before any object
     // gets added (in case a template defaults to having an object pre-selected
@@ -1503,17 +1563,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
     return () => {
       cancelled = true;
-      // why: drop the image-border paint hook before disposing.
-      fabricCanvas.off("after:render", paintBorders);
-      // why: drop the aligning-guidelines listeners before disposing the
-      // canvas so they don't fire into a torn-down instance.
-      if (teardownGuides) {
-        try {
-          teardownGuides();
-        } catch {
-          /* teardown is best-effort */
-        }
-        teardownGuides = null;
+      // why: drop the alignment-guides + border-paint hooks before disposing
+      // the canvas so they don't fire into a torn-down instance.
+      try {
+        teardownGuides();
+      } catch {
+        /* teardown is best-effort */
       }
       // why: Fabric v6 dispose() returns Promise<boolean>. React effect
       // cleanup is sync, so we kick it off and ignore the result. Safe
@@ -3050,6 +3105,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // matches what social posts typically expect.
       const originalBackgroundColor = canvas.backgroundColor;
       let dataUrl: string;
+      // why: Fabric's toDataURL renders the scene to an offscreen context,
+      // firing before/after:render. Our editor-only overlay hooks (alignment
+      // guides + dash) assume the live contexts and throw on that offscreen
+      // pass, aborting the render and blanking the canvas. Suspend them for the
+      // export and resume after. The border hook stays (it targets the export
+      // context via the event ctx, so frames appear in the saved image too).
+      overlayHooksRef.current?.suspend();
       try {
         if (!originalBackgroundColor || originalBackgroundColor === "transparent") {
           canvas.backgroundColor = "#FFFFFF";
@@ -3082,8 +3144,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         // actually overwrote it.
         if (canvas.backgroundColor === "#FFFFFF" && originalBackgroundColor !== "#FFFFFF") {
           canvas.backgroundColor = originalBackgroundColor;
-          canvas.requestRenderAll();
         }
+        // why: re-attach the editor-only guide hooks now the export pass is
+        // done, then render once so the live canvas repaints cleanly.
+        overlayHooksRef.current?.resume();
+        canvas.requestRenderAll();
       }
 
       // why: dataURL → Blob → File. We can't use the Canvas.toBlob() API
@@ -3227,6 +3292,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       console.warn("[SaveAsTemplate] reconstructSchemaFromCanvas failed:", err);
       return null;
     }
+    // why: suspend the editor-only guide hooks around toDataURL — their
+    // before:render throws on Fabric's offscreen export pass (see handleExport).
+    overlayHooksRef.current?.suspend();
     try {
       previewImageDataUri = canvas.toDataURL({
         format: "png",
@@ -3239,6 +3307,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // can show a helpful inline error rather than crashing here.
       console.warn("[SaveAsTemplate] toDataURL failed:", err);
       previewImageDataUri = "";
+    } finally {
+      overlayHooksRef.current?.resume();
     }
     return { schemaJson, previewImageDataUri };
   }, [currentTemplate]);
