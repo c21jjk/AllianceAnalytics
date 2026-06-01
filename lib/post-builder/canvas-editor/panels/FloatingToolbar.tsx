@@ -297,7 +297,18 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
     charSpacing: number;
   } | null>(null);
 
-  useEffect(() => {
+  // why (2026-05-31): the font-size field commits on blur, but clicking a
+  // DIFFERENT text box on the canvas changes Fabric's active object BEFORE the
+  // blur fires. The old blur handler applied the typed size to whatever was
+  // active AT BLUR TIME — i.e. the newly-clicked box — so box B inherited box
+  // A's size. We capture the box that was active when the field gained focus
+  // and commit to THAT box on blur, regardless of what's selected now.
+  const fontSizeTargetRef = useRef<Textbox | null>(null);
+
+  // why: re-read all editable text props off the active textbox into local
+  // state. Extracted so BOTH the selectionVersion effect and the canvas
+  // selection-event subscription below can call it.
+  const syncFromActive = useCallback(() => {
     const active = readActive(canvas);
     if (!(active instanceof Textbox)) {
       setState(null);
@@ -336,7 +347,29 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
       charSpacing:
         typeof active.charSpacing === "number" ? active.charSpacing : 0,
     });
-  }, [canvas, selectionVersion]);
+  }, [canvas]);
+
+  useEffect(() => {
+    syncFromActive();
+  }, [syncFromActive, selectionVersion]);
+
+  // why (2026-05-31): selectionVersion is driven by layerVersion, which only
+  // bumps on object add/remove/modify — NOT when the user clicks from one text
+  // box to another. Without this, the toolbar kept showing the previous box's
+  // values (e.g. a stale font size). Subscribe to Fabric's selection events so
+  // every selection change re-syncs the readout to the newly-active box.
+  useEffect(() => {
+    if (!canvas) return;
+    const resync = (): void => syncFromActive();
+    canvas.on("selection:created", resync);
+    canvas.on("selection:updated", resync);
+    canvas.on("selection:cleared", resync);
+    return () => {
+      canvas.off("selection:created", resync);
+      canvas.off("selection:updated", resync);
+      canvas.off("selection:cleared", resync);
+    };
+  }, [canvas, syncFromActive]);
 
   const applyToActive = useCallback(
     (
@@ -383,6 +416,20 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
     if (!Number.isFinite(next) || next < 4 || next > 400) return;
     setState((prev) => (prev ? { ...prev, fontSize: next } : prev));
     applyToActive({ fontSize: rawFontSizeFor(next) });
+    canvas?.requestRenderAll();
+    onCanvasMutated?.();
+  };
+
+  // why: commit an effective font size to a SPECIFIC textbox (captured on
+  // focus), not the live active object — so a deferred blur lands on the box
+  // the user was actually editing even if they've since clicked another one.
+  const applyFontSizeToTarget = (
+    target: Textbox | null,
+    effective: number,
+  ): void => {
+    if (!target) return;
+    const scaleY = Number(target.scaleY) || 1;
+    target.set({ fontSize: effective / scaleY });
     canvas?.requestRenderAll();
     onCanvasMutated?.();
   };
@@ -496,6 +543,12 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
           // field snapped back. Now we update the visible value freely while
           // typing (no canvas mutation yet) and clamp + apply + record history
           // on blur / Enter.
+          onFocus={() => {
+            // Capture the box being edited so blur commits to it, not to
+            // whatever is selected by the time blur fires.
+            const a = readActive(canvas);
+            fontSizeTargetRef.current = a instanceof Textbox ? a : null;
+          }}
           onChange={(e) => {
             const v = Number(e.target.value);
             if (Number.isFinite(v) && v >= 1) {
@@ -508,8 +561,17 @@ function TextControls(props: FloatingToolbarProps): JSX.Element {
               4,
               Math.min(400, Math.round(Number.isFinite(raw) && raw > 0 ? raw : state.fontSize)),
             );
-            handleFontSize(next);
+            const target = fontSizeTargetRef.current;
+            fontSizeTargetRef.current = null;
+            // Commit to the captured box (may differ from the live active obj).
+            applyFontSizeToTarget(target, next);
             commit(canvas, onCanvasMutated, recordHistory);
+            // Only refresh the readout if that box is still selected; otherwise
+            // leave it showing the now-active box's real size (set by the
+            // selectionVersion effect).
+            if (target && readActive(canvas) === target) {
+              setState((prev) => (prev ? { ...prev, fontSize: next } : prev));
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
