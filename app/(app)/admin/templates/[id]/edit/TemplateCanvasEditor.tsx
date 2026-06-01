@@ -98,6 +98,9 @@ export default function TemplateCanvasEditor({
   // schema and open a choice dialog (save to this template vs. save as new,
   // plus an optional "set as default") instead of committing immediately.
   const [pendingSchema, setPendingSchema] = useState<unknown | null>(null);
+  // The editor's rendered image (data URI), captured at save time so the
+  // chosen save action can refresh the template's list thumbnail.
+  const [pendingPreview, setPendingPreview] = useState<string | null>(null);
 
   // Resolve the schema to mount in the editor. We MERGE the stored data
   // (whatever shape it's in) with a fresh starter to guarantee every
@@ -146,6 +149,7 @@ export default function TemplateCanvasEditor({
       return;
     }
     setPendingSchema(editedSchema as unknown);
+    setPendingPreview(result.dataUrl ?? null);
   }
 
   // "Save Changes to Existing Template" (+ optional set-default).
@@ -159,6 +163,7 @@ export default function TemplateCanvasEditor({
           template.id,
           format,
           schema,
+          pendingPreview ?? undefined,
         );
         if (!response.ok) {
           setError(response.error ?? "Failed to save template schema.");
@@ -193,6 +198,7 @@ export default function TemplateCanvasEditor({
           schema,
           name,
           makeDefault,
+          pendingPreview ?? undefined,
         );
         if (!response.ok) {
           setError(response.error ?? "Failed to create new template.");

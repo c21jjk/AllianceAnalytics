@@ -3,12 +3,60 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { PostType, PostFormat } from "@/lib/post-builder/types";
 import type {
   TemplatePublishState,
   TemplateSchemaFamily,
 } from "@/lib/template-builder";
 import * as storage from "@/lib/template-builder/storage";
+
+// Template thumbnails are stored alongside post renders (public bucket).
+const TEMPLATE_PREVIEW_BUCKET = "post-builder-renders";
+const TEMPLATE_PREVIEW_PREFIX = "template-previews";
+const MAX_TEMPLATE_PREVIEW_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Upload a data-URI (jpeg or png) thumbnail of the current design and return
+ * its public URL. Returns null on any problem so a preview hiccup never blocks
+ * the actual schema save. Lets the Template Builder save keep the list
+ * thumbnail in sync with the real design (it used to be frozen at whatever was
+ * last rendered — e.g. an old 4:5 layout).
+ */
+async function uploadTemplatePreview(
+  dataUri: string,
+): Promise<string | null> {
+  const m = /^data:image\/(png|jpe?g);base64,(.*)$/i.exec(dataUri);
+  if (!m) return null;
+  const ext = m[1].toLowerCase().startsWith("jp") ? "jpg" : "png";
+  const contentType = ext === "jpg" ? "image/jpeg" : "image/png";
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(Buffer.from(m[2], "base64"));
+  } catch {
+    return null;
+  }
+  if (bytes.length === 0 || bytes.length > MAX_TEMPLATE_PREVIEW_BYTES) {
+    return null;
+  }
+  const supabase = createAdminClient();
+  const path = `${TEMPLATE_PREVIEW_PREFIX}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage
+    .from(TEMPLATE_PREVIEW_BUCKET)
+    .upload(path, bytes, {
+      contentType,
+      upsert: false,
+      cacheControl: "31536000",
+    });
+  if (error) {
+    console.error("[admin/templates] uploadTemplatePreview:", error.message);
+    return null;
+  }
+  const { data } = supabase.storage
+    .from(TEMPLATE_PREVIEW_BUCKET)
+    .getPublicUrl(path);
+  return data.publicUrl ?? null;
+}
 
 /**
  * Admin server actions for the Template Builder.
@@ -255,6 +303,7 @@ export async function saveTemplateSchemaForFormatAction(
   templateId: string,
   format: PostFormat,
   schemaForFormat: unknown,
+  previewDataUri?: string,
 ): Promise<ActionResult> {
   const profile = await requireAdmin();
 
@@ -285,9 +334,20 @@ export async function saveTemplateSchemaForFormatAction(
     [format]: schemaForFormat,
   };
 
+  // Regenerate the list thumbnail from the freshly-edited design so it never
+  // drifts from what the template actually looks like. Best-effort: a failed
+  // upload leaves the old preview rather than blocking the schema save.
+  const previewUrl =
+    previewDataUri && previewDataUri.length > 0
+      ? await uploadTemplatePreview(previewDataUri)
+      : null;
+
   const updated = await storage.updateTemplate(
     templateId,
-    { schema: nextSchema },
+    {
+      schema: nextSchema,
+      ...(previewUrl ? { preview_image_url: previewUrl } : {}),
+    },
     profile.id,
   );
   if (!updated) {
@@ -313,6 +373,7 @@ export async function saveTemplateAsNewAction(
   schemaForFormat: unknown,
   name: string,
   makeDefault: boolean,
+  previewDataUri?: string,
 ): Promise<ActionResult> {
   const profile = await requireAdmin();
 
@@ -333,12 +394,18 @@ export async function saveTemplateAsNewAction(
   const source = await storage.getTemplateById(sourceTemplateId);
   if (!source) return { ok: false, error: "Source template not found." };
 
+  const previewUrl =
+    previewDataUri && previewDataUri.length > 0
+      ? await uploadTemplatePreview(previewDataUri)
+      : null;
+
   const created = await storage.createTemplate(
     {
       name: trimmed,
       description: source.description,
       post_types: source.post_types,
       schema: { [format]: schemaForFormat } as TemplateSchemaFamily,
+      preview_image_url: previewUrl,
       // why: published so the new template is immediately pickable in the
       // Post Builder. The author explicitly chose "save as new," so this is
       // a deliberate, live template, not a draft.
