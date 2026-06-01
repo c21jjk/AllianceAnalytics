@@ -268,6 +268,31 @@ function reconstructImageLayer(
     ? (data?.targetBoxHeight ?? naturalHeight * scaleY)
     : naturalHeight * scaleY;
 
+  // why (2026-05-31): for a REAL loaded photo the Fabric object's own
+  // left/top is the cover-scaled image's top-left, which sits OUTSIDE the
+  // visible frame (the image overflows its box). The frame the author sees is
+  // the absolutePositioned Rect clipPath that createFabricImage attaches to
+  // every image. So when an image has that clip, read the FRAME rect for
+  // position + dims — that's what the author actually placed. This makes a
+  // dragged/repositioned Hero Photo round-trip to the right spot instead of
+  // saving the photo's overflow corner. Falls back to the transform-derived
+  // top-left + box dims when there's no Rect clip (older / non-clipped images,
+  // and dashed placeholder frames, which ARE their own object).
+  const clipObj = readProp(obj, "clipPath") as
+    | { type?: string; left?: number; top?: number; width?: number; height?: number; scaleX?: number; scaleY?: number }
+    | null;
+  const frameClip =
+    isRealImage && clipObj && asStr(clipObj.type, "") === "rect" ? clipObj : null;
+  const framePos = frameClip
+    ? { left: asNum(frameClip.left, original.left), top: asNum(frameClip.top, original.top) }
+    : topLeftOf(obj, original.left, original.top);
+  const frameWidth = frameClip
+    ? asNum(frameClip.width, boxWidth) * asNum(frameClip.scaleX, 1)
+    : boxWidth;
+  const frameHeight = frameClip
+    ? asNum(frameClip.height, boxHeight) * asNum(frameClip.scaleY, 1)
+    : boxHeight;
+
   const hasBoundField = Boolean(original.boundField);
 
   return {
@@ -277,9 +302,9 @@ function reconstructImageLayer(
     name: original.name,
     locked: original.locked,
     visible: asBool(readProp(obj, "visible"), original.visible),
-    ...topLeftOf(obj, original.left, original.top),
-    width: boxWidth,
-    height: boxHeight,
+    ...framePos,
+    width: frameWidth,
+    height: frameHeight,
     angle: asNum(readProp(obj, "angle"), original.angle),
     opacity: asNum(readProp(obj, "opacity"), original.opacity),
     z: zIndex,

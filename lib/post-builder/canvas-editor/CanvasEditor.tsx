@@ -1052,6 +1052,51 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const dispH = naturalH * scaleY;
       const left = obj.left ?? 0;
       const top = obj.top ?? 0;
+      // 2026-05-31 — MOVE (drag) vs SCALE (handles). A plain drag must move
+      // the photo AND its frame together; it must NOT rebuild the clip to the
+      // full cover-scaled image bounds (dispW × dispH, which is larger than
+      // the frame). The old code did exactly that on every modify, so dragging
+      // a Cover Hero Photo ballooned it vertically — the whole untrimmed photo
+      // got revealed and the frame box was overwritten, leaving no way to crop
+      // it back. On a pure move we instead TRANSLATE the existing clipPath by
+      // the same delta the image moved, preserving the frame dims + box bag.
+      // Detection: Fabric's ModifiedEvent carries the gesture `action`
+      // ("drag" | "scale" | "scaleX" | "scaleY" | "rotate") and a `transform`
+      // snapshot (`original`) of the object at mousedown. Programmatic fires
+      // (crop done, alignment) have no transform → original is undefined and
+      // this branch is skipped, so their intentional clip rebuilds still run.
+      const modEvent = e as unknown as {
+        action?: string;
+        transform?: {
+          action?: string;
+          original?: { left?: number; top?: number; scaleX?: number; scaleY?: number };
+        };
+      };
+      const modAction = modEvent.action ?? modEvent.transform?.action;
+      const gestureOrigin = modEvent.transform?.original;
+      const existingMoveClip = obj.clipPath instanceof Rect ? obj.clipPath : null;
+      const scaleUnchanged =
+        gestureOrigin != null &&
+        Math.abs((gestureOrigin.scaleX ?? scaleX) - scaleX) < 1e-4 &&
+        Math.abs((gestureOrigin.scaleY ?? scaleY) - scaleY) < 1e-4;
+      const isPureMove =
+        gestureOrigin != null &&
+        (modAction === "drag" || (modAction == null && scaleUnchanged)) &&
+        scaleUnchanged;
+      if (existingMoveClip && isPureMove) {
+        const dx = left - (gestureOrigin.left ?? left);
+        const dy = top - (gestureOrigin.top ?? top);
+        if (dx !== 0 || dy !== 0) {
+          existingMoveClip.set({
+            left: (existingMoveClip.left ?? 0) + dx,
+            top: (existingMoveClip.top ?? 0) + dy,
+          });
+          existingMoveClip.setCoords();
+          fabricCanvas.requestRenderAll();
+        }
+        bumpVersion();
+        return;
+      }
       // 2026-05-29 — skip the Rect re-allocation + render when nothing
       // actually moved or resized. Fabric fires object:modified for some
       // no-op interactions (e.g. a select that it counts as a transform);
