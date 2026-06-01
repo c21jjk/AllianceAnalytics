@@ -137,7 +137,63 @@ export async function renderSchemaHeadless(
   // a non-event canvas.
   const sortedLayers = [...schema.layers].sort((a, b) => a.z - b.z);
 
+  // --- hide-if-empty (render only) -----------------------------------------
+  // A bound text field with no value for THIS listing (e.g. Square Ft on a
+  // listing whose feed omits square footage) is DROPPED from the generated
+  // post instead of showing its placeholder label ("Square Ft"). Any separator
+  // ("|" / "—") left next to a dropped field is dropped too, so the stats line
+  // reads cleanly ("3 Bedrooms | 2 Bathrooms" instead of "… | Square Ft" or a
+  // trailing bar). This runs on the render path only — the authoring editor
+  // still shows every placeholder so the author can position them.
+  const SEPARATOR_CHARS = new Set(["—", "|"]);
+  const isSeparatorLayer = (l: (typeof schema.layers)[number]): boolean =>
+    isTextLayer(l) && !l.boundField && SEPARATOR_CHARS.has((l.text ?? "").trim());
+  const centerX = (l: (typeof schema.layers)[number]): number =>
+    l.left + (("width" in l ? l.width : 0) ?? 0) / 2;
+  const vTop = (l: (typeof schema.layers)[number]): number => l.top;
+  const vBottom = (l: (typeof schema.layers)[number]): number =>
+    l.top + (("height" in l ? l.height : 0) ?? 0);
+  const sameBand = (
+    a: (typeof schema.layers)[number],
+    b: (typeof schema.layers)[number],
+  ): boolean => Math.min(vBottom(a), vBottom(b)) > Math.max(vTop(a), vTop(b));
+
+  const hiddenIds = new Set<string>();
+  // 1) Empty bound text fields.
+  for (const layer of schema.layers) {
+    if (isTextLayer(layer) && layer.boundField) {
+      const value = resolveTextBoundField(layer.boundField, listing).trim();
+      if (!value) hiddenIds.add(layer.id);
+    }
+  }
+  // 2) Separators whose immediate neighbor (left or right, same horizontal
+  //    band) was dropped. Standalone separators with no dropped neighbor stay.
+  for (const sep of schema.layers) {
+    if (!isSeparatorLayer(sep)) continue;
+    const sx = centerX(sep);
+    const neighbors = schema.layers.filter(
+      (l) =>
+        l.id !== sep.id &&
+        isTextLayer(l) &&
+        !isSeparatorLayer(l) &&
+        sameBand(l, sep),
+    );
+    const left = neighbors
+      .filter((l) => centerX(l) < sx)
+      .sort((a, b) => centerX(b) - centerX(a))[0];
+    const right = neighbors
+      .filter((l) => centerX(l) > sx)
+      .sort((a, b) => centerX(a) - centerX(b))[0];
+    if ((left && hiddenIds.has(left.id)) || (right && hiddenIds.has(right.id))) {
+      hiddenIds.add(sep.id);
+    }
+  }
+
   for (const layer of sortedLayers) {
+    if (hiddenIds.has(layer.id)) {
+      // Dropped by hide-if-empty (empty bound field or orphaned separator).
+      continue;
+    }
     if (layer.kind === "group") {
       // Group is reserved (see types.ts); skip silently.
       warnings.push(`skipped group layer ${layer.id} (not implemented)`);
