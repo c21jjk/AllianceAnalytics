@@ -1021,6 +1021,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           width: 1.5,
           color: "#9747FF", // Canva-style violet
         });
+        // why (2026-05-31): the extension snaps the active object during
+        // RESIZE/SCALE by MUTATING its width/height/scale (collect-point.mjs).
+        // For a native-crop image that independently stretches the photo —
+        // dragging a crop handle near a band edge distorts it and drifts its
+        // width. We only want guides for MOVE (position snap). Drop the
+        // resize + scale snap handlers; keep object:moving + the line drawing.
+        // Nothing else in the editor listens to these two events.
+        fabricCanvas.off("object:resizing");
+        fabricCanvas.off("object:scaling");
         fabricCanvas.on("after:render", clearGuideDash); // after ext draw
         guidesAttached = true;
       } catch (err) {
