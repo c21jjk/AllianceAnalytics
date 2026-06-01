@@ -554,7 +554,17 @@ export function reconstructSchemaFromCanvas(
     format: originalSchema.format,
     width: originalSchema.width,
     height: originalSchema.height,
-    backgroundColor: originalSchema.backgroundColor,
+    // why (2026-05-31 fix): capture the LIVE canvas background, not the
+    // original. Changing the slide background color in the editor updates
+    // canvas.backgroundColor; reading originalSchema here silently discarded
+    // that edit (John set a tan background, saved, and it reverted to cream).
+    // Fall back to the original only when the canvas bg isn't a plain color
+    // string (e.g. a pattern/gradient we don't round-trip here).
+    backgroundColor:
+      typeof canvas.backgroundColor === "string" &&
+      canvas.backgroundColor.length > 0
+        ? canvas.backgroundColor
+        : originalSchema.backgroundColor,
     backgroundImage: originalSchema.backgroundImage,
     layers: nextLayers,
     updatedAt: new Date().toISOString(),
