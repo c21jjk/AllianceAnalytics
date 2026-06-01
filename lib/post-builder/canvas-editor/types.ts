@@ -347,6 +347,15 @@ export interface ImageLayer extends CanvasLayerBase {
   borderColor: string;
   borderWidth: number;
   /**
+   * Focal point (0..1) for "cover" framing — which slice of the photo shows.
+   * x: 0 = left edge, 1 = right edge. y: 0 = top, 1 = bottom. Persisted so an
+   * author's pan/trim of a BOUND placeholder re-frames the same way when a
+   * different-sized listing photo is bound at render time. Optional; defaults
+   * to centered (x 0.5) and slightly-above-center (y 0.4) for cover.
+   */
+  focalX?: number;
+  focalY?: number;
+  /**
    * When true, the image layer is excluded from the canvas entirely if
    * its `boundField` resolves to null/empty (or `src` is null when no
    * bound field is set). Used by hosting-agent-block to degrade gracefully

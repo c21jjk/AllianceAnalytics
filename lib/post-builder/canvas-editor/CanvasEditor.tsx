@@ -1142,115 +1142,50 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         bumpVersion();
         return;
       }
-      // 2026-05-25 — Crop mode short-circuit. When the user is
-      // repositioning the photo inside its fixed frame, the clipPath
-      // MUST NOT follow the image (that would defeat the whole point
-      // of crop — moving the image would also move the visible
-      // window). Skip the rebuild; the absolutePositioned clipPath
-      // stays anchored where it was when crop mode was entered.
-      const activeCrop = cropModeRef.current;
-      const data = getLayerData(obj);
-      if (activeCrop && data?.layerId === activeCrop.layerId) {
-        bumpVersion();
-        return;
-      }
-      // Current displayed bounds in canvas px.
-      const naturalW = obj.width ?? 1;
-      const naturalH = obj.height ?? 1;
-      const scaleX = obj.scaleX ?? 1;
-      const scaleY = obj.scaleY ?? 1;
-      const dispW = naturalW * scaleX;
-      const dispH = naturalH * scaleY;
+      // 2026-05-31 — NATIVE CROP model. An image's bounding box now EQUALS its
+      // visible frame (cover crop via cropX/cropY/width/height; corner handles
+      // scale; edge handles trim). So a move/scale/trim needs no frame rebuild —
+      // the box tracks the object automatically. The only thing to sync is the
+      // rounding clipPath (present only when cornerRadius > 0), which is
+      // absolutePositioned and must be re-pinned to the new box. We also keep
+      // the data-bag box dims current for the fit toggle.
       const left = obj.left ?? 0;
       const top = obj.top ?? 0;
-      // 2026-05-31 — MOVE (drag) vs SCALE (handles). A plain drag must move
-      // the photo AND its frame together; it must NOT rebuild the clip to the
-      // full cover-scaled image bounds (dispW × dispH, which is larger than
-      // the frame). The old code did exactly that on every modify, so dragging
-      // a Cover Hero Photo ballooned it vertically — the whole untrimmed photo
-      // got revealed and the frame box was overwritten, leaving no way to crop
-      // it back. On a pure move we instead TRANSLATE the existing clipPath by
-      // the same delta the image moved, preserving the frame dims + box bag.
-      // Detection: Fabric's ModifiedEvent carries the gesture `action`
-      // ("drag" | "scale" | "scaleX" | "scaleY" | "rotate") and a `transform`
-      // snapshot (`original`) of the object at mousedown. Programmatic fires
-      // (crop done, alignment) have no transform → original is undefined and
-      // this branch is skipped, so their intentional clip rebuilds still run.
-      const modEvent = e as unknown as {
-        action?: string;
-        transform?: {
-          action?: string;
-          original?: { left?: number; top?: number; scaleX?: number; scaleY?: number };
-        };
-      };
-      const modAction = modEvent.action ?? modEvent.transform?.action;
-      const gestureOrigin = modEvent.transform?.original;
-      const existingMoveClip = obj.clipPath instanceof Rect ? obj.clipPath : null;
-      const scaleUnchanged =
-        gestureOrigin != null &&
-        Math.abs((gestureOrigin.scaleX ?? scaleX) - scaleX) < 1e-4 &&
-        Math.abs((gestureOrigin.scaleY ?? scaleY) - scaleY) < 1e-4;
-      const isPureMove =
-        gestureOrigin != null &&
-        (modAction === "drag" || (modAction == null && scaleUnchanged)) &&
-        scaleUnchanged;
-      if (existingMoveClip && isPureMove) {
-        const dx = left - (gestureOrigin.left ?? left);
-        const dy = top - (gestureOrigin.top ?? top);
-        if (dx !== 0 || dy !== 0) {
-          existingMoveClip.set({
-            left: (existingMoveClip.left ?? 0) + dx,
-            top: (existingMoveClip.top ?? 0) + dy,
-          });
-          existingMoveClip.setCoords();
-          fabricCanvas.requestRenderAll();
-        }
-        bumpVersion();
-        return;
-      }
-      // 2026-05-29 — skip the Rect re-allocation + render when nothing
-      // actually moved or resized. Fabric fires object:modified for some
-      // no-op interactions (e.g. a select that it counts as a transform);
-      // rebuilding an identical clipPath every time is wasted work that
-      // contributes to the per-gesture stutter.
-      const existing = obj.clipPath instanceof Rect ? obj.clipPath : null;
-      const unchanged =
-        existing != null &&
-        Math.abs((existing.left ?? 0) - left) < 0.5 &&
-        Math.abs((existing.top ?? 0) - top) < 0.5 &&
-        Math.abs((existing.width ?? 0) - dispW) < 0.5 &&
-        Math.abs((existing.height ?? 0) - dispH) < 0.5;
-      if (unchanged) {
-        bumpVersion();
-        return;
-      }
-      // Write new box dims into the data bag. Preserve all other
-      // data-bag fields (layerId etc.) by spreading what's there.
+      const boxW = (obj.width ?? 0) * (obj.scaleX ?? 1);
+      const boxH = (obj.height ?? 0) * (obj.scaleY ?? 1);
       const bag = (obj as unknown as { data?: Record<string, unknown> })
         .data ?? {};
       (obj as unknown as { data: Record<string, unknown> }).data = {
         ...bag,
-        targetBoxWidth: dispW,
-        targetBoxHeight: dispH,
+        targetBoxWidth: boxW,
+        targetBoxHeight: boxH,
       };
-      // Rebuild the clipPath at the new canvas position + dims.
-      // Preserve the user's corner radius if one was set.
-      const rx =
-        existing && typeof existing.rx === "number" ? existing.rx : 0;
-      const ry =
-        existing && typeof existing.ry === "number" ? existing.ry : 0;
-      obj.clipPath = new Rect({
-        left,
-        top,
-        width: dispW,
-        height: dispH,
-        rx,
-        ry,
-        originX: "left",
-        originY: "top",
-        absolutePositioned: true,
-      });
-      fabricCanvas.requestRenderAll();
+      const roundClip = obj.clipPath instanceof Rect ? obj.clipPath : null;
+      if (roundClip) {
+        const curW = (roundClip.width ?? 0) * (roundClip.scaleX ?? 1);
+        const curH = (roundClip.height ?? 0) * (roundClip.scaleY ?? 1);
+        const moved =
+          Math.abs((roundClip.left ?? 0) - left) > 0.5 ||
+          Math.abs((roundClip.top ?? 0) - top) > 0.5 ||
+          Math.abs(curW - boxW) > 0.5 ||
+          Math.abs(curH - boxH) > 0.5;
+        if (moved) {
+          const rx =
+            typeof roundClip.rx === "number" ? roundClip.rx : 0;
+          obj.clipPath = new Rect({
+            left,
+            top,
+            width: boxW,
+            height: boxH,
+            rx,
+            ry: rx,
+            originX: "left",
+            originY: "top",
+            absolutePositioned: true,
+          });
+          fabricCanvas.requestRenderAll();
+        }
+      }
       bumpVersion();
     });
 
@@ -1270,29 +1205,18 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     //   3. Set cropMode state — the object:modified handler above
     //      now knows to skip the clipPath rebuild for THIS layer,
     //      letting the image move freely inside the fixed frame.
+    // 2026-05-31 — native-crop model: double-clicking a photo just SELECTS it.
+    // Trimming/cropping now happens directly via the edge handles (cut off) and
+    // corner handles (scale) on the selected image — no separate crop mode. The
+    // old clipPath-based crop session is retired (it assumed the cover-overflow
+    // framing that native crop replaced).
     fabricCanvas.on("mouse:dblclick", (e) => {
       if (cancelled) return;
       const obj = e.target;
       if (!(obj instanceof FabricImage)) return;
-      const data = getLayerData(obj);
-      if (!data?.layerId) return;
-      // Lock out double-clicks on locked images (e.g. background photo
-      // that some templates pin) — user can still single-click select.
-      if ((obj as unknown as { lockMovementX?: boolean }).lockMovementX)
-        return;
-
-      const next: CropModeState = {
-        layerId: data.layerId,
-        originalImagePose: {
-          left: obj.left ?? 0,
-          top: obj.top ?? 0,
-          scaleX: obj.scaleX ?? 1,
-          scaleY: obj.scaleY ?? 1,
-        },
-        // P1.1: works whether or not the image already has a Rect clipPath.
-        originalClipRect: deriveCropFrameRect(obj),
-      };
-      setCropMode(next);
+      if ((obj as unknown as { lockMovementX?: boolean }).lockMovementX) return;
+      fabricCanvas.setActiveObject(obj);
+      fabricCanvas.requestRenderAll();
     });
 
     // why: optional background image. Drawn UNDERNEATH all layers, not in the
@@ -2280,24 +2204,16 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // FloatingToolbar's `onEnterCropMode` prop so users have two
   // ways to enter crop mode: double-click the image OR click the
   // Crop button in the floating toolbar.
+  // 2026-05-31 — native crop: the "Crop" button just ensures the photo is
+  // selected so its trim (edge) + scale (corner) handles are visible. There's
+  // no separate crop session anymore — the handles do the cropping in place.
   const enterCropModeForActive = useCallback((): void => {
     const canvas = fabricRef.current;
     if (!canvas) return;
     const active = canvas.getActiveObject();
     if (!(active instanceof FabricImage)) return;
-    const data = getLayerData(active);
-    if (!data?.layerId) return;
-    setCropMode({
-      layerId: data.layerId,
-      originalImagePose: {
-        left: active.left ?? 0,
-        top: active.top ?? 0,
-        scaleX: active.scaleX ?? 1,
-        scaleY: active.scaleY ?? 1,
-      },
-      // P1.1: works whether or not the image already has a Rect clipPath.
-      originalClipRect: deriveCropFrameRect(active),
-    });
+    canvas.setActiveObject(active);
+    canvas.requestRenderAll();
   }, []);
 
   // 2026-05-25 — Companion to enterCropModeForActive. Resize is the

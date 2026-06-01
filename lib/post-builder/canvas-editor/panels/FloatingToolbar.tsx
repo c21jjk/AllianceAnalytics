@@ -310,7 +310,7 @@ function ImageControls(props: FloatingToolbarProps): JSX.Element | null {
   return (
     <div className="flex items-center gap-1">
       {onActivateResize ? (
-        <Tooltip label="Resize photo — drag handles to scale">
+        <Tooltip label="Resize — drag a CORNER handle to scale the whole photo">
           <button
             type="button"
             onClick={onActivateResize}
@@ -322,7 +322,7 @@ function ImageControls(props: FloatingToolbarProps): JSX.Element | null {
         </Tooltip>
       ) : null}
       {onEnterCropMode ? (
-        <Tooltip label="Crop / reposition photo">
+        <Tooltip label="Crop — drag an EDGE handle to cut off that side of the photo">
           <button
             type="button"
             onClick={onEnterCropMode}

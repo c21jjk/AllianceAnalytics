@@ -57,7 +57,8 @@ import type {
   ShapeLayer,
   TextLayer,
 } from "./types";
-import { getLayerData } from "./fabric-factory";
+import { getLayerData, focalOfImage } from "./fabric-factory";
+import { FabricImage } from "fabric";
 
 // ---------------------------------------------------------------------------
 // Lightweight Fabric prop accessors
@@ -249,49 +250,23 @@ function reconstructImageLayer(
   // on the data bag. Prefer the box dims so a Cover-fit user resize correctly
   // round-trips as "the user wanted that BOX dimension" rather than the
   // accidental scale that produced it.
-  const naturalWidth = asNum(readProp(obj, "width"), original.width);
-  const naturalHeight = asNum(readProp(obj, "height"), original.height);
-  // why (2026-05-31 fix): a real loaded photo (Fabric type "image") is
-  // cover/contain-scaled, so its natural×scale overflows the box — for those we
-  // MUST use the box dims tracked on the data bag (kept current by the
-  // object:modified clipPath rebuild). But a bound image with no photo yet
-  // renders as a dashed PLACEHOLDER FRAME (a Rect). When the author resizes that
-  // frame, scaleX/scaleY change while data.targetBoxWidth stays at its insert
-  // value — so reading targetBoxWidth saved the OLD size and the photo came back
-  // smaller than the frame. For a non-image (frame) object, the live width×scale
-  // IS the box the author drew, so use that.
-  const isRealImage = asStr(readProp(obj, "type"), "") === "image";
-  const boxWidth = isRealImage
-    ? (data?.targetBoxWidth ?? naturalWidth * scaleX)
-    : naturalWidth * scaleX;
-  const boxHeight = isRealImage
-    ? (data?.targetBoxHeight ?? naturalHeight * scaleY)
-    : naturalHeight * scaleY;
+  // why (2026-05-31 native crop): every image (real photo or placeholder
+  // frame) now has box == visible frame. The Fabric object's width/height are
+  // the cropped region in element px, so width×scaleX is the frame width and
+  // left/top is the frame's top-left directly. No clip-reading or box-dim bag
+  // gymnastics needed anymore.
+  const objWidth = asNum(readProp(obj, "width"), original.width);
+  const objHeight = asNum(readProp(obj, "height"), original.height);
+  const framePos = topLeftOf(obj, original.left, original.top);
+  const frameWidth = objWidth * scaleX;
+  const frameHeight = objHeight * scaleY;
 
-  // why (2026-05-31): for a REAL loaded photo the Fabric object's own
-  // left/top is the cover-scaled image's top-left, which sits OUTSIDE the
-  // visible frame (the image overflows its box). The frame the author sees is
-  // the absolutePositioned Rect clipPath that createFabricImage attaches to
-  // every image. So when an image has that clip, read the FRAME rect for
-  // position + dims — that's what the author actually placed. This makes a
-  // dragged/repositioned Hero Photo round-trip to the right spot instead of
-  // saving the photo's overflow corner. Falls back to the transform-derived
-  // top-left + box dims when there's no Rect clip (older / non-clipped images,
-  // and dashed placeholder frames, which ARE their own object).
-  const clipObj = readProp(obj, "clipPath") as
-    | { type?: string; left?: number; top?: number; width?: number; height?: number; scaleX?: number; scaleY?: number }
-    | null;
-  const frameClip =
-    isRealImage && clipObj && asStr(clipObj.type, "") === "rect" ? clipObj : null;
-  const framePos = frameClip
-    ? { left: asNum(frameClip.left, original.left), top: asNum(frameClip.top, original.top) }
-    : topLeftOf(obj, original.left, original.top);
-  const frameWidth = frameClip
-    ? asNum(frameClip.width, boxWidth) * asNum(frameClip.scaleX, 1)
-    : boxWidth;
-  const frameHeight = frameClip
-    ? asNum(frameClip.height, boxHeight) * asNum(frameClip.scaleY, 1)
-    : boxHeight;
+  // Persist the focal point (cover framing) so a bound photo re-frames the same
+  // way against a different-sized listing photo at render time.
+  const focal =
+    obj instanceof FabricImage
+      ? focalOfImage(obj)
+      : { focalX: original.focalX ?? 0.5, focalY: original.focalY ?? 0.5 };
 
   const hasBoundField = Boolean(original.boundField);
 
@@ -317,6 +292,8 @@ function reconstructImageLayer(
     objectFit: data?.objectFit ?? original.objectFit,
     crossOrigin: "anonymous",
     cornerRadius: original.cornerRadius,
+    focalX: focal.focalX,
+    focalY: focal.focalY,
     // why (2026-05-31): the frame-border color/width are edited live via the
     // floating toolbar, which writes them onto the image's data bag. Read them
     // back from there so a border the author added/changed persists through

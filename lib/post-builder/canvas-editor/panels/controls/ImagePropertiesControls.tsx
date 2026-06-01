@@ -22,6 +22,13 @@
 
 import { FabricImage, Rect } from "fabric";
 import type { Canvas } from "fabric";
+
+import {
+  fitImageInFrame,
+  frameOfImage,
+  focalOfImage,
+  type FrameRect,
+} from "../../fabric-factory";
 import {
   type ChangeEvent,
   type JSX,
@@ -217,27 +224,9 @@ function readCornerRadius(img: FabricImage): number {
  * cropped to. This is the rect the X/Y/W/H steppers operate on. Falls back to
  * the image's displayed bounds when there's no Rect clip.
  */
-function readFrameRect(img: FabricImage): {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-} {
-  const clip = img.clipPath instanceof Rect ? img.clipPath : null;
-  if (clip) {
-    return {
-      left: clip.left ?? img.left ?? 0,
-      top: clip.top ?? img.top ?? 0,
-      width: (clip.width ?? 0) * (clip.scaleX ?? 1),
-      height: (clip.height ?? 0) * (clip.scaleY ?? 1),
-    };
-  }
-  return {
-    left: img.left ?? 0,
-    top: img.top ?? 0,
-    width: (img.width ?? 0) * (img.scaleX ?? 1),
-    height: (img.height ?? 0) * (img.scaleY ?? 1),
-  };
+function readFrameRect(img: FabricImage): FrameRect {
+  // Native crop: the object's bounding box IS the visible frame.
+  return frameOfImage(img);
 }
 
 /**
@@ -249,19 +238,18 @@ function readImageState(canvas: Canvas | null): ImageState | null {
   const active = canvas.getActiveObject();
   if (!active || !(active instanceof FabricImage)) return null;
   const { naturalWidth, naturalHeight } = readNaturalSize(active);
-  const scaleX = active.scaleX ?? 1;
-  const scaleY = active.scaleY ?? 1;
-  const { boxWidth, boxHeight } = readBoxDims(active);
+  // Native crop: the visible box IS the bounding box (frame). All "box"/
+  // "target" dims derive from it so the circle detection + readouts are honest.
   const frame = readFrameRect(active);
   return {
     src: active.getSrc?.() ?? "",
     objectFit: readObjectFit(active),
     cornerRadius: readCornerRadius(active),
     opacity: typeof active.opacity === "number" ? active.opacity : 1,
-    targetWidth: naturalWidth * scaleX,
-    targetHeight: naturalHeight * scaleY,
-    boxWidth,
-    boxHeight,
+    targetWidth: frame.width,
+    targetHeight: frame.height,
+    boxWidth: frame.width,
+    boxHeight: frame.height,
     naturalWidth,
     naturalHeight,
     frameLeft: frame.left,
@@ -317,29 +305,21 @@ function computeFitScale(
  * existing Rect sometimes leaves a stale-render until the next redraw.
  */
 function applyCornerRadius(img: FabricImage, radius: number): void {
-  const { boxWidth, boxHeight } = readBoxDims(img);
-  // Read the image's current canvas-space top-left so the clip stays in
-  // place across re-applications. The clipPath is absolutePositioned, so
-  // its left/top are in CANVAS pixels (NOT image-local).
-  const existing =
-    img.clipPath instanceof Rect ? img.clipPath : null;
-  const clipLeft =
-    existing && typeof existing.left === "number"
-      ? existing.left
-      : img.left ?? 0;
-  const clipTop =
-    existing && typeof existing.top === "number"
-      ? existing.top
-      : img.top ?? 0;
-
+  // Native crop: the visible frame IS the bounding box. A rounding clipPath is
+  // only needed when radius > 0; at radius 0 we remove it (square corners, no
+  // clip — the crop already bounds the photo).
+  if (!radius || radius <= 0) {
+    img.clipPath = undefined;
+    return;
+  }
+  const box = frameOfImage(img);
   img.clipPath = new Rect({
-    left: clipLeft,
-    top: clipTop,
-    width: boxWidth,
-    height: boxHeight,
-    // why: absolutePositioned means rx/ry are in canvas px — no scale math.
-    rx: Math.max(0, radius),
-    ry: Math.max(0, radius),
+    left: box.left,
+    top: box.top,
+    width: box.width,
+    height: box.height,
+    rx: radius,
+    ry: radius,
     originX: "left",
     originY: "top",
     absolutePositioned: true,
@@ -354,22 +334,17 @@ function applyCornerRadius(img: FabricImage, radius: number): void {
  * achieve a perfect circle (radius = side / 2).
  */
 function resizeToSquare(img: FabricImage, fit: ImageState["objectFit"]): number {
-  const { naturalWidth, naturalHeight } = readNaturalSize(img);
-  // why: use the BOX dims (not the displayed dims) so circle-ifying
-  // an image whose displayed bounds overflowed the box (Cover) still
-  // produces a circle inside the box.
-  const { boxWidth, boxHeight } = readBoxDims(img);
-  const side = Math.min(boxWidth, boxHeight);
-  const { scaleX: nextScaleX, scaleY: nextScaleY } = computeFitScale(
+  // Square the frame to the shorter side, keeping the top-left, and re-cover.
+  const box = frameOfImage(img);
+  const side = Math.min(box.width, box.height);
+  const focal = focalOfImage(img);
+  fitImageInFrame(
+    img,
+    { left: box.left, top: box.top, width: side, height: side },
     fit,
-    side,
-    side,
-    naturalWidth,
-    naturalHeight,
+    focal.focalX,
+    focal.focalY,
   );
-  img.set({ scaleX: nextScaleX, scaleY: nextScaleY });
-  // The box is now square — persist so future Cover/Contain/Stretch use it.
-  writeBoxDims(img, side, side);
   return side;
 }
 
@@ -410,44 +385,31 @@ function isCircleShape(state: ImageState): boolean {
  */
 function fitImageToFrame(
   img: FabricImage,
-  frame: { left: number; top: number; width: number; height: number },
+  frame: FrameRect,
   fit: ImageState["objectFit"],
 ): void {
-  const { naturalWidth, naturalHeight } = readNaturalSize(img);
-  const { scaleX, scaleY } = computeFitScale(
-    fit,
-    frame.width,
-    frame.height,
-    naturalWidth,
-    naturalHeight,
-  );
-  const scaledW = naturalWidth * scaleX;
-  const scaledH = naturalHeight * scaleY;
-  const FOCAL_X = 0.5;
-  const FOCAL_Y = fit === "cover" ? 0.4 : 0.5;
-  img.set({
-    left: frame.left - (scaledW - frame.width) * FOCAL_X,
-    top: frame.top - (scaledH - frame.height) * FOCAL_Y,
-    scaleX,
-    scaleY,
-  });
-  writeBoxDims(img, frame.width, frame.height);
-  // Preserve any corner radius the author set; rebuild the clip at the frame.
-  const existing = img.clipPath instanceof Rect ? img.clipPath : null;
-  const rx =
-    existing && typeof existing.rx === "number" ? existing.rx : 0;
+  const focal = focalOfImage(img);
+  fitImageInFrame(img, frame, fit, focal.focalX, focal.focalY);
+  repinRoundClip(img);
+}
+
+/** Re-pin a rounding clipPath (if any) to the image's current bounding box. */
+function repinRoundClip(img: FabricImage): void {
+  const clip = img.clipPath instanceof Rect ? img.clipPath : null;
+  if (!clip) return;
+  const box = frameOfImage(img);
+  const rx = typeof clip.rx === "number" ? clip.rx : 0;
   img.clipPath = new Rect({
-    left: frame.left,
-    top: frame.top,
-    width: frame.width,
-    height: frame.height,
+    left: box.left,
+    top: box.top,
+    width: box.width,
+    height: box.height,
     rx,
     ry: rx,
     originX: "left",
     originY: "top",
     absolutePositioned: true,
   });
-  img.setCoords();
 }
 
 /**
@@ -464,12 +426,8 @@ function computeOpenSpace(
 ): { left: number; top: number; width: number; height: number } {
   const cw = canvas.width ?? 1080;
   const ch = canvas.height ?? 1080;
-  const clip = img.clipPath instanceof Rect ? img.clipPath : null;
-  const frameTop = clip ? clip.top ?? img.top ?? 0 : img.top ?? 0;
-  const frameH = clip
-    ? clip.height ?? 0
-    : (img.height ?? 0) * (img.scaleY ?? 1);
-  const centerY = frameTop + frameH / 2;
+  const box = frameOfImage(img);
+  const centerY = box.top + box.height / 2;
   const WIDE = cw * 0.6;
   let gapTop = 0;
   let gapBottom = ch;
@@ -532,28 +490,16 @@ export default function ImagePropertiesControls(
         // why: crossOrigin: "anonymous" is mandatory — without it the new
         // image taints the canvas and toDataURL throws SecurityError on
         // export. See ImageLayer typedoc + CanvasEditor.tsx createFabricImage.
-        await active.setSrc(nextUrl, { crossOrigin: "anonymous" });
-
-        // why: setSrc gives us a new underlying element with new natural
-        // dimensions — re-apply object-fit so the visual size doesn't
-        // suddenly jump. Compute against the BOX dims (stable target)
-        // so the new photo lands at the same on-screen size, regardless
-        // of how it differs in natural aspect from the previous photo.
+        // Capture the frame + fit + focal BEFORE the swap (focal is derived
+        // from the OLD photo's crop), then re-frame the new photo into the
+        // same frame so it lands at the same on-screen size + framing.
         const currentFit = readObjectFit(active);
-        const { boxWidth, boxHeight } = readBoxDims(active);
-        const { naturalWidth, naturalHeight } = readNaturalSize(active);
-        const { scaleX, scaleY } = computeFitScale(
-          currentFit,
-          boxWidth,
-          boxHeight,
-          naturalWidth,
-          naturalHeight,
-        );
-        active.set({ scaleX, scaleY });
+        const frame = frameOfImage(active);
+        const focal = focalOfImage(active);
+        await active.setSrc(nextUrl, { crossOrigin: "anonymous" });
+        fitImageInFrame(active, frame, currentFit, focal.focalX, focal.focalY);
 
-        // why: always re-apply the clipPath after swap — the new image's
-        // displayed dims may differ, but the box is unchanged. Pass the
-        // current corner radius so rounded photos stay rounded.
+        // Re-apply rounding so rounded photos stay rounded after the swap.
         applyCornerRadius(active, state?.cornerRadius ?? 0);
 
         canvas.requestRenderAll();
@@ -581,23 +527,13 @@ export default function ImagePropertiesControls(
       if (!canvas || !state) return;
       const active = canvas.getActiveObject();
       if (!active || !(active instanceof FabricImage)) return;
-      // why (2026-05-23 fix): compute the new scale against the BOX dims
-      // (stable target) rather than the displayed dims (= naturalDim *
-      // currentScale, which is a circular reference that always returns
-      // the current scale = no-op). This is the root fix for the
-      // "Cover/Contain/Stretch don't change anything" bug.
-      const { scaleX, scaleY } = computeFitScale(
-        next,
-        state.boxWidth,
-        state.boxHeight,
-        state.naturalWidth,
-        state.naturalHeight,
-      );
-      active.set({ scaleX, scaleY });
+      // Re-frame into the CURRENT frame (bounding box) under the new fit,
+      // preserving the focal point. Native crop sets cropX/cropY/width/height.
+      const frame = frameOfImage(active);
+      const focal = focalOfImage(active);
+      fitImageInFrame(active, frame, next, focal.focalX, focal.focalY);
       writeObjectFit(active, next);
-      // why: the clipPath stays at the box position — re-applying corner
-      // radius preserves it. With the new absolutePositioned clip, the
-      // radius value is in canvas px directly, no scale math.
+      // Re-pin the rounding clip (if any) to the new box.
       applyCornerRadius(active, state.cornerRadius);
       canvas.requestRenderAll();
       onCanvasMutated?.();

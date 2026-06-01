@@ -162,6 +162,125 @@ function renderPillHorizontal(
   ctx.restore();
 }
 
+// ---------------------------------------------------------------------------
+// Native-crop edge handlers (2026-05-31)
+// ---------------------------------------------------------------------------
+//
+// For images framed with Fabric's native crop, the edge midpoint handles
+// (ml/mr/mt/mb) TRIM the frame (cut off) instead of scaling — exactly Canva's
+// crop behavior. They change the image's `width`/`height` (the cropped region,
+// in element px) and shift `cropX`/`cropY` so the OPPOSITE edge's content stays
+// pinned. Corner handles keep proportional scaling (no distortion).
+//
+// Modeled on Fabric's `changeObjectWidth`: getLocalPoint gives the pointer in
+// the object's local (scaled) frame relative to the fixed anchor; dividing by
+// scale yields element px. wrapWithFixedAnchor pins the opposite edge.
+
+const MIN_CROP_PX = 8;
+
+function naturalSizeOf(img: unknown): { w: number; h: number } {
+  const getEl = (img as { getElement?: () => unknown }).getElement;
+  const el = typeof getEl === "function" ? getEl.call(img) : null;
+  if (el && typeof el === "object") {
+    const e = el as {
+      naturalWidth?: number;
+      naturalHeight?: number;
+      width?: number;
+      height?: number;
+    };
+    const w = e.naturalWidth || e.width || 0;
+    const h = e.naturalHeight || e.height || 0;
+    if (w > 0 && h > 0) return { w, h };
+  }
+  const f = img as { width?: number; height?: number };
+  return { w: f.width || 1, h: f.height || 1 };
+}
+
+const cropResizeInner = (
+  _eventData: unknown,
+  transform: {
+    target: unknown;
+    corner: string;
+    originX: unknown;
+    originY: unknown;
+  },
+  x: number,
+  y: number,
+): boolean => {
+  const target = transform.target as {
+    width: number;
+    height: number;
+    scaleX?: number;
+    scaleY?: number;
+    cropX?: number;
+    cropY?: number;
+    set: (k: string | Record<string, unknown>, v?: unknown) => void;
+    getElement?: () => unknown;
+  };
+  const local = (
+    controlsUtils as unknown as {
+      getLocalPoint: (
+        t: unknown,
+        ox: unknown,
+        oy: unknown,
+        x: number,
+        y: number,
+      ) => { x: number; y: number };
+    }
+  ).getLocalPoint(transform, transform.originX, transform.originY, x, y);
+  const nat = naturalSizeOf(target);
+  const corner = transform.corner;
+
+  if (corner === "mr" || corner === "ml") {
+    const scaleX = target.scaleX || 1;
+    const oldW = target.width;
+    const cropX = target.cropX || 0;
+    let newW = Math.abs(local.x / scaleX);
+    if (corner === "mr") {
+      // right edge dragged, left pinned (cropX unchanged); reveal up to the
+      // photo's right edge.
+      newW = Math.max(MIN_CROP_PX, Math.min(newW, nat.w - cropX));
+      target.set("width", newW);
+    } else {
+      // left edge dragged, right element-edge (cropX+width) pinned.
+      const rightEdge = cropX + oldW;
+      newW = Math.max(MIN_CROP_PX, Math.min(newW, rightEdge));
+      target.set({ width: newW, cropX: rightEdge - newW });
+    }
+    return oldW !== target.width;
+  }
+  if (corner === "mt" || corner === "mb") {
+    const scaleY = target.scaleY || 1;
+    const oldH = target.height;
+    const cropY = target.cropY || 0;
+    let newH = Math.abs(local.y / scaleY);
+    if (corner === "mb") {
+      // bottom edge dragged, top pinned (cropY unchanged) → cut off the bottom.
+      newH = Math.max(MIN_CROP_PX, Math.min(newH, nat.h - cropY));
+      target.set("height", newH);
+    } else {
+      // top edge dragged, bottom element-edge pinned.
+      const bottomEdge = cropY + oldH;
+      newH = Math.max(MIN_CROP_PX, Math.min(newH, bottomEdge));
+      target.set({ height: newH, cropY: bottomEdge - newH });
+    }
+    return oldH !== target.height;
+  }
+  return false;
+};
+
+const cropResizeHandler = (
+  controlsUtils as unknown as {
+    wrapWithFireEvent: (n: string, h: unknown) => unknown;
+    wrapWithFixedAnchor: (h: unknown) => unknown;
+  }
+).wrapWithFireEvent(
+  "resizing",
+  (
+    controlsUtils as unknown as { wrapWithFixedAnchor: (h: unknown) => unknown }
+  ).wrapWithFixedAnchor(cropResizeInner),
+);
+
 /** Smaller rotation handle — same shape as corners, half the size. */
 function renderRotationCircle(
   ctx: CanvasRenderingContext2D,
@@ -213,6 +332,14 @@ export function createCanvaStyleControls(options?: {
    * uniform scale back into fontSize so the readout stays honest.
    */
   textResize?: boolean;
+  /**
+   * When true (IMAGE layers with native crop), the side midpoint handles
+   * TRIM the frame (cut off) by changing the cropped width/height + cropX/cropY
+   * instead of scaling the photo. Corners still scale proportionally. This is
+   * Canva's crop behavior — drag the bottom-center handle to cut off the bottom
+   * of the photo without stretching it.
+   */
+  imageCrop?: boolean;
 }): Record<string, Control> {
   // Generous hit areas: 24x24 for corners and pills so the user has a
   // comfortable click target. Visual size stays at CORNER_SIZE /
@@ -226,15 +353,24 @@ export function createCanvaStyleControls(options?: {
   // (no distortion); text/shapes keep the single-axis scale/skew.
   const uniform = options?.uniformSides === true;
   const textResize = options?.textResize === true;
-  // Text: left/right handles resize the box width (reflow), never scale glyphs.
-  const sideXAction = textResize
-    ? controlsUtils.changeWidth
+  const imageCrop = options?.imageCrop === true;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cropAction = cropResizeHandler as any;
+  // Images: side handles TRIM (native crop). Text: left/right resize box width
+  // (reflow). Otherwise scale (uniform for the old image path, single-axis for
+  // shapes).
+  const sideXAction = imageCrop
+    ? cropAction
+    : textResize
+      ? controlsUtils.changeWidth
+      : uniform
+        ? controlsUtils.scalingEqually
+        : controlsUtils.scalingXOrSkewingY;
+  const sideYAction = imageCrop
+    ? cropAction
     : uniform
       ? controlsUtils.scalingEqually
-      : controlsUtils.scalingXOrSkewingY;
-  const sideYAction = uniform
-    ? controlsUtils.scalingEqually
-    : controlsUtils.scalingYOrSkewingX;
+      : controlsUtils.scalingYOrSkewingX;
 
   const controls: Record<string, Control> = {
     // ---- corners ----

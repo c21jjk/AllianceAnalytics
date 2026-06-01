@@ -579,6 +579,147 @@ interface ImageLoadFailure {
 }
 export type ImageLoadOutcome = ImageLoadResult | ImageLoadFailure;
 
+// ---------------------------------------------------------------------------
+// Native-crop framing (2026-05-31)
+// ---------------------------------------------------------------------------
+//
+// Images are framed with Fabric's NATIVE crop (`cropX`/`cropY` + `width`/
+// `height` in element px + uniform `scaleX`/`scaleY`) rather than a
+// cover-overflow photo masked by a clipPath. The win: the object's bounding
+// box EQUALS the visible frame, so a photo never hangs invisibly over its
+// neighbors (you can click the band underneath), the edge handles can TRIM the
+// frame (cut off) instead of scaling, and corner handles scale without
+// distortion.
+//
+//   • cover   → crop the photo so the frame is filled edge-to-edge; the focal
+//               point (0..1) picks which slice shows.
+//   • contain → whole photo fits inside the frame, centered; box = scaled photo.
+//   • stretch → fill the frame exactly, distorting aspect; no crop.
+
+export interface FrameRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
+/** Read a Fabric image's NATURAL (uncropped) element dimensions. */
+export function imageNaturalSize(img: FabricImage): {
+  width: number;
+  height: number;
+} {
+  const el = (
+    img as unknown as { getElement?: () => unknown }
+  ).getElement?.();
+  if (el && typeof el === "object") {
+    const e = el as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+    const w = e.naturalWidth || e.width || 0;
+    const h = e.naturalHeight || e.height || 0;
+    if (w > 0 && h > 0) return { width: w, height: h };
+  }
+  return { width: img.width || 1, height: img.height || 1 };
+}
+
+/**
+ * Frame a loaded Fabric image into a target rect (canvas px) using native
+ * crop. Sets left/top/scaleX/scaleY/cropX/cropY/width/height in place. The
+ * resulting object bounding box equals the frame for cover/stretch (and the
+ * centered scaled photo for contain). `focalX/focalY` (0..1) only matter for
+ * cover.
+ */
+export function fitImageInFrame(
+  img: FabricImage,
+  frame: FrameRect,
+  fit: "cover" | "contain" | "stretch",
+  focalX = 0.5,
+  focalY = 0.5,
+): void {
+  const { width: nW, height: nH } = imageNaturalSize(img);
+  const fW = Math.max(1, frame.width);
+  const fH = Math.max(1, frame.height);
+
+  if (fit === "stretch") {
+    img.set({
+      left: frame.left,
+      top: frame.top,
+      scaleX: fW / nW,
+      scaleY: fH / nH,
+      cropX: 0,
+      cropY: 0,
+      width: nW,
+      height: nH,
+    });
+    img.setCoords();
+    return;
+  }
+
+  if (fit === "contain") {
+    const s = Math.min(fW / nW, fH / nH);
+    const boxW = nW * s;
+    const boxH = nH * s;
+    img.set({
+      left: frame.left + (fW - boxW) / 2,
+      top: frame.top + (fH - boxH) / 2,
+      scaleX: s,
+      scaleY: s,
+      cropX: 0,
+      cropY: 0,
+      width: nW,
+      height: nH,
+    });
+    img.setCoords();
+    return;
+  }
+
+  // cover
+  const s = Math.max(fW / nW, fH / nH);
+  const cropW = Math.min(nW, fW / s);
+  const cropH = Math.min(nH, fH / s);
+  img.set({
+    left: frame.left,
+    top: frame.top,
+    scaleX: s,
+    scaleY: s,
+    cropX: (nW - cropW) * clamp01(focalX),
+    cropY: (nH - cropH) * clamp01(focalY),
+    width: cropW,
+    height: cropH,
+  });
+  img.setCoords();
+}
+
+/** The image's current visible frame (bounding box) in canvas px. */
+export function frameOfImage(img: FabricImage): FrameRect {
+  return {
+    left: img.left ?? 0,
+    top: img.top ?? 0,
+    width: (img.width ?? 0) * (img.scaleX ?? 1),
+    height: (img.height ?? 0) * (img.scaleY ?? 1),
+  };
+}
+
+/**
+ * The image's current focal point (0..1) derived from its crop offset — how
+ * far into the available overflow the visible slice sits. Used to persist a
+ * pan/trim so a bound photo re-frames the same way at render against a
+ * different-sized photo.
+ */
+export function focalOfImage(img: FabricImage): { focalX: number; focalY: number } {
+  const { width: nW, height: nH } = imageNaturalSize(img);
+  const cw = img.width ?? nW;
+  const ch = img.height ?? nH;
+  const overflowX = nW - cw;
+  const overflowY = nH - ch;
+  return {
+    focalX: overflowX > 0.5 ? clamp01((img.cropX ?? 0) / overflowX) : 0.5,
+    focalY: overflowY > 0.5 ? clamp01((img.cropY ?? 0) / overflowY) : 0.5,
+  };
+}
+
 export async function createFabricImage(
   layer: ImageLayer,
   resolvedSrc: string | null,
@@ -631,68 +772,28 @@ export async function createFabricImage(
         ),
       ),
     ]);
-    // why: object-fit math. Fabric scales uniformly via scaleX/scaleY based on
-    // the image's natural element dimensions. We compute the scale that makes
-    // the image fit the layer's width × height per the chosen objectFit.
-    const naturalWidth = img.width || 1;
-    const naturalHeight = img.height || 1;
-    const targetWidth = layer.width;
-    const targetHeight = layer.height;
-
-    const scaleCover = Math.max(
-      targetWidth / naturalWidth,
-      targetHeight / naturalHeight,
+    // why (2026-05-31): frame via NATIVE crop (see fitImageInFrame). The
+    // object's bounding box becomes the visible frame — no cover overflow
+    // hanging over neighbors. Default focal: horizontally centered, vertically
+    // biased above center for cover (keep roofline, trim foreground) unless the
+    // layer carries an authored focal point.
+    const frame: FrameRect = {
+      left: layer.left,
+      top: layer.top,
+      width: layer.width,
+      height: layer.height,
+    };
+    const focalX = clamp01(layer.focalX ?? 0.5);
+    const focalY = clamp01(
+      layer.focalY ?? (layer.objectFit === "cover" ? 0.4 : 0.5),
     );
-    const scaleContain = Math.min(
-      targetWidth / naturalWidth,
-      targetHeight / naturalHeight,
-    );
-    const scaleX =
-      layer.objectFit === "stretch"
-        ? targetWidth / naturalWidth
-        : layer.objectFit === "contain"
-          ? scaleContain
-          : scaleCover;
-    const scaleY =
-      layer.objectFit === "stretch"
-        ? targetHeight / naturalHeight
-        : layer.objectFit === "contain"
-          ? scaleContain
-          : scaleCover;
-
-    // why (2026-05-31): position the image inside its frame by a FOCAL POINT
-    // instead of anchoring to the top-left. The old top-left anchor meant a
-    // cover photo taller than its frame cropped only the BOTTOM (sky/roof shown,
-    // foreground lost).
-    //
-    // Horizontal: centered (0.5). Vertical: biased slightly ABOVE center
-    // (FOCAL_Y = 0.4) — real-estate exteriors read best keeping the roofline +
-    // house and trimming the foreground (lawn/driveway/road is the least
-    // important third), so we crop a bit more off the bottom than the top. This
-    // makes the FIRST generated post land close to ideal without manual cropping.
-    // contain/stretch have no meaningful overflow, so they stay centered.
-    const FOCAL_X = 0.5;
-    const FOCAL_Y =
-      layer.objectFit === "cover" ? 0.4 : 0.5;
-    const scaledWidth = naturalWidth * scaleX;
-    const scaledHeight = naturalHeight * scaleY;
-    const centeredLeft = layer.left - (scaledWidth - layer.width) * FOCAL_X;
-    const centeredTop = layer.top - (scaledHeight - layer.height) * FOCAL_Y;
 
     img.set({
-      left: centeredLeft,
-      top: centeredTop,
       angle: layer.angle,
       opacity: layer.opacity,
-      scaleX,
-      scaleY,
       visible: layer.visible,
       selectable: !layer.locked,
       evented: !layer.locked,
-      // why: clip to the layer rect for "cover" mode so the overflow doesn't
-      // bleed past the intended frame. Without this, a cover-fit photo
-      // extends beyond its layer box. Implemented as a clipPath rect aligned
-      // to the layer dimensions, positioned relative to the image's origin.
       // 2026-05-25 — Canva-style selection chrome.
       cornerStyle: "circle",
       cornerSize: 16,
@@ -701,31 +802,30 @@ export async function createFabricImage(
       cornerColor: CANVA_VIOLET,
       borderScaleFactor: 2,
     });
+    fitImageInFrame(img, frame, layer.objectFit, focalX, focalY);
     (
       img as unknown as { controls: Record<string, unknown> }
-    ).controls = createCanvaStyleControls({ uniformSides: true });
+    ).controls = createCanvaStyleControls({ imageCrop: true });
 
-    // why (2026-05-23 — Cover/Contain/Stretch bug fix): ALWAYS attach a
-    // clipPath at the BOX dimensions (layer.width × layer.height),
-    // independent of corner radius. The clipPath uses
-    // `absolutePositioned: true` so it stays at the layer's intended
-    // canvas position regardless of how the image's scaleX/scaleY drift
-    // after Cover/Contain/Stretch. Without this clip, Cover overflow
-    // bleeds onto neighboring layers and the user can't tell the fit
-    // even changed. cornerRadius (if any) is baked into the same clip
-    // rect so we only ever have ONE clipPath per image.
-    const clip = new Rect({
-      left: layer.left,
-      top: layer.top,
-      width: layer.width,
-      height: layer.height,
-      rx: layer.cornerRadius,
-      ry: layer.cornerRadius,
-      originX: "left",
-      originY: "top",
-      absolutePositioned: true,
-    });
-    img.clipPath = clip;
+    // why: with native crop the box already equals the frame, so a clipPath is
+    // only needed to ROUND the corners. Attach one at the box dims when a
+    // corner radius is set; otherwise leave the image unclipped (simpler, and
+    // the box can't overflow). The clip is absolutePositioned at the current
+    // box; object:modified keeps it in sync as the frame is trimmed/moved.
+    if (layer.cornerRadius && layer.cornerRadius > 0) {
+      const box = frameOfImage(img);
+      img.clipPath = new Rect({
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        rx: layer.cornerRadius,
+        ry: layer.cornerRadius,
+        originX: "left",
+        originY: "top",
+        absolutePositioned: true,
+      });
+    }
 
     setLayerData(img, {
       layerId: layer.id,
@@ -806,18 +906,19 @@ export function drawImageBorders(
     const color =
       typeof data?.borderColor === "string" ? data.borderColor : "";
     if (width <= 0 || !color) continue;
+    // why: with native crop the object's bounding box IS the visible frame, so
+    // the border traces the box directly. Skip rotated images (the simple rect
+    // trace would be wrong) — templates don't rotate framed photos.
+    if (Math.abs(((obj as { angle?: number }).angle ?? 0) % 360) > 0.01) continue;
+    const box = frameOfImage(obj);
+    const left = box.left;
+    const top = box.top;
+    const w = box.width;
+    const h = box.height;
+    // Corner rounding comes from the (rounding-only) clipPath if one is set.
     const clip = obj.clipPath;
-    if (
-      !(clip instanceof Rect) ||
-      !(clip as unknown as { absolutePositioned?: boolean }).absolutePositioned
-    ) {
-      continue; // no frame to trace (e.g. mid-crop) — skip
-    }
-    const left = clip.left ?? 0;
-    const top = clip.top ?? 0;
-    const w = (clip.width ?? 0) * (clip.scaleX ?? 1);
-    const h = (clip.height ?? 0) * (clip.scaleY ?? 1);
-    const rx = Math.max(0, Number(clip.rx) || 0);
+    const rx =
+      clip instanceof Rect ? Math.max(0, Number(clip.rx) || 0) : 0;
     ctx.beginPath();
     ctx.lineWidth = width;
     ctx.strokeStyle = color;
