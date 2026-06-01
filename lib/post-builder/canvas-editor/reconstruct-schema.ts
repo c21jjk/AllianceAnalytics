@@ -251,8 +251,22 @@ function reconstructImageLayer(
   // accidental scale that produced it.
   const naturalWidth = asNum(readProp(obj, "width"), original.width);
   const naturalHeight = asNum(readProp(obj, "height"), original.height);
-  const boxWidth = data?.targetBoxWidth ?? naturalWidth * scaleX;
-  const boxHeight = data?.targetBoxHeight ?? naturalHeight * scaleY;
+  // why (2026-05-31 fix): a real loaded photo (Fabric type "image") is
+  // cover/contain-scaled, so its natural×scale overflows the box — for those we
+  // MUST use the box dims tracked on the data bag (kept current by the
+  // object:modified clipPath rebuild). But a bound image with no photo yet
+  // renders as a dashed PLACEHOLDER FRAME (a Rect). When the author resizes that
+  // frame, scaleX/scaleY change while data.targetBoxWidth stays at its insert
+  // value — so reading targetBoxWidth saved the OLD size and the photo came back
+  // smaller than the frame. For a non-image (frame) object, the live width×scale
+  // IS the box the author drew, so use that.
+  const isRealImage = asStr(readProp(obj, "type"), "") === "image";
+  const boxWidth = isRealImage
+    ? (data?.targetBoxWidth ?? naturalWidth * scaleX)
+    : naturalWidth * scaleX;
+  const boxHeight = isRealImage
+    ? (data?.targetBoxHeight ?? naturalHeight * scaleY)
+    : naturalHeight * scaleY;
 
   const hasBoundField = Boolean(original.boundField);
 
@@ -411,11 +425,20 @@ function reconstructOrphan(
       )._originalElement;
       return typeof el?.src === "string" && el.src.length > 0 ? el.src : null;
     })();
+    // why (2026-05-31 fix): same frame-resize issue as reconstructImageLayer.
+    // A placeholder FRAME (Rect) carries a stale targetBoxWidth after the author
+    // resizes it; only a real loaded photo (type "image") needs the box dims off
+    // the data bag. For the frame, the live width×scale is the box drawn.
+    const isRealImageOrphan = fabricType === "image";
     return {
       ...baseLayer,
       kind: "image",
-      width: data?.targetBoxWidth ?? rawWidth * scaleX,
-      height: data?.targetBoxHeight ?? rawHeight * scaleY,
+      width: isRealImageOrphan
+        ? (data?.targetBoxWidth ?? rawWidth * scaleX)
+        : rawWidth * scaleX,
+      height: isRealImageOrphan
+        ? (data?.targetBoxHeight ?? rawHeight * scaleY)
+        : rawHeight * scaleY,
       src: imageBound ? null : literalSrc,
       boundField: imageBound,
       hideIfEmpty: data?.hideIfEmpty ?? undefined,
