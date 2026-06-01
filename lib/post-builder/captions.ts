@@ -62,15 +62,15 @@ export interface GeneratedCaption {
 
 const POST_TYPE_TONE: Record<PostType, string> = {
   just_listed:
-    "excited but understated. Open with the address or a confident hook (NOT 'Just Listed!' — that's already on the image). Highlight what makes THIS property worth seeing — a specific feature from the property remarks if anything stands out. End with a soft CTA like 'DM for a private showing' or 'Tour link in bio'.",
+    "excited but understated. Open with the address or a confident hook (NOT 'Just Listed!' — that's already on the image). Highlight what makes THIS property worth seeing — a specific feature from the property remarks if anything stands out. End on the property itself, NOT a contact prompt.",
   just_sold:
-    "celebratory and warm. Congratulate the new owners (without naming them). Acknowledge the agent's work briefly if known. End with a confidence line like 'Thinking of selling? Let's talk.'",
+    "celebratory and warm. Congratulate the new owners (without naming them). Mark the milestone for the property and the market, not any individual. End on a warm, brand-level note — NO 'let's talk', NO contact prompt.",
   under_contract:
-    "momentum-forward. Quick, snappy. Note that it's under contract in days/weeks if known (we don't track that yet — keep generic). End with a buyer-pipeline line like 'Have a similar dream property in mind? Let's find it.'",
+    "momentum-forward. Quick, snappy. Note that it's under contract. End on the market momentum, NOT a contact prompt.",
   open_house:
-    "warm invitation. Lead with the date and time prominently in the caption text (the image will also show it). Mention what's special about the property in one sentence. End with 'See you Saturday!' or similar.",
+    "warm invitation. Lead with the date and time prominently in the caption text (the image will also show it). Mention what's special about the property in one sentence. End with a welcoming line about the open house itself (e.g. 'Stop by Saturday.') — NOT a contact prompt.",
   price_reduction:
-    "value-forward, not desperate. Lead with the property — what makes it worth a fresh look. Mention the price reduction matter-of-factly without pleading or hyping urgency ('the seller adjusted their price' beats 'PRICE SLASHED'). End with a soft CTA like 'Same property, better number — DM to see it.'",
+    "value-forward, not desperate. Lead with the property — what makes it worth a fresh look. Mention the price reduction matter-of-factly without pleading or hyping urgency ('the seller adjusted their price' beats 'PRICE SLASHED'). End matter-of-factly on the value, NOT a contact prompt.",
 };
 
 const POST_TYPE_HASHTAGS: Record<PostType, string[]> = {
@@ -168,7 +168,7 @@ export async function generateCaption(args: {
       model: ANTHROPIC_MODELS.sonnet,
       max_tokens: 1200,
       system:
-        "You are a senior real estate social media writer at Century 21 Alliance, a brokerage with 8 offices in South Jersey (Cape May County, Cumberland County, Atlantic County). You write captions that convert lookers into showings. You write in plain, confident sentences. No emoji unless explicitly requested. No real estate cliches like 'home sweet home' or 'dream home'. You write THREE platform-tuned captions per task (Instagram, Facebook, TikTok) — each platform reads differently, so the captions must differ in length and rhythm, not just hashtags. You always return strict JSON with the exact shape the user requests — no markdown, no preamble, no commentary.",
+        "You are a senior real estate social media writer at Century 21 Alliance, a brokerage with 8 offices in South Jersey (Cape May County, Cumberland County, Atlantic County). You write captions that convert lookers into showings. You write in plain, confident sentences. No emoji unless explicitly requested. No real estate cliches like 'home sweet home' or 'dream home'. You write THREE platform-tuned captions per task (Instagram, Facebook, TikTok) — each platform reads differently, so the captions must differ in length and rhythm, not just hashtags. You always return strict JSON with the exact shape the user requests — no markdown, no preamble, no commentary. HARD RULES (never violate, regardless of the user prompt): never name or reference the listing agent; never say 'DM us', 'DM for info', or any direct-contact prompt; never say 'link in bio' or any bio-link prompt. Captions describe the property itself and never route leads to a specific person or channel — so any Alliance agent can re-share the post to their own page.",
       messages: [{ role: "user", content: userPrompt }],
     });
     const textBlock = response.content.find((b) => b.type === "text");
@@ -263,7 +263,9 @@ function buildPrompt(args: {
     fact("Full bathrooms", listing.bathrooms_full),
     fact("Half bathrooms", listing.bathrooms_half),
     fact("Property type", listing.property_type),
-    fact("Listing agent", listing.agent_name),
+    // why: the listing agent's name is intentionally NOT given to the model.
+    // Posts must read as shareable by ANY Alliance agent to their own page, so
+    // the caption never names a specific agent. See feedback_caption_content_rules.
     fact("Office", listing.listing_office_name),
   ]
     .filter((s): s is string => !!s)
@@ -299,7 +301,11 @@ UNIVERSAL CONSTRAINTS (apply to all three):
 - Do NOT include the words "Just Listed", "Just Sold", "Under Contract", or "Open House" — those are on the image already.
 - Do NOT mention specific bedroom/bathroom/sqft counts in the caption — those are visible in the image. Talk about what makes the property worth seeing instead.
 - Do NOT use cliches: "home sweet home", "dream home", "must see", "won't last".
-- Do NOT include any contact info, phone, or URL — Larissa will add those.
+- Do NOT include any contact info, phone, or URL.
+- Do NOT name or reference the listing agent (or ANY agent/Realtor by name). The post must read as shareable by any Alliance agent to their own page.
+- Do NOT say "DM us", "DM for", "DM to", "message us", or ANY direct-contact call to action.
+- Do NOT say "link in bio", "tour link in bio", or reference a bio link.
+- No call to action that routes leads to a person or channel. End on the property or the market, not a contact prompt.
 - The three variants should READ DIFFERENTLY in length and rhythm — not just three slight rewrites of the same sentence.
 
 For each platform, also suggest extra hashtags (no '#' prefix needed, we'll add it). Mix local/market tags (city, county, neighborhood feel — e.g. "CapeMayRealEstate", "VinelandHomes") and lifestyle tags relevant to the property (e.g. "BeachHouse", "HistoricHome", "FixerUpper"). Skip generic tags like "RealEstate" or "Realtor" — we add brand tags separately.
@@ -340,15 +346,15 @@ function deterministicFallbackCaption(
   const city = listing.city ? ` in ${listing.city}` : "";
   switch (post_type) {
     case "just_listed":
-      return `New on market: ${addr}${city}. Reach out for a private showing or share with someone who'd love to see it.`;
+      return `New on market: ${addr}${city}. A standout worth a closer look.`;
     case "just_sold":
-      return `Closed on ${addr}${city}. Congratulations to everyone involved. Thinking of making a move yourself? Let's talk.`;
+      return `Closed on ${addr}${city}. Congratulations to the new owners.`;
     case "under_contract":
-      return `Under contract: ${addr}${city}. Have something similar in mind? We'll help you find it.`;
+      return `Under contract: ${addr}${city}. Another one moving in this market.`;
     case "open_house":
       return `Open house at ${addr}${city} this weekend. Come walk through and see for yourself.`;
     case "price_reduction":
-      return `Price just adjusted on ${addr}${city}. Same property, better number — DM if you'd like a closer look.`;
+      return `Price just adjusted on ${addr}${city}. Same property, better number.`;
   }
 }
 
