@@ -122,7 +122,14 @@ export function normalizeOrBuildStarter(
     ...starter,
     // Stored fields override starter defaults for the soft fields.
     ...(typeof s.id === "string" && s.id.length > 0 ? { id: s.id } : {}),
-    ...(typeof s.name === "string" && s.name.length > 0 ? { name: s.name } : {}),
+    // why (2026-05-31): NAME is intentionally NOT overridable by the stored
+    // inner schema. The canonical name is the Template Builder record name
+    // (`template_definitions.name`, already baked into the starter via
+    // buildStarterSchema). The inner schema.name was a separate copy that
+    // drifted — a row renamed to "Just Listed - Template 1" still carried an
+    // inner name of "Bold", so the Studio canvas header showed the stale name
+    // while the library/picker/save-dialog showed the real one. Always use the
+    // record name; the next save re-stamps the inner schema name to match.
     ...(typeof s.description === "string" ? { description: s.description } : {}),
     ...(typeof s.backgroundColor === "string"
       ? { backgroundColor: s.backgroundColor }
