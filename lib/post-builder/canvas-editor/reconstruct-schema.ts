@@ -317,8 +317,18 @@ function reconstructImageLayer(
     objectFit: data?.objectFit ?? original.objectFit,
     crossOrigin: "anonymous",
     cornerRadius: original.cornerRadius,
-    borderColor: original.borderColor,
-    borderWidth: original.borderWidth,
+    // why (2026-05-31): the frame-border color/width are edited live via the
+    // floating toolbar, which writes them onto the image's data bag. Read them
+    // back from there so a border the author added/changed persists through
+    // save; fall back to the original schema values when the bag is empty.
+    borderColor:
+      typeof data?.borderColor === "string"
+        ? data.borderColor
+        : original.borderColor,
+    borderWidth:
+      typeof data?.borderWidth === "number"
+        ? data.borderWidth
+        : original.borderWidth,
     hideIfEmpty: original.hideIfEmpty,
   };
 }

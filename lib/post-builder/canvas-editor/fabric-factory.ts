@@ -39,6 +39,7 @@
  */
 
 import {
+  type Canvas,
   Circle,
   Ellipse,
   FabricImage,
@@ -442,6 +443,15 @@ export interface FabricLayerData {
    * the placeholder is authored as a rounded Rect rather than a real image.
    */
   cornerRadius?: number;
+  /**
+   * Image-only: a visible frame stroked around the photo's frame (the clip
+   * window). Color + width are stamped here so the shared `drawImageBorders`
+   * after-render hook can paint them in BOTH the editor and the headless post
+   * pipeline, and so reconstruct-schema can persist edits back to the layer.
+   * width <= 0 (or no color) = no border.
+   */
+  borderColor?: string;
+  borderWidth?: number;
 }
 
 /**
@@ -728,6 +738,11 @@ export async function createFabricImage(
       targetBoxWidth: layer.width,
       targetBoxHeight: layer.height,
       objectFit: layer.objectFit,
+      // why: carry the frame-border spec on the data bag so drawImageBorders
+      // (after:render) can paint it identically in the editor and the headless
+      // render, and reconstruct-schema can read it back.
+      borderColor: layer.borderColor,
+      borderWidth: layer.borderWidth,
     });
     return { ok: true, image: img };
   } catch (err) {
@@ -749,6 +764,68 @@ export async function createFabricImage(
         : `Image failed to load: ${src} — ${message}`,
     };
   }
+}
+
+/**
+ * Paint frame borders for every image that carries a border spec on its data
+ * bag. Designed to run as an `after:render` hook on the SAME canvas the editor
+ * and the headless render pipeline use, so a photo's frame looks identical in
+ * Studio and in the published PNG.
+ *
+ * The frame is stroked at the image's CLIP bounds (the visible window), NOT the
+ * image's own bounds — a Cover photo overflows its frame, so a stroke on the
+ * image itself would be clipped away. We only draw when the image has an
+ * absolutePositioned Rect clipPath (every factory-built image does). During
+ * crop the clip is temporarily removed, which conveniently suppresses the
+ * border until the crop is committed.
+ *
+ * Drawn on the lower (container) context beneath the selection chrome, so the
+ * frame reads as artwork rather than UI, and is captured by both toDataURL and
+ * the page screenshot in the render pipeline.
+ */
+export function drawImageBorders(canvas: Canvas): void {
+  const ctx = canvas.getContext();
+  if (!ctx) return;
+  const vpt = canvas.viewportTransform;
+  ctx.save();
+  if (vpt && vpt.length === 6) {
+    ctx.transform(vpt[0], vpt[1], vpt[2], vpt[3], vpt[4], vpt[5]);
+  }
+  for (const obj of canvas.getObjects()) {
+    if (!(obj instanceof FabricImage)) continue;
+    if (obj.visible === false) continue;
+    const data = getLayerData(obj);
+    const width = Number(data?.borderWidth) || 0;
+    const color =
+      typeof data?.borderColor === "string" ? data.borderColor : "";
+    if (width <= 0 || !color) continue;
+    const clip = obj.clipPath;
+    if (
+      !(clip instanceof Rect) ||
+      !(clip as unknown as { absolutePositioned?: boolean }).absolutePositioned
+    ) {
+      continue; // no frame to trace (e.g. mid-crop) — skip
+    }
+    const left = clip.left ?? 0;
+    const top = clip.top ?? 0;
+    const w = (clip.width ?? 0) * (clip.scaleX ?? 1);
+    const h = (clip.height ?? 0) * (clip.scaleY ?? 1);
+    const rx = Math.max(0, Number(clip.rx) || 0);
+    ctx.beginPath();
+    ctx.lineWidth = width;
+    ctx.strokeStyle = color;
+    ctx.lineJoin = "miter";
+    if (
+      rx > 0 &&
+      typeof (ctx as { roundRect?: unknown }).roundRect === "function"
+    ) {
+      ctx.roundRect(left, top, w, h, rx);
+    } else {
+      ctx.rect(left, top, w, h);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------

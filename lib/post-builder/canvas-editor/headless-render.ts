@@ -37,6 +37,7 @@ import {
   createFabricImage,
   createFabricShape,
   createFabricTextbox,
+  drawImageBorders,
   resolveImageBoundField,
   resolveTextBoundField,
 } from "./fabric-factory";
@@ -234,6 +235,10 @@ export async function renderSchemaHeadless(
       canvas.add(createFabricShape(layer));
     }
   }
+
+  // why: paint image frame borders on every render tick, the same way the
+  // editor does (shared fn), so the published PNG matches Studio exactly.
+  canvas.on("after:render", () => drawImageBorders(canvas));
 
   canvas.requestRenderAll();
   // Force a single render tick so toDataURL/screenshot sees the result.

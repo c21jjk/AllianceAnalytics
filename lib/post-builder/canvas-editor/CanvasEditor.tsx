@@ -107,6 +107,7 @@ import {
   createFabricImage,
   createFabricShape,
   createFabricTextbox,
+  drawImageBorders,
   getLayerData,
   resolveImageBoundField,
   resolveTextBoundField,
@@ -986,6 +987,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       console.warn("[canvas-editor] aligning guidelines init failed:", err);
     }
 
+    // why (2026-05-31): paint image frame borders every render. Shared with the
+    // headless pipeline (same fn) so a photo's frame is identical in Studio and
+    // the published PNG. Drawn on the lower context after objects render.
+    const paintBorders = (): void => drawImageBorders(fabricCanvas);
+    fabricCanvas.on("after:render", paintBorders);
+
     // why: wire selection events FIRST so they're armed before any object
     // gets added (in case a template defaults to having an object pre-selected
     // in some future Phase 2 enhancement).
@@ -1495,6 +1502,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
     return () => {
       cancelled = true;
+      // why: drop the image-border paint hook before disposing.
+      fabricCanvas.off("after:render", paintBorders);
       // why: drop the aligning-guidelines listeners before disposing the
       // canvas so they don't fire into a torn-down instance.
       if (teardownGuides) {

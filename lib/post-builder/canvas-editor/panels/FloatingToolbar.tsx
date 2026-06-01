@@ -27,8 +27,10 @@
  * SelectionToolbar + TransparencyButton.
  */
 
-import { Textbox } from "fabric";
+import { FabricImage, Textbox } from "fabric";
 import type { Canvas, FabricObject } from "fabric";
+
+import { getLayerData } from "../fabric-factory";
 import {
   AlignCenter as LAlignCenter,
   AlignLeft as LAlignLeft,
@@ -230,11 +232,80 @@ function TypeSpecificGroup(props: FloatingToolbarProps): JSX.Element | null {
 }
 
 // ===========================================================================
-// IMAGE controls — Crop + Resize
+// IMAGE controls — Crop + Resize + Border (frame)
 // ===========================================================================
 
+/** Read the active image's frame-border spec off its data bag. */
+function readActiveImageBorder(canvas: Canvas | null): {
+  color: string;
+  width: number;
+} {
+  const a = readActive(canvas);
+  if (!(a instanceof FabricImage)) return { color: "#FFFFFF", width: 0 };
+  const data = getLayerData(a);
+  return {
+    color:
+      typeof data?.borderColor === "string" && data.borderColor
+        ? data.borderColor
+        : "#FFFFFF",
+    width: typeof data?.borderWidth === "number" ? data.borderWidth : 0,
+  };
+}
+
 function ImageControls(props: FloatingToolbarProps): JSX.Element | null {
-  const { onEnterCropMode, onActivateResize } = props;
+  const {
+    onEnterCropMode,
+    onActivateResize,
+    canvas,
+    selectionVersion,
+    onCanvasMutated,
+    recordHistory,
+  } = props;
+
+  const [border, setBorder] = useState<{ color: string; width: number }>(() =>
+    readActiveImageBorder(canvas),
+  );
+
+  // Re-read on selection change. selectionVersion (= layerVersion) doesn't bump
+  // when clicking between two images, so also subscribe to selection events.
+  useEffect(() => {
+    setBorder(readActiveImageBorder(canvas));
+  }, [canvas, selectionVersion]);
+  useEffect(() => {
+    if (!canvas) return;
+    const resync = (): void => setBorder(readActiveImageBorder(canvas));
+    canvas.on("selection:created", resync);
+    canvas.on("selection:updated", resync);
+    canvas.on("selection:cleared", resync);
+    return () => {
+      canvas.off("selection:created", resync);
+      canvas.off("selection:updated", resync);
+      canvas.off("selection:cleared", resync);
+    };
+  }, [canvas]);
+
+  // Write the border spec onto the active image's data bag (preserving the
+  // rest), then re-render so drawImageBorders repaints the frame.
+  const applyBorder = useCallback(
+    (patch: Partial<{ color: string; width: number }>, commitHistory = false): void => {
+      const a = readActive(canvas);
+      if (!(a instanceof FabricImage)) return;
+      const nextColor = patch.color ?? border.color;
+      const nextWidth = patch.width ?? border.width;
+      const bag = a as unknown as { data?: Record<string, unknown> };
+      bag.data = {
+        ...(bag.data ?? {}),
+        borderColor: nextColor,
+        borderWidth: nextWidth,
+      };
+      setBorder({ color: nextColor, width: nextWidth });
+      canvas?.requestRenderAll();
+      onCanvasMutated?.();
+      if (commitHistory) recordHistory?.();
+    },
+    [border.color, border.width, canvas, onCanvasMutated, recordHistory],
+  );
+
   if (!onEnterCropMode && !onActivateResize) return null;
   return (
     <div className="flex items-center gap-1">
@@ -262,6 +333,59 @@ function ImageControls(props: FloatingToolbarProps): JSX.Element | null {
           </button>
         </Tooltip>
       ) : null}
+
+      <Divider />
+
+      {/* Frame border — color swatch + weight. Weight 0 = no frame. */}
+      <Tooltip label="Frame color">
+        <label className="inline-flex h-6 w-6 cursor-pointer items-center justify-center overflow-hidden rounded border border-[var(--studio-border)]">
+          <span className="sr-only">Frame color</span>
+          <input
+            type="color"
+            value={border.color}
+            onChange={(e) => applyBorder({ color: e.target.value })}
+            onBlur={() => recordHistory?.()}
+            className="h-8 w-8 cursor-pointer border-0 bg-transparent p-0"
+            aria-label="Frame color"
+          />
+        </label>
+      </Tooltip>
+      <Tooltip label="Frame thickness (0 = none)">
+        <div className="flex items-center gap-0.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-1">
+          <StepperButton
+            label="Thinner frame"
+            onClick={() =>
+              applyBorder({ width: Math.max(0, Math.round(border.width - 1)) }, true)
+            }
+          >
+            −
+          </StepperButton>
+          <input
+            type="number"
+            min={0}
+            max={80}
+            step={1}
+            value={Math.round(border.width)}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v) && v >= 0) {
+                applyBorder({ width: Math.min(80, Math.round(v)) });
+              }
+            }}
+            onBlur={() => recordHistory?.()}
+            aria-label="Frame thickness"
+            className="h-6 w-9 border-0 bg-transparent p-0 text-center text-[12px] font-medium text-white focus:outline-none [&::-webkit-inner-spin-button]:hidden [&::-webkit-outer-spin-button]:hidden"
+          />
+          <StepperButton
+            label="Thicker frame"
+            onClick={() =>
+              applyBorder({ width: Math.min(80, Math.round(border.width + 1)) }, true)
+            }
+          >
+            +
+          </StepperButton>
+        </div>
+      </Tooltip>
     </div>
   );
 }
