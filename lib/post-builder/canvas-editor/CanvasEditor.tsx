@@ -486,9 +486,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // 2026-05-24 — default lowered from 1.0 → 0.8 per John. At 1.0 (Fit), the
   // canvas fills the available area but the layer panel + brand sidebar
   // crowd the visible slide so the user can't see the full composition
-  // without scrolling. 0.8 leaves comfortable margin on both sides while
-  // keeping detail readable for text-edit work.
-  const [zoom, setZoom] = useState<number>(0.8);
+  // without scrolling. Leaves comfortable margin on both sides while keeping
+  // detail readable for text-edit work.
+  // 2026-05-31 — bumped 0.8 → 0.9 per John (a bit larger by default).
+  const [zoom, setZoom] = useState<number>(0.9);
   const [brandAssets, setBrandAssets] = useState<readonly BrandAsset[]>([]);
   const [officesForFilter, setOfficesForFilter] = useState<readonly OfficeOption[]>([]);
   const [brandAssetsLoading, setBrandAssetsLoading] = useState<boolean>(true);
