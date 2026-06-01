@@ -650,9 +650,21 @@ export async function createFabricImage(
           ? scaleContain
           : scaleCover;
 
+    // why (2026-05-31): CENTER the image within its frame, matching the CSS
+    // `object-fit: cover/contain` default of `object-position: center`. The
+    // image was anchored to the frame's TOP-LEFT, so a cover photo taller than
+    // its frame cropped only the BOTTOM (you saw sky/roof and lost the
+    // foreground). Centering crops top+bottom (and left+right) evenly so the
+    // subject stays in view — which is what "crop the top and bottom" needs.
+    // The clipPath stays anchored at the frame (layer.left/top) below.
+    const scaledWidth = naturalWidth * scaleX;
+    const scaledHeight = naturalHeight * scaleY;
+    const centeredLeft = layer.left - (scaledWidth - layer.width) / 2;
+    const centeredTop = layer.top - (scaledHeight - layer.height) / 2;
+
     img.set({
-      left: layer.left,
-      top: layer.top,
+      left: centeredLeft,
+      top: centeredTop,
       angle: layer.angle,
       opacity: layer.opacity,
       scaleX,
