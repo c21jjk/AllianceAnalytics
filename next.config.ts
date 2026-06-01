@@ -11,6 +11,16 @@ const nextConfig: NextConfig = {
   // straight from node_modules at runtime so the chromium binary launcher
   // can locate its companion shared libraries (libnss3.so, etc).
   serverExternalPackages: ["puppeteer-core", "@sparticuz/chromium-min"],
+  experimental: {
+    // why: Server Actions default to a 1MB request-body cap. Template/post
+    // saves carry a schema JSON plus an inline preview image, which can edge
+    // past 1MB. Previews are downscaled client-side, but raise the ceiling so
+    // a large schema or preview degrades gracefully instead of failing the
+    // whole action with an opaque "Server Components render" error.
+    serverActions: {
+      bodySizeLimit: "4mb",
+    },
+  },
 };
 
 export default nextConfig;

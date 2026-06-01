@@ -20,6 +20,47 @@ import {
 } from "../../actions";
 import type { TemplateDefinition } from "@/lib/template-builder";
 
+/**
+ * Downscale a data-URL image to a small JPEG suitable for the template list
+ * thumbnail. The editor's export `dataUrl` is a 2× full-resolution image
+ * (~1080→2160px) meant for the POST, not a thumbnail. Sending it whole pushes
+ * the Save server-action body past Next.js's 1MB limit (which surfaces as a
+ * generic "Server Components render" error, since the request is rejected
+ * before the action runs). A ~480px JPEG is a few tens of KB. Returns null on
+ * any failure so the caller saves the schema without a preview rather than
+ * breaking.
+ */
+async function downscalePreviewDataUrl(
+  dataUrl: string,
+  maxDim = 480,
+  quality = 0.8,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/jpeg", quality));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 function prettyPostType(pt: string): string {
   switch (pt) {
     case "just_listed":
@@ -149,7 +190,14 @@ export default function TemplateCanvasEditor({
       return;
     }
     setPendingSchema(editedSchema as unknown);
-    setPendingPreview(result.dataUrl ?? null);
+    // why: shrink the full-res export image to a small thumbnail before it
+    // rides along in the Save server-action body. The 2× export JPEG can exceed
+    // Next's 1MB action-body limit (rejected request → generic server error);
+    // a ~480px JPEG is tiny. Null preview just means "keep the old thumbnail".
+    const preview = result.dataUrl
+      ? await downscalePreviewDataUrl(result.dataUrl)
+      : null;
+    setPendingPreview(preview);
   }
 
   // "Save Changes to Existing Template" (+ optional set-default).
