@@ -948,21 +948,38 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     });
     fabricRef.current = fabricCanvas;
 
-    // why (2026-05-31): turn on edge/center snapping with guide lines. The
-    // module hooks Fabric's move/scale events and snaps the active object to
-    // any other object's edges + centers and the canvas center when within
-    // `margin` px, flashing a guide line while the snap holds. margin 8 ≈ the
-    // distance that feels intentional without fighting the user on small
-    // nudges; the line uses Relentless Gold so it reads on the dark canvas.
+    // why (2026-05-31): turn on edge/center snapping with Canva-style guide
+    // lines. The module hooks Fabric's move/scale events and snaps the active
+    // object to any other object's edges + centers and the canvas center when
+    // within `margin` px, flashing a guide line while the snap holds. margin 8
+    // ≈ the distance that feels intentional without fighting small nudges.
+    //
+    // Canva draws those guides as a DASHED VIOLET line. The extension's drawing
+    // is solid and doesn't expose a dash option, but its stroke inherits the
+    // selection context's line-dash state. So we bracket the extension's
+    // `after:render` draw: a handler registered BEFORE it sets a dash, one
+    // registered AFTER it clears the dash. Net effect — only the guide strokes
+    // are dashed; the selection borders/handles (drawn earlier in the frame,
+    // while dash is clear) stay solid. Color comes through the extension config.
     // Returns a teardown we call on dispose so listeners don't leak across
     // canvas re-inits.
     let teardownGuides: (() => void) | null = null;
     try {
-      teardownGuides = initAligningGuidelines(fabricCanvas, {
+      const guideCtx = fabricCanvas.getSelectionContext();
+      const setGuideDash = (): void => guideCtx.setLineDash([7, 5]);
+      const clearGuideDash = (): void => guideCtx.setLineDash([]);
+      fabricCanvas.on("after:render", setGuideDash); // runs before ext draw
+      const teardownExt = initAligningGuidelines(fabricCanvas, {
         margin: 8,
-        width: 1,
-        color: "#C9A84C",
+        width: 1.5,
+        color: "#9747FF", // Canva-style violet
       });
+      fabricCanvas.on("after:render", clearGuideDash); // runs after ext draw
+      teardownGuides = (): void => {
+        fabricCanvas.off("after:render", setGuideDash);
+        fabricCanvas.off("after:render", clearGuideDash);
+        teardownExt();
+      };
     } catch (err) {
       // Non-fatal: snapping is an enhancement, not a requirement. If the
       // extension ever fails to init, the editor still works without guides.
