@@ -76,6 +76,15 @@ interface ImageState {
   /** Natural image dimensions — used when computing the new scale on fit change. */
   naturalWidth: number;
   naturalHeight: number;
+  /**
+   * The FRAME rect in canvas px — the visible window the photo is cropped to
+   * (the absolutePositioned clipPath). This is what the X/Y/W/H steppers edit.
+   * Reads from the clip when present, else from the displayed bounds.
+   */
+  frameLeft: number;
+  frameTop: number;
+  frameWidth: number;
+  frameHeight: number;
 }
 
 const FIT_OPTIONS: ReadonlyArray<{
@@ -204,6 +213,34 @@ function readCornerRadius(img: FabricImage): number {
 }
 
 /**
+ * Read the image's FRAME rect (canvas px) — the clipPath window the photo is
+ * cropped to. This is the rect the X/Y/W/H steppers operate on. Falls back to
+ * the image's displayed bounds when there's no Rect clip.
+ */
+function readFrameRect(img: FabricImage): {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+} {
+  const clip = img.clipPath instanceof Rect ? img.clipPath : null;
+  if (clip) {
+    return {
+      left: clip.left ?? img.left ?? 0,
+      top: clip.top ?? img.top ?? 0,
+      width: (clip.width ?? 0) * (clip.scaleX ?? 1),
+      height: (clip.height ?? 0) * (clip.scaleY ?? 1),
+    };
+  }
+  return {
+    left: img.left ?? 0,
+    top: img.top ?? 0,
+    width: (img.width ?? 0) * (img.scaleX ?? 1),
+    height: (img.height ?? 0) * (img.scaleY ?? 1),
+  };
+}
+
+/**
  * Read the current image state out of the canvas. Returns null when there's
  * no active object or the active object isn't a FabricImage.
  */
@@ -215,6 +252,7 @@ function readImageState(canvas: Canvas | null): ImageState | null {
   const scaleX = active.scaleX ?? 1;
   const scaleY = active.scaleY ?? 1;
   const { boxWidth, boxHeight } = readBoxDims(active);
+  const frame = readFrameRect(active);
   return {
     src: active.getSrc?.() ?? "",
     objectFit: readObjectFit(active),
@@ -226,6 +264,10 @@ function readImageState(canvas: Canvas | null): ImageState | null {
     boxHeight,
     naturalWidth,
     naturalHeight,
+    frameLeft: frame.left,
+    frameTop: frame.top,
+    frameWidth: frame.width,
+    frameHeight: frame.height,
   };
 }
 
@@ -354,6 +396,104 @@ function isCircleShape(state: ImageState): boolean {
   return squareEnough && roundEnough && dim > 0;
 }
 
+/**
+ * Size + position an image to fill a target frame rect (canvas px), honoring
+ * object-fit, then rebuild its absolutePositioned clipPath at that frame.
+ *
+ * Mirrors createFabricImage's cover/contain placement — including the slight
+ * above-center focal bias for real-estate exteriors — so the on-canvas result
+ * matches what the render pipeline produces. Deliberately does NOT fire
+ * `object:modified`: callers sync history via recordHistory() (same pattern as
+ * handleFitChange). Firing object:modified would invoke the editor's clip
+ * rebuild, which assumes displayed-bounds == box and would re-balloon a Cover
+ * photo back out of the frame we just set.
+ */
+function fitImageToFrame(
+  img: FabricImage,
+  frame: { left: number; top: number; width: number; height: number },
+  fit: ImageState["objectFit"],
+): void {
+  const { naturalWidth, naturalHeight } = readNaturalSize(img);
+  const { scaleX, scaleY } = computeFitScale(
+    fit,
+    frame.width,
+    frame.height,
+    naturalWidth,
+    naturalHeight,
+  );
+  const scaledW = naturalWidth * scaleX;
+  const scaledH = naturalHeight * scaleY;
+  const FOCAL_X = 0.5;
+  const FOCAL_Y = fit === "cover" ? 0.4 : 0.5;
+  img.set({
+    left: frame.left - (scaledW - frame.width) * FOCAL_X,
+    top: frame.top - (scaledH - frame.height) * FOCAL_Y,
+    scaleX,
+    scaleY,
+  });
+  writeBoxDims(img, frame.width, frame.height);
+  // Preserve any corner radius the author set; rebuild the clip at the frame.
+  const existing = img.clipPath instanceof Rect ? img.clipPath : null;
+  const rx =
+    existing && typeof existing.rx === "number" ? existing.rx : 0;
+  img.clipPath = new Rect({
+    left: frame.left,
+    top: frame.top,
+    width: frame.width,
+    height: frame.height,
+    rx,
+    ry: rx,
+    originX: "left",
+    originY: "top",
+    absolutePositioned: true,
+  });
+  img.setCoords();
+}
+
+/**
+ * Find the open rectangle the image should fill: full canvas width, and the
+ * vertical span between the nearest wide BAND above and the nearest wide BAND
+ * below the image. "Bands" are non-text objects spanning ≥60% of the canvas
+ * width (e.g. the header + info bands). Text and narrow accents are ignored so
+ * a wide headline isn't mistaken for a band. Falls back to the canvas top /
+ * bottom edge when there's no band on that side.
+ */
+function computeOpenSpace(
+  canvas: Canvas,
+  img: FabricImage,
+): { left: number; top: number; width: number; height: number } {
+  const cw = canvas.width ?? 1080;
+  const ch = canvas.height ?? 1080;
+  const clip = img.clipPath instanceof Rect ? img.clipPath : null;
+  const frameTop = clip ? clip.top ?? img.top ?? 0 : img.top ?? 0;
+  const frameH = clip
+    ? clip.height ?? 0
+    : (img.height ?? 0) * (img.scaleY ?? 1);
+  const centerY = frameTop + frameH / 2;
+  const WIDE = cw * 0.6;
+  let gapTop = 0;
+  let gapBottom = ch;
+  for (const o of canvas.getObjects()) {
+    if (o === img) continue;
+    const tp = (o as unknown as { type?: string }).type ?? "";
+    if (tp.includes("text")) continue; // skip headlines/labels
+    const br = o.getBoundingRect();
+    if (br.width < WIDE) continue; // not a full-width band
+    const oTop = br.top;
+    const oBottom = br.top + br.height;
+    // nearest band whose bottom sits above the image center → gap ceiling
+    if (oBottom <= centerY && oBottom > gapTop) gapTop = oBottom;
+    // nearest band whose top sits below the image center → gap floor
+    if (oTop >= centerY && oTop < gapBottom) gapBottom = oTop;
+  }
+  return {
+    left: 0,
+    top: gapTop,
+    width: cw,
+    height: Math.max(1, gapBottom - gapTop),
+  };
+}
+
 export default function ImagePropertiesControls(
   props: ImagePropertiesControlsProps,
 ): JSX.Element {
@@ -469,6 +609,57 @@ export default function ImagePropertiesControls(
     },
     [canvas, onCanvasMutated, recordHistory, state],
   );
+
+  /**
+   * Edit one field of the frame rect (X/Y/W/H) from the numeric steppers.
+   * Re-fits the photo into the new frame so Cover/Contain stays correct. The
+   * spinner arrows + keyboard up/down nudge by `step`, so the author can creep
+   * a value to perfect without retyping. History is committed on blur.
+   */
+  const handleFrameEdit = useCallback(
+    (field: "left" | "top" | "width" | "height", value: number): void => {
+      if (!canvas || !state) return;
+      const active = canvas.getActiveObject();
+      if (!active || !(active instanceof FabricImage)) return;
+      if (!Number.isFinite(value)) return;
+      const cur = readFrameRect(active);
+      const next = {
+        ...cur,
+        [field]:
+          field === "width" || field === "height"
+            ? Math.max(1, value)
+            : value,
+      };
+      fitImageToFrame(active, next, state.objectFit);
+      canvas.requestRenderAll();
+      onCanvasMutated?.();
+      setState(readImageState(canvas));
+      // why: defer recordHistory to onBlur so a burst of arrow-key nudges
+      // collapses into one undo step instead of dozens.
+    },
+    [canvas, onCanvasMutated, state],
+  );
+
+  const handleFrameCommit = useCallback(() => {
+    recordHistory?.();
+  }, [recordHistory]);
+
+  /**
+   * Fill the open space: resize + reposition the active image to the gap
+   * between the bands above and below it, full canvas width. One click for the
+   * common "snap the hero photo flush between the header and info bands" task.
+   */
+  const handleFitToOpenSpace = useCallback((): void => {
+    if (!canvas || !state) return;
+    const active = canvas.getActiveObject();
+    if (!active || !(active instanceof FabricImage)) return;
+    const frame = computeOpenSpace(canvas, active);
+    fitImageToFrame(active, frame, state.objectFit);
+    canvas.requestRenderAll();
+    onCanvasMutated?.();
+    recordHistory?.();
+    setState(readImageState(canvas));
+  }, [canvas, onCanvasMutated, recordHistory, state]);
 
   const handleShapeCircle = useCallback((): void => {
     if (!canvas || !state) return;
@@ -634,6 +825,51 @@ export default function ImagePropertiesControls(
         </div>
       </Section>
 
+      {/* ===== Position & Size ===== */}
+      <Section title="Position & Size">
+        <button
+          type="button"
+          onClick={handleFitToOpenSpace}
+          title="Resize this photo to fill the open space between the bands above and below it"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-xs font-medium text-white transition-colors hover:border-gold-500 hover:bg-[var(--studio-hover)]"
+        >
+          <FitGlyph />
+          Fit to open space
+        </button>
+        {/* why: native number inputs carry their own spinner arrows and respond
+            to keyboard up/down, so each value can be nudged 1px at a time to
+            land a perfect fit. W/H resize the frame (photo re-fits Cover); X/Y
+            move it. */}
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <StepperField
+            label="X"
+            value={Math.round(state.frameLeft)}
+            onChange={(v) => handleFrameEdit("left", v)}
+            onCommit={handleFrameCommit}
+          />
+          <StepperField
+            label="Y"
+            value={Math.round(state.frameTop)}
+            onChange={(v) => handleFrameEdit("top", v)}
+            onCommit={handleFrameCommit}
+          />
+          <StepperField
+            label="W"
+            value={Math.round(state.frameWidth)}
+            min={1}
+            onChange={(v) => handleFrameEdit("width", v)}
+            onCommit={handleFrameCommit}
+          />
+          <StepperField
+            label="H"
+            value={Math.round(state.frameHeight)}
+            min={1}
+            onChange={(v) => handleFrameEdit("height", v)}
+            onCommit={handleFrameCommit}
+          />
+        </div>
+      </Section>
+
       {/* ===== Shape (Rectangle / Circle) =====
           why: one-click circle for agent headshots + co-brand marks. The
           freeform Corner Radius slider below still works for soft-rounded
@@ -749,6 +985,61 @@ function Section(props: SectionProps): JSX.Element {
 // ===========================================================================
 // Shape glyphs — small line-art icons for the segmented control buttons
 // ===========================================================================
+
+/**
+ * A labeled numeric stepper. Wraps a native <input type="number"> so it keeps
+ * the browser's built-in up/down spinner arrows and arrow-key nudging. Emits
+ * onChange on each value change and onCommit on blur (history checkpoint).
+ */
+interface StepperFieldProps {
+  label: string;
+  value: number;
+  min?: number;
+  step?: number;
+  onChange: (value: number) => void;
+  onCommit?: () => void;
+}
+
+function StepperField(props: StepperFieldProps): JSX.Element {
+  const { label, value, min, step = 1, onChange, onCommit } = props;
+  return (
+    <label className="flex items-center gap-1.5">
+      <span className="w-4 text-[10px] font-semibold uppercase text-[var(--studio-text-muted)]">
+        {label}
+      </span>
+      <input
+        type="number"
+        value={value}
+        min={min}
+        step={step}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (Number.isFinite(v)) onChange(v);
+        }}
+        onBlur={onCommit}
+        className="w-full rounded-md border border-[var(--studio-input-border)] bg-[var(--studio-input-bg)] px-2 py-1 text-sm text-white focus:border-gold-500 focus:outline-none focus:ring-1 focus:ring-gold-500/40"
+      />
+    </label>
+  );
+}
+
+function FitGlyph(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2 5.5V2.5H5M11 2.5H14V5.5M14 10.5V13.5H11M5 13.5H2V10.5" />
+    </svg>
+  );
+}
 
 function RectGlyph(): JSX.Element {
   return (

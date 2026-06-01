@@ -39,6 +39,11 @@ import {
   Rect,
   Textbox,
 } from "fabric";
+// why (2026-05-31): Fabric's optional aligning-guidelines module. Snaps the
+// dragged/resized object's edges + centers to other objects and the canvas,
+// drawing a guide line while the snap holds. Lets authors drop the Hero Photo
+// flush against the header/info bands without hand-pixel-hunting.
+import { initAligningGuidelines } from "fabric/extensions";
 import {
   AlertTriangle as LAlertTriangle,
   ArrowRight as LArrowRight,
@@ -943,6 +948,27 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     });
     fabricRef.current = fabricCanvas;
 
+    // why (2026-05-31): turn on edge/center snapping with guide lines. The
+    // module hooks Fabric's move/scale events and snaps the active object to
+    // any other object's edges + centers and the canvas center when within
+    // `margin` px, flashing a guide line while the snap holds. margin 8 ≈ the
+    // distance that feels intentional without fighting the user on small
+    // nudges; the line uses Relentless Gold so it reads on the dark canvas.
+    // Returns a teardown we call on dispose so listeners don't leak across
+    // canvas re-inits.
+    let teardownGuides: (() => void) | null = null;
+    try {
+      teardownGuides = initAligningGuidelines(fabricCanvas, {
+        margin: 8,
+        width: 1,
+        color: "#C9A84C",
+      });
+    } catch (err) {
+      // Non-fatal: snapping is an enhancement, not a requirement. If the
+      // extension ever fails to init, the editor still works without guides.
+      console.warn("[canvas-editor] aligning guidelines init failed:", err);
+    }
+
     // why: wire selection events FIRST so they're armed before any object
     // gets added (in case a template defaults to having an object pre-selected
     // in some future Phase 2 enhancement).
@@ -1452,6 +1478,16 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
     return () => {
       cancelled = true;
+      // why: drop the aligning-guidelines listeners before disposing the
+      // canvas so they don't fire into a torn-down instance.
+      if (teardownGuides) {
+        try {
+          teardownGuides();
+        } catch {
+          /* teardown is best-effort */
+        }
+        teardownGuides = null;
+      }
       // why: Fabric v6 dispose() returns Promise<boolean>. React effect
       // cleanup is sync, so we kick it off and ignore the result. Safe
       // because no subsequent code references the canvas after this point —
