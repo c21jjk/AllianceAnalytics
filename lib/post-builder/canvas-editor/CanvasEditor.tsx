@@ -3390,6 +3390,27 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const active = canvas.getActiveObject();
       if (active && (active as { isEditing?: boolean }).isEditing) return;
 
+      // why (2026-05-31): Escape should DESELECT the current object first, not
+      // immediately close Studio. The overlay also listens for Escape (to
+      // close); we stop propagation here so a stray Escape while a photo is
+      // selected just clears the selection instead of kicking the author out
+      // of the editor (which read as "I can't get my handles back").
+      if (e.key === "Escape") {
+        const target0 = e.target as HTMLElement | null;
+        const inField =
+          target0 &&
+          (target0.tagName === "INPUT" ||
+            target0.tagName === "TEXTAREA" ||
+            target0.isContentEditable);
+        if (!inField && canvas.getActiveObject()) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          canvas.discardActiveObject();
+          canvas.requestRenderAll();
+          return;
+        }
+      }
+
       // why: ignore shortcuts while focus is in a real form input — the layer
       // panel will eventually have a rename input.
       const target = e.target as HTMLElement | null;
