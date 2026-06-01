@@ -3512,6 +3512,39 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   ]);
 
   // -------------------------------------------------------------------------
+  // Escape → deselect (NOT close Studio). 2026-05-31.
+  // -------------------------------------------------------------------------
+  // why: the overlay shell ALSO listens for Escape to close Studio. Pressing
+  // Escape with a photo selected was closing the whole editor (kicking the
+  // author back to Template Details). We run this in the CAPTURE phase so it
+  // fires before the overlay's bubble-phase handler regardless of mount order;
+  // if something is selected we clear it and stop the event so the overlay
+  // never sees it. With nothing selected, Escape still closes Studio.
+  useEffect(() => {
+    const onKeyCapture = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const t = e.target as HTMLElement | null;
+      const inField =
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable);
+      if (inField) return;
+      const active = canvas.getActiveObject();
+      if (active && (active as { isEditing?: boolean }).isEditing) return;
+      if (!active) return; // nothing selected → let the overlay close Studio
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+    };
+    window.addEventListener("keydown", onKeyCapture, true);
+    return () => window.removeEventListener("keydown", onKeyCapture, true);
+  }, []);
+
+  // -------------------------------------------------------------------------
   // Selected-layer-derived computed values for the toolbar
   // -------------------------------------------------------------------------
   const selectedEntry = useMemo<LayerEntry | null>(() => {
