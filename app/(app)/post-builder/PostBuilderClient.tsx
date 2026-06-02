@@ -3870,12 +3870,20 @@ export default function PostBuilderClient({
                 {!isMultiOHPost && dbTemplates.length > 0 ? (
                   <div>
                     <div className="eyebrow mb-2">Choose a template</div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {/* 2026-05-31 — visual template picker. Replaces the
+                        text-only chips + the property-photo carousel: the
+                        author chooses by SEEING each design. Horizontal row of
+                        preview cards (~5 visible), bigger than the old photo
+                        thumbs, with the design thumbnail on top and name + a
+                        Default badge below. The card thumbnail is the
+                        template's preview_image_url (the render saved with the
+                        template); a clean placeholder shows when one isn't
+                        generated yet. */}
+                    <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
                       {dbTemplates.map((t) => {
                         // Pre-select the default until the user actively picks
                         // a card (changeable). Once they click one,
-                        // activeDbTemplateId owns the highlight. why: "default
-                        // pre-selected but changeable before generating".
+                        // activeDbTemplateId owns the highlight.
                         const active = activeDbTemplateId
                           ? activeDbTemplateId === t.id
                           : t.is_default;
@@ -3890,9 +3898,9 @@ export default function PostBuilderClient({
                             }}
                             disabled={disabled}
                             title={t.description ?? t.name}
-                            aria-label={`Render with admin template ${t.name}`}
+                            aria-label={`Use template ${t.name}`}
                             className={[
-                              "text-left rounded-xl border p-2.5 transition flex flex-col",
+                              "group shrink-0 w-40 rounded-xl border p-2 text-left transition flex flex-col",
                               disabled
                                 ? "border-neutral-200 bg-neutral-50 cursor-not-allowed opacity-60"
                                 : active
@@ -3900,25 +3908,29 @@ export default function PostBuilderClient({
                                   : "border-neutral-200 bg-white cursor-pointer hover:border-gold-300 hover:ring-2 hover:ring-gold-300/40 hover:shadow-sm",
                             ].join(" ")}
                           >
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-sm font-semibold text-neutral-900 line-clamp-1">
-                                {t.name}
-                              </span>
+                            <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-neutral-100">
+                              {t.preview_image_url ? (
+                                /* eslint-disable-next-line @next/next/no-img-element */
+                                <img
+                                  src={t.preview_image_url}
+                                  alt={`${t.name} design preview`}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="absolute inset-0 flex items-center justify-center px-2 text-center text-[11px] font-medium text-neutral-400">
+                                  Preview coming soon
+                                </div>
+                              )}
                               {t.is_default ? (
-                                <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-gold-500/95 px-2 py-0.5 text-neutral-900">
+                                <span className="absolute left-1.5 top-1.5 rounded-full bg-gold-500/95 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-neutral-900 shadow">
                                   Default
                                 </span>
-                              ) : (
-                                <span className="text-[10px] font-bold uppercase tracking-wider rounded-full bg-neutral-200 px-2 py-0.5 text-neutral-700">
-                                  Template
-                                </span>
-                              )}
+                              ) : null}
                             </div>
-                            {t.description ? (
-                              <div className="text-xs text-neutral-600 line-clamp-2">
-                                {t.description}
-                              </div>
-                            ) : null}
+                            <div className="mt-1.5 text-xs font-semibold text-neutral-900 line-clamp-2">
+                              {t.name}
+                            </div>
                           </button>
                         );
                       })}
@@ -4150,81 +4162,11 @@ export default function PostBuilderClient({
                 ) : null}
               </div>
 
-              {/* Photo picker — single-select. Hidden in multi-OH mode
-                  (the hero render uses a designed graphic, not a chosen
-                  hero photo; per-property slides each carry their own
-                  photo already selected by the wizard). */}
-              {!isMultiOHPost && availablePhotos.length > 1 ? (
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="eyebrow">
-                      {`Photos${
-                        photoCount === 1
-                          ? ` · ${selectedPhotoIndex + 1} of ${availablePhotos.length}`
-                          : ` · slots ${(selectedPhotoIndex % availablePhotos.length) + 1}–${((selectedPhotoIndex + photoCount - 1) % availablePhotos.length) + 1}`
-                      }`}
-                    </div>
-                    {photosLoading ? (
-                      <span className="text-xs text-neutral-500">Loading…</span>
-                    ) : null}
-                  </div>
-                  <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-                    {availablePhotos.map((p, i) => {
-                      // IG single-image rolling window from selectedPhotoIndex sized by photoCount
-                      const slotPosition = computeSlotPosition(
-                        i,
-                        selectedPhotoIndex,
-                        photoCount,
-                        availablePhotos.length,
-                      );
-                      const inSlot = slotPosition !== null;
-                      const isPrimary = slotPosition === 0;
-                      return (
-                        <button
-                          key={`${p.sequence}-${i}`}
-                          type="button"
-                          onClick={() => pickPhoto(i)}
-                          className={[
-                            "relative shrink-0 rounded-lg overflow-hidden transition focus-ring",
-                            inSlot
-                              ? isPrimary
-                                ? "ring-2 ring-gold-500"
-                                : "ring-2 ring-gold-300"
-                              : "hover:ring-1 hover:ring-neutral-300",
-                          ].join(" ")}
-                          title={
-                            inSlot
-                              ? `Photo ${p.sequence} · slot ${slotPosition + 1}`
-                              : `Photo ${p.sequence}`
-                          }
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={p.url}
-                            alt=""
-                            className="w-24 h-24 object-cover bg-neutral-100"
-                            loading="lazy"
-                          />
-                          <span
-                            className={[
-                              "absolute bottom-1 left-1 rounded-full px-1.5 py-px text-[10px] font-semibold",
-                              isPrimary
-                                ? "bg-gold-500 text-neutral-900"
-                                : inSlot
-                                  ? "bg-gold-300 text-neutral-900"
-                                  : "bg-black/55 text-white",
-                            ].join(" ")}
-                          >
-                            {inSlot && photoCount > 1
-                              ? `#${slotPosition + 1}`
-                              : p.sequence || "★"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
+              {/* 2026-05-31 — the property-photo carousel was removed from this
+                  screen. The main slide always uses the listing's hero photo
+                  (selectedPhotoIndex defaults to 0); for the rare swap, the
+                  author uses "Next photo" on the preview or swaps inside Studio.
+                  The freed space now shows the visual template picker above. */}
 
               {/* Generate header + button — hidden in multi-OH mode.
                   Re-rendering a multi-OH carousel has to go through the
