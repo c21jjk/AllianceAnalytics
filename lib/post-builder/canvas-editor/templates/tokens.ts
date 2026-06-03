@@ -173,6 +173,11 @@ export const ALLIANCE_FONTS = {
   pinyonScript: '"Pinyon Script", "Brush Script MT", cursive',
   caveat: '"Caveat", "Comic Sans MS", cursive',
   cookie: '"Cookie", "Brush Script MT", cursive',
+  /** 2026-06-01 (John) — brush script, NOT on Google Fonts. Served from the
+   *  CDNFonts CDN via @font-face in fonts.css. Free-for-commercial per the
+   *  foundry (SolidType); confirm the license before heavy use, and ideally
+   *  self-host the official woff2 in /public/fonts for render reliability. */
+  stayClassy: '"Stay Classy SLDT", "Brush Script MT", cursive',
 
   // ----- Slab serif (3 new — currently zero in original catalog) -----
   robotoSlab: '"Roboto Slab", Georgia, "Times New Roman", serif',

@@ -109,6 +109,7 @@ export const FONT_OPTIONS: ReadonlyArray<FontPickerOption> = [
   { label: "Pinyon Script", value: ALLIANCE_FONTS.pinyonScript, category: "Script" },
   { label: "Sacramento", value: ALLIANCE_FONTS.sacramento, category: "Script" },
   { label: "Satisfy", value: ALLIANCE_FONTS.satisfy, category: "Script" },
+  { label: "Stay Classy SLDT", value: ALLIANCE_FONTS.stayClassy, category: "Script" },
   { label: "Tangerine", value: ALLIANCE_FONTS.tangerine, category: "Script" },
   { label: "Yellowtail", value: ALLIANCE_FONTS.yellowtail, category: "Script" },
 
