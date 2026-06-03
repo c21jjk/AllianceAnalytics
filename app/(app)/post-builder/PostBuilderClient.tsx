@@ -634,6 +634,12 @@ export default function PostBuilderClient({
   // UI. block:"nearest" makes the scroll a no-op when the banner is already
   // visible, so this doesn't disrupt users who can already see it.
   const errorBannerRef = useRef<HTMLDivElement | null>(null);
+  // 2026-06-03 — "Continue to Final Review" was closing Studio but leaving the
+  // page scrolled at the top ("Choose a template"), which read as going one
+  // step backwards. The single-listing builder has no separate review screen;
+  // the Preview/caption pane IS the review. After a hero save we scroll this
+  // ref into view so the button actually lands on Final Review.
+  const finalReviewRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!error || !errorBannerRef.current) return;
     errorBannerRef.current.scrollIntoView({
@@ -1790,6 +1796,21 @@ export default function PostBuilderClient({
 
         // ---- 4. Close the overlay ----
         setStudioOpen(false);
+
+        // 2026-06-03 — "Continue to Final Review" promise: the single-listing
+        // builder has no separate review screen, so closing Studio dropped the
+        // user back at the top ("Choose a template"), which felt like a step
+        // backwards. Scroll the Preview/caption pane (the de facto Final
+        // Review) into view. requestAnimationFrame defers until after the
+        // overlay unmounts and renderResult repaints so the ref is mounted.
+        // Hero-save path only — the slide-edit branch returns above, and
+        // cancel (handleStudioClose) never reaches here.
+        requestAnimationFrame(() => {
+          finalReviewRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        });
 
         // ---- 5. Part 2 (Phase D) — Make-a-Reel follow-up prompt ----
         // why: connect the canvas Studio flow to the Reel flow. Larissa
@@ -4271,7 +4292,10 @@ export default function PostBuilderClient({
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
+              <div
+                ref={finalReviewRef}
+                className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 scroll-mt-4"
+              >
                 {/* Preview pane */}
                 <div className="flex flex-col">
                   <div className="eyebrow mb-2">
