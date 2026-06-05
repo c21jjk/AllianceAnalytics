@@ -4398,8 +4398,8 @@ export default function PostBuilderClient({
                           onClick={openStudio}
                           className={
                             studioSavedOnce
-                              ? "flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
-                              : "btn-primary flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5"
+                              ? "flex-1 min-w-[110px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
+                              : "btn-primary flex-[2] min-w-[150px] inline-flex items-center justify-center gap-1.5"
                           }
                           title="Open this post in the Studio editor for fine-tuning"
                         >
@@ -4417,8 +4417,8 @@ export default function PostBuilderClient({
                           onClick={openPostNow}
                           className={
                             studioSavedOnce
-                              ? "btn-primary flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5"
-                              : "flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
+                              ? "btn-primary flex-[2] min-w-[150px] inline-flex items-center justify-center gap-1.5"
+                              : "flex-1 min-w-[110px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
                           }
                           title="Publish directly to Facebook + Instagram"
                         >
