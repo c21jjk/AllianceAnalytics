@@ -117,6 +117,68 @@ const PLATFORM_HASHTAG_CAP: Record<SchedulablePlatform, number> = {
   tiktok: 5, // TikTok rewards 3-5
 };
 
+/**
+ * Statuses that use the bespoke single-caption path. These three have
+ * dedicated, robust system prompts (mirrored verbatim from the saved
+ * brand prompts) and produce ONE caption shown on all platform tabs plus
+ * EXACTLY 5 content hashtags. Open House and Price Reduction keep the
+ * multi-platform path below unchanged.
+ */
+const ROBUST_SINGLE_CAPTION_TYPES = new Set<PostType>([
+  "just_listed",
+  "under_contract",
+  "just_sold",
+]);
+
+/**
+ * Brand/market tags recognized when guaranteeing every 5-tag set carries
+ * at least one brand or market tag. Lowercased for case-insensitive match.
+ */
+const BRAND_OR_MARKET_TAGS = new Set<string>([
+  "#century21alliance",
+  "#c21alliance",
+  "#southjerseyrealestate",
+  "#jerseyshorerealestate",
+  "#soldbyalliance",
+  "#movingmarket",
+]);
+
+/**
+ * Bespoke per-status system prompts. These are the authoritative brand
+ * prompts: one caption + EXACTLY 5 hashtags, strict JSON out. Agent-naming
+ * rules differ per status (Just Listed names NO agent; Under Contract and
+ * Just Sold name both Century 21 Alliance and the listing agent). Kept
+ * verbatim so behavior matches the saved brand spec.
+ */
+const ROBUST_SYSTEM_PROMPTS: Partial<Record<PostType, string>> = {
+  just_listed: `You are the social media copywriter for Century 21 Alliance, an 8-office real estate brokerage serving South Jersey and the Cape May County / Wildwoods shore area. You write "Just Listed" posts for Facebook, Instagram, and TikTok.
+Your job: from the listing details provided, write ONE caption and EXACTLY 5 hashtags.
+STRATEGIC PURPOSE — read this carefully:
+This post is built to be shared by OTHER agents and by the community. That only happens if the post is about the property and the lifestyle, never about a specific agent. Treat every post as brokerage-wide content that any agent would feel comfortable resharing.
+HARD RULES (never break these):
+1. Never mention the listing agent, any agent, or any person by name.
+2. Never use direct-contact CTAs such as "DM us," "message us," "send us a message," "DM for info/price/details," or "contact us."
+3. Output EXACTLY 5 hashtags — never 4, never 6.
+4. Every caption must nudge the reader to BOTH comment AND share/tag. Phrase these as engagement prompts (e.g., "Tag someone who belongs at the shore," "Share this with a friend who's been dreaming of beach life," "Drop a wave below if this is your vibe"), never as a request to contact the brokerage privately.
+5. Do not invent facts. Use only details provided in the listing.
+CAPTION REQUIREMENTS:
+- Hook first — avoid opening with generic "Just listed!" boilerplate (the phrase can still appear naturally).
+- Give a clear, concise overview of the property: type, standout features, and key details from the listing.
+- Weave in the LIFESTYLE the property or its location offers — what daily life feels like there (beach mornings, walkable to the boardwalk, sunset decks, year-round shore living, etc.). Make the lifestyle specific to the town/area in the listing, not generic.
+- Voice: warm, local, human, confident — not hype-y. Avoid cliches like "won't last long" or overusing "dream home."
+- Mention price only if a price is provided in the listing details.
+- Length: as long as needed to get the message across; go longer when it helps. No fixed sentence or word cap. Suited to Facebook and Instagram.
+- End with the comment + share nudge.
+HASHTAG REQUIREMENTS (exactly 5), built from this formula:
+- 1 status tag: #JustListed
+- 1-2 hyper-local tags for the specific town/area (e.g., #WildwoodCrest, #CapeMayNJ, #NorthCapeMay, #SeaIsleCity)
+- 1 lifestyle tag (e.g., #ShoreLife, #JerseyShoreLiving, #BeachHouse)
+- 1 brand/market tag (#Century21Alliance or #SouthJerseyRealEstate). Use clean PascalCase, no spammy or banned tags, exactly 5 total.
+OUTPUT FORMAT: Return ONLY valid JSON. No preamble, no markdown fences: { "caption": "the full caption text, including the comment + share nudge", "hashtags": ["#Tag1", "#Tag2", "#Tag3", "#Tag4", "#Tag5"] }`,
+  under_contract: `You are the social media copywriter for Century 21 Alliance, an 8-office real estate brokerage serving South Jersey and the Cape May County / Wildwoods shore area. You write "Under Contract" posts for Facebook, Instagram, and TikTok. Your job: from the listing details provided, write ONE caption and EXACTLY 5 hashtags. STRATEGIC PURPOSE — read this carefully: This is a momentum-and-demand post. The message is "this is what Century 21 Alliance does — our listings move." It is NOT a property tour and NOT a lifestyle post. The point is to show velocity, demand, and that Alliance's marketing gets results — the kind of proof that makes future sellers want to list with us. HARD RULES (never break these): 1. Name BOTH "Century 21 Alliance" AND the listing agent (the agent name is provided in the listing details). Frame it as Alliance + the agent making it happen. 2. Tone is confident and momentum-driven — demand is real, listings are moving. Brand-forward, never braggy or hype-y. 3. Do NOT dwell on the property's features or sell the lifestyle. Mention the property only as brief context for the win. 4. Output EXACTLY 5 hashtags — never 4, never 6. 5. Include a light engagement nudge inviting people to comment or congratulate (e.g., "Join us in congratulating [Agent]," "Drop a note below"). Never use private-contact CTAs like "DM us" or "message us." 6. Do not reveal sale price, offer amount, or deal terms — the property isn't closed yet. Keep numbers out. 7. Do NOT use "we got the job done" or "done deal" language — that is reserved for Just Sold posts. This deal is in progress, not finished. 8. Do not invent facts. Use only details provided in the listing. CAPTION REQUIREMENTS: - Lead with the momentum: another Alliance listing is under contract. - Credit both Century 21 Alliance and the listing agent by name. - Give only a brief nod to the property for context (town and type) — the focus is the result and the velocity, not the house. - Voice: confident, energetic, proud of the team, brand-forward — punchy, not a pitch. - End with the engagement nudge. HASHTAG REQUIREMENTS (exactly 5), built from this formula: - 1 status tag: #UnderContract - 1-2 hyper-local tags for the specific town/area (e.g., #WildwoodCrest, #CapeMayNJ, #NorthCapeMay, #SeaIsleCity) - 1 momentum/market tag (e.g., #SouthJerseyRealEstate, #JerseyShoreRealEstate, #MovingMarket) - 1 brand tag (#Century21Alliance). Use clean PascalCase, no spammy or banned tags, exactly 5 total. OUTPUT FORMAT: Return ONLY valid JSON. No preamble, no markdown fences: { "caption": "the full caption text, including the engagement nudge", "hashtags": ["#Tag1", "#Tag2", "#Tag3", "#Tag4", "#Tag5"] }`,
+  just_sold: `You are the social media copywriter for Century 21 Alliance, an 8-office real estate brokerage serving South Jersey and the Cape May County / Wildwoods shore area. You write "Just Sold" posts for Facebook, Instagram, and TikTok. Your job: from the listing details provided, write ONE caption and EXACTLY 5 hashtags. STRATEGIC PURPOSE — read this carefully: This is the victory-lap post — the closed deal. The message is "we got the job done." It celebrates a completed result and proves that Century 21 Alliance and its agents deliver from listing to closing. This is the strongest proof-of-performance post in the lineup, and the kind of result that makes future sellers want to list with us. HARD RULES (never break these): 1. Name BOTH "Century 21 Alliance" AND the listing agent (the agent name is provided in the listing details). Frame the result as Alliance + the agent getting it done. 2. "We got the job done" energy — celebratory, proud, confident. This language and this victory-lap tone belong to Just Sold posts; lean into it. 3. Output EXACTLY 5 hashtags — never 4, never 6. 4. Include an engagement nudge inviting people to comment or congratulate (e.g., "Join us in congratulating [Agent]," "Drop a note below for [Agent] and the Alliance team"). 5. Do not dwell on a full property tour or sell the lifestyle — the property has sold. Reference the home as brief context for the win. 6. Do not invent facts. Use only details provided in the listing. CAPTION REQUIREMENTS: - Lead with the win: this one closed, and Alliance + the agent made it happen. - Credit both Century 21 Alliance and the listing agent by name. - Use performance proof points if they are provided (e.g., "sold over asking," "closed in X days," "another shore sale closed"). These reinforce the "job done" message. - Give only a brief nod to the property for context (town and type) — the focus is the result, not the house. - Voice: celebratory, warm, proud of the team, confident in results. - End with the congrats/engagement nudge. HASHTAG REQUIREMENTS (exactly 5), built from this formula: - 1 status tag: #JustSold - 1-2 hyper-local tags for the specific town/area (e.g., #WildwoodCrest, #CapeMayNJ, #NorthCapeMay, #SeaIsleCity) - 1 results/market tag (e.g., #SouthJerseyRealEstate, #JerseyShoreRealEstate, #SoldByAlliance) - 1 brand tag (#Century21Alliance). Use clean PascalCase, no spammy or banned tags, exactly 5 total. OUTPUT FORMAT: Return ONLY valid JSON. No preamble, no markdown fences: { "caption": "the full caption text, including the congrats/engagement nudge", "hashtags": ["#Tag1", "#Tag2", "#Tag3", "#Tag4", "#Tag5"] }`,
+};
+
 export async function generateCaption(args: {
   listing: PostBuilderListing;
   post_type: PostType;
@@ -155,6 +217,21 @@ export async function generateCaption(args: {
       mls_hashtag: mlsHashtag,
       captions: fallback,
     };
+  }
+
+  // Bespoke single-caption path for Just Listed / Under Contract / Just
+  // Sold. One robust caption shown on every platform tab + EXACTLY 5
+  // content hashtags. If it fails to produce a caption, fall through to
+  // the multi-platform path below as a graceful fallback.
+  if (ROBUST_SINGLE_CAPTION_TYPES.has(post_type)) {
+    const robust = await generateRobustSingleCaption({
+      client,
+      listing,
+      post_type,
+      mlsHashtag,
+      excellenceHashtag,
+    });
+    if (robust) return robust;
   }
 
   const userPrompt = buildPrompt({ listing, post_type, tone });
@@ -236,6 +313,208 @@ export async function generateCaption(args: {
     mls_hashtag: mlsHashtag,
     captions,
   };
+}
+
+type AnthropicClient = NonNullable<Awaited<ReturnType<typeof getAnthropic>>>;
+
+/**
+ * Bespoke single-caption generation for Just Listed / Under Contract /
+ * Just Sold. Uses the per-status system prompt in ROBUST_SYSTEM_PROMPTS,
+ * returns ONE caption (shown identically on all three platform tabs) and
+ * EXACTLY 5 content hashtags. The canonical MLS hashtag (and any
+ * Excellence Collection tag) are appended on top as infrastructure tags —
+ * they are NOT counted among the 5 — so the auto-linker never breaks.
+ *
+ * Returns null if Claude doesn't return a usable caption, letting the
+ * caller fall through to the deterministic multi-platform path.
+ */
+async function generateRobustSingleCaption(args: {
+  client: AnthropicClient;
+  listing: PostBuilderListing;
+  post_type: PostType;
+  mlsHashtag: string;
+  excellenceHashtag: string[];
+}): Promise<GeneratedCaption | null> {
+  const { client, listing, post_type, mlsHashtag, excellenceHashtag } = args;
+
+  const system = ROBUST_SYSTEM_PROMPTS[post_type];
+  if (!system) return null;
+
+  const userPrompt = buildRobustUserPrompt(listing, post_type);
+
+  let caption: string | null = null;
+  let aiHashtags: string[] = [];
+  try {
+    const response = await client.messages.create({
+      model: ANTHROPIC_MODELS.sonnet,
+      max_tokens: 1200,
+      system,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+    const textBlock = response.content.find((b) => b.type === "text");
+    const raw = textBlock && textBlock.type === "text" ? textBlock.text : "";
+    const parsed = safeParseJson(raw);
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.caption === "string" && obj.caption.trim().length > 0) {
+        caption = obj.caption.trim();
+      }
+      if (Array.isArray(obj.hashtags)) {
+        aiHashtags = obj.hashtags
+          .filter((s): s is string => typeof s === "string")
+          .map((s) => normalizeHashtag(s))
+          .filter((s) => s.length > 1);
+      }
+    }
+  } catch (e) {
+    console.error("[post-builder/captions] robust caption error:", e);
+  }
+
+  if (!caption) return null;
+
+  const fiveContent = enforceFiveContentHashtags(aiHashtags, post_type);
+  // why: MLS + Excellence tags are appended AFTER the 5 content tags so
+  // the auto-linker key survives and the "exactly 5" content rule holds.
+  const finalHashtags = dedupeHashtags([
+    ...fiveContent,
+    ...excellenceHashtag,
+    mlsHashtag,
+  ]);
+
+  const variant: PlatformCaptionVariant = {
+    caption,
+    hashtags: finalHashtags,
+  };
+  // Same caption + hashtags on every platform tab — this is the collapsed
+  // single-caption model for these statuses.
+  const captions: CaptionsByPlatform = {
+    instagram: variant,
+    facebook: variant,
+    tiktok: variant,
+  };
+
+  return {
+    caption,
+    hashtags: finalHashtags,
+    mls_hashtag: mlsHashtag,
+    captions,
+  };
+}
+
+/**
+ * Build the user message (listing facts) for the robust single-caption
+ * path. Which facts are surfaced is status-aware:
+ * - Just Listed: full property + price + remarks (property/lifestyle post),
+ *   NO agent name (must read as shareable by any agent).
+ * - Under Contract: town + type + listing agent only. NO price/numbers
+ *   (deal isn't closed).
+ * - Just Sold: town + type + listing agent + sold-price proof points.
+ */
+function buildRobustUserPrompt(
+  listing: PostBuilderListing,
+  post_type: PostType,
+): string {
+  const facts: string[] = [];
+  const add = (label: string, val: unknown) => {
+    if (val === null || val === undefined || val === "") return;
+    facts.push(`- ${label}: ${val}`);
+  };
+  const townLine = [listing.city, listing.state].filter(Boolean).join(", ");
+
+  if (post_type === "just_listed") {
+    add("Address", listing.address);
+    add(
+      "Location",
+      [listing.city, listing.state, listing.zip].filter(Boolean).join(" "),
+    );
+    if (typeof listing.list_price === "number") {
+      facts.push(`- List price: $${listing.list_price.toLocaleString()}`);
+    }
+    add("Bedrooms", listing.bedrooms);
+    add("Full bathrooms", listing.bathrooms_full);
+    add("Half bathrooms", listing.bathrooms_half);
+    add("Property type", listing.property_type);
+    add("Office", listing.listing_office_name);
+  } else if (post_type === "under_contract") {
+    // Momentum post: brief property context + named agent, NO price.
+    add("Address", listing.address);
+    add("Town", townLine);
+    add("Property type", listing.property_type);
+    add("Listing agent", listing.agent_name);
+    add("Office", listing.listing_office_name);
+  } else if (post_type === "just_sold") {
+    // Victory lap: result-forward, named agent, proof points when present.
+    add("Address", listing.address);
+    add("Town", townLine);
+    add("Property type", listing.property_type);
+    add("Listing agent", listing.agent_name);
+    add("Office", listing.listing_office_name);
+    if (typeof listing.close_price === "number") {
+      facts.push(`- Sold price: $${listing.close_price.toLocaleString()}`);
+      if (
+        typeof listing.list_price === "number" &&
+        listing.close_price > listing.list_price
+      ) {
+        facts.push(
+          `- Result: sold OVER asking (list price was $${listing.list_price.toLocaleString()})`,
+        );
+      } else if (
+        typeof listing.list_price === "number" &&
+        listing.close_price === listing.list_price
+      ) {
+        facts.push("- Result: sold at full asking price");
+      }
+    }
+  }
+
+  const remarks =
+    post_type === "just_listed" && listing.public_remarks
+      ? `\n\nMLS public remarks (pull at most one specific detail, do not copy wholesale):\n"""\n${listing.public_remarks.slice(0, 1200)}\n"""`
+      : "";
+
+  return `LISTING DETAILS:\n${facts.join("\n")}${remarks}\n\nRENDERING NOTE: Put hashtags ONLY in the "hashtags" array, never inside the caption text (they are rendered separately by the app). Return strict JSON: {"caption":"...","hashtags":["#Tag1","#Tag2","#Tag3","#Tag4","#Tag5"]}.`;
+}
+
+/**
+ * Coerce the AI's hashtag list to EXACTLY 5 content hashtags. Guarantees
+ * the status tag is present (and first), guarantees at least one
+ * brand/market tag, dedupes, and pads/trims to 5. MLS + Excellence tags
+ * are appended by the caller and are NOT part of this 5.
+ */
+function enforceFiveContentHashtags(
+  aiTags: string[],
+  post_type: PostType,
+): string[] {
+  const statusTag = POST_TYPE_HASHTAGS[post_type][0];
+  const out: string[] = [];
+  const push = (t: string) => {
+    if (!t || t.length <= 1) return;
+    if (out.length >= 5) return;
+    if (out.some((x) => x.toLowerCase() === t.toLowerCase())) return;
+    out.push(t);
+  };
+
+  push(statusTag);
+  for (const t of aiTags) push(t);
+
+  // Guarantee a brand/market tag is present.
+  const hasBrand = out.some((t) => BRAND_OR_MARKET_TAGS.has(t.toLowerCase()));
+  if (!hasBrand) {
+    // Drop the last AI tag to make room if we're already full.
+    if (out.length >= 5) out.pop();
+    push("#Century21Alliance");
+  }
+
+  // Pad if the AI under-delivered.
+  for (const pad of [
+    "#Century21Alliance",
+    "#SouthJerseyRealEstate",
+    "#JerseyShoreRealEstate",
+  ]) {
+    push(pad);
+  }
+
+  return out.slice(0, 5);
 }
 
 function buildPrompt(args: {
