@@ -4520,6 +4520,28 @@ export default function PostBuilderClient({
                       <p className="mt-1.5 text-xs text-neutral-500">
                         {`Posts as a ${1 + carouselSlides.length}-photo carousel on Instagram + Facebook.`}
                       </p>
+                      {/* 2026-06-05 — direct Reel entry. The post-publish
+                          prompt is a nice nudge, but it shouldn't be the ONLY
+                          doorway: you'd have to publish before you could make
+                          or even test a Reel. This builds the Reel from the
+                          carousel that's already on screen (no publish needed),
+                          seeds a draft, and opens the Reel editor. Same
+                          handleMakeReel the publish prompt uses. */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleMakeReel();
+                        }}
+                        disabled={makingReel}
+                        className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-gold-300 bg-white px-3 py-2 text-sm font-semibold text-gold-700 transition-colors hover:bg-gold-50 hover:border-gold-500 disabled:opacity-60 disabled:cursor-not-allowed focus-ring"
+                        title="Turn this carousel into a cinematic Reel"
+                      >
+                        <Sparkles size={14} aria-hidden="true" />
+                        {makingReel ? "Building your Reel…" : "Make it a Reel"}
+                        {!makingReel ? (
+                          <ChevronRight size={14} aria-hidden="true" />
+                        ) : null}
+                      </button>
                     </div>
                   ) : null}
                 </div>
