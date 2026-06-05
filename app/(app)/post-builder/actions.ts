@@ -37,6 +37,10 @@ import type {
   SourceMls,
   VideoComposition,
 } from "@/lib/post-builder/types";
+import {
+  buildReelFromCarousel,
+  type ReelPace,
+} from "@/lib/post-builder/reel-templates/build-from-carousel";
 
 // Mirrors STORAGE_BUCKET in app/api/post-builder/canvas-save/route.ts +
 // lib/post-builder/render.ts — same bucket, same naming, so a single delete
@@ -2795,6 +2799,112 @@ export async function persistRenderedReelAction(
       hashtags: hashtagsLegacy,
       mls_hashtag: mlsHashtag,
       captions_by_platform: (captionsByPlatform ?? {}) as unknown as Json,
+      status: "draft",
+      created_by: profile.id,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error: `insert_failed: ${error.message}` };
+  }
+  if (!data || typeof data.id !== "string") {
+    return { ok: false, error: "insert returned no row" };
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/saved-posts");
+  return { ok: true, generated_post_id: data.id };
+}
+
+// ---------------------------------------------------------------------------
+// seedReelFromCarouselAction — "Make it a Reel" on-ramp (B)
+// ---------------------------------------------------------------------------
+//
+// why (2026-06-05): after the user publishes a carousel post, the post-
+// publish prompt offers "Make it a Reel". This action turns that finished
+// carousel into a DRAFT Reel row the Reel editor can resume via
+// `/post-builder/reel?gp=<id>` — same `composition_json` + `?gp=` resume
+// pattern fetchReelResume already drives.
+//
+// It builds the composition server-side with buildReelFromCarousel (9:16
+// branded hero + one cinematic photo scene per carousel slide), inserts a
+// draft generated_posts row (media_type='reel', no video yet), and returns
+// the new id to navigate to. The Reel is its OWN row, separate from the
+// source carousel post, so both live independently in Saved posts.
+export interface SeedReelFromCarouselInput {
+  mls_number: string;
+  source_mls: SourceMls | null;
+  property_id: string | null;
+  post_type: PostType;
+  variant: PostVariant;
+  /** Carousel photo URLs (additional_images) in order — the Reel body. */
+  photo_urls: string[];
+  /** Optional cover/thumbnail — the post's hero image. */
+  cover_image_url?: string | null;
+  /** Pacing feel. Defaults to cinematic. */
+  pace?: ReelPace;
+}
+
+export type SeedReelFromCarouselResult =
+  | { ok: true; generated_post_id: string }
+  | { ok: false; error: string };
+
+export async function seedReelFromCarouselAction(
+  input: SeedReelFromCarouselInput,
+): Promise<SeedReelFromCarouselResult> {
+  const profile = await requireUser();
+
+  if (!input.mls_number) {
+    return { ok: false, error: "mls_number is required to seed a Reel" };
+  }
+  const photoUrls = (input.photo_urls ?? []).filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  if (photoUrls.length === 0) {
+    return {
+      ok: false,
+      error: "This post has no carousel photos to build a Reel from.",
+    };
+  }
+
+  const composition = buildReelFromCarousel({
+    postType: input.post_type,
+    variant: input.variant,
+    photoUrls,
+    sourceListingMls: input.mls_number,
+    pace: input.pace ?? "cinematic",
+  });
+  if (!composition) {
+    return { ok: false, error: "Could not build a Reel composition." };
+  }
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("generated_posts")
+    .insert({
+      mls_number: input.mls_number,
+      source_mls: input.source_mls,
+      property_id: input.property_id,
+      post_type: input.post_type,
+      variant: input.variant,
+      format: "story_9x16",
+      template_id: "reel_from_carousel_v1",
+      media_type: "reel",
+      // Cover/thumbnail — the source post's hero. Optional; the editor can
+      // set a proper cover later. No Storage path (it's a source URL).
+      image_url: input.cover_image_url ?? null,
+      image_path: null,
+      hero_image_source_url: input.cover_image_url ?? null,
+      // Not rendered yet — the user tunes the draft in the Reel editor and
+      // renders from there.
+      video_url: null,
+      video_path: null,
+      composition_json: composition as unknown as Json,
+      reel_duration_ms: composition.totalDurationMs,
+      template_props: {} as Json,
+      customizations: {} as Json,
+      captions_by_platform: {} as unknown as Json,
       status: "draft",
       created_by: profile.id,
     })

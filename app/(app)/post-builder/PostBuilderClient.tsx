@@ -47,6 +47,7 @@ import {
   saveCustomTemplateAction,
   saveGeneratedPostAction,
   schedulePostAction,
+  seedReelFromCarouselAction,
   setPostTestModeAction,
   updateGeneratedPostImageAction,
   updateGeneratedPostSlideAction,
@@ -3049,6 +3050,43 @@ export default function PostBuilderClient({
     // Keep results so user can see what just happened until they close.
   }
 
+  // 2026-06-05 — "Make it a Reel" post-publish on-ramp (C). Seeds a draft
+  // Reel row from the just-published carousel (branded hero + the carousel
+  // photos) and navigates into the dedicated Reel editor to tune + render.
+  // Fired from the Post Now success footer; only offered for carousel posts.
+  const [makingReel, setMakingReel] = useState(false);
+  const handleMakeReel = useCallback(async (): Promise<void> => {
+    if (!selectedListing || carouselSlides.length === 0) return;
+    setMakingReel(true);
+    try {
+      const res = await seedReelFromCarouselAction({
+        mls_number: selectedListing.mls_number,
+        source_mls: selectedListing.source_mls ?? null,
+        property_id: selectedListing.id ?? null,
+        post_type: postType,
+        variant: variantId,
+        photo_urls: carouselSlides.map((s) => s.url),
+        cover_image_url:
+          renderResult?.image_url ?? selectedListing.hero_image_url ?? null,
+        pace: "cinematic",
+      });
+      if (!res.ok) {
+        setError(`Couldn't start the Reel: ${res.error}`);
+        setMakingReel(false);
+        return;
+      }
+      // Navigate into the Reel editor seeded with the new draft. Leave
+      // makingReel true through the navigation so the button stays in its
+      // loading state until the route changes.
+      router.push(`/post-builder/reel?gp=${res.generated_post_id}`);
+    } catch (e) {
+      setError(
+        `Make a Reel threw: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      setMakingReel(false);
+    }
+  }, [selectedListing, carouselSlides, postType, variantId, renderResult, router]);
+
   // Path A "Customize" was removed on 2026-05-14 — replaced by Path C
   // "Edit in Studio" (canvas editor). The render API still accepts an
   // optional `customizations` field for backward-compat with historical
@@ -4646,6 +4684,11 @@ export default function PostBuilderClient({
           // why: pass the actual slide count so the platform cards' copy
           // can describe carousels accurately. hero (1) + extra slides.
           slideCount={1 + carouselSlides.length}
+          // 2026-06-05 — post-publish "Make it a Reel" on-ramp. Only carousel
+          // posts (extra slides present) get the offer; the modal further
+          // gates on a successful publish.
+          onMakeReel={carouselSlides.length >= 1 ? handleMakeReel : undefined}
+          makingReel={makingReel}
         />
       ) : null}
       {/* === Canvas Editor (Path C) — overlay portal ===
@@ -5083,6 +5126,15 @@ interface PostNowModalProps {
    * "single photo" vs "N-photo carousel" copy on the platform cards.
    */
   slideCount: number;
+  /**
+   * 2026-06-05 — "Make it a Reel" post-publish on-ramp. When provided AND the
+   * post is a carousel (slideCount >= 2) AND at least one platform published
+   * successfully, the success footer offers to turn the carousel into a Reel.
+   * Omitted on non-carousel posts. The parent seeds the Reel draft + navigates.
+   */
+  onMakeReel?: () => void;
+  /** True while the Reel seed action + navigation is in flight. */
+  makingReel?: boolean;
 }
 
 const POST_NOW_ARM_MS = 2000;
@@ -5108,6 +5160,8 @@ function PostNowModal(props: PostNowModalProps) {
     error,
     onClearError,
     slideCount,
+    onMakeReel,
+    makingReel,
   } = props;
 
   // why: render the full carousel strip whenever we have 2+ slides. The
@@ -5681,13 +5735,50 @@ function PostNowModal(props: PostNowModalProps) {
 
         <div className="p-5 border-t border-neutral-200 bg-neutral-50 rounded-b-2xl">
           {results ? (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="btn-primary w-full"
-            >
-              Close
-            </button>
+            (() => {
+              // 2026-06-05 — offer "Make it a Reel" only after a carousel post
+              // actually published to at least one platform. The branded hero
+              // + the carousel photos become a cinematic Reel in the Reel
+              // editor. Non-carousel posts (or any all-failed publish) just
+              // see Close.
+              const anyPosted = results.some((r) => r.ok);
+              const canMakeReel = Boolean(onMakeReel) && slideCount >= 2 && anyPosted;
+              if (!canMakeReel) {
+                return (
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    className="btn-primary w-full"
+                  >
+                    Close
+                  </button>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={onMakeReel}
+                    disabled={makingReel}
+                    className="btn-primary w-full inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
+                  >
+                    <Sparkles size={14} aria-hidden="true" />
+                    {makingReel ? "Building your Reel…" : "Now make it a Reel"}
+                    {!makingReel ? (
+                      <ChevronRight size={14} aria-hidden="true" />
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    disabled={makingReel}
+                    className="btn-secondary w-full disabled:opacity-60"
+                  >
+                    Not now
+                  </button>
+                </div>
+              );
+            })()
           ) : tab === "schedule" ? (
             // Schedule tab — primary action queues to /api/cron drain.
             // No hold-to-confirm; scheduling is reversible (unschedule
