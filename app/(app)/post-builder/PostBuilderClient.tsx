@@ -640,6 +640,36 @@ export default function PostBuilderClient({
   // the Preview/caption pane IS the review. After a hero save we scroll this
   // ref into view so the button actually lands on Final Review.
   const finalReviewRef = useRef<HTMLDivElement | null>(null);
+  // 2026-06-05 — reliable post-save scroll. The earlier inline
+  // requestAnimationFrame scroll in handleStudioSave raced the Studio
+  // overlay teardown: for carousel saves it fired before the overlay
+  // unmounted + the new preview painted, and the smooth scroll got cut
+  // short, leaving the user parked at the top ("Choose a template").
+  // Instead, handleStudioSave sets this flag; the effect below runs the
+  // scroll AFTER React has committed the closed-overlay DOM (studioOpen
+  // false) and after a double rAF so layout has settled, then clears it.
+  const [pendingReviewScroll, setPendingReviewScroll] = useState(false);
+  const rafIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!pendingReviewScroll || studioOpen) return;
+    // Double rAF: first frame lets the overlay-removed commit paint, the
+    // second runs once layout is final. Use an instant jump (not smooth)
+    // so nothing in the teardown can interrupt it mid-scroll.
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        finalReviewRef.current?.scrollIntoView({
+          behavior: "auto",
+          block: "start",
+        });
+        setPendingReviewScroll(false);
+      });
+      rafIdRef.current = raf2;
+    });
+    rafIdRef.current = raf1;
+    return () => {
+      if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
+    };
+  }, [pendingReviewScroll, studioOpen]);
   useEffect(() => {
     if (!error || !errorBannerRef.current) return;
     errorBannerRef.current.scrollIntoView({
@@ -1800,17 +1830,13 @@ export default function PostBuilderClient({
         // 2026-06-03 — "Continue to Final Review" promise: the single-listing
         // builder has no separate review screen, so closing Studio dropped the
         // user back at the top ("Choose a template"), which felt like a step
-        // backwards. Scroll the Preview/caption pane (the de facto Final
-        // Review) into view. requestAnimationFrame defers until after the
-        // overlay unmounts and renderResult repaints so the ref is mounted.
-        // Hero-save path only — the slide-edit branch returns above, and
-        // cancel (handleStudioClose) never reaches here.
-        requestAnimationFrame(() => {
-          finalReviewRef.current?.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          });
-        });
+        // backwards. Flag a scroll to the Preview/caption pane (the de facto
+        // Final Review). The actual scrollIntoView runs from the
+        // pendingReviewScroll effect once studioOpen is false and the DOM has
+        // committed — doing it inline here raced the overlay teardown (the
+        // smooth scroll got cut short on carousel saves). Hero-save path only:
+        // the slide-edit branch returns above, and cancel never reaches here.
+        setPendingReviewScroll(true);
 
         // ---- 5. Part 2 (Phase D) — Make-a-Reel follow-up prompt ----
         // why: connect the canvas Studio flow to the Reel flow. Larissa
@@ -4385,6 +4411,48 @@ export default function PostBuilderClient({
                           <Download size={16} aria-hidden="true" />
                         )}
                       </button>
+                    </div>
+                  ) : null}
+
+                  {/* 2026-06-05 — Carousel review strip. The single-listing
+                      builder only ever showed the hero, so the supporting
+                      photos a user added in Studio were invisible after
+                      "Continue to Final Review" — making it feel like the
+                      carousel work vanished. Surface the full set (hero +
+                      added photos) that will publish. Display-only: the
+                      slides are already persisted in additional_images and
+                      already drive the Post Now publish path. Hidden in
+                      multi-OH mode (that flow has its own MultiOhFinalStage). */}
+                  {!isMultiOHPost && renderResult && carouselSlides.length >= 1 ? (
+                    <div className="mt-4">
+                      <div className="eyebrow mb-2">
+                        {`Carousel · ${1 + carouselSlides.length} photos`}
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                        {[
+                          { id: "__hero__", url: renderResult.image_url },
+                          ...carouselSlides.map((s) => ({ id: s.id, url: s.url })),
+                        ].map((slide, i) => (
+                          <div
+                            key={slide.id}
+                            className="relative shrink-0 w-16 h-16 rounded-md overflow-hidden border border-neutral-200 bg-neutral-100"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={slide.url}
+                              alt={i === 0 ? "Hero slide" : `Carousel photo ${i}`}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                            <span className="absolute top-0.5 left-0.5 rounded bg-black/65 text-white text-[10px] font-semibold leading-none px-1 py-0.5">
+                              {i + 1}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-1.5 text-xs text-neutral-500">
+                        {`Posts as a ${1 + carouselSlides.length}-photo carousel on Instagram + Facebook.`}
+                      </p>
                     </div>
                   ) : null}
                 </div>
