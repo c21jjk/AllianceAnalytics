@@ -650,6 +650,13 @@ export default function PostBuilderClient({
   // false) and after a double rAF so layout has settled, then clears it.
   const [pendingReviewScroll, setPendingReviewScroll] = useState(false);
   const rafIdRef = useRef<number | null>(null);
+  // 2026-06-05 — true once the user has saved from Studio at least once this
+  // session ("Continue to Final Review"). Drives the button emphasis in the
+  // preview: after editing, Post Now becomes the bold primary and Edit in
+  // Studio drops to secondary, so coming back from Studio clearly reads as
+  // "ready to publish" rather than looking like the prior screen. Reset when
+  // the listing/template tuple changes (alongside the renderResult reset).
+  const [studioSavedOnce, setStudioSavedOnce] = useState(false);
   useEffect(() => {
     if (!pendingReviewScroll || studioOpen) return;
     // Double rAF: first frame lets the overlay-removed commit paint, the
@@ -1235,6 +1242,10 @@ export default function PostBuilderClient({
     // (new run) to repopulate, which matches the user's mental model
     // of "fresh context, fresh canvas."
     setRenderResult(null);
+    // 2026-06-05 — fresh listing/template means a fresh post; revert the
+    // button emphasis so Edit in Studio is primary again until the user
+    // saves from Studio on this new post.
+    setStudioSavedOnce(false);
     // 2026-05-25 — same lockstep rule for the user's Fabric snapshot.
     // A change to the listing/template tuple invalidates the prior
     // canvas — keeping editedFabricJson around would cause the next
@@ -1837,6 +1848,9 @@ export default function PostBuilderClient({
         // smooth scroll got cut short on carousel saves). Hero-save path only:
         // the slide-edit branch returns above, and cancel never reaches here.
         setPendingReviewScroll(true);
+        // 2026-06-05 — the user has now finished an edit pass in Studio, so
+        // promote Post Now to the primary action in the preview button row.
+        setStudioSavedOnce(true);
 
         // ---- 5. Part 2 (Phase D) — Make-a-Reel follow-up prompt ----
         // why: connect the canvas Studio flow to the Reel flow. Larissa
@@ -4369,28 +4383,43 @@ export default function PostBuilderClient({
                        and Download PNG is demoted to a small icon-only
                        button on the right edge. */
                     <div className="mt-3 flex gap-2 flex-wrap items-stretch">
-                      {/* === Canvas Editor (Path C) — Edit in Studio (primary) ===
+                      {/* === Canvas Editor (Path C) — Edit in Studio ===
                           why: replaces the old V1 Customize button. Only shows
                           when a canvas template exists for the current
                           (postType, variantId, format) tuple AND a listing
-                          is selected. Promoted to primary gold because Studio
-                          is the most likely next step after a generate. */}
+                          is selected. Emphasis is context-aware (2026-06-05):
+                          primary gold right after Generate (Studio is the
+                          likely next step), but demoted to the outline
+                          secondary once the user has saved from Studio —
+                          at that point Post Now is the obvious next action. */}
                       {studioTemplate && selectedListing ? (
                         <button
                           type="button"
                           onClick={openStudio}
-                          className="btn-primary flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5"
+                          className={
+                            studioSavedOnce
+                              ? "flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
+                              : "btn-primary flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5"
+                          }
                           title="Open this post in the Studio editor for fine-tuning"
                         >
                           <Edit3 size={14} aria-hidden="true" />
                           Edit in Studio
                         </button>
                       ) : null}
+                      {/* Post Now — promoted to primary gold once the user has
+                          finished an edit pass in Studio (studioSavedOnce), so
+                          coming back from Studio clearly reads as "ready to
+                          publish". Outline secondary before that. */}
                       {isAdmin ? (
                         <button
                           type="button"
                           onClick={openPostNow}
-                          className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
+                          className={
+                            studioSavedOnce
+                              ? "btn-primary flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5"
+                              : "flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
+                          }
                           title="Publish directly to Facebook + Instagram"
                         >
                           Post Now
