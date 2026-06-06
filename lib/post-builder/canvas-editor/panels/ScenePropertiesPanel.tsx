@@ -25,15 +25,37 @@
  *   local state drift.
  */
 
-import { type JSX } from "react";
+import { type JSX, type ReactNode } from "react";
 
 import type { ScenePropertiesPanelProps } from "../contracts";
 import {
   MOTION_PRESETS,
   REEL_CAPS,
   type MotionPath,
+  type TextOverlay,
+  type TextOverlayAnimation,
   type TransitionType,
 } from "../../types";
+import {
+  TEXT_OVERLAY_PRESETS,
+  TEXT_OVERLAY_PRESET_ORDER,
+  createTextOverlay,
+} from "../../reel-templates/text-overlay";
+
+const OVERLAY_ANIM_ORDER: readonly TextOverlayAnimation[] = [
+  "none",
+  "fade",
+  "pop",
+  "rise",
+  "typewriter",
+];
+const OVERLAY_ANIM_LABEL: Readonly<Record<TextOverlayAnimation, string>> = {
+  none: "None",
+  fade: "Fade",
+  pop: "Pop",
+  rise: "Rise",
+  typewriter: "Type",
+};
 
 // ---------------------------------------------------------------------------
 // Local types + constants
@@ -388,7 +410,7 @@ interface SectionProps {
   title: string;
   /** Optional right-aligned eyebrow (e.g. a "Custom" badge for motion). */
   rightSlot?: JSX.Element | null;
-  children: JSX.Element | JSX.Element[];
+  children: ReactNode;
 }
 
 /**
@@ -663,6 +685,159 @@ export default function ScenePropertiesPanel(
             </p>
           </Section>
         ) : null}
+
+        {/* 2026-06-05 — Animated text overlays (CapCut-style). Add headline /
+            address (street + city) / open-house time / price as text that
+            animates in. Per Larissa's rules: street + city only, no agent
+            name on Just Listed/Sold, no emojis in the image text. */}
+        <Section title="Text">
+          {(scene.textOverlays ?? []).length === 0 ? (
+            <p className="mb-2 text-[11px] leading-snug text-[var(--studio-text-muted)]">
+              Add animated text — headline, address (street + city), open-house
+              time, price.
+            </p>
+          ) : null}
+          <div className="space-y-3">
+            {(scene.textOverlays ?? []).map((ov, i) => {
+              const overlays = scene.textOverlays ?? [];
+              const update = (patch: Partial<TextOverlay>): void =>
+                onSceneChanged(scene.id, {
+                  textOverlays: overlays.map((o, idx) =>
+                    idx === i ? { ...o, ...patch } : o,
+                  ),
+                });
+              const remove = (): void =>
+                onSceneChanged(scene.id, {
+                  textOverlays: overlays.filter((_, idx) => idx !== i),
+                });
+              const chip = (active: boolean): string =>
+                [
+                  "rounded border px-2 py-1 text-[11px] font-medium transition-colors",
+                  active
+                    ? "border-gold-500 bg-gold-500 text-white"
+                    : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-[var(--studio-text)] hover:bg-[var(--studio-hover)] hover:border-gold-400",
+                ].join(" ");
+              return (
+                <div
+                  key={ov.id}
+                  className="space-y-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-input-bg)] p-2.5"
+                >
+                  <div className="flex items-start gap-2">
+                    <textarea
+                      value={ov.text}
+                      onChange={(e) => update({ text: e.currentTarget.value })}
+                      rows={2}
+                      placeholder="Your text"
+                      className="flex-1 resize-none rounded border border-[var(--studio-border)] bg-[var(--studio-bg)] px-2 py-1 text-xs text-[var(--studio-text)] placeholder:text-[var(--studio-text-faint)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={remove}
+                      aria-label="Remove text overlay"
+                      className="shrink-0 rounded p-1 text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-hover)] hover:text-[var(--studio-text)]"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {TEXT_OVERLAY_PRESET_ORDER.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => {
+                          const spec = TEXT_OVERLAY_PRESETS[p];
+                          update({
+                            preset: p,
+                            fontFamily: spec.fontFamily,
+                            color: spec.color,
+                            fontSize: spec.fontSize,
+                          });
+                        }}
+                        className={chip(ov.preset === p)}
+                      >
+                        {TEXT_OVERLAY_PRESETS[p].label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {OVERLAY_ANIM_ORDER.map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => update({ animation: a })}
+                        className={chip(ov.animation === a)}
+                      >
+                        {OVERLAY_ANIM_LABEL[a]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]">
+                        Pos
+                      </span>
+                      {(
+                        [
+                          ["Top", 0.2],
+                          ["Mid", 0.5],
+                          ["Bot", 0.8],
+                        ] as const
+                      ).map(([lbl, yv]) => (
+                        <button
+                          key={lbl}
+                          type="button"
+                          onClick={() => update({ y: yv })}
+                          className={chip(Math.abs(ov.y - yv) < 0.06)}
+                        >
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]">
+                        Size
+                      </span>
+                      {(
+                        [
+                          ["S", 0.7],
+                          ["M", 1],
+                          ["L", 1.4],
+                        ] as const
+                      ).map(([lbl, mult]) => {
+                        const base = TEXT_OVERLAY_PRESETS[ov.preset].fontSize;
+                        const target = Math.round(base * mult);
+                        return (
+                          <button
+                            key={lbl}
+                            type="button"
+                            onClick={() => update({ fontSize: target })}
+                            className={chip(ov.fontSize === target)}
+                          >
+                            {lbl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              onSceneChanged(scene.id, {
+                textOverlays: [
+                  ...(scene.textOverlays ?? []),
+                  createTextOverlay(),
+                ],
+              })
+            }
+            className="mt-2 inline-flex items-center gap-1 rounded border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2.5 py-1.5 text-xs font-medium text-[var(--studio-text)] transition-colors hover:border-gold-400 hover:bg-[var(--studio-hover)]"
+          >
+            + Add text
+          </button>
+        </Section>
       </div>
     </aside>
   );

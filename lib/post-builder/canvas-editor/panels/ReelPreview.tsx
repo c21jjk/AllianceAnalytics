@@ -39,9 +39,11 @@ import {
 import {
   type MotionPath,
   type Scene,
+  type TextOverlay,
   type TransitionType,
   type VideoComposition,
 } from "@/lib/post-builder/types";
+import { TEXT_OVERLAY_PRESETS } from "@/lib/post-builder/reel-templates/text-overlay";
 
 // ---------------------------------------------------------------------------
 // Public props
@@ -475,6 +477,144 @@ function drawDesignScene(
  * their decoded image from the cache; if it's missing or not ready we paint
  * black (the preloader overlay covers this visually).
  */
+/** Ease helpers for overlay entrance animations. */
+function easeOutCubic(t: number): number {
+  const u = 1 - t;
+  return 1 - u * u * u;
+}
+function easeOutBack(t: number): number {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  const u = t - 1;
+  return 1 + c3 * u * u * u + c1 * u * u;
+}
+/** Rounded-rect path (ctx.roundRect isn't universal). */
+function pathRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+/**
+ * Draw one animated text overlay onto the scene frame (canvas preview side —
+ * must stay visually in lockstep with the worker's overlay renderer). Handles
+ * the brand presets (shadow / outline / gold pill), multi-line text,
+ * alignment, and the entrance animations (fade / pop / rise / typewriter).
+ */
+function drawTextOverlay(
+  ctx: CanvasRenderingContext2D,
+  ov: TextOverlay,
+  animP: number,
+  W: number,
+  H: number,
+): void {
+  const spec = TEXT_OVERLAY_PRESETS[ov.preset];
+  const fontSize = ov.fontSize;
+  const lineHeight = fontSize * 1.14;
+
+  const fullText = ov.text;
+  const shown =
+    ov.animation === "typewriter"
+      ? fullText.slice(0, Math.ceil(animP * fullText.length))
+      : fullText;
+  const lines = shown.length > 0 ? shown.split("\n") : [""];
+
+  ctx.save();
+  ctx.font = `${spec.weight} ${fontSize}px "${ov.fontFamily}", "Nunito", sans-serif`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = ov.align;
+
+  // Entrance transforms.
+  let alpha = 1;
+  let dy = 0;
+  let scale = 1;
+  switch (ov.animation) {
+    case "fade":
+      alpha = animP;
+      break;
+    case "rise":
+      alpha = animP;
+      dy = (1 - easeOutCubic(animP)) * (fontSize * 0.55);
+      break;
+    case "pop":
+      alpha = Math.min(1, animP * 1.6);
+      scale = easeOutBack(animP);
+      break;
+    default:
+      alpha = 1;
+      break;
+  }
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+
+  const cx = ov.x * W;
+  const cy = ov.y * H + dy;
+
+  let maxLineW = 0;
+  for (const ln of lines) {
+    const w = ctx.measureText(ln).width;
+    if (w > maxLineW) maxLineW = w;
+  }
+  const blockH = lines.length * lineHeight;
+
+  // Pop scales around the block center.
+  if (scale !== 1) {
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.translate(-cx, -cy);
+  }
+
+  // Background pill (gold_bar preset).
+  if (spec.background && shown.trim().length > 0) {
+    const bg = spec.background;
+    const pillW = maxLineW + bg.padX * 2;
+    const pillH = blockH + bg.padY * 2;
+    ctx.fillStyle = bg.color;
+    pathRoundRect(ctx, cx - pillW / 2, cy - pillH / 2, pillW, pillH, bg.radius);
+    ctx.fill();
+  }
+
+  const anchorX =
+    ov.align === "left"
+      ? cx - maxLineW / 2
+      : ov.align === "right"
+        ? cx + maxLineW / 2
+        : cx;
+  const firstLineY = cy - blockH / 2 + lineHeight / 2;
+
+  for (let i = 0; i < lines.length; i++) {
+    const ly = firstLineY + i * lineHeight;
+    if (spec.shadow) {
+      ctx.shadowColor = spec.shadow.color;
+      ctx.shadowBlur = spec.shadow.blur;
+      ctx.shadowOffsetY = spec.shadow.offsetY;
+    }
+    if (spec.outline) {
+      ctx.lineJoin = "round";
+      ctx.lineWidth = spec.outline.width * 2;
+      ctx.strokeStyle = spec.outline.color;
+      ctx.strokeText(lines[i]!, anchorX, ly);
+    }
+    ctx.fillStyle = ov.color;
+    ctx.fillText(lines[i]!, anchorX, ly);
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+  }
+  ctx.restore();
+}
+
 function drawScene(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
@@ -484,19 +624,17 @@ function drawScene(
   canvasW: number,
   canvasH: number,
 ): void {
+  // ---- 1. Scene content ----
   if (scene.content.kind === "photo") {
     const entry = cache.get(scene.content.photoUrl);
     if (entry && entry.ready) {
       drawPhotoScene(ctx, entry.image, scene.content.motion, intraSceneT, canvasW, canvasH);
-      return;
+    } else {
+      // Not loaded yet — paint black. The overlay covers this.
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvasW, canvasH);
     }
-    // Not loaded yet — paint black. The overlay covers this.
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, canvasW, canvasH);
-    return;
-  }
-
-  if (scene.content.kind === "design") {
+  } else if (scene.content.kind === "design") {
     const fallback = designHeroFallbackUrl
       ? (cache.get(designHeroFallbackUrl)?.image ?? null)
       : null;
@@ -509,19 +647,33 @@ function drawScene(
       canvasW,
       canvasH,
     );
-    return;
+  } else {
+    // video_clip — reserved (Phase 7). Render a label so it's clear what's
+    // happening. The renderer rejects this kind before publish.
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.fillStyle = "#888";
+    ctx.font = "500 32px Barlow, Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Video clip — Phase 7", canvasW / 2, canvasH / 2);
   }
 
-  // video_clip — reserved (Phase 7). Render a label so it's clear what's
-  // happening. The renderer rejects this kind before publish, so the user
-  // can't accidentally generate one.
-  ctx.fillStyle = "#1a1a1a";
-  ctx.fillRect(0, 0, canvasW, canvasH);
-  ctx.fillStyle = "#888";
-  ctx.font = "500 32px Barlow, Arial, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("Video clip — Phase 7", canvasW / 2, canvasH / 2);
+  // ---- 2. Animated text overlays (2026-06-05) ----
+  // Drawn on top of the scene content, baked into the scene frame so they
+  // travel with the scene through transitions. Entrance animation is keyed
+  // to elapsed time INTO the scene (intraSceneT * durationMs) vs the
+  // overlay's animationMs.
+  if (scene.textOverlays && scene.textOverlays.length > 0) {
+    const elapsedMs = intraSceneT * scene.durationMs;
+    for (const ov of scene.textOverlays) {
+      const animP =
+        ov.animationMs > 0
+          ? Math.max(0, Math.min(1, elapsedMs / ov.animationMs))
+          : 1;
+      drawTextOverlay(ctx, ov, animP, canvasW, canvasH);
+    }
+  }
 }
 
 /**

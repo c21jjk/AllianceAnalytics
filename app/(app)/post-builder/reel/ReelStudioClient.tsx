@@ -874,6 +874,8 @@ export default function ReelStudioClient({
             durationMs: patch.durationMs ?? s.durationMs,
             transitionIn: patch.transitionIn ?? s.transitionIn,
             transitionMs: patch.transitionMs ?? s.transitionMs,
+            // 2026-06-05 — textOverlays replace wholesale when present.
+            textOverlays: patch.textOverlays ?? s.textOverlays,
             content: nextContent,
           };
         }),

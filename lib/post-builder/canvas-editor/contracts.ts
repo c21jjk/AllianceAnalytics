@@ -29,7 +29,7 @@ import type {
   MLSListingPayload,
   PostFormat,
 } from "./types";
-import type { Scene, TransitionType } from "../types";
+import type { Scene, TextOverlay, TransitionType } from "../types";
 
 // ===========================================================================
 // Phase 5 — Carousel (multi-image post) UI surfaces
@@ -280,6 +280,8 @@ export interface ScenePropertiesPanelProps {
       transitionMs: number;
       /** Motion preset name for photo scenes. Maps to MOTION_PRESETS in types.ts. */
       motionPreset: "static" | "zoom_in" | "zoom_out" | "pan_left" | "pan_right";
+      /** 2026-06-05 — replace the scene's animated text overlays wholesale. */
+      textOverlays: readonly TextOverlay[];
     }>,
   ) => void;
 }
