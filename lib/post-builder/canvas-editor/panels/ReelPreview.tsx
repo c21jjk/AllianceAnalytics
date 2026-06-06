@@ -39,6 +39,7 @@ import {
 import {
   type MotionPath,
   type Scene,
+  type TransitionType,
   type VideoComposition,
 } from "@/lib/post-builder/types";
 
@@ -523,6 +524,122 @@ function drawScene(
   ctx.fillText("Video clip — Phase 7", canvasW / 2, canvasH / 2);
 }
 
+/**
+ * 2026-06-05 — Composite a transition between two already-rendered scene
+ * frames (offscreen canvases `a` = outgoing, `b` = incoming) onto `ctx`, at
+ * progress `p` (0..1). The main ctx is pre-filled black by the caller.
+ *
+ * These are PREVIEW approximations of the worker's ffmpeg xfade presets — the
+ * goal is that the user can SEE the move during playback (crossfade vs slide
+ * vs circle), not a pixel-exact match of the final MP4. Whip (smooth_*) is
+ * approximated as a fast slide; zoom_blur as a scale-in (no real blur).
+ */
+function compositeTransition(
+  ctx: CanvasRenderingContext2D,
+  a: HTMLCanvasElement,
+  b: HTMLCanvasElement,
+  type: TransitionType,
+  p: number,
+  W: number,
+  H: number,
+): void {
+  switch (type) {
+    case "fade":
+      // Crossfade.
+      ctx.drawImage(a, 0, 0);
+      ctx.globalAlpha = p;
+      ctx.drawImage(b, 0, 0);
+      ctx.globalAlpha = 1;
+      return;
+    case "dissolve":
+      // Dip to black (ctx already black underneath).
+      if (p < 0.5) {
+        ctx.globalAlpha = 1 - p * 2;
+        ctx.drawImage(a, 0, 0);
+      } else {
+        ctx.globalAlpha = (p - 0.5) * 2;
+        ctx.drawImage(b, 0, 0);
+      }
+      ctx.globalAlpha = 1;
+      return;
+    case "fade_white":
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, W, H);
+      if (p < 0.5) {
+        ctx.globalAlpha = 1 - p * 2;
+        ctx.drawImage(a, 0, 0);
+      } else {
+        ctx.globalAlpha = (p - 0.5) * 2;
+        ctx.drawImage(b, 0, 0);
+      }
+      ctx.globalAlpha = 1;
+      return;
+    case "slide_left":
+      ctx.drawImage(a, -p * W, 0);
+      ctx.drawImage(b, (1 - p) * W, 0);
+      return;
+    case "smooth_left":
+      // Whip — approximate as a fast slide (ease the progress).
+      ctx.drawImage(a, -Math.min(1, p * 1.4) * W, 0);
+      ctx.drawImage(b, (1 - Math.min(1, p * 1.4)) * W, 0);
+      return;
+    case "slide_right":
+      ctx.drawImage(a, p * W, 0);
+      ctx.drawImage(b, -(1 - p) * W, 0);
+      return;
+    case "smooth_right":
+      ctx.drawImage(a, Math.min(1, p * 1.4) * W, 0);
+      ctx.drawImage(b, -(1 - Math.min(1, p * 1.4)) * W, 0);
+      return;
+    case "slide_up":
+      ctx.drawImage(a, 0, -p * H);
+      ctx.drawImage(b, 0, (1 - p) * H);
+      return;
+    case "slide_down":
+      ctx.drawImage(a, 0, p * H);
+      ctx.drawImage(b, 0, -(1 - p) * H);
+      return;
+    case "wipe_left":
+      // Outgoing underneath; reveal incoming from the right edge inward.
+      ctx.drawImage(a, 0, 0);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(W - p * W, 0, p * W, H);
+      ctx.clip();
+      ctx.drawImage(b, 0, 0);
+      ctx.restore();
+      return;
+    case "circle_open":
+      ctx.drawImage(a, 0, 0);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(W / 2, H / 2, (p * Math.hypot(W, H)) / 2, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(b, 0, 0);
+      ctx.restore();
+      return;
+    case "zoom_blur": {
+      // Incoming scales from 1.3x down to 1x while fading in over the outgoing.
+      ctx.globalAlpha = 1 - p;
+      ctx.drawImage(a, 0, 0);
+      ctx.globalAlpha = 1;
+      const s = 1.3 - 0.3 * p;
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(s, s);
+      ctx.globalAlpha = p;
+      ctx.drawImage(b, -W / 2, -H / 2);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+      return;
+    }
+    case "cut":
+    default:
+      ctx.drawImage(b, 0, 0);
+      return;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The component
 // ---------------------------------------------------------------------------
@@ -540,6 +657,11 @@ export default function ReelPreview({
   maxWidth = 360,
 }: ReelPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // 2026-06-05 — two offscreen canvases used during a transition band to
+  // render the outgoing + incoming scene frames before compositing them
+  // (slides/wipes/circle need a fully-painted source to translate/clip).
+  const offARef = useRef<HTMLCanvasElement | null>(null);
+  const offBRef = useRef<HTMLCanvasElement | null>(null);
   const scrubRef = useRef<HTMLDivElement | null>(null);
   const playButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -841,17 +963,18 @@ export default function ReelPreview({
 
     const { scene, intraSceneT, sceneIndex } = active;
 
-    // Detect dissolve-from-previous. We're "inside the dissolve band" when
-    // the time since scene start is less than transitionMs and the scene
-    // uses dissolve and there's a previous scene to blend from.
+    // 2026-06-05 — animate ALL transitions (not just dissolve). We're inside
+    // a transition band when the time since scene start is less than
+    // transitionMs, the scene isn't a hard "cut", and there's a previous
+    // scene to transition from.
     const sinceSceneStartMs = currentTimeMs - scene.startMs;
-    const inDissolveBand =
-      scene.transitionIn === "dissolve" &&
+    const inTransitionBand =
+      scene.transitionIn !== "cut" &&
       scene.transitionMs > 0 &&
       sceneIndex > 0 &&
       sinceSceneStartMs < scene.transitionMs;
 
-    if (inDissolveBand) {
+    if (inTransitionBand) {
       const prev = composition.scenes[sceneIndex - 1]!;
       // Previous scene's intra-T at this moment: prev's end is
       // (scene.startMs + scene.transitionMs) under the recompute model
@@ -861,38 +984,60 @@ export default function ReelPreview({
         0,
         Math.min(1, (currentTimeMs - prev.startMs) / Math.max(prev.durationMs, 1)),
       );
-      // Paint the outgoing frame at full opacity, then alpha-blend the
-      // incoming on top.
-      drawScene(
-        ctx,
-        prev,
-        prevIntra,
-        cacheRef.current,
-        designHeroFallbackUrl,
-        canvasW,
-        canvasH,
-      );
       const blend = Math.max(
         0,
         Math.min(1, sinceSceneStartMs / Math.max(scene.transitionMs, 1)),
       );
-      ctx.globalAlpha = blend;
-      drawScene(
-        ctx,
-        scene,
-        intraSceneT,
-        cacheRef.current,
-        designHeroFallbackUrl,
-        canvasW,
-        canvasH,
-      );
-      ctx.globalAlpha = 1;
-      return;
+
+      // Render both scene frames to offscreen canvases first (slides/wipes/
+      // circle need fully-painted sources to translate/clip), then composite.
+      const offA = (offARef.current ??= document.createElement("canvas"));
+      const offB = (offBRef.current ??= document.createElement("canvas"));
+      if (offA.width !== canvasW || offA.height !== canvasH) {
+        offA.width = canvasW;
+        offA.height = canvasH;
+      }
+      if (offB.width !== canvasW || offB.height !== canvasH) {
+        offB.width = canvasW;
+        offB.height = canvasH;
+      }
+      const ctxA = offA.getContext("2d");
+      const ctxB = offB.getContext("2d");
+      if (ctxA && ctxB) {
+        ctxA.clearRect(0, 0, canvasW, canvasH);
+        ctxB.clearRect(0, 0, canvasW, canvasH);
+        drawScene(
+          ctxA,
+          prev,
+          prevIntra,
+          cacheRef.current,
+          designHeroFallbackUrl,
+          canvasW,
+          canvasH,
+        );
+        drawScene(
+          ctxB,
+          scene,
+          intraSceneT,
+          cacheRef.current,
+          designHeroFallbackUrl,
+          canvasW,
+          canvasH,
+        );
+        compositeTransition(
+          ctx,
+          offA,
+          offB,
+          scene.transitionIn,
+          blend,
+          canvasW,
+          canvasH,
+        );
+        return;
+      }
+      // Fallback if offscreen contexts are unavailable: hard cut to incoming.
     }
 
-    // TODO Day 5+: implement "fade" (to/from black), "slide_left" (translate
-    // outgoing left while sliding incoming in from right), and "zoom_blur"
-    // (scale + box-blur). For Day 4 they all render as a hard cut.
     drawScene(
       ctx,
       scene,

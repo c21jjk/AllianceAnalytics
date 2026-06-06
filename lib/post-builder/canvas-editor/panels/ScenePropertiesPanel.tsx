@@ -537,7 +537,7 @@ export default function ScenePropertiesPanel(
                       "flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs font-medium transition-colors",
                       isActive
                         ? "border-gold-500 bg-gold-500 text-white"
-                        : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-white hover:bg-[var(--studio-hover)] hover:border-gold-400",
+                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50 hover:border-gold-400",
                     ].join(" ")}
                   >
                     {presetIcon(preset)}
