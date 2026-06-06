@@ -8,6 +8,8 @@ import {
   REEL_CAPS,
   type AudioTrack,
   type PostBuilderListing,
+  type PostType,
+  type SchedulablePlatform,
   type Scene,
   type TransitionType,
   type VideoComposition,
@@ -142,6 +144,28 @@ const PACE_LABEL: Readonly<Record<PaceKey, string>> = {
   standard: "Standard",
   fast: "Fast",
 };
+/**
+ * Derive the audio post-type from the selected listing's status so the reel
+ * builder can auto-pick a fitting Audio Library track. The composition itself
+ * doesn't carry a post type; the listing status is the best client-side signal
+ * (active = just listed, pending = under contract, sold = just sold).
+ */
+const AUDIO_POST_TYPE_BY_LISTING_STATUS: Readonly<
+  Record<PostBuilderListing["status"], PostType>
+> = {
+  active: "just_listed",
+  pending: "under_contract",
+  sold: "just_sold",
+  expired: "just_listed",
+};
+
+/** Reels publish across all three networks; auto-audio logs usage per platform. */
+const REEL_AUDIO_PLATFORMS: readonly SchedulablePlatform[] = [
+  "instagram",
+  "facebook",
+  "tiktok",
+];
+
 /** Default transition durations by type — overrideable per scene later. */
 const DEFAULT_TRANSITION_MS_BY_TYPE: Readonly<Record<TransitionType, number>> = {
   cut: 0,
@@ -987,8 +1011,15 @@ export default function ReelStudioClient({
     }
 
     // ---- Step 2: submit to the worker --------------------------------
+    // Auto-audio: when the user hasn't picked a track in the MusicPicker,
+    // the reel builder selects a fitting Audio Library track by post type +
+    // platform and embeds it. autoAttachAudio is a no-op when composition.audio
+    // is already set, so a manual pick always wins.
     setGenerateState({ phase: "submitting" });
-    const submit = await triggerReelRenderAction(composition);
+    const submit = await triggerReelRenderAction(composition, {
+      postType: AUDIO_POST_TYPE_BY_LISTING_STATUS[selectedListing.status],
+      platforms: REEL_AUDIO_PLATFORMS,
+    });
     if (!submit.ok) {
       setGenerateState({ phase: "error", message: submit.error });
       return;
