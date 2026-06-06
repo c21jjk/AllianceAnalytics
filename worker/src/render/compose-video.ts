@@ -443,12 +443,24 @@ export async function composeVideo(
       scenesFrames.map((frames, i) => writeSceneFrames(i, frames, workDir)),
     );
 
-    // 2. Optionally download audio.
-    const audioPath = composition.audio
-      ? path.join(workDir, "audio.bin")
-      : null;
-    if (composition.audio && audioPath) {
-      await downloadAudio(composition.audio, audioPath);
+    // 2. Optionally download audio. A download failure (missing Storage
+    //    object, 404, network) degrades to a SILENT render rather than
+    //    failing the whole MP4 — the video is the critical artifact, and a
+    //    missing track shouldn't sink the render. (Audio Library, 2026-06-06.)
+    let audioPath: string | null = null;
+    if (composition.audio) {
+      const candidate = path.join(workDir, "audio.bin");
+      try {
+        await downloadAudio(composition.audio, candidate);
+        audioPath = candidate;
+      } catch (audioErr) {
+        console.warn(
+          `[compose-video] audio download failed, rendering silent: ${
+            audioErr instanceof Error ? audioErr.message : String(audioErr)
+          }`,
+        );
+        audioPath = null;
+      }
     }
 
     // 3. Build the filter graph.
@@ -463,7 +475,12 @@ export async function composeVideo(
       args.push("-framerate", String(fps), "-i", path.join(dir, "%05d.png"));
     }
     if (audioPath) {
-      args.push("-i", audioPath);
+      // why -stream_loop -1: loop a short source track so it fills the full
+      // reel duration. The filter graph's atrim=0:totalSec + the output's
+      // -shortest flag bound the looped input to the video length, so a track
+      // shorter OR longer than the reel both resolve to an exact-length bed
+      // ("loop or trim to match the reel duration"). Must precede -i.
+      args.push("-stream_loop", "-1", "-i", audioPath);
     }
 
     args.push(

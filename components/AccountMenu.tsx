@@ -139,6 +139,13 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
                 sub="Design + manage the global template library"
               />
               <MenuItem
+                href="/admin/audio-library"
+                onSelect={() => setOpen(false)}
+                icon={<MusicIcon />}
+                label="Audio Library"
+                sub="Reel music tracks + post-type tags"
+              />
+              <MenuItem
                 href="/templates"
                 onSelect={() => setOpen(false)}
                 icon={<LayersIcon />}
@@ -275,6 +282,21 @@ function LayersIcon() {
         strokeWidth={1.6}
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function MusicIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" aria-hidden="true">
+      <path
+        d="M9 18V6l10-2v12"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinejoin="round"
+      />
+      <circle cx="6" cy="18" r="3" stroke="currentColor" strokeWidth={1.6} />
+      <circle cx="16" cy="16" r="3" stroke="currentColor" strokeWidth={1.6} />
     </svg>
   );
 }

@@ -28,10 +28,13 @@ import {
   type PostType,
   type PostVariant,
   type Scene,
+  type TextOverlay,
   type TransitionType,
   type VideoComposition,
 } from "@/lib/post-builder/types";
+import type { CanvasTemplateSchema } from "@/lib/post-builder/canvas-editor/types";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import { createTextOverlay } from "./text-overlay";
 
 /**
  * Pacing presets. The user picked "cinematic" as the default feel; the
@@ -87,6 +90,72 @@ function recompute(scenes: Scene[]): {
     cursor = startMs + s.durationMs;
   }
   return { scenes: out, totalDurationMs: cursor };
+}
+
+/**
+ * Build a closing END-CARD / CTA scene: a dark Obsessed-Grey card with a CTA
+ * headline + the C21 Alliance wordmark, both as animated text overlays. A
+ * design scene with an empty dark schema (the overlays carry the content), so
+ * it renders identically in the preview and the worker. Appended to a Reel via
+ * the editor's "Add end-card" action.
+ */
+/**
+ * Beat-sync wiring (2026-06-05). Snap each scene's duration to the nearest
+ * whole number of beats for a given BPM, so cuts land on the beat. Preserves
+ * relative pacing (a long scene stays longer) while aligning every cut to the
+ * grid. Clamped to the scene-duration caps. Once the music library lands with
+ * per-track BPM, the editor passes that BPM here; until then the user can set
+ * it manually. Returns adjusted scenes; the caller re-times the timeline.
+ */
+export function snapScenesToBeat(
+  scenes: readonly Scene[],
+  bpm: number,
+): Scene[] {
+  if (!Number.isFinite(bpm) || bpm <= 0) return scenes.slice();
+  const beatMs = 60_000 / bpm;
+  return scenes.map((s) => {
+    const beats = Math.max(1, Math.round(s.durationMs / beatMs));
+    const snapped = Math.min(10_000, Math.max(500, Math.round(beats * beatMs)));
+    return { ...s, durationMs: snapped };
+  });
+}
+
+export function buildEndCardScene(): Scene {
+  const schema: CanvasTemplateSchema = {
+    id: "reel_end_card",
+    name: "Reel End Card",
+    description: "Dark CTA end card for Reels.",
+    category: "just_listed",
+    variant: "v1" as PostVariant,
+    format: "story_9x16",
+    width: 1080,
+    height: 1920,
+    backgroundColor: "#252526",
+    backgroundImage: null,
+    layers: [],
+    updatedAt: new Date().toISOString(),
+    schemaVersion: 1,
+  };
+  const cta: TextOverlay = {
+    ...createTextOverlay("headline"),
+    text: "Schedule a private tour",
+    y: 0.42,
+    fontSize: 104,
+  };
+  const brand: TextOverlay = {
+    ...createTextOverlay("gold_bar"),
+    text: "C21 ALLIANCE",
+    y: 0.6,
+  };
+  return {
+    id: crypto.randomUUID(),
+    startMs: 0,
+    durationMs: 2_500,
+    content: { kind: "design", template: schema },
+    transitionIn: "fade",
+    transitionMs: 400,
+    textOverlays: [cta, brand],
+  };
 }
 
 export interface BuildReelFromCarouselParams {

@@ -41,6 +41,10 @@ import {
   buildReelFromCarousel,
   type ReelPace,
 } from "@/lib/post-builder/reel-templates/build-from-carousel";
+import {
+  autoAttachAudio,
+  type AutoAttachAudioParams,
+} from "@/lib/audio-library/attach-audio";
 import { reflowSchemaToVertical } from "@/lib/post-builder/canvas-editor/ai/reflow-to-vertical";
 import type { CanvasTemplateSchema } from "@/lib/post-builder/canvas-editor/types";
 
@@ -2391,11 +2395,27 @@ interface WorkerRenderSubmitResponse {
  */
 export async function triggerReelRenderAction(
   composition: VideoComposition,
+  /**
+   * Optional audio context. When provided AND the composition has no manually
+   * picked track, the reel builder auto-selects an Audio Library track for the
+   * post type + target platform(s), embeds it, and logs usage. Omit it to
+   * preserve the legacy behavior (render exactly the composition passed in).
+   */
+  audioContext?: AutoAttachAudioParams,
 ): Promise<TriggerReelRenderResult> {
   await requireUser();
 
   const env = readReelWorkerEnv();
   if (!env.ok) return { ok: false, error: env.error };
+
+  // Auto-attach background music when requested. autoAttachAudio is a no-op
+  // when the composition already has a (manually picked) track, and it never
+  // throws — a selection/logging hiccup just yields a silent reel.
+  let outgoing = composition;
+  if (audioContext) {
+    const attached = await autoAttachAudio(composition, audioContext);
+    outgoing = attached.composition;
+  }
 
   // why: client-generated idempotency key. The worker dedupes by this within
   // a 24h window, so a flaky network retry of the same Generate click can't
@@ -2410,7 +2430,7 @@ export async function triggerReelRenderAction(
         Authorization: `Bearer ${env.token}`,
       },
       body: JSON.stringify({
-        composition,
+        composition: outgoing,
         idempotency_key: idempotencyKey,
       }),
       // why: 30s is generous for a submit-only call — the worker should

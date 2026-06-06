@@ -37,6 +37,7 @@ import {
   type TransitionType,
 } from "../../types";
 import {
+  REEL_STICKERS,
   TEXT_OVERLAY_PRESETS,
   TEXT_OVERLAY_PRESET_ORDER,
   createTextOverlay,
@@ -837,6 +838,32 @@ export default function ScenePropertiesPanel(
           >
             + Add text
           </button>
+
+          {/* One-tap branded badges — drop a pre-styled overlay (editable). */}
+          <div className="mt-3">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]">
+              Quick badges
+            </span>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {REEL_STICKERS.map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() =>
+                    onSceneChanged(scene.id, {
+                      textOverlays: [
+                        ...(scene.textOverlays ?? []),
+                        st.build(),
+                      ],
+                    })
+                  }
+                  className="rounded border border-gold-500/40 bg-gold-500/10 px-2 py-1 text-[11px] font-semibold text-gold-300 transition-colors hover:bg-gold-500/20 hover:text-gold-200"
+                >
+                  {st.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </Section>
       </div>
     </aside>

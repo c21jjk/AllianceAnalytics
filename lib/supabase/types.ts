@@ -14,6 +14,121 @@ export type Database = {
   }
   public: {
     Tables: {
+      audio_tracks: {
+        Row: {
+          artist: string | null
+          audio_source: string
+          created_at: string
+          download_date: string
+          duration: number | null
+          file_path: string
+          genre: string | null
+          id: string
+          is_active: boolean
+          license_notes: string | null
+          license_scope: string
+          mood: string | null
+          platform_allowed: string[]
+          platform_blocked: string[]
+          post_type: string[] | null
+          track_name: string
+          updated_at: string
+        }
+        Insert: {
+          artist?: string | null
+          audio_source?: string
+          created_at?: string
+          download_date?: string
+          duration?: number | null
+          file_path: string
+          genre?: string | null
+          id?: string
+          is_active?: boolean
+          license_notes?: string | null
+          license_scope?: string
+          mood?: string | null
+          platform_allowed?: string[]
+          platform_blocked?: string[]
+          post_type?: string[] | null
+          track_name: string
+          updated_at?: string
+        }
+        Update: {
+          artist?: string | null
+          audio_source?: string
+          created_at?: string
+          download_date?: string
+          duration?: number | null
+          file_path?: string
+          genre?: string | null
+          id?: string
+          is_active?: boolean
+          license_notes?: string | null
+          license_scope?: string
+          mood?: string | null
+          platform_allowed?: string[]
+          platform_blocked?: string[]
+          post_type?: string[] | null
+          track_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      audio_track_usage: {
+        Row: {
+          audio_status: string
+          audio_track_id: string
+          id: string
+          office_id: string | null
+          platform: string | null
+          post_id: string | null
+          post_type: string | null
+          used_at: string
+        }
+        Insert: {
+          audio_status: string
+          audio_track_id: string
+          id?: string
+          office_id?: string | null
+          platform?: string | null
+          post_id?: string | null
+          post_type?: string | null
+          used_at?: string
+        }
+        Update: {
+          audio_status?: string
+          audio_track_id?: string
+          id?: string
+          office_id?: string | null
+          platform?: string | null
+          post_id?: string | null
+          post_type?: string | null
+          used_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audio_track_usage_audio_track_id_fkey"
+            columns: ["audio_track_id"]
+            isOneToOne: false
+            referencedRelation: "audio_tracks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audio_track_usage_office_id_fkey"
+            columns: ["office_id"]
+            isOneToOne: false
+            referencedRelation: "offices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audio_track_usage_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "generated_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_post_outbox: {
         Row: {
           acknowledged_at: string | null

@@ -20,6 +20,10 @@ import {
 } from "@/app/(app)/post-builder/actions";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import type { CanvasTemplateSchema } from "@/lib/post-builder/canvas-editor/types";
+import {
+  buildEndCardScene,
+  snapScenesToBeat,
+} from "@/lib/post-builder/reel-templates/build-from-carousel";
 import type { ScenePropertiesPanelProps } from "@/lib/post-builder/canvas-editor/contracts";
 // Real imports — the two sibling components shipped on 2026-05-16 alongside
 // this shell. Earlier drafts of this file stubbed both as () => null so the
@@ -678,6 +682,21 @@ export default function ReelStudioClient({
   const hasPhotoScenes =
     composition?.scenes.some((s) => s.content.kind === "photo") ?? false;
 
+  // 2026-06-05 — append a closing CTA end-card scene.
+  const handleAddEndCard = useCallback(() => {
+    const endCard = buildEndCardScene();
+    applySceneMutation((prev) => [...prev, endCard]);
+    setSelectedSceneId(endCard.id);
+  }, [applySceneMutation]);
+
+  // 2026-06-05 — beat-sync wiring. BPM auto-fills from the chosen music track
+  // once the library lands (composition.audio); until then it's a manual
+  // field. "Snap" aligns every scene cut to the beat grid.
+  const [bpm, setBpm] = useState(100);
+  const handleSnapToBeat = useCallback(() => {
+    applySceneMutation((prev) => snapScenesToBeat(prev, bpm));
+  }, [applySceneMutation, bpm]);
+
   // ---- AI-adapt my card (E, 2026-06-05) -------------------------------
   // why: the Reel hero defaults to a pre-built 9:16 template. When the Reel
   // was seeded from a carousel post we also stashed that post's SQUARE card
@@ -1226,6 +1245,49 @@ export default function ReelStudioClient({
               {adaptingCard ? "Adapting…" : "AI-adapt my card"}
             </button>
           ) : null}
+          {/* Beat sync — snap every cut to the beat grid. BPM auto-fills from
+              the chosen track once the music library lands. */}
+          {hasPhotoScenes ? (
+            <div className="mr-1 flex items-center gap-1.5">
+              <span className="hidden text-xs font-medium text-[var(--studio-text-faint)] sm:inline">
+                BPM
+              </span>
+              <input
+                type="number"
+                min={40}
+                max={220}
+                value={bpm}
+                onChange={(e) => setBpm(Number(e.currentTarget.value) || 0)}
+                aria-label="Beats per minute"
+                className="w-14 rounded border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-1.5 py-1.5 text-xs text-[var(--studio-text)]"
+              />
+              <button
+                type="button"
+                onClick={handleSnapToBeat}
+                disabled={!composition || bpm <= 0}
+                title="Snap every scene cut to the beat grid"
+                className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2.5 py-2 text-sm font-medium text-[var(--studio-text)] transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Snap
+              </button>
+            </div>
+          ) : null}
+          {/* Add end-card — appends a closing CTA scene. */}
+          <button
+            type="button"
+            onClick={handleAddEndCard}
+            disabled={
+              !composition ||
+              generateState.phase === "submitting" ||
+              generateState.phase === "polling" ||
+              generateState.phase === "persisting"
+            }
+            aria-label="Add a closing CTA end-card scene"
+            title="Add a closing call-to-action end-card"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-3 py-2 text-sm font-medium text-[var(--studio-text)] shadow-sm transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            + End card
+          </button>
           {/* Templates button — opens the Reel Template Library picker.
               Disabled until a listing is picked (no point browsing
               templates with nothing to render against) and during an

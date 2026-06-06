@@ -114,6 +114,71 @@ export const TEXT_OVERLAY_PRESET_ORDER: readonly TextOverlayPreset[] = [
  * The default vertical position nudges per preset so a headline sits a bit
  * high and a subtle caption sits low (typical listing-reel layout).
  */
+/**
+ * Branded one-tap stickers/badges. Each builds a pre-styled text overlay, so
+ * they reuse the overlay render path entirely (no separate sticker engine).
+ * Text is editable after drop. Aligned to Larissa's looks: gold pills for
+ * status badges, big outline for SOLD, script for soft announcements.
+ */
+export interface ReelSticker {
+  id: string;
+  label: string;
+  build: () => TextOverlay;
+}
+
+export const REEL_STICKERS: readonly ReelSticker[] = [
+  {
+    id: "just_listed",
+    label: "Just Listed",
+    build: () => ({ ...createTextOverlay("headline"), text: "Just Listed", y: 0.22 }),
+  },
+  {
+    id: "open_house",
+    label: "Open House",
+    build: () => ({ ...createTextOverlay("gold_bar"), text: "OPEN HOUSE", y: 0.14 }),
+  },
+  {
+    id: "sold",
+    label: "SOLD",
+    build: () => ({
+      ...createTextOverlay("outline"),
+      text: "SOLD",
+      fontSize: 230,
+      y: 0.5,
+      animation: "pop",
+    }),
+  },
+  {
+    id: "price",
+    label: "Price",
+    build: () => ({ ...createTextOverlay("gold_bar"), text: "$0", y: 0.85 }),
+  },
+  {
+    id: "new_price",
+    label: "New Price",
+    build: () => ({ ...createTextOverlay("gold_bar"), text: "NEW PRICE", y: 0.14 }),
+  },
+  {
+    id: "coming_soon",
+    label: "Coming Soon",
+    build: () => ({ ...createTextOverlay("headline"), text: "Coming Soon", y: 0.22 }),
+  },
+  {
+    id: "open_sun",
+    label: "Open Sun 1–3",
+    build: () => ({ ...createTextOverlay("gold_bar"), text: "OPEN SUN 1–3", y: 0.14 }),
+  },
+  {
+    id: "beds_baths",
+    label: "Beds · Baths",
+    build: () => ({
+      ...createTextOverlay("subtle"),
+      text: "3 Bed · 2 Bath",
+      y: 0.9,
+    }),
+  },
+];
+
 export function createTextOverlay(
   preset: TextOverlayPreset = "headline",
 ): TextOverlay {

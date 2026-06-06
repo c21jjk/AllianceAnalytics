@@ -791,6 +791,153 @@
    * @param {number} totalFrames
    * @returns {Promise<string>} data URL
    */
+  // -------------------------------------------------------------------------
+  // Text overlays (2026-06-05)
+  // -------------------------------------------------------------------------
+  // Mirror of lib/post-builder/reel-templates/text-overlay.ts TEXT_OVERLAY_PRESETS
+  // and ReelPreview.drawTextOverlay — keep visually in lockstep so the baked
+  // MP4 matches the editor preview.
+  var TEXT_OVERLAY_PRESETS = {
+    headline: {
+      fontFamily: "Kaushan Script",
+      weight: 400,
+      color: "#FFFFFF",
+      shadow: { color: "rgba(0,0,0,0.45)", blur: 28, offsetY: 6 },
+    },
+    gold_bar: {
+      fontFamily: "Nunito",
+      weight: 700,
+      color: "#252526",
+      background: { color: "#C9A84C", padX: 36, padY: 18, radius: 999 },
+    },
+    outline: {
+      fontFamily: "Nunito",
+      weight: 800,
+      color: "#FFFFFF",
+      outline: { color: "#252526", width: 6 },
+    },
+    subtle: {
+      fontFamily: "Nunito",
+      weight: 600,
+      color: "#FFFFFF",
+      shadow: { color: "rgba(0,0,0,0.5)", blur: 14, offsetY: 3 },
+    },
+  };
+
+  function ovEaseOutCubic(t) {
+    var u = 1 - t;
+    return 1 - u * u * u;
+  }
+  function ovEaseOutBack(t) {
+    var c1 = 1.70158;
+    var c3 = c1 + 1;
+    var u = t - 1;
+    return 1 + c3 * u * u * u + c1 * u * u;
+  }
+
+  /** Draw a scene's animated text overlays onto the Fabric canvas (on top of
+   *  the already-rendered scene content), at this frame's animation state. */
+  function renderTextOverlays(canvas, scene, frameIndex, totalFrames) {
+    var overlays = scene && scene.textOverlays;
+    if (!overlays || !overlays.length) return;
+    var intra = totalFrames <= 1 ? 1 : frameIndex / (totalFrames - 1);
+    var elapsedMs = intra * (scene.durationMs || 0);
+
+    for (var i = 0; i < overlays.length; i++) {
+      var ov = overlays[i];
+      var spec = TEXT_OVERLAY_PRESETS[ov.preset] || TEXT_OVERLAY_PRESETS.subtle;
+      var p =
+        ov.animationMs > 0
+          ? Math.max(0, Math.min(1, elapsedMs / ov.animationMs))
+          : 1;
+
+      var alpha = 1;
+      var dy = 0;
+      var scale = 1;
+      if (ov.animation === "fade") {
+        alpha = p;
+      } else if (ov.animation === "rise") {
+        alpha = p;
+        dy = (1 - ovEaseOutCubic(p)) * (ov.fontSize * 0.55);
+      } else if (ov.animation === "pop") {
+        alpha = Math.min(1, p * 1.6);
+        scale = ovEaseOutBack(p);
+      }
+      alpha = Math.max(0, Math.min(1, alpha));
+
+      var fullText = ov.text || "";
+      var shown =
+        ov.animation === "typewriter"
+          ? fullText.slice(0, Math.ceil(p * fullText.length))
+          : fullText;
+
+      var cx = ov.x * CANVAS_WIDTH;
+      var cy = ov.y * CANVAS_HEIGHT + dy;
+
+      var textObj = new fabric.Text(shown, {
+        left: cx,
+        top: cy,
+        originX: "center",
+        originY: "center",
+        fontFamily: ov.fontFamily,
+        fontSize: ov.fontSize,
+        fontWeight: spec.weight,
+        fill: ov.color,
+        textAlign: ov.align || "center",
+        opacity: alpha,
+        selectable: false,
+        evented: false,
+      });
+      if (spec.outline) {
+        textObj.set({
+          stroke: spec.outline.color,
+          strokeWidth: spec.outline.width * 2,
+          paintFirst: "stroke",
+        });
+      }
+      if (spec.shadow) {
+        textObj.set({
+          shadow: new fabric.Shadow({
+            color: spec.shadow.color,
+            blur: spec.shadow.blur,
+            offsetX: 0,
+            offsetY: spec.shadow.offsetY,
+          }),
+        });
+      }
+      if (scale !== 1) {
+        textObj.set({ scaleX: scale, scaleY: scale });
+      }
+
+      if (spec.background && shown.trim().length > 0) {
+        var bg = spec.background;
+        var tw = textObj.width || 0;
+        var th = textObj.height || 0;
+        var pillH = th + bg.padY * 2;
+        var pill = new fabric.Rect({
+          left: cx,
+          top: cy,
+          originX: "center",
+          originY: "center",
+          width: tw + bg.padX * 2,
+          height: pillH,
+          rx: Math.min(bg.radius, pillH / 2),
+          ry: Math.min(bg.radius, pillH / 2),
+          fill: bg.color,
+          opacity: alpha,
+          selectable: false,
+          evented: false,
+        });
+        if (scale !== 1) {
+          pill.set({ scaleX: scale, scaleY: scale });
+        }
+        canvas.add(pill);
+      }
+      canvas.add(textObj);
+    }
+    canvas.renderAll();
+  }
+
   function renderSceneFrame(scene, frameIndex, totalFrames) {
     return document.fonts.ready.then(function () {
       var content = scene && scene.content;
@@ -832,6 +979,9 @@
 
       return work.then(function () {
         var canvas = getFabricCanvas();
+        // Bake animated text overlays on top of the scene content for this
+        // frame (matches the editor preview's drawTextOverlay).
+        renderTextOverlays(canvas, scene, frameIndex, totalFrames);
         return canvas.toDataURL({
           format: "png",
           multiplier: 1,

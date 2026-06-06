@@ -41,6 +41,18 @@
       href="https://fonts.gstatic.com/s/playfairdisplay/v37/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFvUDQ.woff2"
     />
 
+    <!--
+      2026-06-05 — fonts for Reel TEXT OVERLAYS (Kaushan Script script
+      headline + Nunito body), matching the ReelPreview overlay fonts so the
+      baked MP4 text looks like the editor preview. A stylesheet link (not
+      pinned @font-face) so Google serves the correct current woff2 URLs;
+      document.fonts.ready waits for these before the first frame renders.
+    -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Kaushan+Script&family=Nunito:wght@600;700;800;900&display=block"
+    />
+
     <style>
       /*
        * Register Inter (400/600/700) and Playfair Display (400/700)
