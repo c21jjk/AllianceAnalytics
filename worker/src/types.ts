@@ -154,6 +154,30 @@ export type TransitionType =
   | "circle_open"
   | "zoom_blur";
 
+/** Animated text overlay (mirror of the app TextOverlay in
+ *  lib/post-builder/types.ts — keep in lockstep). */
+export type TextOverlayAnimation =
+  | "none"
+  | "fade"
+  | "pop"
+  | "rise"
+  | "typewriter";
+export type TextOverlayPreset = "headline" | "gold_bar" | "outline" | "subtle";
+export interface TextOverlay {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  fontFamily: string;
+  color: string;
+  preset: TextOverlayPreset;
+  align: "left" | "center" | "right";
+  maxWidthPct: number;
+  animation: TextOverlayAnimation;
+  animationMs: number;
+}
+
 export interface Scene {
   /** Stable id (UUID) used as React key + for re-ordering. */
   id: string;
@@ -169,6 +193,8 @@ export interface Scene {
   /** Transition duration in ms. Overlaps with the end of the previous
    *  scene's content time. */
   transitionMs: number;
+  /** Optional animated text overlays drawn on top of this scene. */
+  textOverlays?: readonly TextOverlay[];
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +380,21 @@ const TransitionTypeZ = z.enum([
   "zoom_blur",
 ]);
 
+const TextOverlayZ = z.object({
+  id: z.string().min(1),
+  text: z.string(),
+  x: z.number(),
+  y: z.number(),
+  fontSize: z.number().positive(),
+  fontFamily: z.string(),
+  color: z.string(),
+  preset: z.enum(["headline", "gold_bar", "outline", "subtle"]),
+  align: z.enum(["left", "center", "right"]),
+  maxWidthPct: z.number().min(0).max(1),
+  animation: z.enum(["none", "fade", "pop", "rise", "typewriter"]),
+  animationMs: z.number().int().min(0),
+});
+
 const SceneZ = z.object({
   id: z.string().min(1),
   startMs: z.number().int().min(0),
@@ -365,6 +406,7 @@ const SceneZ = z.object({
   content: SceneContentZ,
   transitionIn: TransitionTypeZ,
   transitionMs: z.number().int().min(0).max(2000),
+  textOverlays: z.array(TextOverlayZ).optional(),
 });
 
 const AudioTrackZ = z.object({

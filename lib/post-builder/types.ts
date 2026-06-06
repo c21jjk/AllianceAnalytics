@@ -687,6 +687,62 @@ export type TransitionType =
   | "circle_open" // incoming scene revealed through an expanding circle.
   | "zoom_blur"; // outgoing zooms in + blurs out as incoming fades in.
 
+/**
+ * 2026-06-05 — Animated text overlays on a scene (CapCut-style). Any scene
+ * (photo or design) can carry N text overlays rendered on top of its content
+ * and animated in. Mirrored in worker/src/types.ts; both the preview
+ * (ReelPreview) and the worker render them, so keep the three in lockstep.
+ */
+
+/** Entrance animation for a text overlay. Preview + worker approximate these. */
+export type TextOverlayAnimation =
+  | "none" // appears instantly, holds
+  | "fade" // opacity 0 -> 1
+  | "pop" // scales up past 1 then settles (overshoot)
+  | "rise" // slides up into place while fading in
+  | "typewriter"; // characters reveal left-to-right
+
+/**
+ * Brand style preset for a text overlay. Drives the fill / outline /
+ * background-pill treatment so the user picks a LOOK, not ten knobs. Exact
+ * colors resolve from the Alliance palette at render time.
+ */
+export type TextOverlayPreset =
+  | "headline" // large bold light text, soft shadow for legibility
+  | "gold_bar" // text sitting on a Relentless Gold pill
+  | "outline" // light text with a dark outline (reads on any photo)
+  | "subtle"; // smaller muted caption
+
+export interface TextOverlay {
+  /** Stable id (crypto.randomUUID()). React key + edit targeting. */
+  id: string;
+  /** The text content. Newlines allowed. */
+  text: string;
+  /**
+   * Normalized position (0..1) of the text block's anchor on the 1080x1920
+   * frame. Default anchor is the block's center. Lets the same overlay land
+   * correctly regardless of output resolution.
+   */
+  x: number;
+  y: number;
+  /** Font size in px at native 1080x1920 resolution. */
+  fontSize: number;
+  /** Font family (must be available to both the canvas preview and the worker). */
+  fontFamily: string;
+  /** Primary text color (hex). The preset may override/augment with outline/bg. */
+  color: string;
+  /** Visual style preset (outline / pill / shadow treatment). */
+  preset: TextOverlayPreset;
+  /** Text alignment within the block. */
+  align: "left" | "center" | "right";
+  /** Max block width as a fraction of canvas width (drives wrapping). */
+  maxWidthPct: number;
+  /** Entrance animation. */
+  animation: TextOverlayAnimation;
+  /** Entrance animation duration in ms. ~400 default; typewriter scales with length. */
+  animationMs: number;
+}
+
 export interface Scene {
   /** Stable id used as React key + for re-ordering. Generate with crypto.randomUUID(). */
   id: string;
@@ -700,6 +756,11 @@ export interface Scene {
   transitionIn: TransitionType;
   /** Transition duration in ms. Overlaps with the END of the previous scene. */
   transitionMs: number;
+  /**
+   * Optional animated text overlays drawn on top of this scene's content.
+   * Absent/empty = no overlay (back-compat with every existing composition).
+   */
+  textOverlays?: readonly TextOverlay[];
 }
 
 /** Audio track on the composition — background music. */

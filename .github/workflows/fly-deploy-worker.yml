@@ -1,0 +1,48 @@
+name: Deploy Reel Worker to Fly
+
+# Auto-deploys the Fly.io Reel render worker (worker/) whenever its code
+# changes on main. Before this, the worker only shipped via a manual
+# `fly deploy` from a laptop, so render-side features (motion, transitions,
+# text overlays) stayed invisible in the actual MP4 until someone remembered
+# to deploy. This closes that gap: a push that touches worker/ ships it.
+#
+# One-time setup: add a FLY_API_TOKEN repo secret (GitHub → Settings →
+# Secrets and variables → Actions → New repository secret). Get the token
+# from the Fly dashboard (fly.io → Account → Access Tokens → create a
+# deploy token), so no terminal is required.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "worker/**"
+      - ".github/workflows/fly-deploy-worker.yml"
+  # Allow manual runs from the Actions tab when you want to force a redeploy.
+  workflow_dispatch:
+
+# Never run two worker deploys at once; cancel an in-progress one if a newer
+# push lands.
+concurrency:
+  group: deploy-reel-worker
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy worker to Fly
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy (remote build on Fly)
+        # --remote-only builds the Docker image on Fly's builders, so the
+        # Action runner doesn't need Docker. fly.toml in worker/ pins the
+        # app name (alliance-reel-render).
+        working-directory: worker
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
