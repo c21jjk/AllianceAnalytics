@@ -41,9 +41,11 @@ import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 export type ReelPace = "cinematic" | "standard" | "punchy";
 
 const PACE_PHOTO_SCENE_MS: Readonly<Record<ReelPace, number>> = {
-  cinematic: 3_500,
-  standard: 2_500,
-  punchy: 1_600,
+  // 2026-06-05 — slowed to match the editor's new "Standard" pace (4.5s);
+  // a freshly seeded Reel opens calm rather than fast.
+  cinematic: 4_500,
+  standard: 3_000,
+  punchy: 2_000,
 };
 
 /** Hero opener is held a beat shorter than a cinematic body scene. */

@@ -3069,6 +3069,9 @@ export default function PostBuilderClient({
         cover_image_url:
           renderResult?.image_url ?? selectedListing.hero_image_url ?? null,
         pace: "cinematic",
+        // 2026-06-05 — pass the source post so the Reel draft can carry its
+        // square card design for the editor's "AI-adapt my card" option.
+        source_generated_post_id: generatedPostId,
       });
       if (!res.ok) {
         setError(`Couldn't start the Reel: ${res.error}`);
@@ -3085,7 +3088,15 @@ export default function PostBuilderClient({
       );
       setMakingReel(false);
     }
-  }, [selectedListing, carouselSlides, postType, variantId, renderResult, router]);
+  }, [
+    selectedListing,
+    carouselSlides,
+    postType,
+    variantId,
+    renderResult,
+    router,
+    generatedPostId,
+  ]);
 
   // Path A "Customize" was removed on 2026-05-14 — replaced by Path C
   // "Edit in Studio" (canvas editor). The render API still accepts an

@@ -339,6 +339,14 @@ export interface ReelResumeRow {
   cover_image_url: string | null;
   /** Optional caption draft saved with the Reel. */
   caption: string | null;
+  /**
+   * 2026-06-05 — the source post's SQUARE card schema (layer_tree), stashed
+   * on the draft at seed time under customizations.source_square_card. Lets
+   * the Reel editor offer "AI-adapt my card" (reflow the square hero into a
+   * native 9:16 frame). Null when the Reel wasn't seeded from a carousel post
+   * or the source had no saved design.
+   */
+  source_square_card: unknown | null;
 }
 
 export async function fetchReelResume(
@@ -350,7 +358,7 @@ export async function fetchReelResume(
   const { data, error } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, composition_json, video_url, video_path, reel_duration_ms, image_url, caption, media_type, created_by",
+      "id, mls_number, property_id, source_mls, composition_json, video_url, video_path, reel_duration_ms, image_url, caption, media_type, created_by, customizations",
     )
     .eq("id", id)
     .maybeSingle();
@@ -376,6 +384,12 @@ export async function fetchReelResume(
     reel_duration_ms: data.reel_duration_ms,
     cover_image_url: data.image_url,
     caption: data.caption,
+    source_square_card:
+      data.customizations &&
+      typeof data.customizations === "object" &&
+      "source_square_card" in data.customizations
+        ? (data.customizations as Record<string, unknown>).source_square_card
+        : null,
   };
 }
 

@@ -2871,6 +2871,12 @@ export interface SeedReelFromCarouselInput {
   cover_image_url?: string | null;
   /** Pacing feel. Defaults to cinematic. */
   pace?: ReelPace;
+  /**
+   * Optional source post id. When set, we fetch its saved square card design
+   * (layer_tree) and stash it on the Reel draft so the editor can offer
+   * "AI-adapt my card" (reflow the square hero into a native 9:16 frame).
+   */
+  source_generated_post_id?: string | null;
 }
 
 export type SeedReelFromCarouselResult =
@@ -2907,6 +2913,23 @@ export async function seedReelFromCarouselAction(
   }
 
   const supabase = createAdminClient();
+
+  // 2026-06-05 — carry the source post's SQUARE card design onto the Reel
+  // draft (customizations.source_square_card) so the editor's "AI-adapt my
+  // card" can reflow it to 9:16. Best-effort: a failed/empty fetch just
+  // leaves the editor on the default pre-built hero.
+  let customizations: Json = {} as Json;
+  if (input.source_generated_post_id) {
+    const { data: src } = await supabase
+      .from("generated_posts")
+      .select("layer_tree")
+      .eq("id", input.source_generated_post_id)
+      .maybeSingle();
+    if (src?.layer_tree && typeof src.layer_tree === "object") {
+      customizations = { source_square_card: src.layer_tree } as unknown as Json;
+    }
+  }
+
   const { data, error } = await supabase
     .from("generated_posts")
     .insert({
@@ -2930,7 +2953,7 @@ export async function seedReelFromCarouselAction(
       composition_json: composition as unknown as Json,
       reel_duration_ms: composition.totalDurationMs,
       template_props: {} as Json,
-      customizations: {} as Json,
+      customizations,
       captions_by_platform: {} as unknown as Json,
       status: "draft",
       created_by: profile.id,

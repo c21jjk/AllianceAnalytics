@@ -16,8 +16,10 @@ import {
   triggerReelRenderAction,
   getReelRenderStatusAction,
   persistRenderedReelAction,
+  adaptHeroCardToReelAction,
 } from "@/app/(app)/post-builder/actions";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
+import type { CanvasTemplateSchema } from "@/lib/post-builder/canvas-editor/types";
 import type { ScenePropertiesPanelProps } from "@/lib/post-builder/canvas-editor/contracts";
 // Real imports — the two sibling components shipped on 2026-05-16 alongside
 // this shell. Earlier drafts of this file stubbed both as () => null so the
@@ -122,9 +124,12 @@ const DEFAULT_OUTRO_DURATION_MS = 1_000;
  * ScenePropertiesPanel; this is the coarse "feel" control.
  */
 const PACE_PHOTO_MS = {
-  slow: 4_500,
-  standard: 3_000,
-  fast: 1_800,
+  // 2026-06-05 — slowed across the board; the old values panned too fast.
+  // Old fast(1800) dropped; old standard(3000) is now Fast, old slow(4500)
+  // is now Standard, and Slow goes slower still.
+  slow: 6_000,
+  standard: 4_500,
+  fast: 3_000,
 } as const;
 type PaceKey = keyof typeof PACE_PHOTO_MS;
 const PACE_ORDER: readonly PaceKey[] = ["slow", "standard", "fast"];
@@ -657,6 +662,57 @@ export default function ReelStudioClient({
   const hasPhotoScenes =
     composition?.scenes.some((s) => s.content.kind === "photo") ?? false;
 
+  // ---- AI-adapt my card (E, 2026-06-05) -------------------------------
+  // why: the Reel hero defaults to a pre-built 9:16 template. When the Reel
+  // was seeded from a carousel post we also stashed that post's SQUARE card
+  // design (initialResume.source_square_card). This button reflows it to a
+  // native 9:16 layout via Claude and swaps it onto the first design (hero)
+  // scene. Opt-in — the default hero stands until the user asks.
+  const squareCard = initialResume?.source_square_card ?? null;
+  const canAdaptCard =
+    squareCard != null &&
+    typeof squareCard === "object" &&
+    Array.isArray((squareCard as { layers?: unknown }).layers);
+  const [adaptingCard, setAdaptingCard] = useState(false);
+  const handleAdaptCard = useCallback(async () => {
+    if (!canAdaptCard) return;
+    setAdaptingCard(true);
+    try {
+      const res = await adaptHeroCardToReelAction(
+        squareCard as CanvasTemplateSchema,
+      );
+      if (!res.ok) {
+        setToast({ kind: "error", message: `Couldn't adapt your card: ${res.error}` });
+        return;
+      }
+      // Swap the reflowed schema onto the FIRST design (hero) scene.
+      setComposition((prev) => {
+        if (!prev) return prev;
+        let swapped = false;
+        const scenes = prev.scenes.map((s) => {
+          if (!swapped && s.content.kind === "design") {
+            swapped = true;
+            return {
+              ...s,
+              content: { kind: "design" as const, template: res.schema },
+            };
+          }
+          return s;
+        });
+        return { ...prev, scenes, updatedAt: new Date().toISOString() };
+      });
+      setHasUnsavedTemplateEdits(true);
+      setToast({ kind: "info", message: "Adapted your card to the Reel's vertical hero." });
+    } catch (e) {
+      setToast({
+        kind: "error",
+        message: `Adapt card threw: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    } finally {
+      setAdaptingCard(false);
+    }
+  }, [canAdaptCard, squareCard]);
+
   // ---- template-pick handler -------------------------------------------
   // why: applying a template replaces the entire scenes array with the
   // factory's output. The dirty flag clears because the new composition
@@ -1125,6 +1181,32 @@ export default function ReelStudioClient({
                 {totalDurationSec}
               </span>
             </div>
+          ) : null}
+          {/* AI-adapt my card (E, 2026-06-05) — reflow the source post's
+              square card into a native 9:16 hero. Shown only when the Reel
+              was seeded from a carousel post that carried its design. */}
+          {canAdaptCard ? (
+            <button
+              type="button"
+              onClick={() => {
+                void handleAdaptCard();
+              }}
+              disabled={adaptingCard || !composition}
+              aria-label="Adapt my square card design into the Reel's vertical hero with AI"
+              title="Reflow your exact post card into the 9:16 Reel hero (AI)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-white px-3 py-2 text-sm font-semibold text-gold-700 shadow-sm transition hover:border-gold-500 hover:bg-gold-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+                className="h-4 w-4"
+              >
+                <path d="M11.999 2.25l1.9 5.151 5.151 1.9-5.151 1.9-1.9 5.151-1.9-5.151-5.151-1.9 5.151-1.9 1.9-5.151zM18.75 14.25l.95 2.575 2.575.95-2.575.95-.95 2.575-.95-2.575-2.575-.95 2.575-.95.95-2.575z" />
+              </svg>
+              {adaptingCard ? "Adapting…" : "AI-adapt my card"}
+            </button>
           ) : null}
           {/* Templates button — opens the Reel Template Library picker.
               Disabled until a listing is picked (no point browsing
