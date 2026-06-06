@@ -41,6 +41,8 @@ import {
   buildReelFromCarousel,
   type ReelPace,
 } from "@/lib/post-builder/reel-templates/build-from-carousel";
+import { reflowSchemaToVertical } from "@/lib/post-builder/canvas-editor/ai/reflow-to-vertical";
+import type { CanvasTemplateSchema } from "@/lib/post-builder/canvas-editor/types";
 
 // Mirrors STORAGE_BUCKET in app/api/post-builder/canvas-save/route.ts +
 // lib/post-builder/render.ts — same bucket, same naming, so a single delete
@@ -2815,6 +2817,31 @@ export async function persistRenderedReelAction(
   revalidatePath("/post-builder");
   revalidatePath("/saved-posts");
   return { ok: true, generated_post_id: data.id };
+}
+
+// ---------------------------------------------------------------------------
+// adaptHeroCardToReelAction — "AI-adapt my card" (E)
+// ---------------------------------------------------------------------------
+//
+// why (2026-06-05): the Reel hero defaults to a pre-built 9:16 template, but
+// the user can opt in to carry their EXACT square card over. This reflows the
+// square CanvasTemplateSchema to a native 9:16 layout via a single Claude
+// call (see reflowSchemaToVertical) and returns the new schema; the Reel
+// editor swaps it onto the hero design scene. Falls back gracefully (ok:false)
+// when the key is missing or the model returns unusable output — the editor
+// keeps the default hero in that case.
+export type AdaptHeroCardResult =
+  | { ok: true; schema: CanvasTemplateSchema }
+  | { ok: false; error: string };
+
+export async function adaptHeroCardToReelAction(
+  squareSchema: CanvasTemplateSchema,
+): Promise<AdaptHeroCardResult> {
+  await requireUser();
+  if (!squareSchema || !Array.isArray(squareSchema.layers)) {
+    return { ok: false, error: "No square card design to adapt." };
+  }
+  return reflowSchemaToVertical(squareSchema);
 }
 
 // ---------------------------------------------------------------------------

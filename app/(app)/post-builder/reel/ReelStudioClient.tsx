@@ -113,6 +113,26 @@ type GenerateState =
 const DEFAULT_SCENE_DURATION_MS = 1_500;
 /** Default outro duration — slightly shorter than the body scenes. */
 const DEFAULT_OUTRO_DURATION_MS = 1_000;
+
+/**
+ * Global pace presets (2026-06-05). One tap rescales EVERY photo scene's
+ * duration so the whole Reel speeds up / slows down without touching each
+ * slide individually. Design scenes (hero / outro) keep their own timing —
+ * pace is about the photo-slide rhythm. Per-scene fine-tuning still lives in
+ * ScenePropertiesPanel; this is the coarse "feel" control.
+ */
+const PACE_PHOTO_MS = {
+  slow: 4_500,
+  standard: 3_000,
+  fast: 1_800,
+} as const;
+type PaceKey = keyof typeof PACE_PHOTO_MS;
+const PACE_ORDER: readonly PaceKey[] = ["slow", "standard", "fast"];
+const PACE_LABEL: Readonly<Record<PaceKey, string>> = {
+  slow: "Slow",
+  standard: "Standard",
+  fast: "Fast",
+};
 /** Default transition durations by type — overrideable per scene later. */
 const DEFAULT_TRANSITION_MS_BY_TYPE: Readonly<Record<TransitionType, number>> = {
   cut: 0,
@@ -614,6 +634,29 @@ export default function ReelStudioClient({
     [],
   );
 
+  // ---- global pace (2026-06-05) ---------------------------------------
+  // why: "speed up / slow down the slides" without editing each scene. Sets
+  // every PHOTO scene to the chosen preset duration in one pass (design
+  // scenes keep their timing). `pace` is the last-applied preset, used only
+  // to highlight the active segment — per-scene edits afterward may diverge
+  // from it, which is fine (it's a coarse control, not a lock).
+  const [pace, setPace] = useState<PaceKey>("standard");
+  const applyPace = useCallback(
+    (next: PaceKey) => {
+      setPace(next);
+      applySceneMutation((prev) =>
+        prev.map((s) =>
+          s.content.kind === "photo"
+            ? { ...s, durationMs: PACE_PHOTO_MS[next] }
+            : s,
+        ),
+      );
+    },
+    [applySceneMutation],
+  );
+  const hasPhotoScenes =
+    composition?.scenes.some((s) => s.content.kind === "photo") ?? false;
+
   // ---- template-pick handler -------------------------------------------
   // why: applying a template replaces the entire scenes array with the
   // factory's output. The dirty flag clears because the new composition
@@ -1044,6 +1087,45 @@ export default function ReelStudioClient({
           <p className="truncate text-xs text-neutral-600">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Global pace (2026-06-05) — speed up / slow down every photo
+              slide at once. Per-scene fine-tuning still lives in the scene
+              properties panel. Hidden until there are photo slides to pace. */}
+          {hasPhotoScenes ? (
+            <div className="mr-1 flex items-center gap-2">
+              <span className="hidden text-xs font-medium text-neutral-500 sm:inline">
+                Pace
+              </span>
+              <div
+                role="group"
+                aria-label="Reel pace"
+                className="inline-flex overflow-hidden rounded-md border border-neutral-300"
+              >
+                {PACE_ORDER.map((p) => {
+                  const active = pace === p;
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => applyPace(p)}
+                      aria-pressed={active}
+                      title={`Set every photo slide to ${PACE_LABEL[p].toLowerCase()} pace`}
+                      className={[
+                        "px-2.5 py-1.5 text-xs font-semibold transition",
+                        active
+                          ? "bg-gold-600 text-white"
+                          : "bg-white text-neutral-700 hover:bg-neutral-50",
+                      ].join(" ")}
+                    >
+                      {PACE_LABEL[p]}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-xs tabular-nums text-neutral-500">
+                {totalDurationSec}
+              </span>
+            </div>
+          ) : null}
           {/* Templates button — opens the Reel Template Library picker.
               Disabled until a listing is picked (no point browsing
               templates with nothing to render against) and during an
