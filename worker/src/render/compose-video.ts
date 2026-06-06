@@ -106,8 +106,24 @@ function xfadePresetFor(t: TransitionType): string | null {
       return "fade";
     case "dissolve":
       return "fadeblack";
+    case "fade_white":
+      return "fadewhite";
     case "slide_left":
       return "slideleft";
+    case "slide_right":
+      return "slideright";
+    case "slide_up":
+      return "slideup";
+    case "slide_down":
+      return "slidedown";
+    case "wipe_left":
+      return "wipeleft";
+    case "smooth_left":
+      return "smoothleft";
+    case "smooth_right":
+      return "smoothright";
+    case "circle_open":
+      return "circleopen";
     case "zoom_blur":
       // why: closest analog available in xfade. Documented limitation.
       return "smoothleft";

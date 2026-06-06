@@ -71,15 +71,31 @@ const TRANSITION_ORDER = [
   "cut",
   "fade",
   "dissolve",
+  "fade_white",
   "slide_left",
+  "slide_right",
+  "slide_up",
+  "slide_down",
+  "wipe_left",
+  "smooth_left",
+  "smooth_right",
+  "circle_open",
   "zoom_blur",
 ] as const satisfies ReadonlyArray<TransitionType>;
 
 const TRANSITION_LABEL: Readonly<Record<TransitionType, string>> = {
   cut: "Cut",
-  fade: "Fade",
-  dissolve: "Dissolve",
-  slide_left: "Slide",
+  fade: "Crossfade",
+  dissolve: "Dip to black",
+  fade_white: "Dip to white",
+  slide_left: "Slide left",
+  slide_right: "Slide right",
+  slide_up: "Slide up",
+  slide_down: "Slide down",
+  wipe_left: "Wipe",
+  smooth_left: "Whip left",
+  smooth_right: "Whip right",
+  circle_open: "Circle",
   zoom_blur: "Zoom blur",
 };
 
@@ -317,10 +333,28 @@ function transitionIconSmall(type: TransitionType): JSX.Element {
           <path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.8 3.8l1.4 1.4M10.8 10.8l1.4 1.4M3.8 12.2l1.4-1.4M10.8 5.2l1.4-1.4" />
         </svg>
       );
-    default: {
-      const _exhaustive: never = type;
-      return _exhaustive;
-    }
+    default:
+      // Generic "transition" glyph (two overlapping panels with an arrow) for
+      // the expanded set (slides/wipe/whip/circle/dip-to-white). The label
+      // below the icon disambiguates; a bespoke glyph per preset isn't worth
+      // the SVG churn. `type` is intentionally not exhaustively checked here so
+      // adding a TransitionType doesn't require a new icon.
+      return (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="2" y="4" width="7" height="8" rx="1" opacity="0.5" />
+          <rect x="7" y="4" width="7" height="8" rx="1" />
+        </svg>
+      );
   }
 }
 

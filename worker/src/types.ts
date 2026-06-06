@@ -136,12 +136,22 @@ export type SceneContent =
       trimStartMs: number;
     };
 
-/** Transitions between scenes. All have a configurable duration in ms. */
+/** Transitions between scenes. All have a configurable duration in ms.
+ *  Mirror of the app TransitionType (lib/post-builder/types.ts). Expanded
+ *  2026-06-05 — keep in lockstep with the app union + the xfade map. */
 export type TransitionType =
   | "cut"
   | "fade"
   | "dissolve"
+  | "fade_white"
   | "slide_left"
+  | "slide_right"
+  | "slide_up"
+  | "slide_down"
+  | "wipe_left"
+  | "smooth_left"
+  | "smooth_right"
+  | "circle_open"
   | "zoom_blur";
 
 export interface Scene {
@@ -332,7 +342,15 @@ const TransitionTypeZ = z.enum([
   "cut",
   "fade",
   "dissolve",
+  "fade_white",
   "slide_left",
+  "slide_right",
+  "slide_up",
+  "slide_down",
+  "wipe_left",
+  "smooth_left",
+  "smooth_right",
+  "circle_open",
   "zoom_blur",
 ]);
 

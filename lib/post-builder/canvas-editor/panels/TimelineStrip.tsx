@@ -109,9 +109,17 @@ const TRANSITION_CYCLE: readonly TransitionType[] = [
  */
 const TRANSITION_LABEL: Readonly<Record<TransitionType, string>> = {
   cut: "Cut",
-  fade: "Fade",
-  dissolve: "Dissolve",
+  fade: "Crossfade",
+  dissolve: "Dip to black",
+  fade_white: "Dip to white",
   slide_left: "Slide left",
+  slide_right: "Slide right",
+  slide_up: "Slide up",
+  slide_down: "Slide down",
+  wipe_left: "Wipe",
+  smooth_left: "Whip left",
+  smooth_right: "Whip right",
+  circle_open: "Circle",
   zoom_blur: "Zoom blur",
 };
 

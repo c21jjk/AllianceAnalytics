@@ -143,7 +143,15 @@ const DEFAULT_TRANSITION_MS_BY_TYPE: Readonly<Record<TransitionType, number>> = 
   cut: 0,
   fade: 400,
   dissolve: 300,
+  fade_white: 300,
   slide_left: 350,
+  slide_right: 350,
+  slide_up: 350,
+  slide_down: 350,
+  wipe_left: 350,
+  smooth_left: 400,
+  smooth_right: 400,
+  circle_open: 500,
   zoom_blur: 400,
 };
 
@@ -152,7 +160,15 @@ const TRANSITION_CYCLE: readonly TransitionType[] = [
   "cut",
   "fade",
   "dissolve",
+  "fade_white",
   "slide_left",
+  "slide_right",
+  "slide_up",
+  "slide_down",
+  "wipe_left",
+  "smooth_left",
+  "smooth_right",
+  "circle_open",
   "zoom_blur",
 ];
 

@@ -76,7 +76,15 @@ export const DEFAULT_TRANSITION_MS_BY_TYPE: Readonly<
   cut: 0,
   fade: 400,
   dissolve: 300,
+  fade_white: 300,
   slide_left: 350,
+  slide_right: 350,
+  slide_up: 350,
+  slide_down: 350,
+  wipe_left: 350,
+  smooth_left: 400,
+  smooth_right: 400,
+  circle_open: 500,
   zoom_blur: 400,
 };
 

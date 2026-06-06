@@ -669,12 +669,22 @@ export type SceneContent =
       trimStartMs: number;
     };
 
-/** Transitions between scenes. All have a configurable duration in ms. */
+/** Transitions between scenes. All have a configurable duration in ms.
+ *  Maps to ffmpeg xfade presets in the worker (worker/src/render/compose-video.ts).
+ *  Existing 5 kept for back-compat; expanded 2026-06-05. */
 export type TransitionType =
   | "cut" // 0ms hard cut — no overlap.
-  | "fade" // fade to black + fade in.
-  | "dissolve" // direct alpha crossfade between two scenes.
-  | "slide_left" // outgoing slides off-left as incoming enters from right.
+  | "fade" // crossfade (cross-dissolve) between the two scenes.
+  | "dissolve" // dip-to-black between scenes.
+  | "fade_white" // dip-to-white between scenes.
+  | "slide_left" // outgoing slides off-left as incoming enters from the right.
+  | "slide_right" // outgoing slides off-right as incoming enters from the left.
+  | "slide_up" // outgoing slides up as incoming enters from below.
+  | "slide_down" // outgoing slides down as incoming enters from above.
+  | "wipe_left" // hard wipe revealing the incoming scene from the right.
+  | "smooth_left" // smooth "whip" pan to the left.
+  | "smooth_right" // smooth "whip" pan to the right.
+  | "circle_open" // incoming scene revealed through an expanding circle.
   | "zoom_blur"; // outgoing zooms in + blurs out as incoming fades in.
 
 export interface Scene {
