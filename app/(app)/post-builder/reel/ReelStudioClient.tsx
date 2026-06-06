@@ -1130,11 +1130,11 @@ export default function ReelStudioClient({
 
   if (listings.length === 0) {
     return (
-      <div className="rounded-xl border border-neutral-200 bg-white p-8 text-center">
-        <h2 className="text-lg font-semibold text-neutral-900">
+      <div data-theme="dark" className="rounded-xl border border-[var(--studio-border)] bg-[var(--studio-bg)] p-8 text-center">
+        <h2 className="text-lg font-semibold text-[var(--studio-text)]">
           No active listings available
         </h2>
-        <p className="mt-2 text-neutral-600">
+        <p className="mt-2 text-[var(--studio-text-muted)]">
           Reels need an active listing to compose from. Add one to your inventory
           first.
         </p>
@@ -1151,12 +1151,12 @@ export default function ReelStudioClient({
   // ---- main render -----------------------------------------------------
 
   return (
-    <div className="flex flex-col gap-4">
+    <div data-theme="dark" className="flex flex-col gap-4 rounded-xl bg-[var(--studio-bg)] p-3">
       {/* ---- Header row -------------------------------------------------- */}
-      <header className="flex h-14 items-center justify-between rounded-lg border border-neutral-200 bg-white px-4">
+      <header className="flex h-14 items-center justify-between rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)] px-4">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-neutral-900">Reel Studio</h2>
-          <p className="truncate text-xs text-neutral-600">{subtitle}</p>
+          <h2 className="text-base font-semibold text-[var(--studio-text)]">Reel Studio</h2>
+          <p className="truncate text-xs text-[var(--studio-text-muted)]">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           {/* Global pace (2026-06-05) — speed up / slow down every photo
@@ -1164,13 +1164,13 @@ export default function ReelStudioClient({
               properties panel. Hidden until there are photo slides to pace. */}
           {hasPhotoScenes ? (
             <div className="mr-1 flex items-center gap-2">
-              <span className="hidden text-xs font-medium text-neutral-500 sm:inline">
+              <span className="hidden text-xs font-medium text-[var(--studio-text-faint)] sm:inline">
                 Pace
               </span>
               <div
                 role="group"
                 aria-label="Reel pace"
-                className="inline-flex overflow-hidden rounded-md border border-neutral-300"
+                className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]"
               >
                 {PACE_ORDER.map((p) => {
                   const active = pace === p;
@@ -1185,7 +1185,7 @@ export default function ReelStudioClient({
                         "px-2.5 py-1.5 text-xs font-semibold transition",
                         active
                           ? "bg-gold-600 text-white"
-                          : "bg-white text-neutral-700 hover:bg-neutral-50",
+                          : "bg-[var(--studio-panel)] text-[var(--studio-text-muted)] hover:bg-[var(--studio-hover)]",
                       ].join(" ")}
                     >
                       {PACE_LABEL[p]}
@@ -1193,7 +1193,7 @@ export default function ReelStudioClient({
                   );
                 })}
               </div>
-              <span className="text-xs tabular-nums text-neutral-500">
+              <span className="text-xs tabular-nums text-[var(--studio-text-faint)]">
                 {totalDurationSec}
               </span>
             </div>
@@ -1210,7 +1210,7 @@ export default function ReelStudioClient({
               disabled={adaptingCard || !composition}
               aria-label="Adapt my square card design into the Reel's vertical hero with AI"
               title="Reflow your exact post card into the 9:16 Reel hero (AI)"
-              className="inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-white px-3 py-2 text-sm font-semibold text-gold-700 shadow-sm transition hover:border-gold-500 hover:bg-gold-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-[var(--studio-panel)] px-3 py-2 text-sm font-semibold text-gold-700 shadow-sm transition hover:border-gold-500 hover:bg-gold-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -1238,7 +1238,7 @@ export default function ReelStudioClient({
               generateState.phase === "persisting"
             }
             aria-label="Open the Reel template picker"
-            className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 shadow-sm transition hover:border-gold-400 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-panel)] px-3 py-2 text-sm font-medium text-[var(--studio-text)] shadow-sm transition hover:border-gold-400 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -1357,7 +1357,7 @@ function ToastBar({ toast, onDismiss }: ToastBarProps) {
       ? "border-amber-200 bg-amber-50 text-amber-900"
       : toast.kind === "error"
         ? "border-red-200 bg-red-50 text-red-900"
-        : "border-neutral-200 bg-neutral-50 text-neutral-900";
+        : "border-[var(--studio-border)] bg-[var(--studio-hover)] text-[var(--studio-text)]";
   return (
     <div
       role="status"
@@ -1404,7 +1404,7 @@ function RenderOverlay({ state, onDismissError }: RenderOverlayProps) {
         aria-labelledby="reel-render-error-title"
         className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/60 backdrop-blur-sm"
       >
-        <div className="mx-4 max-w-md rounded-xl border border-red-200 bg-white p-6 shadow-xl">
+        <div className="mx-4 max-w-md rounded-xl border border-red-200 bg-[var(--studio-panel)] p-6 shadow-xl">
           <h3
             id="reel-render-error-title"
             className="text-base font-semibold text-red-900"
@@ -1459,22 +1459,22 @@ function RenderOverlay({ state, onDismissError }: RenderOverlayProps) {
       aria-busy="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/70 backdrop-blur-sm"
     >
-      <div className="mx-4 w-full max-w-md rounded-xl border border-neutral-200 bg-white p-8 text-center shadow-xl">
+      <div className="mx-4 w-full max-w-md rounded-xl border border-[var(--studio-border)] bg-[var(--studio-panel)] p-8 text-center shadow-xl">
         {/* Spinner — Tailwind animate-spin on a bordered ring. Visible
             even when the progress bar is hidden so the user always sees
             motion. */}
         <div
           aria-hidden="true"
-          className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-neutral-200 border-t-gold-600"
+          className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-[var(--studio-border)] border-t-gold-600"
         />
-        <h3 className="mt-5 text-base font-semibold text-neutral-900">
+        <h3 className="mt-5 text-base font-semibold text-[var(--studio-text)]">
           {headline}
         </h3>
-        <p className="mt-2 text-sm text-neutral-600">{rotatingMessage}</p>
+        <p className="mt-2 text-sm text-[var(--studio-text-muted)]">{rotatingMessage}</p>
         {showProgressBar ? (
           <div className="mt-5">
             <div
-              className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100"
+              className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--studio-hover)]"
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={100}
@@ -1493,7 +1493,7 @@ function RenderOverlay({ state, onDismissError }: RenderOverlayProps) {
                 }}
               />
             </div>
-            <p className="mt-2 text-xs text-neutral-500">
+            <p className="mt-2 text-xs text-[var(--studio-text-faint)]">
               {state.phase === "polling" ? Math.round(state.progressPct) : 0}%
             </p>
           </div>
@@ -1510,9 +1510,9 @@ interface ListingPickerProps {
 
 function ListingPicker({ listings, onPick }: ListingPickerProps) {
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-6">
-      <h3 className="text-lg font-semibold text-neutral-900">Pick a listing</h3>
-      <p className="mt-1 text-sm text-neutral-600">
+    <section data-theme="dark" className="rounded-xl border border-[var(--studio-border)] bg-[var(--studio-bg)] p-6">
+      <h3 className="text-lg font-semibold text-[var(--studio-text)]">Pick a listing</h3>
+      <p className="mt-1 text-sm text-[var(--studio-text-muted)]">
         Choose the property this Reel will feature. The hero card + photos
         seed a 5-scene starting composition you can tune.
       </p>
@@ -1525,7 +1525,7 @@ function ListingPicker({ listings, onPick }: ListingPickerProps) {
             <button
               type="button"
               onClick={() => onPick(l.mls_number)}
-              className="flex w-full items-center gap-3 rounded-lg border border-neutral-200 bg-white p-3 text-left transition hover:border-gold-500 hover:bg-gold-50/50 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+              className="flex w-full items-center gap-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)] p-3 text-left transition hover:border-gold-500 hover:bg-gold-50/50 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
             >
               {l.hero_image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -1536,13 +1536,13 @@ function ListingPicker({ listings, onPick }: ListingPickerProps) {
                   loading="lazy"
                 />
               ) : (
-                <div className="h-16 w-16 shrink-0 rounded-md bg-neutral-100" />
+                <div className="h-16 w-16 shrink-0 rounded-md bg-[var(--studio-hover)]" />
               )}
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-neutral-900">
+                <div className="truncate text-sm font-medium text-[var(--studio-text)]">
                   {l.address ?? l.mls_number}
                 </div>
-                <div className="truncate text-xs text-neutral-600">
+                <div className="truncate text-xs text-[var(--studio-text-muted)]">
                   {[l.city, l.state].filter(Boolean).join(", ")}
                   {l.zip ? ` ${l.zip}` : ""}
                 </div>
@@ -1607,12 +1607,12 @@ function ReelWorkspace({
   return (
     <div className="flex flex-col gap-4">
       {/* ---- Sub-toolbar: change listing + warnings ------------------- */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
-        <div className="flex items-center gap-2 text-sm text-neutral-700">
-          <span className="font-medium text-neutral-900">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-hover)] px-3 py-2">
+        <div className="flex items-center gap-2 text-sm text-[var(--studio-text-muted)]">
+          <span className="font-medium text-[var(--studio-text)]">
             {listing.address ?? listing.mls_number}
           </span>
-          <span className="text-neutral-400">·</span>
+          <span className="text-[var(--studio-text-faint)]">·</span>
           <button
             type="button"
             onClick={onChangeListing}
@@ -1633,14 +1633,14 @@ function ReelWorkspace({
         {/* Left: preview area (~70%) — Day 4 swapped the static frame for
             ReelPreview's real-time canvas playback. The Scene N of M caption
             stays so the user has clear scene context when scrubbing. */}
-        <div className="flex flex-1 flex-col items-center rounded-xl border border-neutral-200 bg-white p-6">
+        <div className="flex flex-1 flex-col items-center rounded-xl border border-[var(--studio-border)] bg-[var(--studio-panel)] p-6">
           <ReelPreview
             composition={composition}
             availablePhotos={photosState.photos}
             scrubToSceneId={selectedSceneId}
             maxWidth={360}
           />
-          <p className="mt-3 text-xs text-neutral-600">
+          <p className="mt-3 text-xs text-[var(--studio-text-muted)]">
             Scene {selectedScene
               ? scenes.findIndex((s) => s.id === selectedScene.id) + 1
               : 1}{" "}
@@ -1653,7 +1653,7 @@ function ReelWorkspace({
             rhythm inside ScenePropertiesPanel's sections so the two panels
             feel like one continuous sidebar even though they're separate
             components. */}
-        <aside className="w-full shrink-0 rounded-xl border border-neutral-200 bg-white lg:w-80">
+        <aside className="w-full shrink-0 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-panel)] lg:w-80">
           <ScenePropertiesPanel
             scene={selectedScene}
             onSceneChanged={onSceneChanged}
@@ -1662,14 +1662,14 @@ function ReelWorkspace({
               the sibling component is still a stub. Removed once the real
               component is wired. */}
           {selectedScene === null ? (
-            <div className="p-4 text-sm text-neutral-500">
+            <div className="p-4 text-sm text-[var(--studio-text-faint)]">
               Select a scene from the timeline below to edit its motion,
               duration, and transition.
             </div>
           ) : null}
           {/* Music picker — composition-level (one track per Reel), so it
               sits below the per-scene panel rather than inside it. */}
-          <div className="border-t border-neutral-200">
+          <div className="border-t border-[var(--studio-border)]">
             <MusicPicker
               currentTrack={composition.audio}
               onTrackChanged={onAudioTrackChanged}
@@ -1679,7 +1679,7 @@ function ReelWorkspace({
       </div>
 
       {/* ---- Bottom: timeline strip ---------------------------------- */}
-      <div className="h-[140px] rounded-xl border border-neutral-200 bg-white">
+      <div className="h-[140px] rounded-xl border border-[var(--studio-border)] bg-[var(--studio-panel)]">
         <TimelineStrip
           scenes={scenes}
           selectedSceneId={selectedSceneId}

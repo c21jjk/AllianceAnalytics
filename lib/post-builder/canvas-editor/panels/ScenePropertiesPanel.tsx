@@ -497,7 +497,7 @@ export default function ScenePropertiesPanel(
     >
       {/* ----- Header --------------------------------------------------- */}
       <header className="border-b border-[var(--studio-border)] px-4 py-3">
-        <h2 className="text-sm font-semibold text-neutral-900">
+        <h2 className="text-sm font-semibold text-[var(--studio-text)]">
           Scene properties
         </h2>
         <p className="mt-0.5 text-xs text-[var(--studio-text-muted)]">{headerSubline}</p>
@@ -537,7 +537,7 @@ export default function ScenePropertiesPanel(
                       "flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs font-medium transition-colors",
                       isActive
                         ? "border-gold-500 bg-gold-500 text-white"
-                        : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50 hover:border-gold-400",
+                        : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-[var(--studio-text)] hover:bg-[var(--studio-hover)] hover:border-gold-400",
                     ].join(" ")}
                   >
                     {presetIcon(preset)}
@@ -569,7 +569,7 @@ export default function ScenePropertiesPanel(
               aria-valuetext={formatSeconds(scene.durationMs)}
               className="flex-1 accent-gold-500"
             />
-            <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-neutral-700">
+            <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-[var(--studio-text)]">
               {formatSeconds(scene.durationMs)}
             </span>
           </div>
@@ -588,7 +588,7 @@ export default function ScenePropertiesPanel(
                     "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
                     isActive
                       ? "bg-gold-500 text-white"
-                      : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200 hover:text-neutral-900",
+                      : "bg-[var(--studio-hover)] text-[var(--studio-text-muted)] hover:bg-[var(--studio-active)] hover:text-[var(--studio-text)]",
                   ].join(" ")}
                   aria-pressed={isActive}
                 >
@@ -623,7 +623,7 @@ export default function ScenePropertiesPanel(
                     "inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition-colors",
                     isActive
                       ? "border-gold-500 bg-gold-500 text-white"
-                      : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50 hover:border-gold-400",
+                      : "border-[var(--studio-border)] bg-[var(--studio-input-bg)] text-[var(--studio-text)] hover:bg-[var(--studio-hover)] hover:border-gold-400",
                   ].join(" ")}
                 >
                   {transitionIconSmall(t)}
@@ -654,7 +654,7 @@ export default function ScenePropertiesPanel(
                 aria-valuetext={formatSeconds(scene.transitionMs)}
                 className="flex-1 accent-gold-500"
               />
-              <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-neutral-700">
+              <span className="w-10 shrink-0 text-right text-xs font-semibold tabular-nums text-[var(--studio-text)]">
                 {formatSeconds(scene.transitionMs)}
               </span>
             </div>

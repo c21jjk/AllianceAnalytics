@@ -420,7 +420,7 @@ export default function MusicPicker({
     <section className="flex flex-col" aria-label="Reel music picker">
       {/* ===== Header ==================================================== */}
       <div className="px-4 pt-4">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]">
           Music
         </h3>
       </div>
@@ -453,7 +453,7 @@ export default function MusicPicker({
 
       {/* ===== Volume + fades — only when a track is selected ============ */}
       {currentTrack ? (
-        <div className="border-t border-neutral-100 px-4 py-4">
+        <div className="border-t border-[var(--studio-border)] px-4 py-4">
           <VolumeAndFadeControls
             volume={currentTrack.volume}
             fadeInMs={currentTrack.fadeInMs}
@@ -516,11 +516,11 @@ function CollapsedCard({
     : "Selected track";
 
   return (
-    <div className="flex w-full items-center gap-2 rounded-lg border border-neutral-200 bg-white p-2 shadow-sm">
+    <div className="flex w-full items-center gap-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)] p-2 shadow-sm">
       <button
         type="button"
         onClick={onExpand}
-        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 py-1 text-left hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 py-1 text-left hover:bg-[var(--studio-hover)] focus:outline-none focus:ring-2 focus:ring-gold-500/40"
         aria-label={`Change music — currently ${currentTrack.displayName}`}
       >
         <span
@@ -530,13 +530,13 @@ function CollapsedCard({
           <AudioWaveform className="h-3.5 w-5" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+          <span className="block truncate text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]">
             Now playing
           </span>
-          <span className="block truncate text-sm font-medium text-neutral-900">
+          <span className="block truncate text-sm font-medium text-[var(--studio-text)]">
             {currentTrack.displayName}
           </span>
-          <span className="block truncate text-[11px] text-neutral-500">
+          <span className="block truncate text-[11px] text-[var(--studio-text-faint)]">
             {subtitle}
           </span>
         </span>
@@ -545,7 +545,7 @@ function CollapsedCard({
         type="button"
         onClick={onRemoveTrack}
         aria-label="Remove music"
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--studio-text-faint)] transition-colors hover:bg-[var(--studio-hover)] hover:text-[var(--studio-text)] focus:outline-none focus:ring-2 focus:ring-gold-500/40"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -592,9 +592,9 @@ function ExpandedPicker({
       : null;
 
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white">
+    <div className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)]">
       {/* ----- Category chips ------------------------------------------- */}
-      <div className="border-b border-neutral-100 px-2 py-2">
+      <div className="border-b border-[var(--studio-border)] px-2 py-2">
         <div
           className="flex flex-wrap items-center gap-1"
           role="toolbar"
@@ -612,7 +612,7 @@ function ExpandedPicker({
                   "rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors",
                   isActive
                     ? "bg-gold-500 text-neutral-900"
-                    : "bg-neutral-100 text-neutral-600 hover:bg-gold-50 hover:text-neutral-900",
+                    : "bg-[var(--studio-hover)] text-[var(--studio-text-muted)] hover:bg-gold-50 hover:text-[var(--studio-text)]",
                 ].join(" ")}
               >
                 {CATEGORY_FILTER_LABEL[filter]}
@@ -624,14 +624,14 @@ function ExpandedPicker({
               type="button"
               onClick={onCollapse}
               aria-label="Close picker"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--studio-text-faint)] transition-colors hover:bg-[var(--studio-hover)] hover:text-[var(--studio-text)] focus:outline-none focus:ring-2 focus:ring-gold-500/40"
             >
               <X className="h-3 w-3" />
             </button>
           </div>
         </div>
         {categoryHint ? (
-          <p className="mt-1.5 px-1 text-[11px] leading-snug text-neutral-500">
+          <p className="mt-1.5 px-1 text-[11px] leading-snug text-[var(--studio-text-faint)]">
             {categoryHint}
           </p>
         ) : null}
@@ -644,7 +644,7 @@ function ExpandedPicker({
         className="max-h-72 divide-y divide-neutral-100 overflow-y-auto"
       >
         {tracks.length === 0 ? (
-          <li className="px-3 py-4 text-center text-xs text-neutral-500">
+          <li className="px-3 py-4 text-center text-xs text-[var(--studio-text-faint)]">
             No tracks in this mood yet.
           </li>
         ) : (
@@ -672,11 +672,11 @@ function ExpandedPicker({
 
       {/* ----- Remove music link ---------------------------------------- */}
       {hasCurrentTrack ? (
-        <div className="border-t border-neutral-100 px-3 py-2 text-right">
+        <div className="border-t border-[var(--studio-border)] px-3 py-2 text-right">
           <button
             type="button"
             onClick={onRemoveTrack}
-            className="text-[11px] font-medium text-neutral-500 underline-offset-2 hover:text-red-600 hover:underline focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+            className="text-[11px] font-medium text-[var(--studio-text-faint)] underline-offset-2 hover:text-red-600 hover:underline focus:outline-none focus:ring-2 focus:ring-gold-500/40"
           >
             Remove music
           </button>
@@ -731,7 +731,7 @@ function TrackRow({
         "flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-gold-500/40",
         isSelected
           ? "bg-gold-50"
-          : "hover:bg-neutral-50",
+          : "hover:bg-[var(--studio-hover)]",
         isUnavailable ? "opacity-60" : "",
       ].join(" ")}
     >
@@ -740,18 +740,18 @@ function TrackRow({
           <span
             className={[
               "truncate text-sm font-medium",
-              isSelected ? "text-gold-900" : "text-neutral-900",
+              isSelected ? "text-gold-900" : "text-[var(--studio-text)]",
             ].join(" ")}
           >
             {track.displayName}
           </span>
-          <span className="inline-flex shrink-0 items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+          <span className="inline-flex shrink-0 items-center rounded bg-[var(--studio-hover)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
             {category}
           </span>
         </div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--studio-text-faint)]">
           <span className="tabular-nums">{duration}</span>
-          <span className="text-neutral-300" aria-hidden="true">
+          <span className="text-[var(--studio-text-faint)]" aria-hidden="true">
             ·
           </span>
           <span>{license}</span>
@@ -766,7 +766,7 @@ function TrackRow({
         // why "Coming soon" instead of a play button: the file doesn't exist
         // in Storage yet (the manifest is seeded ahead of uploads). User can
         // still select the row — the worker errors clearly at render time.
-        <span className="inline-flex shrink-0 items-center rounded bg-neutral-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+        <span className="inline-flex shrink-0 items-center rounded bg-[var(--studio-active)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
           Coming soon
         </span>
       ) : (
@@ -789,7 +789,7 @@ function TrackRow({
             "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-gold-500/40",
             isPreviewPlaying
               ? "bg-gold-600 text-white hover:bg-gold-700"
-              : "bg-neutral-100 text-neutral-700 hover:bg-gold-100",
+              : "bg-[var(--studio-hover)] text-[var(--studio-text-muted)] hover:bg-gold-100",
           ].join(" ")}
         >
           {isPreviewPlaying ? (
@@ -835,7 +835,7 @@ function VolumeAndFadeControls({
       <div>
         <label
           htmlFor="reel-music-volume"
-          className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500"
+          className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]"
         >
           Volume
         </label>
@@ -854,7 +854,7 @@ function VolumeAndFadeControls({
             aria-valuetext={`${volumePct}%`}
             className="flex-1 accent-gold-500"
           />
-          <span className="w-9 shrink-0 text-right text-xs font-semibold tabular-nums text-neutral-900">
+          <span className="w-9 shrink-0 text-right text-xs font-semibold tabular-nums text-[var(--studio-text)]">
             {volumePct}%
           </span>
         </div>
@@ -867,7 +867,7 @@ function VolumeAndFadeControls({
           onClick={onToggleFadeControls}
           aria-expanded={showFadeControls}
           aria-controls="reel-music-fade-controls"
-          className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-600 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--studio-text-muted)] hover:text-[var(--studio-text)] focus:outline-none focus:ring-2 focus:ring-gold-500/40"
         >
           <ChevronDown
             className={[
@@ -885,7 +885,7 @@ function VolumeAndFadeControls({
           <div>
             <label
               htmlFor="reel-music-fade-in"
-              className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500"
+              className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]"
             >
               Fade in
             </label>
@@ -902,7 +902,7 @@ function VolumeAndFadeControls({
                 aria-valuetext={`${fadeInMs} milliseconds`}
                 className="flex-1 accent-gold-500"
               />
-              <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums text-neutral-900">
+              <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums text-[var(--studio-text)]">
                 {fadeInMs}ms
               </span>
             </div>
@@ -911,7 +911,7 @@ function VolumeAndFadeControls({
           <div>
             <label
               htmlFor="reel-music-fade-out"
-              className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500"
+              className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]"
             >
               Fade out
             </label>
@@ -928,12 +928,12 @@ function VolumeAndFadeControls({
                 aria-valuetext={`${fadeOutMs} milliseconds`}
                 className="flex-1 accent-gold-500"
               />
-              <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums text-neutral-900">
+              <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums text-[var(--studio-text)]">
                 {fadeOutMs}ms
               </span>
             </div>
           </div>
-          <p className="text-[11px] leading-snug text-neutral-500">
+          <p className="text-[11px] leading-snug text-[var(--studio-text-faint)]">
             Defaults: {DEFAULT_FADE_IN_MS}ms in, {DEFAULT_FADE_OUT_MS}ms out at{" "}
             {Math.round(DEFAULT_VOLUME * 100)}% volume.
           </p>

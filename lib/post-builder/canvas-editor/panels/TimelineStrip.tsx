@@ -320,11 +320,11 @@ export default function TimelineStrip(props: TimelineStripProps): JSX.Element {
     <section
       role="region"
       aria-label="Reel timeline"
-      className="flex w-full flex-col gap-2 border-t border-neutral-200 bg-white px-4 py-2.5"
+      className="flex w-full flex-col gap-2 border-t border-[var(--studio-border)] bg-[var(--studio-panel)] px-4 py-2.5"
     >
       {/* Header row: eyebrow summary + Add Scene button */}
       <header className="flex items-center justify-between gap-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-faint)]">
           {`Timeline · ${sceneCount} scene${sceneCount === 1 ? "" : "s"} · ${formatDuration(totalMs)}`}
         </span>
         <button
@@ -334,7 +334,7 @@ export default function TimelineStrip(props: TimelineStripProps): JSX.Element {
           className={[
             "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150",
             atMax
-              ? "cursor-not-allowed bg-neutral-100 text-neutral-400"
+              ? "cursor-not-allowed bg-[var(--studio-hover)] text-[var(--studio-text-faint)]"
               : "bg-gold-500 text-neutral-900 hover:bg-gold-400 active:bg-gold-600",
           ].join(" ")}
           aria-label="Add scene"
@@ -491,7 +491,7 @@ function SceneBlock(props: SceneBlockProps): JSX.Element {
         // selected vs unselected color treatment
         isSelected
           ? "border-2 border-gold-500 bg-gold-50"
-          : "border border-neutral-200 bg-neutral-50 hover:border-gold-400 hover:bg-gold-50/40",
+          : "border border-[var(--studio-border)] bg-[var(--studio-hover)] hover:border-gold-400 hover:bg-gold-50/40",
         // dragging fade
         isDragging ? "opacity-50" : "opacity-100",
         "cursor-grab active:cursor-grabbing",
@@ -526,7 +526,7 @@ function SceneBlock(props: SceneBlockProps): JSX.Element {
         className={[
           "absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full opacity-0 shadow transition-all duration-150 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gold-400",
           removeDisabled
-            ? "cursor-not-allowed bg-neutral-300 text-neutral-500"
+            ? "cursor-not-allowed bg-neutral-300 text-[var(--studio-text-faint)]"
             : "bg-neutral-900/80 text-white hover:bg-neutral-900",
         ].join(" ")}
         aria-label={`Remove scene ${sceneNumber}`}
@@ -542,7 +542,7 @@ function SceneBlock(props: SceneBlockProps): JSX.Element {
       {/* Centered scene-kind glyph */}
       <span
         className={[
-          "flex flex-1 items-center justify-center pt-3 text-neutral-500",
+          "flex flex-1 items-center justify-center pt-3 text-[var(--studio-text-faint)]",
           isSelected ? "text-gold-700" : "group-hover:text-gold-700",
         ].join(" ")}
         aria-hidden="true"
@@ -554,7 +554,7 @@ function SceneBlock(props: SceneBlockProps): JSX.Element {
       <span
         className={[
           "mb-1 inline-block w-full truncate px-1 text-center text-[10px] font-medium tabular-nums",
-          isSelected ? "text-gold-800" : "text-neutral-600",
+          isSelected ? "text-gold-800" : "text-[var(--studio-text-muted)]",
         ].join(" ")}
         aria-hidden="true"
       >
@@ -590,7 +590,7 @@ function TransitionGlyphButton(
       type="button"
       onClick={onClick}
       className={[
-        "mx-0.5 my-auto inline-flex h-8 w-8 flex-shrink-0 items-center justify-center self-center rounded-md border border-transparent text-neutral-500 transition-all duration-150",
+        "mx-0.5 my-auto inline-flex h-8 w-8 flex-shrink-0 items-center justify-center self-center rounded-md border border-transparent text-[var(--studio-text-faint)] transition-all duration-150",
         "hover:border-gold-300 hover:bg-gold-50/60 hover:text-gold-700",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500",
       ].join(" ")}
@@ -623,7 +623,7 @@ function AddSceneTile(props: AddSceneTileProps): JSX.Element {
       className={[
         "ml-1 flex flex-shrink-0 flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed transition-all duration-150",
         disabled
-          ? "cursor-not-allowed border-neutral-200 bg-neutral-50 text-neutral-300"
+          ? "cursor-not-allowed border-[var(--studio-border)] bg-[var(--studio-hover)] text-[var(--studio-text-faint)]"
           : "border-gold-400 bg-gold-50/30 text-gold-700 hover:border-gold-500 hover:bg-gold-50/60",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500",
       ].join(" ")}
@@ -663,7 +663,7 @@ function EmptyState(props: {
         heightPx={BLOCK_HEIGHT_PX}
         maxScenes={DEFAULT_MAX_SCENES}
       />
-      <p className="max-w-md text-[11px] leading-snug text-neutral-500">
+      <p className="max-w-md text-[11px] leading-snug text-[var(--studio-text-faint)]">
         Empty timeline — click <span className="font-semibold">+ Scene</span>{" "}
         to start. Scenes play in order, left to right.
       </p>
