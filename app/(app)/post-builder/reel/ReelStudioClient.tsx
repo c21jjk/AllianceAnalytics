@@ -485,6 +485,28 @@ function isPhotosApiResponse(value: unknown): value is PhotosApiResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Element-size hook — measures the center stage so ReelPreview can fill the
+// available height responsively (no page scroll). Returns a ref to attach to
+// the measured element + its rounded content-box width/height.
+// ---------------------------------------------------------------------------
+
+function useElementSize<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]!.contentRect;
+      setSize({ w: Math.round(r.width), h: Math.round(r.height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, size] as const;
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -584,6 +606,15 @@ export default function ReelStudioClient({
   subtitleParts.push("1080×1920");
   subtitleParts.push(totalDurationSec);
   const subtitle = subtitleParts.join(" · ");
+
+  // ---- center-stage measurement (fit-to-viewport preview) -------------
+  // why: the preview must fill the available stage height without scrolling
+  // the page. We measure the stage div and pass derived max dimensions to
+  // ReelPreview, which keeps 9:16 within both. The -24/-96 padding reserves
+  // room for the stage padding + ReelPreview's play/scrub controls.
+  const [stageRef, stageSize] = useElementSize<HTMLDivElement>();
+  const stageW = Math.max(160, stageSize.w - 24);
+  const stageH = Math.max(240, stageSize.h - 96);
 
   // ---- effects: pre-selection + photos fetch --------------------------
 
@@ -1284,237 +1315,16 @@ export default function ReelStudioClient({
 
   // ---- main render -----------------------------------------------------
 
-  return (
-    <div data-theme="dark" className="flex flex-col gap-4 rounded-xl bg-[var(--studio-bg)] p-3">
-      {/* ---- Header row -------------------------------------------------- */}
-      <header className="flex h-14 items-center justify-between rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)] px-4">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold text-[var(--studio-text)]">Reel Studio</h2>
-          <p className="truncate text-xs text-[var(--studio-text-muted)]">{subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Global pace (2026-06-05) — speed up / slow down every photo
-              slide at once. Per-scene fine-tuning still lives in the scene
-              properties panel. Hidden until there are photo slides to pace. */}
-          {hasPhotoScenes ? (
-            <div className="mr-1 flex items-center gap-2">
-              <span className="hidden text-xs font-medium text-[var(--studio-text-faint)] sm:inline">
-                Pace
-              </span>
-              <div
-                role="group"
-                aria-label="Reel pace"
-                className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]"
-              >
-                {PACE_ORDER.map((p) => {
-                  const active = pace === p;
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => applyPace(p)}
-                      aria-pressed={active}
-                      title={`Set every photo slide to ${PACE_LABEL[p].toLowerCase()} pace`}
-                      className={[
-                        "px-2.5 py-1.5 text-xs font-semibold transition",
-                        active
-                          ? "bg-gold-600 text-white"
-                          : "bg-[var(--studio-panel)] text-[var(--studio-text-muted)] hover:bg-[var(--studio-hover)]",
-                      ].join(" ")}
-                    >
-                      {PACE_LABEL[p]}
-                    </button>
-                  );
-                })}
-              </div>
-              <span className="text-xs tabular-nums text-[var(--studio-text-faint)]">
-                {totalDurationSec}
-              </span>
-            </div>
-          ) : null}
-          {/* Global transition (2026-06-06) — ONE style + speed for the whole
-              Reel, applied to every slide. Replaces the per-scene transition
-              controls (the first scene had no incoming transition, so they
-              were a dead end). Hidden until there are 2+ scenes to bridge. */}
-          {hasMultipleScenes ? (
-            <div className="mr-1 flex items-center gap-1.5">
-              <span className="hidden text-xs font-medium text-[var(--studio-text-faint)] sm:inline">
-                Transition
-              </span>
-              <select
-                value={globalTransitionType}
-                onChange={(e) => {
-                  const nextType = e.currentTarget.value as TransitionType;
-                  applyGlobalTransition(
-                    nextType,
-                    globalTransitionMs ||
-                      DEFAULT_TRANSITION_MS_BY_TYPE[nextType],
-                  );
-                }}
-                aria-label="Transition style (applies to every slide)"
-                title="Transition style — applied to every slide in the Reel"
-                className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-xs font-medium text-[var(--studio-text)]"
-              >
-                {TRANSITION_STYLE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={globalTransitionMs}
-                disabled={globalTransitionType === "cut"}
-                onChange={(e) =>
-                  applyGlobalTransition(
-                    globalTransitionType,
-                    Number(e.currentTarget.value),
-                  )
-                }
-                aria-label="Transition speed (applies to every slide)"
-                title="Transition speed — applied to every slide in the Reel"
-                className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-xs font-medium text-[var(--studio-text)] disabled:opacity-40"
-              >
-                {TRANSITION_SPEED_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-          {/* AI-adapt my card (E, 2026-06-05) — reflow the source post's
-              square card into a native 9:16 hero. Shown only when the Reel
-              was seeded from a carousel post that carried its design. */}
-          {canAdaptCard ? (
-            <button
-              type="button"
-              onClick={() => {
-                void handleAdaptCard();
-              }}
-              disabled={adaptingCard || !composition}
-              aria-label="Adapt my square card design into the Reel's vertical hero with AI"
-              title="Reflow your exact post card into the 9:16 Reel hero (AI)"
-              className="inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-[var(--studio-panel)] px-3 py-2 text-sm font-semibold text-gold-700 shadow-sm transition hover:border-gold-500 hover:bg-gold-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-                className="h-4 w-4"
-              >
-                <path d="M11.999 2.25l1.9 5.151 5.151 1.9-5.151 1.9-1.9 5.151-1.9-5.151-5.151-1.9 5.151-1.9 1.9-5.151zM18.75 14.25l.95 2.575 2.575.95-2.575.95-.95 2.575-.95-2.575-2.575-.95 2.575-.95.95-2.575z" />
-              </svg>
-              {adaptingCard ? "Adapting…" : "AI-adapt my card"}
-            </button>
-          ) : null}
-          {/* Beat sync — snap every cut to the beat grid. BPM auto-fills from
-              the chosen track once the music library lands. */}
-          {hasPhotoScenes ? (
-            <div className="mr-1 flex items-center gap-1.5">
-              <span className="hidden text-xs font-medium text-[var(--studio-text-faint)] sm:inline">
-                BPM
-              </span>
-              <input
-                type="number"
-                min={40}
-                max={220}
-                value={bpm}
-                onChange={(e) => setBpm(Number(e.currentTarget.value) || 0)}
-                aria-label="Beats per minute"
-                className="w-14 rounded border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-1.5 py-1.5 text-xs text-[var(--studio-text)]"
-              />
-              <button
-                type="button"
-                onClick={handleSnapToBeat}
-                disabled={!composition || bpm <= 0}
-                title="Snap every scene cut to the beat grid"
-                className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2.5 py-2 text-sm font-medium text-[var(--studio-text)] transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Snap
-              </button>
-            </div>
-          ) : null}
-          {/* Add end-card — appends a closing CTA scene. */}
-          <button
-            type="button"
-            onClick={handleAddEndCard}
-            disabled={
-              !composition ||
-              generateState.phase === "submitting" ||
-              generateState.phase === "polling" ||
-              generateState.phase === "persisting"
-            }
-            aria-label="Add a closing CTA end-card scene"
-            title="Add a closing call-to-action end-card"
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-3 py-2 text-sm font-medium text-[var(--studio-text)] shadow-sm transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            + End card
-          </button>
-          {/* Templates button — opens the Reel Template Library picker.
-              Disabled until a listing is picked (no point browsing
-              templates with nothing to render against) and during an
-              in-flight render so the user can't swap mid-flight. */}
-          <button
-            type="button"
-            onClick={() => setShowTemplatesPicker(true)}
-            disabled={
-              !selectedListing ||
-              generateState.phase === "submitting" ||
-              generateState.phase === "polling" ||
-              generateState.phase === "persisting"
-            }
-            aria-label="Open the Reel template picker"
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-panel)] px-3 py-2 text-sm font-medium text-[var(--studio-text)] shadow-sm transition hover:border-gold-400 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.75}
-              stroke="currentColor"
-              aria-hidden="true"
-              className="h-4 w-4"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M3.75 6.75A2.25 2.25 0 016 4.5h12a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0118 19.5H6a2.25 2.25 0 01-2.25-2.25V6.75zM3.75 9h16.5M9 4.5v15"
-              />
-            </svg>
-            Templates
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void handleGenerateReel();
-            }}
-            disabled={
-              !composition ||
-              generateState.phase === "submitting" ||
-              generateState.phase === "polling" ||
-              generateState.phase === "persisting"
-            }
-            aria-label={
-              isResume
-                ? "Re-generate Reel from current composition (saves as a new sibling row)"
-                : "Generate Reel from current composition"
-            }
-            className="inline-flex items-center rounded-md bg-gold-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-gold-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {generateState.phase === "submitting" ||
-            generateState.phase === "polling" ||
-            generateState.phase === "persisting"
-              ? isResume
-                ? "Re-generating..."
-                : "Generating..."
-              : isResume
-                ? "Re-generate Reel"
-                : "Generate Reel"}
-          </button>
-        </div>
-      </header>
+  const renderInFlight =
+    generateState.phase === "submitting" ||
+    generateState.phase === "polling" ||
+    generateState.phase === "persisting";
 
+  return (
+    <div
+      data-theme="dark"
+      className="flex h-[calc(100dvh-13rem)] min-h-[600px] flex-col gap-2 rounded-xl bg-[var(--studio-bg)] p-3"
+    >
       {/* ---- Reel Template Library picker overlay --------------------- */}
       {showTemplatesPicker ? (
         <ReelTemplatesPanel
@@ -1545,26 +1355,323 @@ export default function ReelStudioClient({
           onPick={(mls) => setSelectedListingMls(mls)}
         />
       ) : (
-        <ReelWorkspace
-          listing={selectedListing}
-          composition={composition}
-          selectedScene={selectedScene}
-          selectedSceneId={selectedSceneId}
-          photosState={photosState}
-          onSelectScene={handleSelectScene}
-          onReorderScenes={handleReorderScenes}
-          onAddScene={handleAddScene}
-          onRemoveScene={handleRemoveScene}
-          onCycleTransition={handleCycleTransition}
-          onSceneChanged={handleSceneChanged}
-          onAudioTrackChanged={handleAudioTrackChanged}
-          transitionDemoNonce={transitionDemoNonce}
-          onChangeListing={() => {
-            setSelectedListingMls(null);
-            setComposition(null);
-            setSelectedSceneId(null);
-          }}
-        />
+        <>
+          {/* ---- (a) Slim top bar ----------------------------------- */}
+          <header className="flex h-12 shrink-0 items-center justify-between gap-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)] px-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                className="h-5 w-1 shrink-0 rounded-full bg-gold-600"
+              />
+              <span className="shrink-0 text-sm font-medium text-[var(--studio-text)]">
+                Reel Studio
+              </span>
+              <span className="truncate rounded-md bg-[var(--studio-hover)] px-2 py-0.5 text-xs text-[var(--studio-text-muted)]">
+                {selectedListing.address ?? selectedListing.mls_number}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedListingMls(null);
+                  setComposition(null);
+                  setSelectedSceneId(null);
+                }}
+                className="shrink-0 text-xs font-medium text-gold-700 underline-offset-2 hover:underline"
+              >
+                Change listing
+              </button>
+            </div>
+            {composition ? (
+              <div className="flex shrink-0 items-center gap-2">
+                {/* AI-adapt my card — reflow the source post's square card
+                    into a native 9:16 hero. Shown only when the Reel was
+                    seeded from a carousel post that carried its design. */}
+                {canAdaptCard ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleAdaptCard();
+                    }}
+                    disabled={adaptingCard || !composition}
+                    aria-label="Adapt my square card design into the Reel's vertical hero with AI"
+                    title="Reflow your exact post card into the 9:16 Reel hero (AI)"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-[var(--studio-panel)] px-2.5 py-1.5 text-xs font-medium text-gold-700 shadow-sm transition hover:border-gold-500 hover:bg-gold-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden="true"
+                      className="h-4 w-4"
+                    >
+                      <path d="M11.999 2.25l1.9 5.151 5.151 1.9-5.151 1.9-1.9 5.151-1.9-5.151-5.151-1.9 5.151-1.9 1.9-5.151zM18.75 14.25l.95 2.575 2.575.95-2.575.95-.95 2.575-.95-2.575-2.575-.95 2.575-.95.95-2.575z" />
+                    </svg>
+                    {adaptingCard ? "Adapting…" : "AI-adapt my card"}
+                  </button>
+                ) : null}
+                {/* Templates button — opens the Reel Template Library picker. */}
+                <button
+                  type="button"
+                  onClick={() => setShowTemplatesPicker(true)}
+                  disabled={!selectedListing || renderInFlight}
+                  aria-label="Open the Reel template picker"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-panel)] px-2.5 py-1.5 text-xs font-medium text-[var(--studio-text)] shadow-sm transition hover:border-gold-400 hover:text-gold-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.75}
+                    stroke="currentColor"
+                    aria-hidden="true"
+                    className="h-4 w-4"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3.75 6.75A2.25 2.25 0 016 4.5h12a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0118 19.5H6a2.25 2.25 0 01-2.25-2.25V6.75zM3.75 9h16.5M9 4.5v15"
+                    />
+                  </svg>
+                  Templates
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleGenerateReel();
+                  }}
+                  disabled={!composition || renderInFlight}
+                  aria-label={
+                    isResume
+                      ? "Re-generate Reel from current composition (saves as a new sibling row)"
+                      : "Generate Reel from current composition"
+                  }
+                  className="inline-flex items-center rounded-md bg-gold-600 px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-gold-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {renderInFlight
+                    ? isResume
+                      ? "Re-generating..."
+                      : "Generating..."
+                    : isResume
+                      ? "Re-generate Reel"
+                      : "Generate Reel"}
+                </button>
+              </div>
+            ) : null}
+          </header>
+
+          {/* ---- (b) Body row: left rail · center stage · right rail -- */}
+          <div className="flex min-h-0 flex-1 gap-2">
+            {/* LEFT RAIL — whole-reel controls */}
+            <div className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)] p-3">
+              {/* Transition (only with 2+ scenes) */}
+              {hasMultipleScenes ? (
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
+                    Transition
+                  </h3>
+                  <select
+                    value={globalTransitionType}
+                    onChange={(e) => {
+                      const nextType = e.currentTarget.value as TransitionType;
+                      applyGlobalTransition(
+                        nextType,
+                        globalTransitionMs ||
+                          DEFAULT_TRANSITION_MS_BY_TYPE[nextType],
+                      );
+                    }}
+                    aria-label="Transition style (applies to every slide)"
+                    title="Transition style — applied to every slide in the Reel"
+                    className="w-full rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-xs font-medium text-[var(--studio-text)]"
+                  >
+                    {TRANSITION_STYLE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={globalTransitionMs}
+                    disabled={globalTransitionType === "cut"}
+                    onChange={(e) =>
+                      applyGlobalTransition(
+                        globalTransitionType,
+                        Number(e.currentTarget.value),
+                      )
+                    }
+                    aria-label="Transition speed (applies to every slide)"
+                    title="Transition speed — applied to every slide in the Reel"
+                    className="w-full rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-xs font-medium text-[var(--studio-text)] disabled:opacity-40"
+                  >
+                    {TRANSITION_SPEED_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-[var(--studio-text-faint)]">
+                    Applies to every slide.
+                  </p>
+                </div>
+              ) : null}
+
+              {/* Slide pace (only with photo scenes) */}
+              {hasPhotoScenes ? (
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
+                    Slide pace
+                  </h3>
+                  <div
+                    role="group"
+                    aria-label="Reel pace"
+                    className="inline-flex w-full overflow-hidden rounded-md border border-[var(--studio-border)]"
+                  >
+                    {PACE_ORDER.map((p) => {
+                      const active = pace === p;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => applyPace(p)}
+                          aria-pressed={active}
+                          title={`Set every photo slide to ${PACE_LABEL[p].toLowerCase()} pace`}
+                          className={[
+                            "flex-1 px-2.5 py-1.5 text-xs font-medium transition",
+                            active
+                              ? "bg-gold-600 text-white"
+                              : "bg-[var(--studio-panel)] text-[var(--studio-text-muted)] hover:bg-[var(--studio-hover)]",
+                          ].join(" ")}
+                        >
+                          {PACE_LABEL[p]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="text-[11px] tabular-nums text-[var(--studio-text-faint)]">
+                    {totalDurationSec}
+                  </span>
+                </div>
+              ) : null}
+
+              {/* Beat (only with photo scenes) */}
+              {hasPhotoScenes ? (
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
+                    Beat
+                  </h3>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={40}
+                      max={220}
+                      value={bpm}
+                      onChange={(e) => setBpm(Number(e.currentTarget.value) || 0)}
+                      aria-label="Beats per minute"
+                      className="w-16 rounded border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-1.5 py-1.5 text-xs text-[var(--studio-text)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSnapToBeat}
+                      disabled={!composition || bpm <= 0}
+                      title="Snap every scene cut to the beat grid"
+                      className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2.5 py-1.5 text-xs font-medium text-[var(--studio-text)] transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Snap
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Music — composition-level background track */}
+              {composition ? (
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
+                    Music
+                  </h3>
+                  <MusicPicker
+                    currentTrack={composition.audio}
+                    onTrackChanged={handleAudioTrackChanged}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            {/* CENTER STAGE — large preview */}
+            <div
+              ref={stageRef}
+              className="flex min-w-0 flex-1 flex-col items-center justify-center rounded-lg border border-[var(--studio-border)] bg-[#202021] p-4"
+            >
+              {composition && stageSize.h > 0 ? (
+                <>
+                  <ReelPreview
+                    composition={composition}
+                    availablePhotos={photosState.photos}
+                    scrubToSceneId={selectedSceneId}
+                    demoNonce={transitionDemoNonce}
+                    maxWidth={stageW}
+                    maxHeight={stageH}
+                  />
+                  <p className="mt-3 text-xs text-[var(--studio-text-muted)]">
+                    Scene{" "}
+                    {selectedScene
+                      ? composition.scenes.findIndex(
+                          (s) => s.id === selectedScene.id,
+                        ) + 1
+                      : 1}{" "}
+                    of {composition.scenes.length}
+                  </p>
+                </>
+              ) : null}
+            </div>
+
+            {/* RIGHT RAIL — selected-slide inspector */}
+            <aside className="w-72 shrink-0 overflow-y-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)]">
+              <ScenePropertiesPanel
+                scene={selectedScene}
+                onSceneChanged={handleSceneChanged}
+              />
+              {selectedScene === null ? (
+                <div className="p-4 text-sm text-[var(--studio-text-faint)]">
+                  Select a scene from the timeline below to edit its motion,
+                  duration, and transition.
+                </div>
+              ) : null}
+            </aside>
+          </div>
+
+          {/* ---- (c) Bottom timeline -------------------------------- */}
+          <div className="flex h-[132px] shrink-0 flex-col rounded-lg border border-[var(--studio-border)] bg-[var(--studio-panel)]">
+            <div className="flex items-center justify-between px-3 pt-2">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
+                Timeline
+              </h3>
+              <button
+                type="button"
+                onClick={handleAddEndCard}
+                disabled={!composition || renderInFlight}
+                aria-label="Add a closing CTA end-card scene"
+                title="Add a closing call-to-action end-card"
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2.5 py-1 text-xs font-medium text-[var(--studio-text)] transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                + End card
+              </button>
+            </div>
+            {composition ? (
+              <div className="min-h-0 flex-1">
+                <TimelineStrip
+                  scenes={composition.scenes}
+                  selectedSceneId={selectedSceneId}
+                  onSelectScene={handleSelectScene}
+                  onReorderScenes={handleReorderScenes}
+                  onAddScene={handleAddScene}
+                  onRemoveScene={handleRemoveScene}
+                  onCycleTransition={handleCycleTransition}
+                  allowEmpty={false}
+                  maxScenes={REEL_CAPS.maxScenes}
+                />
+              </div>
+            ) : null}
+          </div>
+        </>
       )}
     </div>
   );
@@ -1785,146 +1892,6 @@ function ListingPicker({ listings, onPick }: ListingPickerProps) {
         ))}
       </ul>
     </section>
-  );
-}
-
-interface ReelWorkspaceProps {
-  listing: PostBuilderListing;
-  composition: VideoComposition | null;
-  selectedScene: Scene | null;
-  selectedSceneId: string | null;
-  photosState: PhotosFetchState;
-  onSelectScene: (sceneId: string) => void;
-  onReorderScenes: (newOrder: readonly string[]) => void;
-  onAddScene: () => void;
-  onRemoveScene: (sceneId: string) => void;
-  onCycleTransition: (sceneId: string) => void;
-  onSceneChanged: ScenePropertiesPanelProps["onSceneChanged"];
-  /** Day 5 — set/clear the composition's background music track. */
-  onAudioTrackChanged: (next: AudioTrack | null) => void;
-  /** 2026-06-06 — bumped on a global-transition change to auto-demo it in the preview. */
-  transitionDemoNonce: number;
-  onChangeListing: () => void;
-}
-
-/**
- * The post-listing-picked workspace: preview + side panel + bottom timeline.
- * Pulled out so the main component stays scannable.
- */
-function ReelWorkspace({
-  listing,
-  composition,
-  selectedScene,
-  selectedSceneId,
-  photosState,
-  onSelectScene,
-  onReorderScenes,
-  onAddScene,
-  onRemoveScene,
-  onCycleTransition,
-  onSceneChanged,
-  onAudioTrackChanged,
-  transitionDemoNonce,
-  onChangeListing,
-}: ReelWorkspaceProps) {
-  if (!composition) return null;
-
-  const scenes = composition.scenes;
-  const noPhotosWarning =
-    !photosState.isLoading &&
-    photosState.error === null &&
-    photosState.photos.length === 0;
-
-  return (
-    <div className="flex flex-col gap-4">
-      {/* ---- Sub-toolbar: change listing + warnings ------------------- */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-hover)] px-3 py-2">
-        <div className="flex items-center gap-2 text-sm text-[var(--studio-text-muted)]">
-          <span className="font-medium text-[var(--studio-text)]">
-            {listing.address ?? listing.mls_number}
-          </span>
-          <span className="text-[var(--studio-text-faint)]">·</span>
-          <button
-            type="button"
-            onClick={onChangeListing}
-            className="text-xs font-medium text-gold-700 underline-offset-2 hover:underline"
-          >
-            Change listing
-          </button>
-        </div>
-        {noPhotosWarning ? (
-          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-200">
-            This listing has no photos — only design scenes will be available.
-          </span>
-        ) : null}
-      </div>
-
-      {/* ---- Main: preview + side panel ------------------------------ */}
-      <div className="flex flex-col gap-4 lg:flex-row">
-        {/* Left: preview area (~70%) — Day 4 swapped the static frame for
-            ReelPreview's real-time canvas playback. The Scene N of M caption
-            stays so the user has clear scene context when scrubbing. */}
-        <div className="flex flex-1 flex-col items-center rounded-xl border border-[var(--studio-border)] bg-[var(--studio-panel)] p-6">
-          <ReelPreview
-            composition={composition}
-            availablePhotos={photosState.photos}
-            scrubToSceneId={selectedSceneId}
-            demoNonce={transitionDemoNonce}
-            maxWidth={360}
-          />
-          <p className="mt-3 text-xs text-[var(--studio-text-muted)]">
-            Scene {selectedScene
-              ? scenes.findIndex((s) => s.id === selectedScene.id) + 1
-              : 1}{" "}
-            of {scenes.length}
-          </p>
-        </div>
-
-        {/* Right: properties panel (~320px) — Day 5 added MusicPicker below
-            ScenePropertiesPanel. Divider mirrors the divide-neutral-100
-            rhythm inside ScenePropertiesPanel's sections so the two panels
-            feel like one continuous sidebar even though they're separate
-            components. */}
-        <aside className="w-full shrink-0 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-panel)] lg:w-80">
-          <ScenePropertiesPanel
-            scene={selectedScene}
-            onSceneChanged={onSceneChanged}
-          />
-          {/* why: render a skeleton so the panel slot is visible even when
-              the sibling component is still a stub. Removed once the real
-              component is wired. */}
-          {selectedScene === null ? (
-            <div className="p-4 text-sm text-[var(--studio-text-faint)]">
-              Select a scene from the timeline below to edit its motion,
-              duration, and transition.
-            </div>
-          ) : null}
-          {/* Music picker — composition-level (one track per Reel), so it
-              sits below the per-scene panel rather than inside it. */}
-          <div className="border-t border-[var(--studio-border)]">
-            <MusicPicker
-              currentTrack={composition.audio}
-              onTrackChanged={onAudioTrackChanged}
-            />
-          </div>
-        </aside>
-      </div>
-
-      {/* ---- Bottom: timeline strip ---------------------------------- */}
-      <div className="h-[140px] rounded-xl border border-[var(--studio-border)] bg-[var(--studio-panel)]">
-        <TimelineStrip
-          scenes={scenes}
-          selectedSceneId={selectedSceneId}
-          onSelectScene={onSelectScene}
-          onReorderScenes={onReorderScenes}
-          onAddScene={onAddScene}
-          onRemoveScene={onRemoveScene}
-          onCycleTransition={onCycleTransition}
-          allowEmpty={false}
-          maxScenes={REEL_CAPS.maxScenes}
-        />
-      </div>
-    </div>
   );
 }
 

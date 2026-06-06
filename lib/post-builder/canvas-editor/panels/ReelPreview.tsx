@@ -71,6 +71,13 @@ export interface ReelPreviewProps {
    * composition's 9:16 ratio. Default 360 (matches Day 3 layout).
    */
   maxWidth?: number;
+  /**
+   * 2026-06-06 — optional height cap (px). When set, the preview fits within
+   * BOTH maxWidth and maxHeight while keeping 9:16, so the redesigned editor
+   * can let the preview fill the available stage height instead of a fixed
+   * width. Omit for the legacy width-only behavior.
+   */
+  maxHeight?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +822,7 @@ export default function ReelPreview({
   scrubToSceneId = null,
   demoNonce = 0,
   maxWidth = 360,
+  maxHeight,
 }: ReelPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // 2026-06-05 — two offscreen canvases used during a transition band to
@@ -829,11 +837,15 @@ export default function ReelPreview({
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
-  // 2026-06-06 — when set, the RAF loop stops playback once the playhead
-  // passes this timestamp. Drives the transition auto-demo (a one-shot play
-  // through the first boundary). A ref (not state) so the loop reads it live
-  // without re-subscribing each frame.
-  const demoStopMsRef = useRef<number | null>(null);
+  // 2026-06-06 — transition auto-demo controller. When active, the RAF loop
+  // plays a short window around the first inter-scene boundary in SLOW MOTION
+  // and LOOPS it a couple of times, so the chosen transition is unmistakable
+  // even between visually similar photos. Refs (not state) so the loop reads
+  // them live without re-subscribing each frame.
+  const demoActiveRef = useRef<boolean>(false);
+  const demoStartRef = useRef<number>(0);
+  const demoEndRef = useRef<number>(0);
+  const demoLoopsLeftRef = useRef<number>(0);
 
   // ---- image cache ----------------------------------------------------
   const { cacheRef, loadingTick, ensureLoaded, allReady } = useImageCache();
@@ -911,10 +923,13 @@ export default function ReelPreview({
     if (composition.scenes.length < 2) return;
     const boundary = composition.scenes[1]!.startMs;
     const transMs = composition.scenes[1]!.transitionMs || 0;
-    const leadMs = 500;
+    const leadMs = 400;
+    const tailMs = 450;
     const startAt = Math.max(0, boundary - leadMs);
-    // Stop a short beat after the transition completes so the move reads fully.
-    demoStopMsRef.current = boundary + transMs + 450;
+    demoStartRef.current = startAt;
+    demoEndRef.current = boundary + transMs + tailMs;
+    demoLoopsLeftRef.current = 2; // play the boundary through twice
+    demoActiveRef.current = true;
     setCurrentTimeMs(startAt);
     setIsPlaying(true);
     // why only demoNonce in deps: the scene geometry is read at fire time; we
@@ -1262,23 +1277,37 @@ export default function ReelPreview({
 
     const tick = (ts: number) => {
       if (lastTs == null) lastTs = ts;
-      const deltaMs = ts - lastTs;
+      let deltaMs = ts - lastTs;
       lastTs = ts;
+      // 2026-06-06 — transition auto-demo: slow the playhead so a 0.3s move
+      // reads clearly, and loop the boundary a couple of times before
+      // stopping. Runs entirely inside the demo window — normal playback is
+      // untouched.
+      if (demoActiveRef.current) {
+        deltaMs *= 0.4; // slow-motion factor
+        virtualTimeMs += deltaMs;
+        if (virtualTimeMs >= demoEndRef.current) {
+          demoLoopsLeftRef.current -= 1;
+          if (demoLoopsLeftRef.current > 0) {
+            virtualTimeMs = demoStartRef.current; // replay the boundary
+            setCurrentTimeMs(virtualTimeMs);
+            rafId = requestAnimationFrame(tick);
+            return;
+          }
+          demoActiveRef.current = false;
+          setCurrentTimeMs(demoEndRef.current);
+          setIsPlaying(false);
+          return; // demo done — stop; the effect cleanup cancels the RAF.
+        }
+        setCurrentTimeMs(virtualTimeMs);
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
       // why no cap on delta: if the tab was backgrounded the delta can be
       // many seconds. We deliberately let the playhead leap forward — this
       // is the "drop frames, don't queue them" rule. The next render shows
       // the correct virtual time, not a catch-up burst.
       virtualTimeMs += deltaMs;
-      // 2026-06-06 — transition auto-demo: stop once we pass the demo end
-      // point instead of looping the whole reel. Checked before the modulo
-      // wrap so a demo near the end still resolves.
-      const demoStop = demoStopMsRef.current;
-      if (demoStop != null && virtualTimeMs >= demoStop) {
-        demoStopMsRef.current = null;
-        setCurrentTimeMs(demoStop);
-        setIsPlaying(false);
-        return; // don't schedule another frame — the effect cleanup cancels.
-      }
       if (totalMs > 0 && virtualTimeMs >= totalMs) {
         // Loop. Modulo handles long pauses (no infinite catch-up).
         virtualTimeMs = virtualTimeMs % totalMs;
@@ -1322,8 +1351,8 @@ export default function ReelPreview({
       if (!el) return;
       el.setPointerCapture(e.pointerId);
       setIsScrubbing(true);
-      // Scrubbing cancels any pending auto-demo stop.
-      demoStopMsRef.current = null;
+      // Scrubbing cancels any in-flight auto-demo.
+      demoActiveRef.current = false;
       // why we pause-on-scrub-start: feels right for a "scrub through" UX.
       // If the user was playing, they'll resume manually after releasing.
       setIsPlaying(false);
@@ -1354,9 +1383,9 @@ export default function ReelPreview({
   // ---- play / pause --------------------------------------------------
 
   const togglePlay = useCallback(() => {
-    // Manual play cancels any pending auto-demo stop so the user gets full
-    // playback, not a clipped demo window.
-    demoStopMsRef.current = null;
+    // Manual play cancels any in-flight auto-demo so the user gets full
+    // playback, not a clipped/slow-mo demo window.
+    demoActiveRef.current = false;
     setIsPlaying((p) => {
       // Restart from 0 if we paused at the very end (no auto-rewind feels
       // wrong on click-Play). Loop wraparound happens during playback.
@@ -1384,7 +1413,14 @@ export default function ReelPreview({
   // why scale-down via CSS, not canvas attribute: the canvas's internal
   // resolution stays 1080×1920 so drawImage math + font sizing match the
   // worker's coordinate system. The display size is purely cosmetic.
-  const displayHeight = Math.round(maxWidth * (16 / 9));
+  //
+  // 2026-06-06 — fit within BOTH maxWidth and (optional) maxHeight, keeping
+  // 9:16. With a height cap the preview fills the editor stage vertically; the
+  // width follows from the ratio so it never overflows either axis.
+  const displayWidth = maxHeight
+    ? Math.max(160, Math.min(maxWidth, Math.round(maxHeight * (9 / 16))))
+    : maxWidth;
+  const displayHeight = Math.round(displayWidth * (16 / 9));
 
   // ---- loading overlay -----------------------------------------------
 
@@ -1404,8 +1440,8 @@ export default function ReelPreview({
     >
       {/* ----- Canvas frame ---------------------------------------------- */}
       <div
-        className="relative overflow-hidden rounded-lg bg-neutral-900 ring-1 ring-neutral-200"
-        style={{ width: maxWidth, height: displayHeight }}
+        className="relative overflow-hidden rounded-xl bg-black ring-1 ring-white/10 shadow-2xl shadow-black/60"
+        style={{ width: displayWidth, height: displayHeight }}
       >
         <canvas
           ref={canvasRef}
@@ -1457,11 +1493,11 @@ export default function ReelPreview({
           )}
         </button>
         <div
-          className="font-mono text-xs tabular-nums text-neutral-700"
+          className="font-mono text-xs tabular-nums text-[var(--studio-text-muted)]"
           aria-live="off"
         >
           {formatMmSs(currentTimeMs)}{" "}
-          <span className="text-neutral-400">/</span>{" "}
+          <span className="text-[var(--studio-text-faint)]">/</span>{" "}
           {formatMmSs(composition.totalDurationMs)}
         </div>
       </div>
@@ -1481,8 +1517,8 @@ export default function ReelPreview({
         onPointerUp={handleScrubPointerUp}
         onPointerCancel={handleScrubPointerUp}
         onKeyDown={handleKeyDown}
-        className="relative mt-2 h-2 cursor-pointer rounded-full bg-neutral-200"
-        style={{ width: maxWidth }}
+        className="relative mt-2 h-2 cursor-pointer rounded-full bg-white/15"
+        style={{ width: displayWidth }}
       >
         {/* Filled portion */}
         <div
