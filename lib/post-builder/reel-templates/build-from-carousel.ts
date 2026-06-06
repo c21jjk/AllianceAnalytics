@@ -53,10 +53,14 @@ const HERO_SCENE_MS = 2_500;
 const BODY_TRANSITION_MS = 500;
 
 /**
- * Ken Burns motion cycle for the body photos. Alternating zoom/pan gives
- * rhythm without feeling chaotic — same rationale as the default builder.
+ * Motion cycle for the body photos. Every slide PANS (alternating
+ * direction) so a landscape photo sweeps across its full width for a
+ * dramatic, cinematic feel. The renderer adds a gentle zoom on top of the
+ * pan for depth (see the cover+pan-across model in ReelPreview /
+ * worker render.js), so the preset here only needs to encode pan
+ * direction — the sign of the x delta is what the renderer reads.
  */
-const MOTION_CYCLE = ["zoom_in", "pan_right", "zoom_out", "pan_left"] as const;
+const MOTION_CYCLE = ["pan_right", "pan_left"] as const;
 
 /**
  * Recompute each scene's `startMs` and the composition's total duration,

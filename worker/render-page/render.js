@@ -719,25 +719,48 @@
     return loadImage(photoUrl).then(function (img) {
       var natW = img.naturalWidth || img.width;
       var natH = img.naturalHeight || img.height;
+      if (natW <= 0 || natH <= 0) {
+        return;
+      }
 
-      var crop = computePhotoCrop(motion, frameIndex, totalFrames, natW, natH);
+      // 2026-06-05 — cover + pan-across + gentle-zoom (must stay in lockstep
+      // with ReelPreview.drawPhotoScene). Cover-fit the FULL photo to the
+      // frame (uniform scale, no distortion, no bars), then pan across the
+      // overflow axis while zooming in slightly. For a landscape photo the
+      // overflow is horizontal, so the camera sweeps across the full width.
+      // The motion preset only encodes pan DIRECTION (sign of the x/y delta);
+      // magnitude is ignored — we always traverse the full overflow.
+      var rawT = totalFrames <= 1 ? 0 : frameIndex / (totalFrames - 1);
+      var ease = EASING[motion.easing] || EASING.linear;
+      var p = ease(Math.max(0, Math.min(1, rawT)));
 
-      // Compute the cover-fit of the cropped region into 1080×1920.
-      // Because cropped region (sw×sh) and dest (1080×1920) usually
-      // share the 9:16 aspect ratio (presets pick rects that do), this
-      // simplifies to a uniform scale. We use computeCoverRect anyway
-      // so non-9:16 crops degrade gracefully.
-      var cover = computeCoverRect(crop.sw, crop.sh, CANVAS_WIDTH, CANVAS_HEIGHT);
+      var KEN_ZOOM = 1.08;
+      var baseScale = Math.max(CANVAS_WIDTH / natW, CANVAS_HEIGHT / natH);
+      var scale = baseScale * (1 + (KEN_ZOOM - 1) * p);
+      var renderedW = natW * scale;
+      var renderedH = natH * scale;
+      var overflowX = renderedW - CANVAS_WIDTH;
+      var overflowY = renderedH - CANVAS_HEIGHT;
 
-      // Offset the image so the crop's TOP-LEFT lands at the cover's
-      // TOP-LEFT. The crop is at (sx, sy) in source pixels; once
-      // scaled by `cover.scaleX`, the image's top-left in canvas
-      // pixels is at `cover.left - crop.sx * cover.scaleX`.
+      var dx = motion.endRect.x - motion.startRect.x;
+      var dy = motion.endRect.y - motion.startRect.y;
+
+      var left, top;
+      if (overflowX >= overflowY) {
+        var fX = dx >= 0 ? p : 1 - p;
+        left = -fX * overflowX;
+        top = -overflowY / 2;
+      } else {
+        var fY = dy >= 0 ? p : 1 - p;
+        top = -fY * overflowY;
+        left = -overflowX / 2;
+      }
+
       var fImg = new fabric.Image(img, {
-        left: cover.left - crop.sx * cover.scaleX,
-        top: cover.top - crop.sy * cover.scaleY,
-        scaleX: cover.scaleX,
-        scaleY: cover.scaleY,
+        left: left,
+        top: top,
+        scaleX: scale,
+        scaleY: scale,
         selectable: false,
         evented: false,
       });

@@ -38,7 +38,6 @@ import {
 } from "react";
 import {
   type MotionPath,
-  type MotionRect,
   type Scene,
   type VideoComposition,
 } from "@/lib/post-builder/types";
@@ -87,16 +86,6 @@ function easeT(t: number, easing: MotionPath["easing"]): number {
       // smoothstep — same formula the worker uses for its ease_in_out
       return 3 * t * t - 2 * t * t * t;
   }
-}
-
-/** Linearly interpolate between two MotionRects componentwise. */
-function lerpRect(start: MotionRect, end: MotionRect, t: number): MotionRect {
-  return {
-    x: start.x + (end.x - start.x) * t,
-    y: start.y + (end.y - start.y) * t,
-    w: start.w + (end.w - start.w) * t,
-    h: start.h + (end.h - start.h) * t,
-  };
 }
 
 /**
@@ -353,9 +342,19 @@ function useImageCache(): {
 // ---------------------------------------------------------------------------
 
 /**
- * Draw a photo scene's current frame onto the destination context. Mirrors
- * the worker's renderPhotoScene math: lerp the motion rect → use as drawImage
- * source crop to "cover" the canvas dimensions.
+ * Draw a photo scene's current frame onto the destination context.
+ *
+ * 2026-06-05 — cover + pan-across + gentle-zoom model (must stay in lockstep
+ * with the worker's renderPhotoScene in worker/render-page/render.js). The
+ * OLD code did a stretched source-rect → full-canvas drawImage, which
+ * squished landscape photos into the 9:16 frame (the distortion bug). Now we
+ * cover-fit the FULL photo to the frame (uniform scale, no distortion, no
+ * bars) and pan across the overflow axis while zooming in slightly. For a
+ * landscape photo the overflow is horizontal, so the camera sweeps across the
+ * full width of the shot — nothing is permanently cropped out of frame.
+ *
+ * The motion preset now only encodes pan DIRECTION (the sign of the x/y
+ * delta); the magnitude is ignored and we always traverse the full overflow.
  */
 function drawPhotoScene(
   ctx: CanvasRenderingContext2D,
@@ -365,22 +364,45 @@ function drawPhotoScene(
   canvasW: number,
   canvasH: number,
 ): void {
-  const eased = easeT(Math.max(0, Math.min(1, intraSceneT)), motion.easing);
-  const rect = lerpRect(motion.startRect, motion.endRect, eased);
   const natW = img.naturalWidth || img.width;
   const natH = img.naturalHeight || img.height;
   // Guard: a decoded-but-zero image (rare onload race) would NaN the math.
   if (natW <= 0 || natH <= 0) return;
 
-  const srcX = rect.x * natW;
-  const srcY = rect.y * natH;
-  const srcW = Math.max(1, rect.w * natW);
-  const srcH = Math.max(1, rect.h * natH);
+  const p = easeT(Math.max(0, Math.min(1, intraSceneT)), motion.easing);
 
-  // Background fill so any letterbox shows black, not stale pixels.
+  // Cover scale fills both axes (one axis overflows). Add a gentle Ken
+  // Burns zoom over the scene for depth.
+  const KEN_ZOOM = 1.08;
+  const baseScale = Math.max(canvasW / natW, canvasH / natH);
+  const scale = baseScale * (1 + (KEN_ZOOM - 1) * p);
+  const renderedW = natW * scale;
+  const renderedH = natH * scale;
+  const overflowX = renderedW - canvasW;
+  const overflowY = renderedH - canvasH;
+
+  const dx = motion.endRect.x - motion.startRect.x;
+  const dy = motion.endRect.y - motion.startRect.y;
+
+  let left: number;
+  let top: number;
+  if (overflowX >= overflowY) {
+    // Pan horizontally across the full width; center vertically.
+    const fX = dx >= 0 ? p : 1 - p;
+    left = -fX * overflowX;
+    top = -overflowY / 2;
+  } else {
+    // Pan vertically; center horizontally.
+    const fY = dy >= 0 ? p : 1 - p;
+    top = -fY * overflowY;
+    left = -overflowX / 2;
+  }
+
+  // Background fill so any sub-pixel gap shows black, not stale pixels.
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, canvasW, canvasH);
-  ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, canvasW, canvasH);
+  // Draw the full image scaled + positioned; the canvas clips the overflow.
+  ctx.drawImage(img, 0, 0, natW, natH, left, top, renderedW, renderedH);
 }
 
 /**
