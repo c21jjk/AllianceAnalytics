@@ -38,6 +38,17 @@ jobs:
       - name: Set up flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      - name: Ensure the Fly app exists (first run creates it)
+        # Idempotent: errors (already exists / name taken) are ignored so the
+        # workflow keeps going to deploy. The app name comes from worker/fly.toml.
+        working-directory: worker
+        run: |
+          APP="$(grep -E '^app' fly.toml | sed 's/.*= *"\(.*\)".*/\1/')"
+          echo "App: $APP"
+          flyctl apps create "$APP" --org personal || true
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
       - name: Deploy (remote build on Fly)
         # --remote-only builds the Docker image on Fly's builders, so the
         # Action runner doesn't need Docker. fly.toml in worker/ pins the
