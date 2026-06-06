@@ -60,6 +60,13 @@ export interface ReelPreviewProps {
    */
   scrubToSceneId?: string | null;
   /**
+   * 2026-06-06 — increment to trigger a short auto-demo: the preview scrubs to
+   * just before the first inter-scene boundary and plays through that one
+   * transition, then stops. Used after a global-transition change so the user
+   * sees the move immediately instead of hunting for it during playback.
+   */
+  demoNonce?: number;
+  /**
    * Visual size constraint — width in pixels. Height is computed from the
    * composition's 9:16 ratio. Default 360 (matches Day 3 layout).
    */
@@ -806,6 +813,7 @@ export default function ReelPreview({
   composition,
   availablePhotos,
   scrubToSceneId = null,
+  demoNonce = 0,
   maxWidth = 360,
 }: ReelPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -821,6 +829,11 @@ export default function ReelPreview({
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  // 2026-06-06 — when set, the RAF loop stops playback once the playhead
+  // passes this timestamp. Drives the transition auto-demo (a one-shot play
+  // through the first boundary). A ref (not state) so the loop reads it live
+  // without re-subscribing each frame.
+  const demoStopMsRef = useRef<number | null>(null);
 
   // ---- image cache ----------------------------------------------------
   const { cacheRef, loadingTick, ensureLoaded, allReady } = useImageCache();
@@ -885,6 +898,29 @@ export default function ReelPreview({
     // the playhead without toggling play state.
     setCurrentTimeMs(startMs);
   }, [scrubToSceneId, composition.scenes]);
+
+  // ---- effect: transition auto-demo (2026-06-06) ---------------------
+  //
+  // When demoNonce bumps (a global-transition change), scrub to ~0.5s before
+  // the FIRST inter-scene boundary and play through that single transition,
+  // then auto-stop (the RAF loop honors demoStopMsRef). This gives instant,
+  // targeted feedback for the chosen transition without the user hunting for
+  // it mid-playback. No-op for single-scene comps (no boundary to show).
+  useEffect(() => {
+    if (demoNonce <= 0) return;
+    if (composition.scenes.length < 2) return;
+    const boundary = composition.scenes[1]!.startMs;
+    const transMs = composition.scenes[1]!.transitionMs || 0;
+    const leadMs = 500;
+    const startAt = Math.max(0, boundary - leadMs);
+    // Stop a short beat after the transition completes so the move reads fully.
+    demoStopMsRef.current = boundary + transMs + 450;
+    setCurrentTimeMs(startAt);
+    setIsPlaying(true);
+    // why only demoNonce in deps: the scene geometry is read at fire time; we
+    // do NOT want a scene edit to re-trigger the demo on its own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoNonce]);
 
   // ---- effects: clamp time when composition shrinks ------------------
 
@@ -1233,6 +1269,16 @@ export default function ReelPreview({
       // is the "drop frames, don't queue them" rule. The next render shows
       // the correct virtual time, not a catch-up burst.
       virtualTimeMs += deltaMs;
+      // 2026-06-06 — transition auto-demo: stop once we pass the demo end
+      // point instead of looping the whole reel. Checked before the modulo
+      // wrap so a demo near the end still resolves.
+      const demoStop = demoStopMsRef.current;
+      if (demoStop != null && virtualTimeMs >= demoStop) {
+        demoStopMsRef.current = null;
+        setCurrentTimeMs(demoStop);
+        setIsPlaying(false);
+        return; // don't schedule another frame — the effect cleanup cancels.
+      }
       if (totalMs > 0 && virtualTimeMs >= totalMs) {
         // Loop. Modulo handles long pauses (no infinite catch-up).
         virtualTimeMs = virtualTimeMs % totalMs;
@@ -1276,6 +1322,8 @@ export default function ReelPreview({
       if (!el) return;
       el.setPointerCapture(e.pointerId);
       setIsScrubbing(true);
+      // Scrubbing cancels any pending auto-demo stop.
+      demoStopMsRef.current = null;
       // why we pause-on-scrub-start: feels right for a "scrub through" UX.
       // If the user was playing, they'll resume manually after releasing.
       setIsPlaying(false);
@@ -1306,6 +1354,9 @@ export default function ReelPreview({
   // ---- play / pause --------------------------------------------------
 
   const togglePlay = useCallback(() => {
+    // Manual play cancels any pending auto-demo stop so the user gets full
+    // playback, not a clipped demo window.
+    demoStopMsRef.current = null;
     setIsPlaying((p) => {
       // Restart from 0 if we paused at the very end (no auto-rewind feels
       // wrong on click-Play). Loop wraparound happens during playback.

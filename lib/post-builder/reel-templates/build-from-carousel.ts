@@ -54,8 +54,12 @@ const PACE_PHOTO_SCENE_MS: Readonly<Record<ReelPace, number>> = {
 /** Hero opener is held a beat shorter than a cinematic body scene. */
 const HERO_SCENE_MS = 2_500;
 
-/** Crossfade overlap between scenes (ms). Dissolve reads as "premium". */
-const BODY_TRANSITION_MS = 500;
+/**
+ * Crossfade overlap between scenes (ms). 2026-06-06 — set to 300 (the editor's
+ * "Standard" speed) so a seeded Reel's transitions match the global transition
+ * control's dropdown exactly on load. The user can bump it to Slow/Dramatic.
+ */
+const BODY_TRANSITION_MS = 300;
 
 /**
  * Motion cycle for the body photos. Every slide PANS (alternating
@@ -152,8 +156,10 @@ export function buildEndCardScene(): Scene {
     startMs: 0,
     durationMs: 2_500,
     content: { kind: "design", template: schema },
-    transitionIn: "fade",
-    transitionMs: 400,
+    // 2026-06-06 — uniform with body scenes; the editor also re-tunes this to
+    // the Reel's current global transition when the card is appended.
+    transitionIn: "dissolve",
+    transitionMs: BODY_TRANSITION_MS,
     textOverlays: [cta, brand],
   };
 }

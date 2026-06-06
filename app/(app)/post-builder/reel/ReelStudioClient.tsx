@@ -183,6 +183,45 @@ const DEFAULT_TRANSITION_MS_BY_TYPE: Readonly<Record<TransitionType, number>> = 
   zoom_blur: 400,
 };
 
+/**
+ * Global transition style options (label + value) for the header dropdown.
+ * 2026-06-06 — transitions are now ONE choice for the whole Reel, not per
+ * scene. Labels mirror the old per-scene panel so nothing reads differently.
+ */
+const TRANSITION_STYLE_OPTIONS: ReadonlyArray<{
+  value: TransitionType;
+  label: string;
+}> = [
+  { value: "cut", label: "Cut (none)" },
+  { value: "fade", label: "Crossfade" },
+  { value: "dissolve", label: "Dip to black" },
+  { value: "fade_white", label: "Dip to white" },
+  { value: "slide_left", label: "Slide left" },
+  { value: "slide_right", label: "Slide right" },
+  { value: "slide_up", label: "Slide up" },
+  { value: "slide_down", label: "Slide down" },
+  { value: "wipe_left", label: "Wipe" },
+  { value: "smooth_left", label: "Whip left" },
+  { value: "smooth_right", label: "Whip right" },
+  { value: "circle_open", label: "Circle" },
+  { value: "zoom_blur", label: "Zoom blur" },
+];
+
+/**
+ * Global transition speed options, in ms. Must include every value any seed
+ * path emits (300 = Standard) so the header dropdown always has a match.
+ */
+const TRANSITION_SPEED_OPTIONS: ReadonlyArray<{
+  value: number;
+  label: string;
+}> = [
+  { value: 200, label: "Quick · 0.2s" },
+  { value: 300, label: "Standard · 0.3s" },
+  { value: 400, label: "Smooth · 0.4s" },
+  { value: 600, label: "Slow · 0.6s" },
+  { value: 1000, label: "Dramatic · 1.0s" },
+];
+
 /** Cycle order for `onCycleTransition` taps in the timeline. */
 const TRANSITION_CYCLE: readonly TransitionType[] = [
   "cut",
@@ -384,8 +423,10 @@ function buildDefaultComposition(
       startMs: 0,
       durationMs: DEFAULT_OUTRO_DURATION_MS,
       content: { kind: "design", template: heroTemplate },
-      transitionIn: "fade",
-      transitionMs: DEFAULT_TRANSITION_MS_BY_TYPE.fade,
+      // 2026-06-06 — uniform with the body scenes so the global transition
+      // control reflects the true (single) transition on load.
+      transitionIn: "dissolve",
+      transitionMs: DEFAULT_TRANSITION_MS_BY_TYPE.dissolve,
     },
   ];
 
@@ -706,12 +747,53 @@ export default function ReelStudioClient({
   const hasPhotoScenes =
     composition?.scenes.some((s) => s.content.kind === "photo") ?? false;
 
-  // 2026-06-05 — append a closing CTA end-card scene.
+  // ---- global transition (2026-06-06) ---------------------------------
+  // why: the team never varies transition style/speed per slide within a
+  // post — one choice applies to the whole Reel. We DERIVE the current value
+  // from the first body scene (every scene after the opener carries the same
+  // transition) so there's a single source of truth, and write changes to ALL
+  // scenes except the opener (scene 0 has no incoming transition — nothing
+  // precedes it). This replaces the old per-scene controls, which were a dead
+  // end on the first scene and let scenes drift out of sync.
+  const globalTransitionType: TransitionType =
+    composition?.scenes[1]?.transitionIn ?? "dissolve";
+  const globalTransitionMs: number =
+    composition?.scenes[1]?.transitionMs ??
+    DEFAULT_TRANSITION_MS_BY_TYPE.dissolve;
+  const hasMultipleScenes = (composition?.scenes.length ?? 0) > 1;
+
+  // Bumped on every global-transition change to trigger the preview auto-demo.
+  const [transitionDemoNonce, setTransitionDemoNonce] = useState(0);
+
+  const applyGlobalTransition = useCallback(
+    (type: TransitionType, ms: number) => {
+      const effectiveMs = type === "cut" ? 0 : ms;
+      applySceneMutation((prev) =>
+        prev.map((s, i) =>
+          i === 0
+            ? s
+            : { ...s, transitionIn: type, transitionMs: effectiveMs },
+        ),
+      );
+      // Fire the auto-demo so the change is instantly visible (#5).
+      setTransitionDemoNonce((n) => n + 1);
+    },
+    [applySceneMutation],
+  );
+
+  // 2026-06-05 — append a closing CTA end-card scene. 2026-06-06 — the new
+  // scene adopts the Reel's current global transition so transitions stay
+  // uniform across every slide.
   const handleAddEndCard = useCallback(() => {
     const endCard = buildEndCardScene();
-    applySceneMutation((prev) => [...prev, endCard]);
-    setSelectedSceneId(endCard.id);
-  }, [applySceneMutation]);
+    const tuned: Scene = {
+      ...endCard,
+      transitionIn: globalTransitionType,
+      transitionMs: globalTransitionType === "cut" ? 0 : globalTransitionMs,
+    };
+    applySceneMutation((prev) => [...prev, tuned]);
+    setSelectedSceneId(tuned.id);
+  }, [applySceneMutation, globalTransitionType, globalTransitionMs]);
 
   // 2026-06-05 — beat-sync wiring. BPM auto-fills from the chosen music track
   // once the library lands (composition.audio); until then it's a manual
@@ -847,8 +929,8 @@ export default function ReelStudioClient({
             kind: "design",
             template: findCanvasTemplate("just_listed", "v1", "story_9x16"),
           },
-      transitionIn: "dissolve",
-      transitionMs: DEFAULT_TRANSITION_MS_BY_TYPE.dissolve,
+      transitionIn: globalTransitionType,
+      transitionMs: globalTransitionType === "cut" ? 0 : globalTransitionMs,
     };
     applySceneMutation((prev) => [...prev, newScene]);
     setSelectedSceneId(newScene.id);
@@ -857,6 +939,8 @@ export default function ReelStudioClient({
     photosState.photos,
     selectedListing,
     applySceneMutation,
+    globalTransitionType,
+    globalTransitionMs,
   ]);
 
   const handleRemoveScene = useCallback(
@@ -876,23 +960,21 @@ export default function ReelStudioClient({
     [composition, selectedSceneId, applySceneMutation],
   );
 
+  // 2026-06-06 — tapping the timeline's between-scene glyph cycles the GLOBAL
+  // transition (style only; speed keeps its current value), keeping every
+  // slide uniform. The sceneId arg is ignored — transitions aren't per-scene.
   const handleCycleTransition = useCallback(
-    (sceneId: string) => {
-      applySceneMutation((prev) =>
-        prev.map((s) => {
-          if (s.id !== sceneId) return s;
-          const currentIdx = TRANSITION_CYCLE.indexOf(s.transitionIn);
-          const nextIdx = (currentIdx + 1) % TRANSITION_CYCLE.length;
-          const nextType = TRANSITION_CYCLE[nextIdx]!;
-          return {
-            ...s,
-            transitionIn: nextType,
-            transitionMs: DEFAULT_TRANSITION_MS_BY_TYPE[nextType],
-          };
-        }),
-      );
+    (_sceneId: string) => {
+      const currentIdx = TRANSITION_CYCLE.indexOf(globalTransitionType);
+      const nextIdx = (currentIdx + 1) % TRANSITION_CYCLE.length;
+      const nextType = TRANSITION_CYCLE[nextIdx]!;
+      const nextMs =
+        nextType === "cut"
+          ? 0
+          : globalTransitionMs || DEFAULT_TRANSITION_MS_BY_TYPE[nextType];
+      applyGlobalTransition(nextType, nextMs);
     },
-    [applySceneMutation],
+    [applyGlobalTransition, globalTransitionType, globalTransitionMs],
   );
 
   const handleSceneChanged = useCallback<
@@ -1250,6 +1332,56 @@ export default function ReelStudioClient({
               </span>
             </div>
           ) : null}
+          {/* Global transition (2026-06-06) — ONE style + speed for the whole
+              Reel, applied to every slide. Replaces the per-scene transition
+              controls (the first scene had no incoming transition, so they
+              were a dead end). Hidden until there are 2+ scenes to bridge. */}
+          {hasMultipleScenes ? (
+            <div className="mr-1 flex items-center gap-1.5">
+              <span className="hidden text-xs font-medium text-[var(--studio-text-faint)] sm:inline">
+                Transition
+              </span>
+              <select
+                value={globalTransitionType}
+                onChange={(e) => {
+                  const nextType = e.currentTarget.value as TransitionType;
+                  applyGlobalTransition(
+                    nextType,
+                    globalTransitionMs ||
+                      DEFAULT_TRANSITION_MS_BY_TYPE[nextType],
+                  );
+                }}
+                aria-label="Transition style (applies to every slide)"
+                title="Transition style — applied to every slide in the Reel"
+                className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-xs font-medium text-[var(--studio-text)]"
+              >
+                {TRANSITION_STYLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={globalTransitionMs}
+                disabled={globalTransitionType === "cut"}
+                onChange={(e) =>
+                  applyGlobalTransition(
+                    globalTransitionType,
+                    Number(e.currentTarget.value),
+                  )
+                }
+                aria-label="Transition speed (applies to every slide)"
+                title="Transition speed — applied to every slide in the Reel"
+                className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-input-bg)] px-2 py-1.5 text-xs font-medium text-[var(--studio-text)] disabled:opacity-40"
+              >
+                {TRANSITION_SPEED_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           {/* AI-adapt my card (E, 2026-06-05) — reflow the source post's
               square card into a native 9:16 hero. Shown only when the Reel
               was seeded from a carousel post that carried its design. */}
@@ -1426,6 +1558,7 @@ export default function ReelStudioClient({
           onCycleTransition={handleCycleTransition}
           onSceneChanged={handleSceneChanged}
           onAudioTrackChanged={handleAudioTrackChanged}
+          transitionDemoNonce={transitionDemoNonce}
           onChangeListing={() => {
             setSelectedListingMls(null);
             setComposition(null);
@@ -1669,6 +1802,8 @@ interface ReelWorkspaceProps {
   onSceneChanged: ScenePropertiesPanelProps["onSceneChanged"];
   /** Day 5 — set/clear the composition's background music track. */
   onAudioTrackChanged: (next: AudioTrack | null) => void;
+  /** 2026-06-06 — bumped on a global-transition change to auto-demo it in the preview. */
+  transitionDemoNonce: number;
   onChangeListing: () => void;
 }
 
@@ -1689,6 +1824,7 @@ function ReelWorkspace({
   onCycleTransition,
   onSceneChanged,
   onAudioTrackChanged,
+  transitionDemoNonce,
   onChangeListing,
 }: ReelWorkspaceProps) {
   if (!composition) return null;
@@ -1733,6 +1869,7 @@ function ReelWorkspace({
             composition={composition}
             availablePhotos={photosState.photos}
             scrubToSceneId={selectedSceneId}
+            demoNonce={transitionDemoNonce}
             maxWidth={360}
           />
           <p className="mt-3 text-xs text-[var(--studio-text-muted)]">
