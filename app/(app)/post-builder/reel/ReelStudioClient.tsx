@@ -491,17 +491,28 @@ function isPhotosApiResponse(value: unknown): value is PhotosApiResponse {
 // ---------------------------------------------------------------------------
 
 function useElementSize<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+  const roRef = useRef<ResizeObserver | null>(null);
+  // why a CALLBACK ref (not useRef + useEffect): the measured stage element
+  // mounts LATER than this component (only after a listing is picked), so a
+  // one-shot mount effect would observe a null ref and never re-attach,
+  // leaving the preview at 0×0 forever. A callback ref fires whenever the node
+  // attaches/detaches, so the observer always binds to the real element and
+  // seeds an initial size synchronously.
+  const ref = useCallback((node: T | null) => {
+    roRef.current?.disconnect();
+    if (!node) {
+      roRef.current = null;
+      return;
+    }
     const ro = new ResizeObserver((entries) => {
       const r = entries[0]!.contentRect;
       setSize({ w: Math.round(r.width), h: Math.round(r.height) });
     });
-    ro.observe(el);
-    return () => ro.disconnect();
+    ro.observe(node);
+    roRef.current = ro;
+    const r = node.getBoundingClientRect();
+    setSize({ w: Math.round(r.width), h: Math.round(r.height) });
   }, []);
   return [ref, size] as const;
 }
@@ -598,14 +609,6 @@ export default function ReelStudioClient({
   const totalDurationSec = composition
     ? formatTotalSeconds(composition.totalDurationMs)
     : "0.0s";
-
-  const subtitleParts: string[] = [];
-  if (selectedListing) {
-    subtitleParts.push(selectedListing.address ?? selectedListing.mls_number);
-  }
-  subtitleParts.push("1080×1920");
-  subtitleParts.push(totalDurationSec);
-  const subtitle = subtitleParts.join(" · ");
 
   // ---- center-stage measurement (fit-to-viewport preview) -------------
   // why: the preview must fill the available stage height without scrolling
@@ -1581,17 +1584,13 @@ export default function ReelStudioClient({
                 </div>
               ) : null}
 
-              {/* Music — composition-level background track */}
+              {/* Music — composition-level background track. MusicPicker
+                  renders its own "Music" header, so no section label here. */}
               {composition ? (
-                <div className="flex flex-col gap-2">
-                  <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
-                    Music
-                  </h3>
-                  <MusicPicker
-                    currentTrack={composition.audio}
-                    onTrackChanged={handleAudioTrackChanged}
-                  />
-                </div>
+                <MusicPicker
+                  currentTrack={composition.audio}
+                  onTrackChanged={handleAudioTrackChanged}
+                />
               ) : null}
             </div>
 
