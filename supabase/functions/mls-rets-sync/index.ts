@@ -67,6 +67,11 @@ const RETS_VERSION = "RETS/1.8";
 const SEARCH_LIMIT = 5000;
 const PHOTO_BUCKET = "property-photos";
 
+// why: Paragon occasionally hangs mid-response; without a signal one stuck
+// search would eat the whole function budget. 60s is generous for the
+// biggest 5000-row search pages.
+const RETS_FETCH_TIMEOUT_MS = 60_000;
+
 interface FeedRow {
   id: string;
   short_code: string;
@@ -233,7 +238,12 @@ class RETSClient {
     } else if (this.authScheme === "basic" && this.basicHeader) {
       headers["Authorization"] = this.basicHeader;
     }
-    let res = await fetch(url, { method: "GET", headers, redirect: expectBinary ? "manual" : "follow" });
+    let res = await fetch(url, {
+      method: "GET",
+      headers,
+      redirect: expectBinary ? "manual" : "follow",
+      signal: AbortSignal.timeout(RETS_FETCH_TIMEOUT_MS),
+    });
     if (res.status === 401) {
       const wa = res.headers.get("www-authenticate") ?? "";
       this.absorbSetCookies(res);
@@ -261,7 +271,12 @@ class RETSClient {
         throw new Error(`Expected Digest or Basic challenge, got: ${wa || "none"}`);
       }
       if (this.cookies.size > 0) headers["Cookie"] = this.cookieHeader();
-      res = await fetch(url, { method: "GET", headers, redirect: expectBinary ? "manual" : "follow" });
+      res = await fetch(url, {
+        method: "GET",
+        headers,
+        redirect: expectBinary ? "manual" : "follow",
+        signal: AbortSignal.timeout(RETS_FETCH_TIMEOUT_MS),
+      });
     }
     this.absorbSetCookies(res);
     return res;
@@ -1188,6 +1203,83 @@ async function replicateToProperties(client: SupabaseClient, rows: MappedListing
   if (error) console.error("properties replication failed:", error.message);
 }
 
+/**
+ * Downgrade listings that left the RETS feed.
+ *
+ * why: passesFilter excludes expired/withdrawn/old-sold rows from upserts,
+ * so a listing that drops out of the feed would otherwise stay
+ * status='active' in our DBs forever. After a fully clean sync run we mark
+ * any still-active row of this feed that was NOT seen in the run as expired.
+ *
+ * SAFETY: the caller only invokes this when no class errored AND the seen
+ * set is non-empty, so a partial RETS outage cannot mass-expire inventory.
+ * We diff in JS (select active, subtract seen) rather than building a giant
+ * NOT IN clause, and we update by the explicit stale list so the count we
+ * log is exactly what changed.
+ */
+async function downgradeStaleListings(
+  analytics: SupabaseClient,
+  listings: SupabaseClient,
+  sourceMls: "cmc" | "sjsr",
+  seenMls: Set<string>,
+): Promise<void> {
+  const now = new Date().toISOString();
+
+  // AllianceAnalytics.properties (feed-scoped via source_mls).
+  try {
+    const { data, error } = await analytics
+      .from("properties")
+      .select("mls_number")
+      .eq("source_mls", sourceMls)
+      .eq("status", "active");
+    if (error) throw new Error(error.message);
+    const stale = ((data ?? []) as Array<{ mls_number: string }>)
+      .map((r) => r.mls_number)
+      .filter((m) => !seenMls.has(m));
+    if (stale.length > 0) {
+      const { error: upErr } = await analytics
+        .from("properties")
+        .update({ status: "expired", status_changed_at: now, updated_at: now })
+        .eq("source_mls", sourceMls)
+        .eq("status", "active")
+        .in("mls_number", stale);
+      if (upErr) throw new Error(upErr.message);
+    }
+    console.log(
+      `[${sourceMls}] downgraded ${stale.length} stale properties to expired (analytics)`,
+    );
+  } catch (e) {
+    console.error(`[${sourceMls}] stale downgrade (analytics):`, (e as Error).message);
+  }
+
+  // Alliance Listings.active_listings (same scoping + status model).
+  try {
+    const { data, error } = await listings
+      .from("active_listings")
+      .select("mls_number")
+      .eq("source_mls", sourceMls)
+      .eq("status", "active");
+    if (error) throw new Error(error.message);
+    const stale = ((data ?? []) as Array<{ mls_number: string }>)
+      .map((r) => r.mls_number)
+      .filter((m) => !seenMls.has(m));
+    if (stale.length > 0) {
+      const { error: upErr } = await listings
+        .from("active_listings")
+        .update({ status: "expired", status_changed_at: now, updated_at: now })
+        .eq("source_mls", sourceMls)
+        .eq("status", "active")
+        .in("mls_number", stale);
+      if (upErr) throw new Error(upErr.message);
+    }
+    console.log(
+      `[${sourceMls}] downgraded ${stale.length} stale listings to expired (listings)`,
+    );
+  } catch (e) {
+    console.error(`[${sourceMls}] stale downgrade (listings):`, (e as Error).message);
+  }
+}
+
 async function updateFeedTimestamps(client: SupabaseClient, feedId: string, ok: boolean): Promise<void> {
   const now = new Date().toISOString();
   const { error } = await client
@@ -1428,6 +1520,9 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
   let totalSeen = 0;
   let totalUpserted = 0;
   let anyClassFailed = false;
+  // why: every MLS number kept by passesFilter across ALL classes. Drives the
+  // post-run stale-listing downgrade (listings that left the feed).
+  const seenMls = new Set<string>();
 
   const propertyClasses = PROPERTY_CLASSES_BY_FEED[sourceMls];
   for (const cls of propertyClasses) {
@@ -1519,6 +1614,7 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
         }
       }
       const mapped = Array.from(byMls.values());
+      for (const m of mapped) seenMls.add(m.mls_number);
       const upserted = await upsertListings(listings, mapped);
       classResult.records_upserted = upserted;
       totalUpserted += upserted;
@@ -1581,6 +1677,18 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
 
     result.classes.push(classResult);
     await rets.logout();
+  }
+
+  // Stale-listing downgrade — only after a fully clean run. why: if any
+  // class errored, or the run saw zero listings (implausible for a healthy
+  // feed), the seen set is incomplete and downgrading from it would
+  // mass-expire live inventory during a partial RETS outage.
+  if (!anyClassFailed && seenMls.size > 0) {
+    await downgradeStaleListings(analytics, listings, sourceMls, seenMls);
+  } else {
+    console.warn(
+      `[${sourceMls}] skipping stale downgrade (anyClassFailed=${anyClassFailed}, seen=${seenMls.size})`,
+    );
   }
 
   // Auto-linker once after all classes complete.

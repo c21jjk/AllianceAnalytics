@@ -36,6 +36,10 @@ const LOOKBACK_DAYS = Number(Deno.env.get("LISTTRAC_LOOKBACK_DAYS") ?? "30");
 const CONCURRENCY = Number(Deno.env.get("LISTTRAC_CONCURRENCY") ?? "8");
 const SOLD_LOOKBACK_DAYS = 90;
 
+// why: a hung ListTrac call would otherwise stall a concurrency slot until
+// the platform kills the function; 20s is generous for both endpoints.
+const FETCH_TIMEOUT_MS = 20_000;
+
 // ----------------------------- Types -----------------------------
 
 interface ListtracCreds {
@@ -123,7 +127,9 @@ async function md5Hex(input: string): Promise<string> {
 
 async function fetchToken(creds: ListtracCreds): Promise<string> {
   const url = `${LISTTRAC_BASE}/getkey?orgID=${encodeURIComponent(creds.org_id)}&username=${encodeURIComponent(creds.username)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`getkey HTTP ${res.status}`);
   const body = await res.json() as { key?: string; message?: string; returncode?: number };
   if (!body.key || body.returncode !== 0) {
@@ -153,6 +159,7 @@ async function callMetrics(
   });
   const res = await fetch(`${LISTTRAC_BASE}/GetMetricsByOrganization`, {
     method: "POST",
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: { "Content-Type": "application/json" },
     body,
   });

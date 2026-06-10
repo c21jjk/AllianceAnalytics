@@ -54,6 +54,10 @@ const TT_REFRESH_URL = "https://open.tiktokapis.com/v2/oauth/token/";
 const BACKFILL_DAYS = Number(Deno.env.get("TT_BACKFILL_DAYS") ?? "365");
 const PAGE_SIZE = 20;
 
+// why: external TikTok calls can otherwise hang the edge function until the
+// platform kills it; 20s is generous for every endpoint we hit.
+const FETCH_TIMEOUT_MS = 20_000;
+
 const VIDEO_FIELDS = [
   "id",
   "title",
@@ -107,6 +111,7 @@ async function ttFetch<T>(
   const url = `${TT_API_BASE}${path}`;
   const res = await fetch(url, {
     ...init,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
       ...(init?.headers ?? {}),
       Authorization: `Bearer ${token}`,
@@ -144,6 +149,7 @@ async function refreshToken(
   });
   const res = await fetch(TT_REFRESH_URL, {
     method: "POST",
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
@@ -198,6 +204,7 @@ export async function syncTikTok(): Promise<SyncResult> {
       if (!clientSecret) {
         throw new Error("TT token expired but TT_CLIENT_SECRET env var not set");
       }
+      const refreshedFromToken = String(cred.credentials.access_token);
       const refreshed = await refreshToken(
         String(cred.credentials.refresh_token),
         String(cred.credentials.client_key),
@@ -211,12 +218,36 @@ export async function syncTikTok(): Promise<SyncResult> {
         expires_in: refreshed.expires_in,
         refresh_expires_in: refreshed.refresh_expires_in,
         obtained_at: new Date().toISOString(),
+        // why: the publish-path refresher (lib/post-builder/publish.ts) reads
+        // expires_at. Write BOTH shapes so either refresher's bookkeeping
+        // stays correct no matter which one rotated last.
+        expires_at: new Date(
+          Date.now() + refreshed.expires_in * 1000,
+        ).toISOString(),
       };
-      await client
+      // why: optimistic guard against the publish-path refresher racing us.
+      // TikTok invalidates the OLD refresh token on rotation, so overwriting
+      // a newer rotation would persist a dead refresh token. Only update if
+      // the stored access token is still the one we refreshed FROM.
+      const { data: updatedRows } = await client
         .from("api_credentials")
         .update({ credentials: newCreds })
-        .eq("platform", "tiktok");
-      accessToken = refreshed.access_token;
+        .eq("platform", "tiktok")
+        .eq("credentials->>access_token", refreshedFromToken)
+        .select("id");
+      if (!updatedRows || updatedRows.length === 0) {
+        // why: zero rows matched means another refresher already rotated the
+        // row. Their tokens are the live chain; re-read and use those.
+        console.warn(
+          "tt-sync: token row rotated concurrently; re-reading credentials",
+        );
+        const refetched = await loadCredentials(client, "tiktok", [
+          "access_token",
+        ]);
+        accessToken = String(refetched.credentials.access_token);
+      } else {
+        accessToken = refreshed.access_token;
+      }
     }
 
     // Capture the TT account's follower count once per sync run.
@@ -226,6 +257,7 @@ export async function syncTikTok(): Promise<SyncResult> {
         `${TT_API_BASE}/user/info/?fields=follower_count,following_count,likes_count,video_count,display_name`,
         {
           method: "GET",
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
           headers: {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",

@@ -302,6 +302,23 @@ export async function removeSellerRecipientByEmail(
   return { removed: true, name: target.name };
 }
 
+/**
+ * Count seller sends recorded for a report since the given ISO timestamp.
+ * why: the public /share route is token-gated only, so it rate-limits by
+ * counting existing owner_story_seller_sends rows (no new tables).
+ */
+export async function countRecentSellerSends(
+  reportId: string,
+  sinceIso: string,
+): Promise<number> {
+  const { count } = await untypedClient()
+    .from("owner_story_seller_sends")
+    .select("*", { count: "exact", head: true })
+    .eq("report_id", reportId)
+    .gte("sent_at", sinceIso);
+  return count ?? 0;
+}
+
 /** Set of "report_id|loweremail" already sent in the given week. */
 export async function loadSellerSendKeysForWeek(
   weekStart: string,

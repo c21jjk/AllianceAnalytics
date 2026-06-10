@@ -27,6 +27,27 @@ import { createAdminClient } from "@/lib/supabase/admin";
 const GRAPH_VERSION = "v22.0";
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
+// why: external platform calls can otherwise hang the route indefinitely.
+// 30s covers normal Graph/TikTok latency; poll-loop requests get a tighter
+// 15s because the loops already bound the total wait themselves.
+const FETCH_TIMEOUT_MS = 30_000;
+const POLL_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * why: AbortSignal.timeout rejects with a DOMException named TimeoutError
+ * (older runtimes: AbortError). Surface a clear transient message instead
+ * of the raw abort text so the UI tells the user to simply retry.
+ */
+function fetchErrorMessage(e: unknown): string {
+  if (
+    e instanceof Error &&
+    (e.name === "TimeoutError" || e.name === "AbortError")
+  ) {
+    return "Platform API request timed out. This is usually transient. Try again.";
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
 export interface MetaCredentials {
   page_id: string;
   /**
@@ -210,7 +231,11 @@ export async function publishToFBPage(args: {
       };
       if (test_mode) params.published = "false";
       const body = new URLSearchParams(params);
-      const res = await fetch(url, { method: "POST", body });
+      const res = await fetch(url, {
+        method: "POST",
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       const json = await res.json();
       if (!res.ok || !json.id) {
         return classifyFBError(json, "facebook");
@@ -241,7 +266,11 @@ export async function publishToFBPage(args: {
         published: "false",
         access_token: creds.page_access_token,
       });
-      const res = await fetch(uploadUrl, { method: "POST", body });
+      const res = await fetch(uploadUrl, {
+        method: "POST",
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       const json = await res.json();
       if (!res.ok || !json.id) {
         return classifyFBError(json, "facebook");
@@ -259,7 +288,11 @@ export async function publishToFBPage(args: {
     };
     if (test_mode) feedParams.published = "false";
     const body = new URLSearchParams(feedParams);
-    const res = await fetch(feedUrl, { method: "POST", body });
+    const res = await fetch(feedUrl, {
+      method: "POST",
+      body,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     const json = await res.json();
     if (!res.ok || !json.id) {
       return classifyFBError(json, "facebook");
@@ -276,7 +309,7 @@ export async function publishToFBPage(args: {
     return {
       ok: false,
       platform: "facebook",
-      error: e instanceof Error ? e.message : String(e),
+      error: fetchErrorMessage(e),
     };
   }
 }
@@ -339,7 +372,11 @@ export async function publishToIG(args: {
         caption,
         access_token: igAccessToken,
       });
-      const res = await fetch(url, { method: "POST", body });
+      const res = await fetch(url, {
+        method: "POST",
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       const json = await res.json();
       if (!res.ok || !json.id) return classifyFBError(json, "instagram");
       creationId = String(json.id);
@@ -353,7 +390,11 @@ export async function publishToIG(args: {
           is_carousel_item: "true",
           access_token: igAccessToken,
         });
-        const res = await fetch(url, { method: "POST", body });
+        const res = await fetch(url, {
+          method: "POST",
+          body,
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         const json = await res.json();
         if (!res.ok || !json.id) return classifyFBError(json, "instagram");
         childIds.push(String(json.id));
@@ -365,7 +406,11 @@ export async function publishToIG(args: {
         caption,
         access_token: igAccessToken,
       });
-      const res = await fetch(parentUrl, { method: "POST", body });
+      const res = await fetch(parentUrl, {
+        method: "POST",
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       const json = await res.json();
       if (!res.ok || !json.id) return classifyFBError(json, "instagram");
       creationId = String(json.id);
@@ -390,7 +435,11 @@ export async function publishToIG(args: {
       creation_id: creationId,
       access_token: igAccessToken,
     });
-    const res = await fetch(publishUrl, { method: "POST", body });
+    const res = await fetch(publishUrl, {
+      method: "POST",
+      body,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     const json = await res.json();
     if (!res.ok || !json.id) return classifyFBError(json, "instagram");
 
@@ -401,6 +450,7 @@ export async function publishToIG(args: {
     try {
       const permRes = await fetch(
         `${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(igAccessToken)}`,
+        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
       );
       const permJson = await permRes.json();
       if (permRes.ok && typeof permJson.permalink === "string") {
@@ -420,7 +470,7 @@ export async function publishToIG(args: {
     return {
       ok: false,
       platform: "instagram",
-      error: e instanceof Error ? e.message : String(e),
+      error: fetchErrorMessage(e),
     };
   }
 }
@@ -437,14 +487,25 @@ function classifyFBError(
   const code = json?.error?.code;
   const sub = json?.error?.error_subcode;
 
+  // why: Graph code 190 means the OAuth token itself is invalid or expired,
+  // NOT a missing scope. Re-connecting is the fix, not re-scoping, so it
+  // gets its own message. scope_error stays true so the UI still prompts
+  // the user toward credentials.
+  if (code === 190) {
+    return {
+      ok: false,
+      platform,
+      error: `Facebook token invalid or expired. Re-connect Facebook in Settings > Credentials. Graph said: ${msg}`,
+      scope_error: true,
+    };
+  }
+
   // Common Graph error codes that mean "missing publishing scope":
   //   200 — Permission denied
-  //   190 — Invalid OAuth token (often when scope wasn't granted)
   //   100 sub 33 — Param error from missing pages_manage_posts
   //   3 — Permission required (rare)
   const isScopeError =
     code === 200 ||
-    code === 190 ||
     (code === 100 && sub === 33) ||
     /permission|scope|not authorized|denied/i.test(msg);
 
@@ -515,7 +576,9 @@ export async function getFBTokenStatus(
     `&access_token=${encodeURIComponent(creds.page_access_token)}`;
 
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     const json = (await res.json()) as {
       data?: {
         is_valid?: boolean;
@@ -570,7 +633,7 @@ export async function getFBTokenStatus(
       days_until_expiry: null,
       is_valid: false,
       app_id: null,
-      error: e instanceof Error ? e.message : String(e),
+      error: fetchErrorMessage(e),
     };
   }
 }
@@ -677,6 +740,7 @@ export async function publishReelToIG(args: {
     const containerRes = await fetch(containerUrl, {
       method: "POST",
       body: containerBody,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     const containerJson = (await containerRes.json()) as {
       id?: string;
@@ -699,6 +763,7 @@ export async function publishReelToIG(args: {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       const statusRes = await fetch(
         `${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(igAccessToken)}`,
+        { signal: AbortSignal.timeout(POLL_FETCH_TIMEOUT_MS) },
       );
       const statusJson = (await statusRes.json()) as IGContainerStatus;
       if (!statusRes.ok && statusJson.error) {
@@ -743,6 +808,7 @@ export async function publishReelToIG(args: {
     const publishRes = await fetch(publishUrl, {
       method: "POST",
       body: publishBody,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     const publishJson = (await publishRes.json()) as {
       id?: string;
@@ -758,6 +824,7 @@ export async function publishReelToIG(args: {
     try {
       const permRes = await fetch(
         `${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(igAccessToken)}`,
+        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
       );
       const permJson = (await permRes.json()) as { permalink?: string };
       if (permRes.ok && typeof permJson.permalink === "string") {
@@ -777,7 +844,7 @@ export async function publishReelToIG(args: {
     return {
       ok: false,
       platform: "instagram",
-      error: e instanceof Error ? e.message : String(e),
+      error: fetchErrorMessage(e),
     };
   }
 }
@@ -824,7 +891,11 @@ export async function publishVideoToFB(args: {
     };
     if (test_mode) params.unpublished_content_type = "DRAFT";
     const body = new URLSearchParams(params);
-    const res = await fetch(url, { method: "POST", body });
+    const res = await fetch(url, {
+      method: "POST",
+      body,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     const json = (await res.json()) as {
       id?: string;
       error?: { message?: string; code?: number; error_subcode?: number };
@@ -851,7 +922,7 @@ export async function publishVideoToFB(args: {
     return {
       ok: false,
       platform: "facebook",
-      error: e instanceof Error ? e.message : String(e),
+      error: fetchErrorMessage(e),
     };
   }
 }
@@ -941,9 +1012,13 @@ async function refreshTikTokToken(
     );
     return null;
   }
+  // why: optimistic-lock anchor. We only persist our rotation if the stored
+  // access token still equals this value (see the .eq guard below).
+  const refreshedFromToken = creds.access_token;
   try {
     const res = await fetch(`${TT_API}/v2/oauth/token/`, {
       method: "POST",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_key: creds.client_key,
@@ -971,7 +1046,7 @@ async function refreshTikTokToken(
 
     // Persist rotated tokens. We preserve the rest of the credentials
     // JSONB shape (open_id, client_key, client_secret) and only swap the
-    // token fields + expires_at.
+    // token fields + expiry bookkeeping.
     const supabase = createAdminClient();
     const nextCreds = {
       access_token: json.access_token,
@@ -982,20 +1057,55 @@ async function refreshTikTokToken(
       expires_at: json.expires_in
         ? new Date(Date.now() + json.expires_in * 1000).toISOString()
         : null,
+      // why: tt-sync's proactive expiry check reads obtained_at + expires_in
+      // (not expires_at). Write BOTH shapes so either refresher's bookkeeping
+      // stays correct no matter which one rotated last.
+      obtained_at: new Date().toISOString(),
+      expires_in: json.expires_in ?? null,
+      refresh_expires_in: json.refresh_expires_in ?? null,
     };
-    const { error: upErr } = await supabase
+    // why: optimistic guard against the tt-sync refresher racing us. TikTok
+    // invalidates the OLD refresh token on rotation, so blindly overwriting
+    // a newer rotation would persist a dead refresh token. Only update the
+    // row if the stored access token is still the one we refreshed FROM.
+    const { data: updatedRows, error: upErr } = await supabase
       .from("api_credentials")
       .update({
         credentials: nextCreds,
         updated_at: new Date().toISOString(),
       })
       .eq("platform", "tiktok")
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .eq("credentials->>access_token", refreshedFromToken)
+      .select("id");
     if (upErr) {
       console.error(
         "[publishTikTok] credential update failed (in-memory token still usable):",
         upErr.message,
       );
+    } else if (!updatedRows || updatedRows.length === 0) {
+      // why: zero rows matched means another refresher already rotated the
+      // row. Their tokens are the live chain; use those instead of ours.
+      console.warn(
+        "[publishTikTok] token row rotated concurrently; re-reading credentials",
+      );
+      const { data: fresh } = await supabase
+        .from("api_credentials")
+        .select("credentials")
+        .eq("platform", "tiktok")
+        .eq("is_active", true)
+        .maybeSingle();
+      const freshCreds = (fresh?.credentials ?? {}) as {
+        access_token?: string;
+        refresh_token?: string;
+      };
+      if (freshCreds.access_token) {
+        creds.access_token = String(freshCreds.access_token);
+        if (freshCreds.refresh_token) {
+          creds.refresh_token = String(freshCreds.refresh_token);
+        }
+        return creds.access_token;
+      }
     }
 
     // Mutate in place so the caller's poll loop sees the new token.
@@ -1029,6 +1139,7 @@ async function tryTikTokInitWithRefresh(
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch(initUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${creds.access_token}`,
         "Content-Type": "application/json; charset=UTF-8",
@@ -1147,19 +1258,23 @@ export async function publishToTikTok(args: {
   let publicPostId: string | undefined;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1500));
-    const statusRes = await fetch(
-      `${TT_API}/v2/post/publish/status/fetch/`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${creds.access_token}`,
-          "Content-Type": "application/json; charset=UTF-8",
-        },
-        body: JSON.stringify({ publish_id: publishId }),
-      },
-    );
     let statusJson: TtPublishStatusResponse | null = null;
     try {
+      // why: 15s timeout per poll request; the loop deadline bounds the
+      // total wait. A timed-out or non-JSON poll is transient, so retry on
+      // the next iteration instead of failing the publish.
+      const statusRes = await fetch(
+        `${TT_API}/v2/post/publish/status/fetch/`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(POLL_FETCH_TIMEOUT_MS),
+          headers: {
+            Authorization: `Bearer ${creds.access_token}`,
+            "Content-Type": "application/json; charset=UTF-8",
+          },
+          body: JSON.stringify({ publish_id: publishId }),
+        },
+      );
       statusJson = (await statusRes.json()) as TtPublishStatusResponse;
     } catch {
       // Transient — retry on the next loop iteration.
@@ -1369,16 +1484,20 @@ export async function publishVideoToTikTok(args: {
   let publicPostId: string | undefined;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2_000));
-    const statusRes = await fetch(`${TT_API}/v2/post/publish/status/fetch/`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${creds.access_token}`,
-        "Content-Type": "application/json; charset=UTF-8",
-      },
-      body: JSON.stringify({ publish_id: publishId }),
-    });
     let statusJson: TtPublishStatusResponse | null = null;
     try {
+      // why: 15s timeout per poll request; the loop deadline bounds the
+      // total wait. A timed-out or non-JSON poll is transient, so retry on
+      // the next iteration instead of failing the publish.
+      const statusRes = await fetch(`${TT_API}/v2/post/publish/status/fetch/`, {
+        method: "POST",
+        signal: AbortSignal.timeout(POLL_FETCH_TIMEOUT_MS),
+        headers: {
+          Authorization: `Bearer ${creds.access_token}`,
+          "Content-Type": "application/json; charset=UTF-8",
+        },
+        body: JSON.stringify({ publish_id: publishId }),
+      });
       statusJson = (await statusRes.json()) as TtPublishStatusResponse;
     } catch {
       // Transient — retry on the next loop iteration.

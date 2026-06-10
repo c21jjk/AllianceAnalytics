@@ -5,6 +5,8 @@ import {
   addSellerRecipient,
   recordSellerSend,
   buildUnsubscribeUrl,
+  countRecentSellerSends,
+  loadSellerRecipients,
 } from "@/lib/email/reports/owner-story-weekly-data";
 import { renderOwnerStoryEmail } from "@/lib/email/reports/owner-story-weekly-template";
 
@@ -26,6 +28,13 @@ export const runtime = "nodejs";
  */
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+// why: this route is public + token-gated and sends real email, so anyone
+// holding a story link could use it as a spam cannon. Caps are counted from
+// existing rows (owner_story_seller_sends + report_recipients) — no new
+// tables. Limits are far above legitimate use (a listing has 1-3 sellers).
+const MAX_SENDS_PER_24H = 10;
+const MAX_RECIPIENTS_PER_REPORT = 20;
 
 export async function POST(
   req: Request,
@@ -52,6 +61,40 @@ export async function POST(
     return NextResponse.json(
       { ok: false, error: "This Owner Story link wasn't found." },
       { status: 404 },
+    );
+  }
+
+  // Rolling 24h send cap per report.
+  const sinceIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const recentSends = await countRecentSellerSends(
+    candidate.report_id,
+    sinceIso,
+  );
+  if (recentSends >= MAX_SENDS_PER_24H) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "This listing has hit its daily limit for seller emails. Try again tomorrow.",
+      },
+      { status: 429 },
+    );
+  }
+
+  // Total recipient cap per report. why: an email already on the list is
+  // allowed through (the upsert just refreshes the name, adding nothing).
+  const recipients = await loadSellerRecipients(candidate.report_id);
+  const alreadyRecipient = recipients.some(
+    (r) => r.email.toLowerCase() === email.toLowerCase(),
+  );
+  if (!alreadyRecipient && recipients.length >= MAX_RECIPIENTS_PER_REPORT) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "This listing already has the maximum number of seller recipients. Remove one before adding another.",
+      },
+      { status: 409 },
     );
   }
 
