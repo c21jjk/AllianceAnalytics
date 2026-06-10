@@ -1885,6 +1885,27 @@ export type Database = {
           },
         ]
       }
+      weekly_report_sends: {
+        Row: {
+          message_id: string | null
+          recipient_count: number | null
+          sent_at: string
+          week_start: string
+        }
+        Insert: {
+          message_id?: string | null
+          recipient_count?: number | null
+          sent_at?: string
+          week_start: string
+        }
+        Update: {
+          message_id?: string | null
+          recipient_count?: number | null
+          sent_at?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

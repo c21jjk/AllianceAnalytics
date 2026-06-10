@@ -36,6 +36,7 @@
  */
 import "server-only";
 import { NextResponse } from "next/server";
+import { requireCronAuth } from "@/lib/cron-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   loadMetaCredentials,
@@ -63,10 +64,21 @@ import type {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-// why: each publish call can take 20-30s (Reels and TT poll loops are
-// slowest). With up to a few due rows per 5-min tick, 60s is a safe ceiling
-// that keeps the cron tick well under Vercel's 300s function cap.
-export const maxDuration = 60;
+// why: each publish call can take 20-30s, and the worst single row is far
+// slower — an IG Reel container can poll up to ~120s and TT video up to
+// ~60s. The old 60s ceiling could kill the function BETWEEN the claim step
+// (which strips due keys from scheduled_for) and the merge write that
+// restores failed keys — silently losing the schedule entry (audit
+// 2026-06-10, High #2). 300s (Vercel Pro cap) plus the ROW_DEADLINE_MS
+// budget below guarantees we stop STARTING new rows with enough headroom
+// for the slowest in-flight publish to finish and persist.
+export const maxDuration = 300;
+
+// Stop picking up new rows once this much wall time has elapsed. Remaining
+// due rows are untouched (their scheduled_for keys are still intact) and the
+// next 5-minute tick picks them up. 150s leaves ~150s of headroom — enough
+// for the slowest possible row (IG Reel ~120s poll) to complete and merge.
+const ROW_DEADLINE_MS = 150_000;
 
 interface CronRowSummary {
   id: string;
@@ -92,31 +104,11 @@ type GeneratedPostRow = Database["public"]["Tables"]["generated_posts"]["Row"];
 
 export async function GET(request: Request): Promise<NextResponse> {
   // ---- auth gate -------------------------------------------------------
-  // why: Vercel auto-generates CRON_SECRET when crons are configured and
-  // sends `Authorization: Bearer <secret>` on every tick. In dev we let
-  // unauthenticated calls through so localhost curl + manual testing
-  // works without setting up the env var. Anywhere else, the header must
-  // match exactly.
-  const isDev = process.env.NODE_ENV === "development";
-  if (!isDev) {
-    const expected = `Bearer ${process.env.CRON_SECRET ?? ""}`;
-    const got = request.headers.get("authorization") ?? "";
-    // why: only reject if CRON_SECRET is set — an unset secret in prod is
-    // a config bug, but we still want the cron to fail loud so the
-    // operator notices, rather than silently allowing every caller.
-    if (!process.env.CRON_SECRET) {
-      return NextResponse.json(
-        { ok: false, error: "CRON_SECRET not configured" } satisfies CronResponseErr,
-        { status: 500 },
-      );
-    }
-    if (got !== expected) {
-      return NextResponse.json(
-        { ok: false, error: "unauthorized" } satisfies CronResponseErr,
-        { status: 401 },
-      );
-    }
-  }
+  // why: strict Bearer CRON_SECRET, shared across all cron routes since
+  // 2026-06-10 (lib/cron-auth.ts). This route's inline version was the
+  // model for the shared helper.
+  const denied = requireCronAuth(request);
+  if (denied) return denied;
 
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
@@ -204,8 +196,20 @@ export async function GET(request: Request): Promise<NextResponse> {
   const details: CronRowSummary[] = [];
   let succeededTotal = 0;
   let failedTotal = 0;
+  let deferred = 0;
 
   for (const row of rows) {
+    // why: time budget — never START a row we might not be able to FINISH.
+    // An unprocessed row's scheduled_for keys are untouched, so the next
+    // tick simply picks it up. Killing a row mid-publish is the dangerous
+    // case (claim already stripped the keys); deferring is always safe.
+    if (Date.now() - nowMs > ROW_DEADLINE_MS) {
+      deferred = rows.length - details.length;
+      console.warn(
+        `[cron/publish-scheduled] time budget reached — deferring ${deferred} row(s) to next tick`,
+      );
+      break;
+    }
     const summary = await processRow(row as GeneratedPostRow, nowMs, getMeta, getTikTok);
     details.push(summary);
     succeededTotal += summary.succeeded.length;
@@ -214,7 +218,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   return NextResponse.json({
     ok: true,
-    processed: rows.length,
+    processed: details.length,
     succeeded: succeededTotal,
     failed: failedTotal,
     details,

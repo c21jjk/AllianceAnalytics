@@ -17,37 +17,20 @@
  *     the listing agent.
  *   - Records the announcement row so the next tick skips the group.
  *
- * Auth mirrors /api/cron/coach-refresh exactly:
- *   1. CRON_SECRET match → accept
- *   2. user-agent starts with "vercel-cron" → accept
- *   3. NODE_ENV !== "production" → accept
- *   4. Otherwise → 401
+ * Auth: strict Bearer CRON_SECRET via requireCronAuth (lib/cron-auth.ts).
+ * Per-campaign dedupe lives in office_post_announcements (announced guard).
  */
 import { NextResponse } from "next/server";
+import { requireCronAuth } from "@/lib/cron-auth";
 import { runOfficePostAnnouncementCron } from "@/lib/email/reports/office-post-announcement";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-function isAuthorized(req: Request): boolean {
-  const auth = req.headers.get("authorization") ?? "";
-  const userAgent = req.headers.get("user-agent") ?? "";
-  if (process.env.CRON_SECRET) {
-    if (auth === `Bearer ${process.env.CRON_SECRET}`) return true;
-  }
-  if (userAgent.toLowerCase().startsWith("vercel-cron")) return true;
-  if (process.env.NODE_ENV !== "production") return true;
-  return false;
-}
-
 export async function GET(req: Request) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json(
-      { ok: false, error: "unauthorized" },
-      { status: 401 },
-    );
-  }
+  const denied = requireCronAuth(req);
+  if (denied) return denied;
   const result = await runOfficePostAnnouncementCron();
   return NextResponse.json({ ok: true, ...result });
 }

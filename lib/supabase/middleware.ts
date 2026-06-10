@@ -30,6 +30,13 @@ const PUBLIC_PATH_PREFIXES = ["/r/", "/home/", "/render/"];
 
 function isPublicPath(pathname: string) {
   if (PUBLIC_PATHS.has(pathname)) return true;
+  // API routes authenticate themselves (requireUser/requireAdmin/
+  // getCurrentProfile/CRON_SECRET/signed tokens). The middleware redirect
+  // must never apply here: Vercel cron sends no session cookie, so the old
+  // behavior 307'd every /api/cron/* call to /login and the handlers never
+  // ran (verified 2026-06-10: all five crons had never executed). Session
+  // cookie refresh above still applies; only the redirect is skipped.
+  if (pathname.startsWith("/api/")) return true;
   if (pathname.startsWith("/_next")) return true;
   if (pathname.startsWith("/favicon")) return true;
   for (const prefix of PUBLIC_PATH_PREFIXES) {
