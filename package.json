@@ -19,8 +19,6 @@
         "@sparticuz/chromium-min": "^131.0.1",
         "@supabase/ssr": "^0.5.2",
         "@supabase/supabase-js": "^2.45.4",
-        "@types/archiver": "^7.0.0",
-        "archiver": "^8.0.0",
         "clsx": "^2.1.1",
         "fabric": "^6.9.1",
         "lucide-react": "^1.16.0",

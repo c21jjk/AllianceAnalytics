@@ -260,9 +260,22 @@ export async function fetchPosts(opts: FetchPostsOptions = {}): Promise<Post[]> 
     return [];
   }
 
-  const { data: properties } = await supabase
-    .from("properties")
-    .select("id, mls_number, address, city, state, list_price, hero_image_url");
+  // why: scope the lookup to the property ids actually referenced by this
+  // page of posts. The old unfiltered read pulled the ENTIRE properties
+  // table (grows with RETS history) on every dashboard/posts render just to
+  // build this map (audit 2026-06-10).
+  const propertyIds = [
+    ...new Set(posts.map((p) => p.property_id).filter((id): id is string => !!id)),
+  ];
+  const { data: properties, error: propertiesError } = propertyIds.length > 0
+    ? await supabase
+        .from("properties")
+        .select("id, mls_number, address, city, state, list_price, hero_image_url")
+        .in("id", propertyIds)
+    : { data: [], error: null };
+  if (propertiesError) {
+    console.error("fetchPosts properties lookup:", propertiesError);
+  }
   const propMap = new Map<string, PropertyRef>();
   for (const p of (properties ?? []) as DbPropertyRow[]) {
     propMap.set(p.id, rowToPropertyRef(p));

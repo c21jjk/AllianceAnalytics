@@ -49,3 +49,5 @@ next-env.d.ts
 # generated app icon placeholder
 /c21-icon.png
 /housekeeping.command
+supabase/.temp/
+tsconfig.tsbuildinfo
