@@ -106,9 +106,17 @@
   // frame in the same browser session.
   var imageCache = Object.create(null);
 
+  // why a load timeout: a stalled photo fetch (slow CDN, dead URL that
+  // never errors) would otherwise hang the page.evaluate forever and pin
+  // the whole render job. 20s is generous for a single listing photo.
+  var IMAGE_LOAD_TIMEOUT_MS = 20000;
+
   /**
    * Load an image with anonymous CORS, returning a Promise that resolves
-   * to the HTMLImageElement once it's decoded.
+   * to the HTMLImageElement once it's decoded. Rejects after
+   * IMAGE_LOAD_TIMEOUT_MS so a hung fetch can't stall the job; callers
+   * decide how to degrade (design layers skip with a warn, photo scenes
+   * render a black frame).
    *
    * @param {string} url
    * @returns {Promise<HTMLImageElement>}
@@ -117,6 +125,29 @@
     if (imageCache[url]) return imageCache[url];
 
     var p = new Promise(function (resolve, reject) {
+      // why the timer lives inside the executor: it must start when the
+      // load starts and be cleared on both resolve and reject paths.
+      var settled = false;
+      var timer = setTimeout(function () {
+        // why evict from cache: a timed-out URL may load fine on the
+        // next job; a cached rejection would poison every later render
+        // in the same browser session. The wrapped reject below handles
+        // the settled bookkeeping.
+        delete imageCache[url];
+        reject(new Error("Image load timed out after " + IMAGE_LOAD_TIMEOUT_MS + "ms: " + url));
+      }, IMAGE_LOAD_TIMEOUT_MS);
+      var settle = function (fn, value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      resolve = (function (orig) {
+        return function (value) { settle(orig, value); };
+      })(resolve);
+      reject = (function (orig) {
+        return function (err) { settle(orig, err); };
+      })(reject);
       var img = new Image();
       // why crossOrigin BEFORE src: setting after triggering the load is
       // a common footgun — Chromium has already issued the request as
@@ -254,6 +285,11 @@
           evented: false,
         });
         canvas.add(fabricImg);
+      }).catch(function (err) {
+        // why swallow: a broken or timed-out background image should
+        // not blank the whole design scene; layers still render over
+        // the solid backgroundColor.
+        console.warn("Background image skipped: " + err.message);
       });
     }
 
@@ -766,6 +802,14 @@
       });
       canvas.add(fImg);
       canvas.renderAll();
+    }).catch(function (err) {
+      // why a black frame instead of rejecting: one dead or timed-out
+      // photo URL should degrade that scene, not fail the whole job.
+      // The canvas was reset to black above, so rendering it as-is
+      // yields a clean black frame (matches the design-scene path's
+      // skip-with-warn discipline).
+      console.warn("Photo scene fell back to a black frame: " + err.message);
+      canvas.renderAll();
     });
   }
 
@@ -1034,6 +1078,17 @@
     return bedsStr || bathsStr;
   }
 
+  // Brand logo fallbacks — MUST mirror
+  // lib/post-builder/canvas-editor/templates/brand-logos.ts and the
+  // price-tier rule in fabric-factory.ts (EXCELLENCE_PRICE_THRESHOLD in
+  // lib/post-builder/excellence-collection.ts). If either changes in the
+  // main app, mirror the change here.
+  var C21_ALLIANCE_WHITE_LOGO_URL =
+    "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/1243286b-f208-47fb-a8f3-7fa1367951a2.png";
+  var EXCELLENCE_COLLECTION_LOGO_URL =
+    "https://rhkgowpjfpqbrdmgsccx.supabase.co/storage/v1/object/public/brand-assets/manual/logos/488d325e-10d2-40ce-92bc-1a4ce9ef9370.png";
+  var EXCELLENCE_PRICE_THRESHOLD = 949000;
+
   /** Mirror lib/post-builder/canvas-editor/CanvasEditor.tsx STATUS_LABEL_MAP. */
   var STATUS_LABEL_MAP = {
     active: "JUST LISTED",
@@ -1148,7 +1203,23 @@
       case "office_logo":
         return listing.officeLogoUrl || null;
       case "brokerage_logo":
-        return "/brand/c21-mark.svg";
+        // why absolute https URLs: this page loads via file://, so the
+        // old app-relative "/brand/c21-mark.svg" resolved to
+        // file:///brand/... (a file that does not exist anywhere, not
+        // even in the app repo) and the logo silently dropped from
+        // every /render-image render. Mirror the app's
+        // fabric-factory.ts resolution instead: prefer the listing's
+        // resolved brokerageLogoUrl, then the price-tier brand
+        // constants below (Supabase Storage public URLs load fine
+        // under file:// with anonymous CORS).
+        if (listing.brokerageLogoUrl) return listing.brokerageLogoUrl;
+        if (
+          typeof listing.priceList === "number" &&
+          listing.priceList >= EXCELLENCE_PRICE_THRESHOLD
+        ) {
+          return EXCELLENCE_COLLECTION_LOGO_URL;
+        }
+        return C21_ALLIANCE_WHITE_LOGO_URL;
       default:
         console.warn("Unknown ImageBoundField: " + field);
         return null;

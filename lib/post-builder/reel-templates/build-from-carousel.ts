@@ -25,6 +25,7 @@
 
 import {
   MOTION_PRESETS,
+  REEL_CAPS,
   type PostType,
   type PostVariant,
   type Scene,
@@ -207,7 +208,12 @@ export function buildReelFromCarousel(
     transitionMs: 0,
   };
 
-  const photoScenes: Scene[] = photoUrls.map((url, i) => {
+  // why slice at maxScenes - 1: the hero occupies scene 0 and the worker's
+  // zod schema hard-rejects compositions above REEL_CAPS.maxScenes scenes.
+  // Dropping the extra carousel slides here beats a 400 at render time.
+  const cappedPhotoUrls = photoUrls.slice(0, REEL_CAPS.maxScenes - 1);
+
+  const photoScenes: Scene[] = cappedPhotoUrls.map((url, i) => {
     const motionKey = MOTION_CYCLE[i % MOTION_CYCLE.length]!;
     return {
       id: crypto.randomUUID(),
@@ -223,7 +229,37 @@ export function buildReelFromCarousel(
     };
   });
 
-  const { scenes, totalDurationMs } = recompute([heroScene, ...photoScenes]);
+  let { scenes, totalDurationMs } = recompute([heroScene, ...photoScenes]);
+
+  // why a total-duration clamp: the worker's zod schema also caps
+  // totalDurationMs at REEL_CAPS.maxTotalDurationMs (15s). A cinematic
+  // pace (4.5s/slide) with 7 slides would otherwise overshoot and 400.
+  // Shorten the photo scenes proportionally (hero keeps its timing) and
+  // re-time. With the 8-scene cap above, one pass always lands under the
+  // limit: the worst case after clamping to the per-scene minimum is
+  // hero 2.5s + 7 x 0.5s minus transition overlaps, well below 15s.
+  if (totalDurationMs > REEL_CAPS.maxTotalDurationMs) {
+    const overshoot = totalDurationMs - REEL_CAPS.maxTotalDurationMs;
+    const photoTotal = scenes.reduce(
+      (sum, s) => (s.content.kind === "photo" ? sum + s.durationMs : sum),
+      0,
+    );
+    if (photoTotal > 0) {
+      const factor = Math.max(0, (photoTotal - overshoot) / photoTotal);
+      const shortened = scenes.map((s) =>
+        s.content.kind === "photo"
+          ? {
+              ...s,
+              durationMs: Math.max(
+                REEL_CAPS.minSceneDurationMs,
+                Math.round(s.durationMs * factor),
+              ),
+            }
+          : s,
+      );
+      ({ scenes, totalDurationMs } = recompute(shortened));
+    }
+  }
 
   return {
     schemaVersion: 1,

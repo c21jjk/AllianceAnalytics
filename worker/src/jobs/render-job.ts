@@ -35,6 +35,16 @@ import type { JobStore } from "./store.js";
 import type { ReelRenderInput } from "../types.js";
 
 /**
+ * Hard wall-clock budget for one render job. why 5 minutes: a healthy
+ * 15s Reel renders in well under a minute; anything past 5 minutes
+ * means a hung Chromium evaluate, a stalled photo fetch, or a wedged
+ * upload. The watchdog marks the job failed and tears the browser down
+ * so the worker can take the next job instead of pinning "processing"
+ * forever.
+ */
+const JOB_DEADLINE_MS = 5 * 60_000;
+
+/**
  * Run a render job. Returns when the job has reached a terminal state
  * (succeeded or failed). The caller does NOT await this — /render
  * fires it and returns the queued job to the client immediately, so
@@ -64,7 +74,14 @@ export async function runRenderJob(
     fps: composition.frameRate,
   } as const;
 
-  try {
+  // why: set when the watchdog fires so the zombie pipeline (which keeps
+  // running until the browser close kills it) can't flip the job's
+  // terminal "failed" status back to "succeeded" after the fact.
+  let deadlineFired = false;
+
+  // why an inner closure instead of inlining in the try: the outer
+  // function Promise.races the whole pipeline against a hard deadline.
+  const runPipeline = async (): Promise<void> => {
     logger.info("render.start", {
       job_id: jobId,
       scenes: composition.scenes.length,
@@ -215,6 +232,10 @@ export async function runRenderJob(
     });
 
     // ---- 100% — succeeded ----
+    // why the deadlineFired guard: if the watchdog already marked this
+    // job failed, the zombie pipeline must not overwrite that terminal
+    // state with a late success.
+    if (deadlineFired) return;
     store.update(jobId, {
       status: "succeeded",
       progress_pct: 100,
@@ -233,6 +254,27 @@ export async function runRenderJob(
       total_elapsed_ms: Date.now() - startedAt,
       bytes: uploaded.size,
     });
+  };
+
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const pipeline = runPipeline();
+    // why swallow the zombie's rejection: when the deadline wins the
+    // race, the pipeline keeps running until the browser close in the
+    // finally block kills it. Its eventual rejection must not become an
+    // unhandled rejection that terminates the process.
+    void pipeline.catch(() => undefined);
+    const deadline = new Promise<never>((_resolve, reject) => {
+      deadlineTimer = setTimeout(() => {
+        deadlineFired = true;
+        reject(
+          new Error(
+            `Render job exceeded the ${Math.round(JOB_DEADLINE_MS / 1000)}s watchdog deadline`,
+          ),
+        );
+      }, JOB_DEADLINE_MS);
+    });
+    await Promise.race([pipeline, deadline]);
   } catch (err) {
     // why: any throw INSIDE the render pipeline must be captured here.
     // If it propagates out, Node will treat it as an unhandled rejection
@@ -249,6 +291,12 @@ export async function runRenderJob(
       error: message,
     });
   } finally {
+    // why clear the timer: a finished pipeline must not leave a live
+    // 5-minute timeout keeping the event loop busy (and firing
+    // deadlineFired on a job that already completed).
+    if (deadlineTimer !== undefined) {
+      clearTimeout(deadlineTimer);
+    }
     // why: release Playwright resources between jobs. The cached browser
     // instance is at module scope inside render-scene.ts so we explicitly
     // close it here rather than letting it linger across job boundaries.

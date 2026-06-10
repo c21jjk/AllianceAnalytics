@@ -2359,6 +2359,13 @@ export interface TriggerReelRenderOk {
   job_id: string;
   /** Echo of the idempotency key — the client can stash this for retry/debug. */
   idempotency_key: string;
+  /**
+   * The composition the worker is ACTUALLY rendering — i.e. the input
+   * composition plus any auto-attached audio track. why: the client must
+   * persist THIS document, not its local pre-attach copy, or the saved
+   * generated_posts row claims silence while the MP4 carries music.
+   */
+  composition: VideoComposition;
 }
 
 export interface TriggerReelRenderErr {
@@ -2477,6 +2484,9 @@ export async function triggerReelRenderAction(
       ok: true,
       job_id: body.job_id,
       idempotency_key: idempotencyKey,
+      // why: hand the rendered (audio-attached) composition back so the
+      // client persists what the worker is actually rendering.
+      composition: outgoing,
     };
   } catch (e) {
     // why: AbortError lands here when the timeout fires. Network errors

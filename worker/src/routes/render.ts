@@ -24,6 +24,7 @@ import type { JobStore } from "../jobs/store.js";
 import {
   renderSingleTemplate,
   closeRenderBrowser,
+  withRenderLock,
 } from "../render/render-scene.js";
 import { uploadCanvasImageToStorage } from "../storage/upload-video.js";
 import { ReelRenderInputZ, RenderImageInputZ } from "../types.js";
@@ -78,7 +79,14 @@ export function makeRenderRouter(store: JobStore): Router {
     // returns now, the render proceeds asynchronously, the client
     // polls /render/:id. why void: making this explicit silences the
     // no-floating-promises eslint rule when it gets added.
-    void runRenderJob(job.job_id, input, store);
+    //
+    // why withRenderLock: jobs share ONE cached Chromium page, and each
+    // job closes the browser in its cleanup. Without the lock, two
+    // concurrent submissions interleave frames and the first finisher
+    // kills the other's browser mid-render (2026-06-10 audit). The lock
+    // queues jobs in-process; queued jobs simply sit in "queued" status
+    // until the previous render releases the lock.
+    void withRenderLock(() => runRenderJob(job.job_id, input, store));
 
     res.status(202).json({
       job_id: job.job_id,
@@ -143,62 +151,68 @@ export function makeRenderImageRouter(): Router {
       idempotency_key: input.idempotency_key,
     });
 
-    try {
-      // why 1080×1920 hardcoded: same canonical dimensions the Reels
-      // pipeline uses. Future callers wanting different sizes (square IG,
-      // story 9:16, etc.) will pass dimensions through the body and a
-      // future version of renderSingleTemplate.
-      const png = await renderSingleTemplate(
-        input.template,
-        input.listing,
-        { width: 1080, height: 1920, fps: 30 },
-      );
-
-      const uploaded = await uploadCanvasImageToStorage(
-        png,
-        input.idempotency_key,
-      );
-
-      logger.info("render_image.succeeded", {
-        idempotency_key: input.idempotency_key,
-        url: uploaded.url,
-        bytes: uploaded.size,
-        duration_ms: Date.now() - startedAt,
-      });
-
-      res.status(200).json({
-        ok: true,
-        url: uploaded.url,
-        path: uploaded.path,
-      });
-    } catch (err) {
-      // why log + return 500 with the error message: this endpoint is
-      // synchronous, so failure surfaces directly to the caller. The
-      // structured error helps the main app distinguish "Chromium crashed"
-      // from "bucket misconfig" without an extra round-trip.
-      const message = err instanceof Error ? err.message : String(err);
-      logger.error("render_image.failed", {
-        idempotency_key: input.idempotency_key,
-        error: message,
-        duration_ms: Date.now() - startedAt,
-      });
-      res.status(500).json({ ok: false, error: message });
-    } finally {
-      // why: same browser-cleanup discipline as the video pipeline. Hold
-      // the browser open across the render+upload window; release once
-      // the response has been queued. If the worker handles a follow-up
-      // /render or /render-image immediately, the next call pays a
-      // ~500ms Chromium relaunch — acceptable in exchange for cleaner
-      // memory between requests.
+    // why withRenderLock: this endpoint shares the cached Chromium page
+    // with the video pipeline. Without the lock, a single-image render
+    // landing mid-video-job would interleave onto the same page and the
+    // first finisher's closeRenderBrowser() would kill the other. The
+    // HTTP response simply waits its turn in the queue.
+    await withRenderLock(async () => {
       try {
-        await closeRenderBrowser();
-      } catch (e) {
-        logger.warn("render_image.cleanup.failed", {
+        // why 1080×1920 hardcoded: same canonical dimensions the Reels
+        // pipeline uses. Future callers wanting different sizes (square IG,
+        // story 9:16, etc.) will pass dimensions through the body and a
+        // future version of renderSingleTemplate.
+        const png = await renderSingleTemplate(
+          input.template,
+          input.listing,
+          { width: 1080, height: 1920, fps: 30 },
+        );
+
+        const uploaded = await uploadCanvasImageToStorage(
+          png,
+          input.idempotency_key,
+        );
+
+        logger.info("render_image.succeeded", {
           idempotency_key: input.idempotency_key,
-          error: e instanceof Error ? e.message : String(e),
+          url: uploaded.url,
+          bytes: uploaded.size,
+          duration_ms: Date.now() - startedAt,
         });
+
+        res.status(200).json({
+          ok: true,
+          url: uploaded.url,
+          path: uploaded.path,
+        });
+      } catch (err) {
+        // why log + return 500 with the error message: this endpoint is
+        // synchronous, so failure surfaces directly to the caller. The
+        // structured error helps the main app distinguish "Chromium crashed"
+        // from "bucket misconfig" without an extra round-trip.
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error("render_image.failed", {
+          idempotency_key: input.idempotency_key,
+          error: message,
+          duration_ms: Date.now() - startedAt,
+        });
+        res.status(500).json({ ok: false, error: message });
+      } finally {
+        // why: same browser-cleanup discipline as the video pipeline. Hold
+        // the browser open across the render+upload window; release once
+        // the response has been queued. Closing INSIDE the lock is safe:
+        // the next queued job relaunches Chromium (~500ms), which is
+        // acceptable in exchange for clean memory between requests.
+        try {
+          await closeRenderBrowser();
+        } catch (e) {
+          logger.warn("render_image.cleanup.failed", {
+            idempotency_key: input.idempotency_key,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
-    }
+    });
   });
 
   return router;

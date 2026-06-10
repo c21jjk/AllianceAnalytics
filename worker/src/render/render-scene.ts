@@ -32,11 +32,16 @@
  *     (e.g., a network failure on a photo URL).
  *
  * Concurrency:
- *   This module is NOT safe for concurrent renderScene calls today —
- *   the single shared page would interleave frames. The worker's
- *   route layer (server.ts) serializes render jobs via the JobStore
- *   anyway, so this is fine. If we ever scale to in-process concurrency
- *   we'd switch to one page per concurrent slot.
+ *   This module is NOT safe for concurrent renderScene calls: the
+ *   single shared page would interleave frames, and the first job to
+ *   finish closes the cached browser out from under the other.
+ *   The route layer does NOT serialize jobs by itself (2026-06-10
+ *   audit: the old comment here claiming the JobStore serialized was
+ *   wrong; the store only tracks status). Every render pipeline,
+ *   /render and /render-image alike, must run inside withRenderLock()
+ *   (exported below), which chains jobs one at a time. Closing the
+ *   browser inside the lock is safe: the next job simply relaunches
+ *   Chromium (~500ms).
  */
 
 import path from "node:path";
@@ -58,6 +63,37 @@ import { logger } from "../lib/logger.js";
 let cachedBrowser: Browser | null = null;
 /** Cached page handle, sharing the cached browser. */
 let cachedPage: Page | null = null;
+
+// ---------------------------------------------------------------------------
+// Render lock — in-process promise-chain mutex
+// ---------------------------------------------------------------------------
+
+/** Tail of the render queue. Each job chains onto the previous one. */
+let renderLockTail: Promise<void> = Promise.resolve();
+
+/**
+ * Run `fn` exclusively against the shared Chromium page.
+ *
+ * why: the worker caches ONE browser + page at module scope, and every
+ * job closes the browser in its cleanup path. Two concurrent jobs would
+ * interleave frames on the shared page, and the first finisher's
+ * closeRenderBrowser() would kill the other's browser mid-render.
+ * Chaining onto a module-level promise serializes every render pipeline
+ * (video jobs AND single-image renders) with zero queue infrastructure.
+ *
+ * Errors from `fn` propagate to the caller; the chain itself swallows
+ * them so one failed job never wedges the queue.
+ */
+export function withRenderLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = renderLockTail.then(fn);
+  // why both handlers: keep the tail a settled Promise<void> no matter
+  // how `fn` settles, so the next queued job always starts.
+  renderLockTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 // ---------------------------------------------------------------------------
 // Public types

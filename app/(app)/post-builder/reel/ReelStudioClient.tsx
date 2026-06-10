@@ -260,6 +260,15 @@ const REEL_POLL_INTERVAL_MS = 1_500;
 const REEL_POLL_MAX_DURATION_MS = 180_000;
 
 /**
+ * How many CONSECUTIVE status-poll failures we tolerate before aborting the
+ * Generate flow. why: a single transient blip (Vercel action cold start,
+ * brief network hiccup, one slow worker response) used to kill a render
+ * that was still progressing fine on the worker. The counter resets on any
+ * successful poll, so only a sustained outage surfaces as an error.
+ */
+const REEL_POLL_MAX_CONSECUTIVE_FAILURES = 3;
+
+/**
  * Rotating status messages shown during the wait. Cycles every 4s so the
  * user sees motion even when progress_pct doesn't advance. Order matches
  * the actual worker pipeline (compose → encode → upload → almost there).
@@ -768,15 +777,63 @@ export default function ReelStudioClient({
   const applyPace = useCallback(
     (next: PaceKey) => {
       setPace(next);
+      // why precompute outside the state updater: the total-duration cap
+      // needs the timed result (recomputeTimeline) AND must surface a
+      // toast when it clamps. Firing setToast inside the setComposition
+      // updater would be a side effect in a render-phase function.
+      const target = PACE_PHOTO_MS[next];
+      const prevScenes = composition?.scenes ?? [];
+      const paced = prevScenes.map((s) =>
+        s.content.kind === "photo" ? { ...s, durationMs: target } : s,
+      );
+      let finalScenes: readonly Scene[] = paced;
+      let clamped = false;
+      const timed = recomputeTimeline(paced);
+      // why clamp here: the worker's zod schema rejects compositions over
+      // REEL_CAPS.maxTotalDurationMs (15s). A slow pace on a many-scene
+      // Reel would otherwise sail past the cap and 400 at render time.
+      if (timed.totalDurationMs > REEL_CAPS.maxTotalDurationMs) {
+        const overshoot = timed.totalDurationMs - REEL_CAPS.maxTotalDurationMs;
+        const photoTotal = paced.reduce(
+          (sum, s) => (s.content.kind === "photo" ? sum + s.durationMs : sum),
+          0,
+        );
+        if (photoTotal > 0) {
+          const factor = Math.max(0, (photoTotal - overshoot) / photoTotal);
+          finalScenes = paced.map((s) =>
+            s.content.kind === "photo"
+              ? {
+                  ...s,
+                  durationMs: Math.max(
+                    REEL_CAPS.minSceneDurationMs,
+                    Math.round(s.durationMs * factor),
+                  ),
+                }
+              : s,
+          );
+          clamped = true;
+        }
+      }
+      const durationBySceneId = new Map(
+        finalScenes.map((s) => [s.id, s.durationMs] as const),
+      );
       applySceneMutation((prev) =>
         prev.map((s) =>
           s.content.kind === "photo"
-            ? { ...s, durationMs: PACE_PHOTO_MS[next] }
+            ? { ...s, durationMs: durationBySceneId.get(s.id) ?? s.durationMs }
             : s,
         ),
       );
+      if (clamped) {
+        setToast({
+          kind: "warn",
+          message: `Slides were shortened to keep the Reel under ${
+            REEL_CAPS.maxTotalDurationMs / 1000
+          }s (the render limit).`,
+        });
+      }
     },
-    [applySceneMutation],
+    [applySceneMutation, composition],
   );
   const hasPhotoScenes =
     composition?.scenes.some((s) => s.content.kind === "photo") ?? false;
@@ -1140,6 +1197,11 @@ export default function ReelStudioClient({
       setGenerateState({ phase: "error", message: submit.error });
       return;
     }
+    // why: the action may auto-attach an Audio Library track before
+    // submitting to the worker. Persist THAT composition (returned by the
+    // action), not our local copy, so the saved row's audio matches the
+    // MP4 instead of claiming silence.
+    const renderedComposition = submit.composition;
 
     // ---- Step 3: poll until terminal ---------------------------------
     setGenerateState({
@@ -1151,6 +1213,9 @@ export default function ReelStudioClient({
     });
 
     const pollStart = Date.now();
+    // Consecutive-failure counter for transient poll errors. Lives in the
+    // closure (not state) because only pollOnce reads it.
+    let consecutivePollFailures = 0;
 
     // why: recursive setTimeout (not setInterval) so each poll waits for
     // the previous one to complete before scheduling the next — avoids
@@ -1173,10 +1238,21 @@ export default function ReelStudioClient({
       if (pollCancelledRef.current) return;
 
       if (!statusRes.ok) {
-        cancelPolling();
-        setGenerateState({ phase: "error", message: statusRes.error });
+        // why retry instead of aborting: the render keeps progressing on
+        // the worker regardless of whether THIS poll round-trip made it.
+        // Only give up after several failures in a row.
+        consecutivePollFailures += 1;
+        if (consecutivePollFailures >= REEL_POLL_MAX_CONSECUTIVE_FAILURES) {
+          cancelPolling();
+          setGenerateState({ phase: "error", message: statusRes.error });
+          return;
+        }
+        pollTimerRef.current = setTimeout(() => {
+          void pollOnce();
+        }, REEL_POLL_INTERVAL_MS);
         return;
       }
+      consecutivePollFailures = 0;
 
       const job = statusRes.job;
 
@@ -1217,7 +1293,7 @@ export default function ReelStudioClient({
         const coverImageUrl =
           job.cover_url ?? selectedListing.hero_image_url!;
         const persist = await persistRenderedReelAction({
-          composition,
+          composition: renderedComposition,
           video_url: job.video_url,
           video_path: job.video_path,
           duration_ms: job.duration_ms,
