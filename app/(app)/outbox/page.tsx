@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import {
   fetchOutboxCounts,
   fetchOutboxRows,
@@ -20,7 +20,9 @@ export const dynamic = "force-dynamic";
  * read-only audit view (which posts went out to which agents and when).
  */
 export default async function OutboxPage() {
-  await requireUser();
+  // why: the Outbox is an admin-only surface (nav hides it for non-admins);
+  // requireAdmin makes the server enforce what the UI already implies.
+  await requireAdmin();
   const [rows, counts] = await Promise.all([
     fetchOutboxRows({ onlyPending: true, limit: 100 }),
     fetchOutboxCounts(),

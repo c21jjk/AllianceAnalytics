@@ -1,4 +1,5 @@
 import PageHeader from "@/components/PageHeader";
+import { requireAdmin } from "@/lib/auth";
 import { listAllTemplates } from "@/lib/template-builder";
 import TemplateListClient from "./TemplateListClient";
 
@@ -16,6 +17,11 @@ export const dynamic = "force-dynamic";
  * See docs/adr/0001-template-builder.md.
  */
 export default async function AdminTemplatesPage() {
+  // why: layouts and pages render in parallel in the App Router, so the
+  // admin layout's gate alone does not stop this page's data fetch. The
+  // page must gate itself too.
+  await requireAdmin();
+
   const templates = await listAllTemplates();
 
   return (

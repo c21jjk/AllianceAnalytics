@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import clsx from "clsx";
 import type {
   CompanyAnalytics,
@@ -10,7 +11,14 @@ import type {
 import type { Platform } from "@/lib/types/post";
 import type { MetricKind } from "@/lib/data/metric-details";
 import { formatCompactNumber } from "@/lib/format";
-import MetricDetailDialog from "./MetricDetailDialog";
+
+// why: MetricDetailDialog pulls in recharts (~heavy) but only opens on click.
+// Dynamic import keeps recharts out of the dashboard's initial bundle; the
+// dialog code loads in the background the first time a tile is clicked.
+const MetricDetailDialog = dynamic(() => import("./MetricDetailDialog"), {
+  ssr: false,
+  loading: () => null,
+});
 
 interface CompanyAnalyticsStripProps {
   data: CompanyAnalytics;

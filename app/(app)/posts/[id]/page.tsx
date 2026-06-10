@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
@@ -12,9 +13,13 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+// why: cache() dedupes the bundle fetch between generateMetadata and the page
+// body within a single request — the merged-campaign query is not cheap.
+const getBundle = cache((id: string) => fetchGroupDetailBundleForPost(id));
+
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params;
-  const bundle = await fetchGroupDetailBundleForPost(id);
+  const bundle = await getBundle(id);
   if (!bundle) return { title: "Post — Alliance Social" };
   const platforms = bundle.group.postings.map((p) => platformLabel(p.platform));
   const platformLine =
@@ -34,7 +39,7 @@ export async function generateMetadata({ params }: PageProps) {
 export default async function PostDetailPage({ params }: PageProps) {
   await requireUser();
   const { id } = await params;
-  const bundle = await fetchGroupDetailBundleForPost(id);
+  const bundle = await getBundle(id);
   if (!bundle) notFound();
 
   const platformCount = bundle.group.postings.length;

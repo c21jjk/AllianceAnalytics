@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound, redirect, permanentRedirect } from "next/navigation";
 import { Barlow } from "next/font/google";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -150,7 +151,9 @@ async function lookupReport(
   };
 }
 
-async function loadLiveData(token: string): Promise<LiveData | null> {
+// why: cache() dedupes the lookup between generateMetadata and the page body
+// within a single request, so each report view hits the DB once, not twice.
+const loadLiveData = cache(async (token: string): Promise<LiveData | null> => {
   const supabase = createAdminClient();
   const lookup = await lookupReport(supabase, token);
   if (!lookup) return null;
@@ -270,7 +273,7 @@ async function loadLiveData(token: string): Promise<LiveData | null> {
     posts,
     rollup,
   };
-}
+});
 
 export async function generateMetadata({ params }: PageProps) {
   const { token } = await params;

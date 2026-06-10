@@ -1,3 +1,4 @@
+import { cache } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
@@ -23,11 +24,15 @@ interface PageProps {
   params: Promise<{ mls: string }>;
 }
 
+// why: cache() dedupes the live-property lookup between generateMetadata and
+// the page body within a single request — one DB round-trip instead of two.
+const getProperty = cache((mls: string) => fetchPropertyByMls(mls));
+
 export async function generateMetadata({ params }: PageProps) {
   const { mls } = await params;
   const property = findProperty(mls);
   if (property) return { title: `${property.address} — Alliance Social` };
-  const live = await fetchPropertyByMls(mls);
+  const live = await getProperty(mls);
   if (live?.address) return { title: `${live.address} — Alliance Social` };
   return { title: "Listing — Alliance Social" };
 }
@@ -39,7 +44,7 @@ export default async function PropertyDetailPage({ params }: PageProps) {
   // Live RETS-synced property takes priority. Fixtures only render when the
   // MLS doesn't exist in the live properties table — preserves the legacy
   // demo-mode rich report view without breaking real listings.
-  const live = await fetchPropertyByMls(mls);
+  const live = await getProperty(mls);
   if (live) {
     return <LivePropertyDetail property={live} />;
   }

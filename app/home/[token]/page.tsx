@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { Barlow } from "next/font/google";
@@ -85,9 +86,13 @@ interface PageProps {
   params: Promise<{ token: string }>;
 }
 
+// why: cache() dedupes the story lookup between generateMetadata and the page
+// body within a single request — one DB round-trip per view instead of two.
+const getStory = cache((token: string) => fetchOwnerStoryByToken(token));
+
 export async function generateMetadata({ params }: PageProps) {
   const { token } = await params;
-  const data = await fetchOwnerStoryByToken(token);
+  const data = await getStory(token);
   if (data?.listing.address) {
     return {
       title: `${data.listing.address} — Century 21 Alliance`,
@@ -103,7 +108,7 @@ export async function generateMetadata({ params }: PageProps) {
 export default async function OwnerStoryPage({ params }: PageProps) {
   const { token } = await params;
   const [data, brandLogos, vitals] = await Promise.all([
-    fetchOwnerStoryByToken(token),
+    getStory(token),
     fetchOwnerStoryBrandLogos(),
     fetchAllianceVitals(),
   ]);

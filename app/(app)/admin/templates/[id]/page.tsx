@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { requireAdmin } from "@/lib/auth";
 import { getTemplateById } from "@/lib/template-builder";
 import TemplateDetailClient from "./TemplateDetailClient";
 
@@ -23,6 +24,10 @@ export default async function AdminTemplateDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // why: layouts and pages render in parallel, so the admin layout's gate
+  // alone does not stop this page's data fetch. Gate here too.
+  await requireAdmin();
+
   const { id } = await params;
   const template = await getTemplateById(id);
   if (!template) notFound();
