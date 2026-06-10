@@ -730,6 +730,14 @@ export interface UndoRedoHistory {
    */
   start: () => void;
   /**
+   * Hard-reset the stacks + started flag back to the pre-start state. The
+   * orchestrator calls this from the canvas init effect whenever it rebuilds
+   * the Fabric canvas (template swap, resize, slide switch), so every fresh
+   * canvas begins with empty history. Without this, the refs survive the
+   * re-init and Cmd+Z replays the previous template's snapshot.
+   */
+  reset: () => void;
+  /**
    * Pause auto-snapshot recording. Used during crop mode: entering crop
    * mutates the canvas a lot (removes the image clipPath, adds overlay rects),
    * which would otherwise pollute the undo stack with intermediate states.

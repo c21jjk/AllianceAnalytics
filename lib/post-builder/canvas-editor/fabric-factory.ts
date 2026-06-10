@@ -763,15 +763,28 @@ export async function createFabricImage(
     // chromium-wide "30000ms exceeded" timeout. The 15s cap lets the
     // parent caller fall through to the no_src placeholder path while
     // still leaving headroom under the 30s screenshot ceiling.
-    const img = await Promise.race<FabricImage>([
-      FabricImage.fromURL(src, { crossOrigin: "anonymous" }),
-      new Promise<FabricImage>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`image load timeout after 15s: ${src}`)),
-          15_000,
-        ),
-      ),
-    ]);
+    //
+    // 2026-06-10: the timeout timer is now cleared once the race settles.
+    // Before this, every successful image load still left a live 15s timer
+    // behind; harmless individually, but a many-image hydration accumulated
+    // dozens of pending timers (wasted wakeups, noisy profiles).
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let img: FabricImage;
+    try {
+      img = await Promise.race<FabricImage>([
+        FabricImage.fromURL(src, { crossOrigin: "anonymous" }),
+        new Promise<FabricImage>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error(`image load timeout after 15s: ${src}`)),
+            15_000,
+          );
+        }),
+      ]);
+    } finally {
+      // why: clearTimeout tolerates undefined in both DOM and Node typings,
+      // so no narrowing dance is needed here.
+      clearTimeout(timeoutHandle);
+    }
     // why (2026-05-31): frame via NATIVE crop (see fitImageInFrame). The
     // object's bounding box becomes the visible frame — no cover overflow
     // hanging over neighbors. Default focal: horizontally centered, vertically

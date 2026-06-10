@@ -1219,4 +1219,16 @@ export interface CanvasEditorProps {
    * persistence + error handling. Omit to disable autosave for a consumer.
    */
   onAutosaveDesign?: (design: unknown) => void | Promise<void>;
+  /**
+   * 2026-06-10: editing-session identity beyond template/listing/custom-
+   * template ids. The canvas init effect re-runs (and the canvas DOM node
+   * is re-keyed, guaranteeing a virgin element per init) whenever this
+   * changes. Parents that reuse one mounted editor across multiple
+   * "documents" sharing the same template + listing (e.g. multi-OH carousel
+   * slides) MUST pass a per-document value (such as "slide-3"); otherwise
+   * switching documents never rehydrates and autosave can write one slide's
+   * canvas under another slide's index. Optional: single-document consumers
+   * can omit it.
+   */
+  sessionKey?: string;
 }

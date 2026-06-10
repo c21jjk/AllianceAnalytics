@@ -2114,29 +2114,9 @@ export default function PostBuilderClient({
       const hostEntry = hostingAgentsByIndex.find(
         (h) => h.index === slideIndex,
       );
-      // 2026-05-28 — Bug 3 diagnostics: surface the state of the host
-      // lookup so we can tell from prod logs whether (a) the array is
-      // empty when slide-1 fires (load race) or (b) the array is
-      // populated but the entry at this index has a null name / photo
-      // (data issue). Walk vs the post-edit hideIfEmpty drop in the
-      // saved layer_tree is the other suspect path.
-      console.log("[multi-oh slide click]", {
-        slideIndex,
-        hostingAgentsByIndexLen: hostingAgentsByIndex.length,
-        hostEntry: hostEntry
-          ? {
-              index: hostEntry.index,
-              name: hostEntry.name,
-              hasPhone: !!hostEntry.phone,
-              hasPhoto: !!hostEntry.photo_url,
-            }
-          : null,
-        templateSource: meta.layer_tree
-          ? "saved layer_tree"
-          : meta.db_template_id
-            ? "db template"
-            : "canonical canvas template",
-      });
+      // 2026-06-10: the "Bug 3 diagnostics" console.log that lived here
+      // (dumping the host lookup state on every slide click) was debug
+      // scaffolding from 2026-05-28 and has been removed.
       if (hostEntry && hostEntry.name) {
         payload.hosting_agent = {
           name: hostEntry.name,
@@ -4916,6 +4896,16 @@ export default function PostBuilderClient({
                 });
               }
             : undefined
+        }
+        // 2026-06-10: per-document session identity. Multi-OH slides share
+        // one template + listing, so without this the editor never re-ran its
+        // canvas init when switching slides: the previous slide's objects
+        // stayed on canvas (the new slide's fabric_json was ignored) and the
+        // autosave above could persist slide A's canvas under slide B's
+        // index. The key re-inits (and re-keys the canvas DOM node) per
+        // hero/slide.
+        sessionKey={
+          editingSlideIndex === null ? "hero" : `slide-${editingSlideIndex}`
         }
         onSaveAsTemplate={async (input) => {
           const res = await saveCustomTemplateAction(input);

@@ -109,6 +109,7 @@ import {
   createFabricTextbox,
   drawImageBorders,
   getLayerData,
+  type ImageLoadOutcome,
   resolveImageBoundField,
   resolveTextBoundField,
   setLayerBoundField,
@@ -120,7 +121,7 @@ import {
   type PlaceholderField,
   type SeparatorChar,
 } from "./placeholder-insert";
-import { createCanvaStyleControls, BRAND_GOLD } from "./canva-style-controls";
+import { BRAND_GOLD } from "./canva-style-controls";
 
 // === Phase 2 panel integrations ===
 // why: imported here at the orchestrator so the integration surface is
@@ -245,6 +246,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     initialFabricJson,
     onApplyLayoutToSiblings,
     onAutosaveDesign,
+    sessionKey,
   } = props;
   const [currentTemplate, setCurrentTemplate] =
     useState<CanvasTemplateSchema>(initialTemplate);
@@ -301,82 +303,41 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [editorError, setEditorError] = useState<EditorError | null>(null);
   const [isLocalSaving, setIsLocalSaving] = useState<boolean>(false);
 
-  // ===================================================================
-  // 2026-05-25 — Crop / Reposition mode (Canva-style)
-  // ===================================================================
-  //
-  // What it does: double-click an image layer → enter "crop mode" for
-  // that layer. The image becomes free to drag/scale WITHOUT the
-  // clipPath following it (default behavior is clipPath-syncs-to-image).
-  // The user can reposition the photo INSIDE its fixed frame to change
-  // which portion is visible. Click outside / press Enter to commit;
-  // Escape to cancel and restore the pre-crop state.
-  //
-  // Why a ref shadowing the state: the canvas event handlers (mouse
-  // dblclick, object:modified, etc.) are attached ONCE in the init
-  // effect and capture references at that time. Reading the live state
-  // value from inside those handlers requires a ref because the closure
-  // would otherwise see the stale initial value forever.
-  //
-  // Saved state shape: { layerId, originalImagePose, originalClipRect }
-  // is what we restore on Escape. originalImagePose captures the four
-  // transform fields that move/scale the image. originalClipRect
-  // captures the clipPath's canvas-space anchor so we can pin it during
-  // image drags inside crop mode.
-  interface CropModeState {
-    layerId: string;
-    originalImagePose: {
-      left: number;
-      top: number;
-      scaleX: number;
-      scaleY: number;
-    };
-    originalClipRect: {
-      left: number;
-      top: number;
-      width: number;
-      height: number;
-    };
-  }
-  const [cropMode, setCropMode] = useState<CropModeState | null>(null);
-  const cropModeRef = useRef<CropModeState | null>(null);
-  useEffect(() => {
-    cropModeRef.current = cropMode;
-  }, [cropMode]);
-  // 2026-05-25 — Live frame rect during crop mode. Updates as the
-  // user drags the frame's handles. Drives Done bar positioning +
-  // the clipPath re-apply on Done. Ref shadows state for stable
-  // closure access inside the exit handler.
-  const [currentClipRect, setCurrentClipRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  const currentClipRectRef = useRef<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  useEffect(() => {
-    currentClipRectRef.current = currentClipRect;
-  }, [currentClipRect]);
+  // 2026-06-10: the matboard-crop-era state/refs (cropMode, currentClipRect,
+  // cropOverlayRef + the CropModeState interface) that lived here were dead
+  // code since the 2026-05-31 native-crop rework (cropMode was only ever set
+  // to null) and have been deleted along with the crop lifecycle effect and
+  // the Done/Cancel crop bar JSX. Native crop needs none of it: the image's
+  // own edge/corner handles do the cropping in place.
 
-  // 2026-05-25 — Visual overlay objects for crop mode.
+  // ===================================================================
+  // 2026-06-10: Autosave arming (data-loss fix)
+  // ===================================================================
   //
-  // The FRAME is interactive — it has 8 handles for resizing the
-  // visible window (the "crop" operation). The PHOTO is below,
-  // draggable from anywhere inside the frame thanks to the frame's
-  // perPixelTargetFind. Dimmers cover the matboard area outside
-  // the frame to communicate what's being cropped.
-  //
-  // Stored on a ref so the enter/exit handlers can add+remove them
-  // without going through a React render cycle.
-  const cropOverlayRef = useRef<{
-    border: Rect | null;
-    dimmers: Rect[];
-  }>({ border: null, dimmers: [] });
+  // why: the autosave effect below keys off layerVersion, but hydration ALSO
+  // bumps layerVersion. Before this fix, the canvas autosaved ~1s after open
+  // with zero user input, which could bake a transient hydration state (for
+  // example a dashed placeholder Rect from a failed image load) into the
+  // persisted fabric_json and permanently lose the real layer. Autosave now
+  // arms only after the FIRST user-driven mutation that happens AFTER
+  // hydration completes. hydrationDoneRef flips true right before
+  // history.start(); armAutosave() is called from canvas mutation events and
+  // from the React-side handlers that mutate without firing canvas events.
+  // Both refs reset at the top of every canvas init so each fresh canvas
+  // starts un-armed again.
+  const autosaveArmedRef = useRef<boolean>(false);
+  const hydrationDoneRef = useRef<boolean>(false);
+  const armAutosave = useCallback((): void => {
+    if (hydrationDoneRef.current) autosaveArmedRef.current = true;
+  }, []);
+  // why: single helper for USER-driven layerVersion bumps that originate in
+  // React handlers (layer panel, toolbar callbacks, color/font panels)
+  // rather than Fabric canvas events. Arms the autosave, then bumps.
+  // Hydration code paths call setLayerVersion directly so they never arm.
+  const bumpUserLayerVersion = useCallback((): void => {
+    armAutosave();
+    setLayerVersion((v) => v + 1);
+  }, [armAutosave]);
   // why: drives the "Save as Template" modal. Closed by default; opens
   // when the user clicks the header button (rendered only when the parent
   // wired `onSaveAsTemplate`). State lives here (not at the parent) because
@@ -716,7 +677,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         canvas.add(img);
         canvas.setActiveObject(img);
         canvas.requestRenderAll();
-        setLayerVersion((v) => v + 1);
+        bumpUserLayerVersion();
         history.record();
       } catch (err) {
         setEditorError({
@@ -735,11 +696,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // -------------------------------------------------------------------------
   // why: when the user clicks a tile in TemplatesPanel (after passing the
   // panel's hasUnsavedEdits confirmation gate), we replace the active
-  // template. The init useEffect's `[template.id, listing.id]` dependency
-  // pair re-fires the entire canvas init pipeline — old Fabric canvas is
-  // disposed in cleanup, a new one is created, layers re-hydrate against
-  // the same listing. History auto-resets because the hook reads from
-  // fabricRef which is rebuilt.
+  // template. The init useEffect's identity deps re-fire the entire canvas
+  // init pipeline: old Fabric canvas is disposed in cleanup, a new one is
+  // created, layers re-hydrate against the same listing. History does NOT
+  // reset on its own (the hook's refs outlive the canvas), so the init
+  // effect calls history.reset() explicitly; without that, Cmd+Z after a
+  // swap replayed the previous template's snapshot onto the new canvas.
   //
   // Canva-mindset note: the proper end-game here is that template swap is
   // an undoable operation — Cmd+Z restores the prior canvas. That would
@@ -940,6 +902,24 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     const canvasEl = canvasRef.current;
     if (!canvasEl) return;
 
+    // 2026-06-10: every fresh canvas starts with EMPTY undo history. The
+    // hook's stacks + isStarted flag live in refs that survive canvas
+    // re-init (template swap, resize, slide switch); without this reset,
+    // start() no-ops on the new canvas and the first Cmd+Z replays the
+    // PREVIOUS template's snapshot onto it.
+    history.reset();
+    // 2026-06-10: disarm autosave for the new canvas: hydration bumps to
+    // layerVersion must not persist anything until the user actually edits.
+    // Also drop any autosave timer still pending from the previous canvas so
+    // it can't serialize the new (mid-hydration) canvas under the new
+    // document identity.
+    hydrationDoneRef.current = false;
+    autosaveArmedRef.current = false;
+    if (autosaveWriteTimerRef.current) {
+      clearTimeout(autosaveWriteTimerRef.current);
+      autosaveWriteTimerRef.current = null;
+    }
+
     // why: `cancelled` flag protects against late-arriving async work (font
     // loading, image fetches) when the effect has been cleaned up. Without it,
     // we'd be calling .add() on a disposed canvas if the user navigates away
@@ -1099,10 +1079,21 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // visibility / ordering / membership.
     const bumpVersion = () => {
       if (cancelled) return;
+      // 2026-06-10: adds/removes after hydration are user-driven: arm
+      // autosave. During hydration (hydrationDoneRef false) the burst of
+      // object:added events leaves autosave disarmed.
+      armAutosave();
       setLayerVersion((v) => v + 1);
     };
     fabricCanvas.on("object:added", bumpVersion);
     fabricCanvas.on("object:removed", bumpVersion);
+    // 2026-06-10: typing inside a Textbox fires text:changed (the matching
+    // object:modified only fires when editing ends). Arm autosave on the
+    // first keystroke so an edit-then-close-fast session still persists.
+    fabricCanvas.on("text:changed", () => {
+      if (cancelled) return;
+      armAutosave();
+    });
 
     // why (2026-05-29 — Phase 1 collapse): previously TWO separate
     // `object:modified` listeners fired on every drag/scale end — one
@@ -1123,6 +1114,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // new canvas-space rect here.
     fabricCanvas.on("object:modified", (e) => {
       if (cancelled) return;
+      // 2026-06-10: a post-hydration modify is user-driven: arm autosave.
+      armAutosave();
       const obj = e.target;
       // 2026-05-31 — TEXT: bake any residual scale into fontSize + width so
       // the glyphs are never left stretched/squished and the size readout
@@ -1198,22 +1191,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       bumpVersion();
     });
 
-    // 2026-05-25 — Crop mode: enter via double-click on an image layer.
-    //
-    // Why mouse:dblclick (not dom click): Fabric synthesizes its own
+    // why mouse:dblclick (not dom click): Fabric synthesizes its own
     // double-click events that fire ONLY on canvas objects (not the
     // background). It captures the target object cleanly without us
     // having to do hit-testing.
-    //
-    // What happens:
-    //   1. Grab the image's current clipPath rect → that's the
-    //      "frame" the user is cropping within. Snapshot its
-    //      canvas-space anchor + dims.
-    //   2. Capture image.left / top / scaleX / scaleY for Escape /
-    //      Cancel restoration.
-    //   3. Set cropMode state — the object:modified handler above
-    //      now knows to skip the clipPath rebuild for THIS layer,
-    //      letting the image move freely inside the fixed frame.
     // 2026-05-31 — native-crop model: double-clicking a photo just SELECTS it.
     // Trimming/cropping now happens directly via the edge handles (cut off) and
     // corner handles (scale) on the selected image — no separate crop mode. The
@@ -1367,6 +1348,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (cancelled || !fabricRef.current) return;
       fabricRef.current.requestRenderAll();
       setLayerVersion((v) => v + 1);
+      // 2026-06-10: hydration is complete: from here on, canvas mutation
+      // events count as user edits and arm the autosave. The bump above
+      // itself does NOT arm (hydrationDoneRef was still false when its
+      // events fired), so nothing persists until the user touches something.
+      hydrationDoneRef.current = true;
       history.start();
     };
 
@@ -1385,6 +1371,25 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
 
       const sortedLayers = [...template.layers].sort((a, b) => a.z - b.z);
 
+      // 2026-06-10: kick off ALL image loads up front so a slow MLS CDN
+      // photo no longer serializes hydration (previously each image was
+      // awaited inside the z-order loop, so total wait was the SUM of load
+      // times). createFabricImage keeps its own 15s timeout + never rejects
+      // (failures come back as ok:false outcomes), so firing them eagerly is
+      // safe. The loop below still ADDS objects in z-order, awaiting each
+      // image's already-in-flight promise, so stacking stays schema-faithful.
+      const imageOutcomePromises = new Map<
+        string,
+        Promise<ImageLoadOutcome>
+      >();
+      for (const layer of sortedLayers) {
+        if (!isImageLayer(layer)) continue;
+        const resolved = layer.boundField
+          ? resolveImageBoundField(layer.boundField, listing)
+          : layer.src;
+        imageOutcomePromises.set(layer.id, createFabricImage(layer, resolved));
+      }
+
       for (const layer of sortedLayers) {
         if (cancelled || !fabricRef.current) return;
 
@@ -1401,10 +1406,15 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           );
           fabricRef.current.add(tb);
         } else if (isImageLayer(layer)) {
-          const resolved = layer.boundField
-            ? resolveImageBoundField(layer.boundField, listing)
-            : layer.src;
-          const outcome = await createFabricImage(layer, resolved);
+          // why: the load was started eagerly above; this await just joins
+          // the already-in-flight promise. The map is keyed by layer id and
+          // populated for every image layer, so the lookup cannot miss; the
+          // fallback only defends against a malformed template.
+          const outcome = (await imageOutcomePromises.get(layer.id)) ?? {
+            ok: false as const,
+            reason: "no_src" as const,
+            message: "No image URL",
+          };
           if (cancelled || !fabricRef.current) return;
           if (outcome.ok) {
             fabricRef.current.add(outcome.image);
@@ -1436,6 +1446,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               transparentCorners: false,
               borderColor: BRAND_GOLD,
               cornerColor: BRAND_GOLD,
+              // 2026-06-10 (data-loss fix): NEVER serialize the placeholder.
+              // A transient load failure (CDN hiccup, flaky wifi) used to get
+              // baked into the autosaved fabric_json as this dashed Rect,
+              // permanently replacing the real image layer on every reopen.
+              // excludeFromExport makes every toObject/toJSON path (autosave,
+              // undo snapshots, PNG export) skip it, so a failed load stays a
+              // this-session-only visual cue.
+              excludeFromExport: true,
             });
             setLayerData(placeholder, {
               layerId: layer.id,
@@ -1466,6 +1484,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       fabricRef.current.requestRenderAll();
       // why: prime the layer panel with the freshly added objects.
       setLayerVersion((v) => v + 1);
+      // 2026-06-10: hydration is complete: from here on, canvas mutation
+      // events count as user edits and arm the autosave (see armAutosave).
+      hydrationDoneRef.current = true;
       // why: Phase 2 — activate the undo/redo auto-snapshot now that the
       // canvas holds its hydrated baseline. Before this call, the history
       // hook ignores Fabric events; after this call, every debounced
@@ -1521,690 +1542,28 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     };
     // why: include only identity fields in deps. Including the full template
     // object would re-init the canvas on every parent re-render (since most
-    // parents pass a new object reference each render). The id pair is
+    // parents pass a new object reference each render). The id tuple is
     // sufficient for "should we recreate the canvas".
+    //
+    // 2026-06-10: sessionKey added to the tuple. Multi-OH slides share one
+    // template + listing, so without it, switching slides never re-ran this
+    // effect: the canvas kept the previous slide's objects, ignored the new
+    // initialFabricJson, and the autosave callback (which reads the CURRENT
+    // slide index) could persist slide A's canvas under slide B's index.
+    // sessionKey also keys the <canvas> DOM node below, so every init gets a
+    // virgin element (Fabric v6 defers dispose() a frame; constructing a new
+    // Canvas on the still-initialized old element threw and left the editor
+    // blank until refresh).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [template.id, listing.id, customTemplate?.id]);
+  }, [template.id, listing.id, customTemplate?.id, sessionKey]);
 
-  // ===================================================================
-  // 2026-05-25 — Crop mode lifecycle effect
-  // ===================================================================
-  //
-  // Fires whenever `cropMode` flips on or off. On enter:
-  //   1. Lock every non-target layer (no selection, no interaction).
-  //   2. Force the target image into a selectable + free-movement
-  //      state — its movement locks get cleared so the user can drag.
-  //   3. Paint the visual cue: a gold border around the active frame
-  //      and four dimmer rects covering the canvas area outside it.
-  //   4. Wire global keydown handlers for Enter (commit) + Escape
-  //      (cancel + restore).
-  //
-  // On exit:
-  //   1. Remove the visual overlays.
-  //   2. Restore the other layers' interactivity to whatever the
-  //      schema said (locked vs. unlocked).
-  //   3. If `cancel=true`, restore the image's saved pose.
-  //   4. Unbind the keydown handlers.
-  //   5. Push a single object:modified event so the undo history
-  //      treats the crop as one step.
-  const exitCropModeRef = useRef<((cancel: boolean) => void) | null>(null);
-  // P2a (2026-05-29): apply an aspect-ratio preset to the crop frame.
-  // ratio = width/height; null = the image's natural aspect ("Original").
-  // Set inside the crop effect (where the frame border + matboard math are
-  // in scope); called from the crop bar's preset buttons.
-  const cropAspectRef = useRef<((ratio: number | null) => void) | null>(null);
-  useEffect(() => {
-    const canvas = fabricRef.current;
-    if (!canvas) return;
-    if (!cropMode) return;
-
-    // Find the target image object by layer id.
-    const targetImage = canvas.getObjects().find((o) => {
-      const data = getLayerData(o);
-      return data?.layerId === cropMode.layerId && o instanceof FabricImage;
-    }) as FabricImage | undefined;
-    if (!targetImage) {
-      // why: defensive — if the layer vanished between dblclick and this
-      // effect running (extremely unlikely, but possible if a parallel
-      // effect removes it), just bail out of crop mode.
-      setCropMode(null);
-      return;
-    }
-
-    // #10 fix — pause undo history for the whole crop session. Entering crop
-    // removes the image clipPath and adds overlay rects; without this those
-    // intermediate mutations pollute the stack (and broke undo). We record a
-    // SINGLE entry on commit (see exitFn).
-    history.suspend();
-
-    // 1 — snapshot pre-crop interactivity so we can restore on exit.
-    interface Restorable {
-      obj: import("fabric").FabricObject;
-      selectable: boolean;
-      evented: boolean;
-    }
-    const restoreList: Restorable[] = [];
-    for (const obj of canvas.getObjects()) {
-      restoreList.push({
-        obj,
-        selectable: obj.selectable ?? true,
-        evented: obj.evented ?? true,
-      });
-      if (obj === targetImage) {
-        obj.set({ selectable: true, evented: true });
-      } else {
-        obj.set({ selectable: false, evented: false });
-      }
-    }
-
-    // 2026-05-25 — Canva crop semantics: SHOW the full photo,
-    // including parts that would be cropped. Remove the clipPath
-    // for the duration of crop mode. The 4 dimmer rects below
-    // give the user a visual cue of what's currently being cropped
-    // by sitting on top of the photo's "to-be-cropped" portions.
-    // On exit (Done or Cancel), we re-apply the clipPath at the
-    // appropriate rect (current frame for commit, original for
-    // cancel).
-    const savedClipPath = targetImage.clipPath;
-    targetImage.clipPath = undefined;
-
-    // 2 — configure the target image's interaction.
-    //
-    // In crop mode, the PHOTO's own handles are HIDDEN. The frame
-    // border (created below) is what the user manipulates to CROP.
-    // The photo is interactive only for repositioning — drag the
-    // body to slide the photo around inside the frame.
-    //
-    // Hiding handles via setControlsVisibility (not removing the
-    // controls map) is the right call because we want to restore
-    // the photo's normal handles on exit. Visibility flags toggle
-    // per-instance without touching the underlying controls object.
-    canvas.setActiveObject(targetImage);
-    const priorControlsVisibility = {
-      tl: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("tl") ?? true,
-      tr: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("tr") ?? true,
-      bl: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("bl") ?? true,
-      br: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("br") ?? true,
-      ml: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("ml") ?? true,
-      mr: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mr") ?? true,
-      mt: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mt") ?? true,
-      mb: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mb") ?? true,
-      mtr: (targetImage as unknown as { isControlVisible?: (k: string) => boolean }).isControlVisible?.("mtr") ?? true,
-    };
-    (
-      targetImage as unknown as {
-        setControlsVisibility: (v: Record<string, boolean>) => void;
-      }
-    ).setControlsVisibility({
-      tl: false,
-      tr: false,
-      bl: false,
-      br: false,
-      ml: false,
-      mr: false,
-      mt: false,
-      mb: false,
-      mtr: false,
-    });
-    // why: also hide the selection bounding box on the photo. With
-    // no handles AND no border, the photo doesn't compete visually
-    // with the frame chrome. The frame border is what the user sees
-    // and grabs.
-    const priorHasBorders = targetImage.hasBorders ?? true;
-    targetImage.set({ hasBorders: false });
-
-    // 2026-05-25 — Canva-style matboard: extend the canvas to 2×
-    // template dimensions and center the template inside. This makes
-    // the photo's overflow VISIBLE in the buffer area surrounding
-    // the template, so the user can see what they're cropping
-    // outside the frame edges. Without this, anything that extends
-    // past the canvas pixel bounds is clipped at the canvas edge.
-    //
-    // Implementation: increase canvas pixel dimensions, then pan
-    // the viewport so scene (0,0) maps to canvas pixel
-    // (templateW/2, templateH/2). All scene-coord objects (including
-    // the photo) keep their original positions in scene space — they
-    // just have more room to extend without being clipped.
-    const EXTEND_FACTOR = 2;
-    const savedCanvasW = canvas.getWidth();
-    const savedCanvasH = canvas.getHeight();
-    // why: Fabric typings expect a 6-tuple (TMat2D). Cast the saved
-    // copy via tuple so setViewportTransform on exit accepts it.
-    const savedViewportTransform: [number, number, number, number, number, number] =
-      canvas.viewportTransform
-        ? [
-            canvas.viewportTransform[0],
-            canvas.viewportTransform[1],
-            canvas.viewportTransform[2],
-            canvas.viewportTransform[3],
-            canvas.viewportTransform[4],
-            canvas.viewportTransform[5],
-          ]
-        : [1, 0, 0, 1, 0, 0];
-    const extendedW = template.width * EXTEND_FACTOR;
-    const extendedH = template.height * EXTEND_FACTOR;
-    const tx = (extendedW - template.width) / 2;
-    const ty = (extendedH - template.height) / 2;
-    canvas.setDimensions({ width: extendedW, height: extendedH });
-    canvas.setViewportTransform([1, 0, 0, 1, tx, ty]);
-
-    // 3 — paint the visual overlays. Canva-style crop chrome:
-    //   • A thin violet outline at the original frame edges (visual
-    //     reference for "this is the visible window").
-    //   • Four black dimmer rects covering everything OUTSIDE the
-    //     frame, on top of the now-clipPath-less photo. These
-    //     communicate what's going to be cropped.
-    //
-    // 2026-05-25 — Dimmers now extend ACROSS the matboard too — not
-    // just the original canvas area. The visible scene area in crop
-    // mode spans (-tx, -ty) to (template.width + tx, template.height +
-    // ty), so dimmers must cover that whole region outside the frame.
-    //
-    // Both border and dimmers are non-interactive (selectable: false,
-    // evented: false) — they're purely visual cues. The photo itself
-    // is the only interactive object; user manipulates IT to change
-    // the crop. The frame stays static for the duration of crop mode.
-    const { left, top, width, height } = cropMode.originalClipRect;
-    const border = new Rect({
-      left,
-      top,
-      width,
-      height,
-      fill: "transparent",
-      stroke: "#8B5CF6",
-      strokeWidth: 3,
-      strokeUniform: true,
-      selectable: true,
-      evented: true,
-      excludeFromExport: true,
-      originX: "left",
-      originY: "top",
-      cornerStyle: "circle",
-      cornerSize: 16,
-      transparentCorners: false,
-      borderColor: "#8B5CF6",
-      cornerColor: "#8B5CF6",
-      borderScaleFactor: 2,
-      hasControls: true,
-      lockRotation: true,
-      // 2026-05-25 — perPixelTargetFind so only the 3px violet
-      // STROKE hit-tests. Clicks inside the body (transparent
-      // pixels) fall through to the photo below for dragging.
-      perPixelTargetFind: true,
-    });
-    // 8 Canva-style handles for cropping the frame.
-    (
-      border as unknown as { controls: Record<string, unknown> }
-    ).controls = createCanvaStyleControls();
-    // Tag for click-outside detection.
-    (
-      border as unknown as { data: Record<string, unknown> }
-    ).data = { isCropFrameBorder: true };
-    // Dimmer bounds: cover the entire VISIBLE SCENE AREA outside the
-    // template frame. Visible scene now spans (-tx, -ty) to
-    // (template.width + tx, template.height + ty) thanks to the
-    // matboard extension above. The dimmers tile around the frame
-    // edges to cover the matboard + any photo overflow into it.
-    const dimmerOpacity = 0.55;
-    const matLeft = -tx;
-    const matTop = -ty;
-    const matWidth = template.width + 2 * tx;
-    const matHeight = template.height + 2 * ty;
-    const dimmers: Rect[] = [
-      // Top strip — spans full matboard width, from top of mat to
-      // the top edge of the frame.
-      new Rect({
-        left: matLeft,
-        top: matTop,
-        width: matWidth,
-        height: top - matTop,
-        fill: "#000000",
-        opacity: dimmerOpacity,
-        selectable: false,
-        evented: false,
-        excludeFromExport: true,
-      }),
-      // Bottom strip — from bottom edge of frame to bottom of mat.
-      new Rect({
-        left: matLeft,
-        top: top + height,
-        width: matWidth,
-        height: matTop + matHeight - (top + height),
-        fill: "#000000",
-        opacity: dimmerOpacity,
-        selectable: false,
-        evented: false,
-        excludeFromExport: true,
-      }),
-      // Left strip — from left of mat to left edge of frame, between
-      // the top and bottom strips.
-      new Rect({
-        left: matLeft,
-        top: top,
-        width: left - matLeft,
-        height: height,
-        fill: "#000000",
-        opacity: dimmerOpacity,
-        selectable: false,
-        evented: false,
-        excludeFromExport: true,
-      }),
-      // Right strip — from right edge of frame to right of mat.
-      new Rect({
-        left: left + width,
-        top: top,
-        width: matLeft + matWidth - (left + width),
-        height: height,
-        fill: "#000000",
-        opacity: dimmerOpacity,
-        selectable: false,
-        evented: false,
-        excludeFromExport: true,
-      }),
-    ];
-    for (const d of dimmers) canvas.add(d);
-    canvas.add(border);
-    cropOverlayRef.current = { border, dimmers };
-
-    // Re-assert image as active selection so its body-drag works
-    // immediately. The border is interactive but only its STROKE
-    // and HANDLES respond to clicks (perPixelTargetFind = true).
-    canvas.setActiveObject(targetImage);
-    canvas.requestRenderAll();
-
-    // 2026-05-25 — seed currentClipRect. Drives the Done bar
-    // position + the clipPath re-apply on Done. Updated below as
-    // the user drags the frame's handles.
-    setCurrentClipRect({ left, top, width, height });
-
-    // 3b — wire scaling/moving handlers on the frame border. Every
-    // tick: normalize scaleX/scaleY → width/height (so the next
-    // transform starts clean), clamp to matboard bounds, and
-    // update the dimmers + currentClipRect React state so the
-    // Done bar follows.
-    // P2c — frame dims captured at the start of a resize gesture, used to
-    // lock the aspect ratio while Shift is held (set on border mousedown).
-    let gestureStartW = 0;
-    let gestureStartH = 0;
-
-    const syncFrameFromBorder = (opt?: { e?: Event }): void => {
-      const rawW = (border.width ?? 0) * (border.scaleX ?? 1);
-      const rawH = (border.height ?? 0) * (border.scaleY ?? 1);
-      const newLeft = border.left ?? 0;
-      const newTop = border.top ?? 0;
-      const MIN = 40;
-      // Matboard bounds (scene coords).
-      const matMinX = -tx;
-      const matMinY = -ty;
-      const matMaxX = template.width + tx;
-      const matMaxY = template.height + ty;
-
-      // P2c — Shift locks the frame to its aspect ratio at gesture start.
-      // Follow the dominant drag axis: whichever dimension changed more
-      // drives the other.
-      let lockedW = rawW;
-      let lockedH = rawH;
-      const shiftHeld = Boolean(
-        (opt?.e as { shiftKey?: boolean } | undefined)?.shiftKey,
-      );
-      if (shiftHeld && gestureStartW > 0 && gestureStartH > 0) {
-        const ratio = gestureStartW / gestureStartH;
-        if (
-          Math.abs(rawW - gestureStartW) >= Math.abs(rawH - gestureStartH)
-        ) {
-          lockedH = lockedW / ratio;
-        } else {
-          lockedW = lockedH * ratio;
-        }
-      }
-
-      let clampedW = Math.max(MIN, Math.min(lockedW, matMaxX - newLeft));
-      let clampedH = Math.max(MIN, Math.min(lockedH, matMaxY - newTop));
-      let clampedLeft = Math.max(matMinX, Math.min(newLeft, matMaxX - clampedW));
-      let clampedTop = Math.max(matMinY, Math.min(newTop, matMaxY - clampedH));
-
-      // P2b — snap the frame edges + center to the TEMPLATE (slide) guides so
-      // the crop aligns to the slide boundaries / center. Small threshold;
-      // an edge snap wins over the center snap on the same axis.
-      const SNAP = 7;
-      const near = (a: number, b: number): boolean => Math.abs(a - b) <= SNAP;
-      let snappedX = false;
-      let snappedY = false;
-      if (near(clampedLeft, 0)) {
-        const r = clampedLeft + clampedW;
-        clampedLeft = 0;
-        clampedW = r - clampedLeft;
-        snappedX = true;
-      } else if (near(clampedLeft + clampedW, template.width)) {
-        clampedW = template.width - clampedLeft;
-        snappedX = true;
-      }
-      if (near(clampedTop, 0)) {
-        const b = clampedTop + clampedH;
-        clampedTop = 0;
-        clampedH = b - clampedTop;
-        snappedY = true;
-      } else if (near(clampedTop + clampedH, template.height)) {
-        clampedH = template.height - clampedTop;
-        snappedY = true;
-      }
-      if (!snappedX && near(clampedLeft + clampedW / 2, template.width / 2)) {
-        clampedLeft = template.width / 2 - clampedW / 2;
-      }
-      if (!snappedY && near(clampedTop + clampedH / 2, template.height / 2)) {
-        clampedTop = template.height / 2 - clampedH / 2;
-      }
-      clampedW = Math.max(MIN, clampedW);
-      clampedH = Math.max(MIN, clampedH);
-
-      border.set({
-        left: clampedLeft,
-        top: clampedTop,
-        width: clampedW,
-        height: clampedH,
-        scaleX: 1,
-        scaleY: 1,
-      });
-      // Update dimmers — reposition all four around the new frame.
-      const matLeftV = matMinX;
-      const matTopV = matMinY;
-      const matWidthV = template.width + 2 * tx;
-      const matHeightV = template.height + 2 * ty;
-      const [dTop, dBottom, dLeft, dRight] = dimmers;
-      dTop.set({
-        left: matLeftV,
-        top: matTopV,
-        width: matWidthV,
-        height: clampedTop - matTopV,
-      });
-      dBottom.set({
-        left: matLeftV,
-        top: clampedTop + clampedH,
-        width: matWidthV,
-        height: matTopV + matHeightV - (clampedTop + clampedH),
-      });
-      dLeft.set({
-        left: matLeftV,
-        top: clampedTop,
-        width: clampedLeft - matLeftV,
-        height: clampedH,
-      });
-      dRight.set({
-        left: clampedLeft + clampedW,
-        top: clampedTop,
-        width: matLeftV + matWidthV - (clampedLeft + clampedW),
-        height: clampedH,
-      });
-      // React state for Done bar positioning.
-      setCurrentClipRect({
-        left: clampedLeft,
-        top: clampedTop,
-        width: clampedW,
-        height: clampedH,
-      });
-      canvas.requestRenderAll();
-    };
-    border.on("scaling", syncFrameFromBorder);
-    border.on("moving", syncFrameFromBorder);
-    // P2c — capture the frame dims when a resize gesture begins so Shift can
-    // lock to that aspect ratio.
-    const captureGestureStart = (): void => {
-      gestureStartW = border.width ?? 0;
-      gestureStartH = border.height ?? 0;
-    };
-    border.on("mousedown", captureGestureStart);
-    // P2b — snap the photo's edges to the frame edges while panning, so the
-    // photo aligns cleanly to the crop window instead of leaving a sliver.
-    const snapPhotoPan = (): void => {
-      const frame = currentClipRectRef.current;
-      if (!frame) return;
-      const SNAP = 7;
-      const near = (a: number, b: number): boolean => Math.abs(a - b) <= SNAP;
-      const w = (targetImage.width ?? 0) * (targetImage.scaleX ?? 1);
-      const h = (targetImage.height ?? 0) * (targetImage.scaleY ?? 1);
-      let nl = targetImage.left ?? 0;
-      let nt = targetImage.top ?? 0;
-      if (near(nl, frame.left)) nl = frame.left;
-      else if (near(nl + w, frame.left + frame.width))
-        nl = frame.left + frame.width - w;
-      if (near(nt, frame.top)) nt = frame.top;
-      else if (near(nt + h, frame.top + frame.height))
-        nt = frame.top + frame.height - h;
-      targetImage.set({ left: nl, top: nt });
-    };
-    targetImage.on("moving", snapPhotoPan);
-
-    // P2a (2026-05-29) — aspect-ratio presets. Resize the crop frame to a
-    // target ratio (w/h), centered on the frame's current center, fit within
-    // the matboard, then reuse syncFrameFromBorder to propagate to the
-    // dimmers + Done-bar state. ratio === null → the image's natural aspect.
-    const applyAspect = (ratio: number | null): void => {
-      const cur = currentClipRectRef.current ?? cropMode.originalClipRect;
-      const cx = cur.left + cur.width / 2;
-      const cy = cur.top + cur.height / 2;
-      const naturalW = targetImage.width ?? 1;
-      const naturalH = targetImage.height ?? 1;
-      const r =
-        ratio ?? (naturalW > 0 && naturalH > 0 ? naturalW / naturalH : 1);
-      // Matboard bounds (scene coords) — same as syncFrameFromBorder.
-      const matMinX = -tx;
-      const matMinY = -ty;
-      const matMaxX = template.width + tx;
-      const matMaxY = template.height + ty;
-      const maxW = matMaxX - matMinX;
-      const maxH = matMaxY - matMinY;
-      // Anchor on the current frame width, derive height from the ratio,
-      // then shrink to fit the matboard if either axis overflows.
-      let newW = cur.width;
-      let newH = newW / r;
-      if (newW > maxW) {
-        newW = maxW;
-        newH = newW / r;
-      }
-      if (newH > maxH) {
-        newH = maxH;
-        newW = newH * r;
-      }
-      let left = cx - newW / 2;
-      let top = cy - newH / 2;
-      left = Math.max(matMinX, Math.min(left, matMaxX - newW));
-      top = Math.max(matMinY, Math.min(top, matMaxY - newH));
-      border.set({ left, top, width: newW, height: newH, scaleX: 1, scaleY: 1 });
-      // Reuse the existing sync so dimmers + currentClipRect + render update.
-      syncFrameFromBorder();
-    };
-    cropAspectRef.current = applyAspect;
-
-    // 4 — define the exit function. Cancel=true restores image pose
-    // AND clipPath rect; cancel=false commits both.
-    const exitFn = (cancel: boolean): void => {
-      const c = fabricRef.current;
-      if (!c) return;
-      // 2026-05-25 — re-apply the image's clipPath now that we're
-      // leaving crop mode. Cover the appropriate rect:
-      // The user can resize the frame during crop. On Done, use
-      // the live frame rect (currentClipRectRef). On Cancel, snap
-      // back to the original. Preserve corner radius from the
-      // saved clipPath so rounded photo frames stay rounded.
-      const targetRect = cancel
-        ? cropMode.originalClipRect
-        : currentClipRectRef.current ?? cropMode.originalClipRect;
-      const priorClipRx =
-        savedClipPath instanceof Rect &&
-        typeof (savedClipPath as unknown as { rx?: number }).rx === "number"
-          ? (savedClipPath as unknown as { rx: number }).rx
-          : 0;
-      const priorClipRy =
-        savedClipPath instanceof Rect &&
-        typeof (savedClipPath as unknown as { ry?: number }).ry === "number"
-          ? (savedClipPath as unknown as { ry: number }).ry
-          : 0;
-      targetImage.clipPath = new Rect({
-        left: targetRect.left,
-        top: targetRect.top,
-        width: targetRect.width,
-        height: targetRect.height,
-        rx: priorClipRx,
-        ry: priorClipRy,
-        originX: "left",
-        originY: "top",
-        absolutePositioned: true,
-      });
-      if (cancel) {
-        // Restore image pose
-        targetImage.set(cropMode.originalImagePose);
-      }
-      // Remove overlays.
-      const overlay = cropOverlayRef.current;
-      if (overlay.border) c.remove(overlay.border);
-      for (const d of overlay.dimmers) c.remove(d);
-      cropOverlayRef.current = { border: null, dimmers: [] };
-      // 2026-05-25 — restore canvas dimensions + viewport transform
-      // (we extended them on entry for the matboard view).
-      c.setDimensions({ width: savedCanvasW, height: savedCanvasH });
-      c.setViewportTransform(savedViewportTransform);
-      // Restore the target image's control visibility AND
-      // hasBorders flag to what they were before crop mode.
-      (
-        targetImage as unknown as {
-          setControlsVisibility: (v: Record<string, boolean>) => void;
-        }
-      ).setControlsVisibility(priorControlsVisibility);
-      targetImage.set({ hasBorders: priorHasBorders });
-      // Restore other layers' interactivity.
-      for (const r of restoreList) {
-        r.obj.set({ selectable: r.selectable, evented: r.evented });
-      }
-      // Force a final modified event so undo history captures one step
-      // — but ONLY on commit. On cancel we already restored, so no
-      // modified event is needed (and would add a noise step).
-      if (!cancel) {
-        c.fire("object:modified", { target: targetImage });
-      }
-      c.requestRenderAll();
-      // #10 fix — resume history, then capture the net crop as ONE undo entry
-      // on commit. On cancel the pre-crop state was restored, so there's
-      // nothing new to record (the stack's current IS the pre-crop state).
-      history.resume();
-      if (!cancel) history.record();
-      setCurrentClipRect(null);
-      setCropMode(null);
-    };
-    exitCropModeRef.current = exitFn;
-
-    // 5 — keyboard handlers. Enter commits, Escape cancels. We use
-    // document-level listeners (not canvas) because the canvas only
-    // has focus when an object's edit mode is active (e.g. Textbox
-    // typing), which isn't our case here.
-    const onKey = (ev: KeyboardEvent): void => {
-      if (ev.key === "Escape") {
-        ev.preventDefault();
-        exitFn(true);
-      } else if (ev.key === "Enter") {
-        ev.preventDefault();
-        exitFn(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-
-    // 6 — click-outside handler. Clicks on the photo OR the frame
-    // border stay in crop mode (those are the two interactive crop
-    // surfaces). Clicks on the matboard / canvas background commit
-    // + exit.
-    const onCanvasClick = (e: {
-      target?: import("fabric").FabricObject | null;
-    }): void => {
-      if (e.target === targetImage) return;
-      // Click on the frame border itself (or its handles) stays in
-      // crop mode — user is engaging the frame controls.
-      const borderData = e.target
-        ? (
-            e.target as unknown as { data?: { isCropFrameBorder?: boolean } }
-          ).data
-        : null;
-      if (borderData?.isCropFrameBorder) return;
-      exitFn(false);
-    };
-    canvas.on("mouse:down", onCanvasClick);
-
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      canvas.off("mouse:down", onCanvasClick);
-      border.off("scaling", syncFrameFromBorder);
-      border.off("moving", syncFrameFromBorder);
-      border.off("mousedown", captureGestureStart);
-      targetImage.off("moving", snapPhotoPan);
-      // why: we still DON'T re-fire object:modified or call
-      // setCropMode here — doing that on every dep-tick could overwrite
-      // legitimate state. The user-driven exit paths (Enter / Escape /
-      // click outside → exitFn) own the committing semantics.
-      //
-      // 2026-05-29 — strand safety. exitFn clears cropOverlayRef to
-      // { border: null, dimmers: [] } before it returns, so if the
-      // overlay refs are still populated here it means this effect is
-      // tearing down WITHOUT a user-driven exit (template dims changed
-      // mid-crop, or the editor unmounted). In that case the canvas is
-      // still extended 2× + dimmed and the photo is unclipped — restore
-      // geometry so we never strand a blown-up, dimmed canvas.
-      const overlay = cropOverlayRef.current;
-      const stranded = Boolean(overlay.border) || overlay.dimmers.length > 0;
-      // 2026-05-29 — only restore when the canvas is STILL MOUNTED. On
-      // unmount (closing Studio mid-crop) React tears down this effect AND
-      // disposes the Fabric canvas; dispose() nulls the lower canvas
-      // element, and calling setDimensions on a disposed canvas throws
-      // ("Cannot destructure property 'el' of 'this.lower'") which
-      // white-screens the app. Restoration is pointless when the canvas is
-      // going away anyway, so skip it. The guard targets the genuine case:
-      // an in-place effect re-run (e.g. template dims change) where the
-      // canvas survives and would otherwise be left extended + dimmed.
-      // why: detect a disposed canvas safely. Reading `lowerCanvasEl`
-      // post-dispose can itself throw (its getter touches `this.lower`,
-      // which dispose() nulls), so the access is wrapped — a throw here
-      // means the canvas is gone and we must skip.
-      let disposed = false;
-      try {
-        disposed = !(canvas as unknown as { lowerCanvasEl?: unknown })
-          .lowerCanvasEl;
-      } catch {
-        disposed = true;
-      }
-      if (stranded && !disposed) {
-        try {
-          if (overlay.border) canvas.remove(overlay.border);
-          for (const d of overlay.dimmers) canvas.remove(d);
-          cropOverlayRef.current = { border: null, dimmers: [] };
-          // Restore canvas geometry (entry extended it for the matboard).
-          canvas.setDimensions({ width: savedCanvasW, height: savedCanvasH });
-          canvas.setViewportTransform(savedViewportTransform);
-          // Re-apply the photo's saved clipPath (entry removed it so the
-          // full extent showed) so the image isn't left unclipped.
-          if (!targetImage.clipPath && savedClipPath) {
-            targetImage.clipPath = savedClipPath;
-          }
-          // Restore the photo's chrome + every layer's interactivity.
-          (
-            targetImage as unknown as {
-              setControlsVisibility: (v: Record<string, boolean>) => void;
-            }
-          ).setControlsVisibility(priorControlsVisibility);
-          targetImage.set({ hasBorders: priorHasBorders });
-          for (const r of restoreList) {
-            r.obj.set({ selectable: r.selectable, evented: r.evented });
-          }
-          canvas.requestRenderAll();
-        } catch {
-          // why: defensive — if the canvas became unusable between the
-          // disposed check and here (teardown race), swallow rather than
-          // crash the editor. A failed best-effort restore is recoverable.
-        }
-      }
-      // #10 safety — never leave history suspended if crop tears down without
-      // a user-driven exit (e.g. template dims change, unmount mid-crop).
-      history.resume();
-      exitCropModeRef.current = null;
-      cropAspectRef.current = null;
-    };
-  }, [cropMode, template.width, template.height]);
+  // 2026-06-10: the matboard crop-mode lifecycle effect (enter/exit, frame
+  // border + dimmer overlays, 2x canvas extension, Done/Cancel handlers,
+  // exitCropModeRef + cropAspectRef) that lived here was dead since the
+  // 2026-05-31 native-crop rework: cropMode was only ever set to null, so
+  // the effect body could never run. Deleted wholesale; native crop is
+  // handled by the image's own edge/corner handles (see fabric-factory's
+  // fitImageInFrame + the object:modified handler in the init effect).
 
   // 2026-05-25 — Crop mode entry via toolbar button.
   //
@@ -2343,7 +1702,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // button to one-step-forward to match Canva's behavior.
     canvas.bringObjectForward(active);
     canvas.requestRenderAll();
-    setLayerVersion((v) => v + 1);
+    bumpUserLayerVersion();
   }, []);
 
   const handleSendBackward = useCallback((): void => {
@@ -2353,7 +1712,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     if (!active) return;
     canvas.sendObjectBackwards(active);
     canvas.requestRenderAll();
-    setLayerVersion((v) => v + 1);
+    bumpUserLayerVersion();
   }, []);
 
   // -------------------------------------------------------------------------
@@ -2437,7 +1796,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         obj.setCoords();
         canvas.fire("object:modified", { target: obj });
         canvas.requestRenderAll();
-        setLayerVersion((v) => v + 1);
+        bumpUserLayerVersion();
         return;
       }
 
@@ -2495,7 +1854,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       canvas.setActiveObject(sel);
       canvas.fire("object:modified", { target: sel });
       canvas.requestRenderAll();
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
     },
     [currentTemplate.width, currentTemplate.height],
   );
@@ -2521,7 +1880,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // off above). To re-edit, they unlock via the layer panel.
     if (newLocked) canvas.discardActiveObject();
     canvas.requestRenderAll();
-    setLayerVersion((v) => v + 1);
+    bumpUserLayerVersion();
   }, []);
 
   const handleDuplicateSelection = useCallback(async (): Promise<void> => {
@@ -2575,7 +1934,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (!obj) return;
       obj.visible = obj.visible === false ? true : false;
       canvas.requestRenderAll();
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
     },
     [getObjectByLayerId],
   );
@@ -2615,7 +1974,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         if (obj) canvas.moveObjectTo(obj, targetIndex);
       });
       canvas.requestRenderAll();
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
       history.record();
     },
     [history],
@@ -2630,7 +1989,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (!canvas) return;
       canvas.setActiveObject(newObj);
       canvas.requestRenderAll();
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
     },
     [],
   );
@@ -2679,7 +2038,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (!active) return;
       setLayerBoundField(active, field.field);
       canvas.requestRenderAll();
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
       history.record?.();
     },
     [history],
@@ -2755,6 +2114,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   useEffect(() => {
     // Skip the initial hydration bump — the user hasn't changed anything yet.
     if (layerVersion === 0) return;
+    // 2026-06-10 (data-loss fix): only persist once a USER edit has been
+    // observed post-hydration (see armAutosave). Hydration also bumps
+    // layerVersion, and before this gate the canvas autosaved ~1s after
+    // open, which could bake a transient hydration state (failed-image
+    // placeholder, half-rebound fields) into fabric_json with zero input.
+    if (!autosaveArmedRef.current) return;
     const persist = onAutosaveDesignRef.current;
     if (!persist) return;
     const canvas = fabricRef.current;
@@ -2981,7 +2346,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         canvas.add(img);
         canvas.setActiveObject(img);
         canvas.requestRenderAll();
-        setLayerVersion((v) => v + 1);
+        bumpUserLayerVersion();
         history.record();
       } catch (err) {
         setEditorError({
@@ -3373,18 +2738,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // why: target a 720px max display height (leaves room for top header +
     // bottom controls in a ~1080px viewport). Width is bounded by the right
     // layer panel + future left toolbar, so we use 880px max display width.
-    //
-    // 2026-05-25 — Crop mode "matboard": canvas grows 2× to show photo
-    // overflow. Re-fit the larger canvas to the same viewport budget so
-    // the user sees everything at once without scrolling.
     const maxDisplayWidth = 880;
     const maxDisplayHeight = 720;
-    const effectiveW = cropMode ? template.width * 2 : template.width;
-    const effectiveH = cropMode ? template.height * 2 : template.height;
-    const scaleW = maxDisplayWidth / effectiveW;
-    const scaleH = maxDisplayHeight / effectiveH;
+    const scaleW = maxDisplayWidth / template.width;
+    const scaleH = maxDisplayHeight / template.height;
     return Math.min(scaleW, scaleH, 1);
-  }, [template.width, template.height, cropMode]);
+  }, [template.width, template.height]);
 
   // -------------------------------------------------------------------------
   // Keyboard shortcuts — Delete, Backspace, Cmd+D
@@ -3449,7 +2808,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         const consumed = handlePhase2KeyDown(e, {
           canvas,
           history,
-          onCanvasMutated: () => setLayerVersion((v) => v + 1),
+          onCanvasMutated: () => bumpUserLayerVersion(),
         });
         // why: only fall through to Tools shortcuts (R/O/L/T/P/E/Escape)
         // when Phase 2 didn't already consume the event. This preserves
@@ -3664,7 +3023,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       if (!(active instanceof Textbox)) return;
       active.set({ fontFamily: next });
       canvas?.requestRenderAll();
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
       history.record();
     },
     [history],
@@ -3723,7 +3082,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       const state = colorPickerPanel;
       if (!state) return;
       writeColorToTarget(state.target, value);
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
       history.record();
     },
     [colorPickerPanel, writeColorToTarget, history],
@@ -3738,7 +3097,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // contextual toolbar's local mirror, the right panel's swatch chip)
       // re-read and reflect the live color. History is NOT recorded — the
       // pointer-up commit anchors the undo step.
-      setLayerVersion((v) => v + 1);
+      bumpUserLayerVersion();
     },
     [colorPickerPanel, writeColorToTarget],
   );
@@ -4246,7 +3605,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           onClose={() => setEffectsPanelOpen(false)}
           canvas={fabricRef.current}
           selectionVersion={layerVersion}
-          onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+          onCanvasMutated={() => bumpUserLayerVersion()}
           recordHistory={history.record}
         />
 
@@ -4300,12 +3659,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 (font/color/etc), alignment (6 directions, single+multi),
                 and layer actions (forward/back/dupe/transparency/lock/
                 delete). Replaces the prior two-stacked pill setup
-                (ContextualTopToolbar + SelectionToolbar). Hidden in crop
-                mode to keep the photo surface fully focused. */}
+                (ContextualTopToolbar + SelectionToolbar). */}
             {((selectedEntry && !selectedEntry.locked) ||
               (selection.isMulti && selection.count > 0)) &&
-            fabricRef.current &&
-            !cropMode ? (
+            fabricRef.current ? (
               <div className="absolute top-6 z-10 flex flex-col items-center gap-1">
                 <FloatingToolbar
                   canvas={fabricRef.current}
@@ -4320,7 +3677,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                         }
                       : null
                   }
-                  onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+                  onCanvasMutated={() => bumpUserLayerVersion()}
                   recordHistory={history.record}
                   onAlign={handleAlign}
                   onEnterCropMode={enterCropModeForActive}
@@ -4382,34 +3739,33 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 centered as zoom changes. Soft Canva-style drop
                 shadow (low + blurred) sells "this is a card on a
                 surface" without competing with the canvas content. */}
-            {/* 2026-05-25 — Crop mode matboard: when in cropMode,
-                the underlying Fabric canvas grows to 2× the template
-                dimensions so the photo's overflow is visible in the
-                buffer area around the frame. The wrapper grows too,
-                with the drop shadow removed (the dimmers + violet
-                frame border act as the visual cue). On exit, all of
-                this snaps back to template-sized. */}
+            {/* 2026-06-10: the matboard crop-mode 2x sizing branches and the
+                floating Done/Cancel + aspect-preset bar that lived here were
+                dead (cropMode could never become non-null) and were deleted
+                with the rest of the matboard crop code. */}
             <div
-              className={
-                cropMode
-                  ? "relative bg-transparent"
-                  : "relative bg-white shadow-2xl shadow-black/60"
-              }
+              className="relative bg-white shadow-2xl shadow-black/60"
               style={{
-                width:
-                  (cropMode ? template.width * 2 : template.width) *
-                  displayScale *
-                  zoom,
-                height:
-                  (cropMode ? template.height * 2 : template.height) *
-                  displayScale *
-                  zoom,
+                width: template.width * displayScale * zoom,
+                height: template.height * displayScale * zoom,
               }}
             >
+              {/* why (2026-06-10): the wrapper div is KEYED on the editing
+                  identity so every canvas init gets a virgin <canvas> node.
+                  Fabric v6 reparents the canvas into its own container div
+                  and defers dispose() a frame when a render is queued, so
+                  constructing a new Canvas on the old element could hit a
+                  still-initialized node, throw, and leave the editor blank
+                  until refresh. Keying the WRAPPER (not the canvas itself)
+                  matters: React removes the wrapper wholesale, so Fabric's
+                  injected container never confuses React's removeChild. */}
               <div
+                key={`${template.id}:${listing.id}:${
+                  customTemplate?.id ?? ""
+                }:${sessionKey ?? ""}`}
                 style={{
-                  width: cropMode ? template.width * 2 : template.width,
-                  height: cropMode ? template.height * 2 : template.height,
+                  width: template.width,
+                  height: template.height,
                   transform: `scale(${displayScale * zoom})`,
                   transformOrigin: "top left",
                   position: "absolute",
@@ -4419,86 +3775,6 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               >
                 <canvas ref={canvasRef} />
               </div>
-              {/* 2026-05-25 — Crop mode floating Done/Cancel bar.
-                  Anchored above the active frame box. Positioned using
-                  the SAME canvas-px space the clipPath uses, then
-                  scaled together with the canvas by the parent
-                  transform — so it tracks the frame regardless of
-                  user zoom level. */}
-              {cropMode && currentClipRect ? (
-                /* 2026-05-25 — Done/Cancel chrome moved to tailwind. Only the
-                   dynamic positioning (left/top, derived from currentClipRect
-                   + the 2× canvas extension translate) stays inline; the
-                   visual chrome — border, bg, padding, shadow — is now
-                   utility-classed for theme consistency. */
-                <div
-                  className="absolute z-50 flex gap-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-popover)] px-1.5 py-1 shadow-2xl shadow-black/60"
-                  style={{
-                    // why: position tracks the LIVE frame rect
-                    // (currentClipRect), so the bar follows every
-                    // frame-handle drag. Offset by (template.width/2,
-                    // template.height/2) because the canvas was extended 2×
-                    // and viewport translates scene origin to canvas
-                    // (templateW/2, templateH/2). The Done bar lives in
-                    // wrapper-div CSS space (canvas pixel space) so we need
-                    // that translate baked in.
-                    left:
-                      (currentClipRect.left + template.width / 2) *
-                      displayScale *
-                      zoom,
-                    top:
-                      Math.max(
-                        0,
-                        currentClipRect.top +
-                          template.height / 2 -
-                          48 / (displayScale * zoom),
-                      ) *
-                      displayScale *
-                      zoom,
-                  }}
-                >
-                  {/* P2a — aspect-ratio presets. "Orig" = the image's
-                      natural ratio; the rest are the common social formats. */}
-                  {(
-                    [
-                      { label: "Orig", ratio: null },
-                      { label: "1:1", ratio: 1 },
-                      { label: "4:5", ratio: 4 / 5 },
-                      { label: "9:16", ratio: 9 / 16 },
-                    ] as const
-                  ).map((p) => (
-                    <button
-                      key={p.label}
-                      type="button"
-                      onClick={() => cropAspectRef.current?.(p.ratio)}
-                      title={`Crop to ${p.label}`}
-                      className="focus-ring-dark inline-flex items-center rounded-md border border-[var(--studio-border)] bg-transparent px-2 py-1 text-[11px] font-medium text-white hover:border-gold-400 hover:bg-[var(--studio-hover)]"
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                  <span
-                    aria-hidden="true"
-                    className="mx-0.5 w-px self-stretch bg-[var(--studio-border)]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => exitCropModeRef.current?.(false)}
-                    className="focus-ring-dark inline-flex items-center gap-1 rounded-md bg-gold-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-gold-600"
-                  >
-                    <LCheck size={12} />
-                    Done
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => exitCropModeRef.current?.(true)}
-                    className="focus-ring-dark inline-flex items-center gap-1 rounded-md border border-[var(--studio-border)] bg-transparent px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--studio-hover)]"
-                  >
-                    <LX size={12} />
-                    Cancel
-                  </button>
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -4596,7 +3872,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     canvas={fabricRef.current}
                     listing={listing}
                     selectionVersion={layerVersion}
-                    onCanvasMutated={() => setLayerVersion((v) => v + 1)}
+                    onCanvasMutated={() => bumpUserLayerVersion()}
                     onClearSelection={handleClearSelection}
                     recordHistory={history.record}
                     onOpenFontPicker={openFontPicker}

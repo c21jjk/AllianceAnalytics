@@ -210,6 +210,27 @@ export function useUndoRedoHistory(
   }, [captureSnapshot, syncReactive]);
 
   /**
+   * Hard-reset the history to its pristine pre-start state. The orchestrator
+   * calls this whenever it rebuilds the Fabric canvas (template swap, resize,
+   * slide switch). Without it, isStartedRef and the stacks survive the canvas
+   * re-init (refs outlive the canvas), so start() no-ops on the new canvas
+   * and the first Cmd+Z replays the PREVIOUS template's snapshot onto the
+   * fresh one. Clearing everything guarantees each canvas starts with empty
+   * history and start() captures a fresh baseline.
+   */
+  const reset = useCallback((): void => {
+    if (debounceTimerRef.current !== null) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    stacksRef.current = { undoStack: [], redoStack: [], current: null };
+    pendingBaselineRef.current = null;
+    isStartedRef.current = false;
+    isSuspendedRef.current = false;
+    syncReactive();
+  }, [syncReactive]);
+
+  /**
    * Replay a snapshot onto the canvas. Sets `isReplayingRef` so the events
    * Fabric fires during loadFromJSON don't recurse into the history.
    *
@@ -373,6 +394,7 @@ export function useUndoRedoHistory(
     redo,
     record,
     start,
+    reset,
     suspend,
     resume,
   };

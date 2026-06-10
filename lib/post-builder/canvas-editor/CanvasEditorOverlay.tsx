@@ -107,6 +107,12 @@ export interface CanvasEditorOverlayProps {
    */
   onAutosaveDesign?: CanvasEditorProps["onAutosaveDesign"];
   /**
+   * 2026-06-10: per-document session identity (e.g. "hero" / "slide-3").
+   * Forwarded verbatim to CanvasEditor so slide switches re-key the canvas
+   * and rehydrate. See CanvasEditorProps.sessionKey for the full contract.
+   */
+  sessionKey?: CanvasEditorProps["sessionKey"];
+  /**
    * Phase 2 AI Design provenance. When non-null, the overlay renders a
    * floating "✨ Designed by Claude" badge in the top-left + a small
    * "Revert to template default" link. Clicking Revert pops a
@@ -290,6 +296,7 @@ export default function CanvasEditorOverlay(
           initialFabricJson={props.initialFabricJson}
           onApplyLayoutToSiblings={props.onApplyLayoutToSiblings}
           onAutosaveDesign={props.onAutosaveDesign}
+          sessionKey={props.sessionKey}
         />
       </div>
 
