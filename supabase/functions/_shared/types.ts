@@ -89,4 +89,16 @@ export interface SyncResult {
   duration_ms: number;
   /** First-sync flag — pulled posts older than the existing latest_posted_at */
   backfilled: boolean;
+  /**
+   * Posts left unprocessed because the run hit its time budget. They get
+   * picked up first (stalest-first ordering) on the next run. Added
+   * 2026-06-11 when fb/ig-sync gained time budgeting; absent on platforms
+   * that finished the full queue.
+   */
+  deferred?: number;
+  /**
+   * Old posts (past the age tier) skipped because their metrics were
+   * refreshed recently. Not an error; engagement on old posts barely moves.
+   */
+  skipped_fresh?: number;
 }

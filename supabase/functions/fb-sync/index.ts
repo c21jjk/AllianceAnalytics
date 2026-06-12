@@ -47,6 +47,24 @@ const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const BACKFILL_DAYS = Number(Deno.env.get("FB_BACKFILL_DAYS") ?? "365");
 const PAGE_SIZE = 50;
 
+// ── Time budgeting (2026-06-11) ─────────────────────────────────────────────
+// why: the per-post insight calls are sequential, and the catalog grew until
+// every run blew past the edge gateway's ~150s ceiling: 504 on every tick,
+// zero rows written, FB metrics frozen. The run now stops STARTING new posts
+// at this budget and returns 200 with a partial summary; the stalest-first
+// ordering below guarantees the next 4h tick continues where this one
+// stopped instead of re-doing the newest posts forever.
+const TIME_BUDGET_MS = Number(Deno.env.get("SYNC_TIME_BUDGET_MS") ?? "110000");
+// Age tier: posts older than STALE_AGE_DAYS whose metrics were refreshed in
+// the last FRESH_WINDOW_DAYS get skipped entirely. Engagement on old posts
+// barely moves; this cuts steady-state work by most of the catalog.
+const STALE_AGE_DAYS = 90;
+const FRESH_WINDOW_DAYS = 7;
+// Per-run cap on the priority plays-backfill loop (2 API calls per post).
+const BACKFILL_CAP_PER_RUN = 25;
+// why: one hung Meta call previously ate the whole run with no bound.
+const FETCH_TIMEOUT_MS = 15_000;
+
 const POST_FIELDS = [
   "id",
   "message",
@@ -122,7 +140,7 @@ interface FbInsightsResponse {
 async function fbFetch<T>(path: string, token: string): Promise<T> {
   const sep = path.includes("?") ? "&" : "?";
   const url = `${GRAPH_BASE}${path}${sep}access_token=${encodeURIComponent(token)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`FB ${path} ${res.status}: ${body}`);
@@ -228,10 +246,15 @@ export async function syncFacebook(): Promise<SyncResult> {
         .select("id, platform_post_id, metrics")
         .eq("platform", "facebook")
         .in("media_type", ["video", "reel"])
-        .filter("metrics->>plays", "is", null);
+        .filter("metrics->>plays", "is", null)
+        // why: bounded per run; 2 API calls per candidate. The rest catch up
+        // on subsequent runs.
+        .limit(BACKFILL_CAP_PER_RUN);
 
       const candidates = missingRows ?? [];
       for (const row of candidates) {
+        // why: never let the backfill eat the main loop's budget.
+        if (Date.now() - start > TIME_BUDGET_MS / 4) break;
         try {
           // Resolve the underlying video object id via the post's attachments.
           // We need the video object's id (not the post id) to query the
@@ -303,7 +326,63 @@ export async function syncFacebook(): Promise<SyncResult> {
       if (allPosts.length > 5000) break;
     } while (after);
 
+    // ── Stalest-first queue (2026-06-11) ──────────────────────────────────
+    // why: the feed walk is reverse-chronological. Under a time budget that
+    // ordering starves old posts forever (the newest get re-synced every
+    // run, the run stops, the tail never refreshes). Instead: posts we have
+    // never seen go first (newest content matters most), then known posts
+    // ordered by how stale their metrics are. Old-and-recently-refreshed
+    // posts are skipped outright via the age tier.
+    const { data: knownRows } = await client
+      .from("posts")
+      .select("platform_post_id, last_synced_at, posted_at")
+      .eq("platform", "facebook");
+    const knownByPostId = new Map<string, { last_synced_at: string | null; posted_at: string | null }>(
+      (knownRows ?? []).map((r) => [
+        String(r.platform_post_id),
+        { last_synced_at: r.last_synced_at, posted_at: r.posted_at },
+      ]),
+    );
+    const staleAgeCutoff = Date.now() - STALE_AGE_DAYS * 86400_000;
+    const freshCutoff = Date.now() - FRESH_WINDOW_DAYS * 86400_000;
+
+    const newPosts: FbPost[] = [];
+    const knownPosts: FbPost[] = [];
+    let skippedFresh = 0;
     for (const fb of allPosts) {
+      const known = knownByPostId.get(fb.id);
+      if (!known) {
+        newPosts.push(fb);
+        continue;
+      }
+      const postedMs = known.posted_at ? new Date(known.posted_at).getTime() : Date.now();
+      const syncedMs = known.last_synced_at ? new Date(known.last_synced_at).getTime() : 0;
+      if (postedMs < staleAgeCutoff && syncedMs > freshCutoff) {
+        skippedFresh++;
+        continue;
+      }
+      knownPosts.push(fb);
+    }
+    knownPosts.sort((a, b) => {
+      const sa = knownByPostId.get(a.id)?.last_synced_at ?? "";
+      const sb = knownByPostId.get(b.id)?.last_synced_at ?? "";
+      return sa < sb ? -1 : sa > sb ? 1 : 0;
+    });
+    const queue = [...newPosts, ...knownPosts];
+    result.skipped_fresh = skippedFresh;
+
+    let processed = 0;
+    for (const fb of queue) {
+      // why: never START a post we might not finish; the queue remainder is
+      // intact and stalest-first puts it at the front of the next run.
+      if (Date.now() - start > TIME_BUDGET_MS) {
+        result.deferred = queue.length - processed;
+        console.warn(
+          `fb-sync: time budget reached after ${processed} posts; deferring ${result.deferred} to next run`,
+        );
+        break;
+      }
+      processed++;
       try {
         if (fb.is_published === false) continue;
 

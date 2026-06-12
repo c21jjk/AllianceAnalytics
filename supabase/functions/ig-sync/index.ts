@@ -50,6 +50,21 @@ const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const BACKFILL_DAYS = Number(Deno.env.get("IG_BACKFILL_DAYS") ?? "365");
 const PAGE_SIZE = 50;
 
+// ── Time budgeting (2026-06-11) ─────────────────────────────────────────────
+// why: each media id costs 1 detail call + 1-3 insight calls + thumbnail
+// caching, all sequential. The catalog grew until every run blew past the
+// edge gateway's ~150s ceiling: 504 on every tick, zero rows written, IG
+// metrics frozen. The run now stops STARTING new media at this budget and
+// returns 200 with a partial summary; stalest-first ordering guarantees the
+// next 4h tick continues where this one stopped.
+const TIME_BUDGET_MS = Number(Deno.env.get("SYNC_TIME_BUDGET_MS") ?? "110000");
+// Age tier: media older than STALE_AGE_DAYS whose metrics were refreshed in
+// the last FRESH_WINDOW_DAYS get skipped before the detail call even fires.
+const STALE_AGE_DAYS = 90;
+const FRESH_WINDOW_DAYS = 7;
+// why: one hung Meta call previously ate the whole run with no bound.
+const FETCH_TIMEOUT_MS = 15_000;
+
 // Meta deprecated `impressions` for IG media in v22 (still works in v21 but
 // will break shortly). The new replacement is `views` which works on every
 // media type. We keep the rest of the universal metrics in the BASE set;
@@ -98,7 +113,7 @@ interface IgInsightsResponse {
 async function igFetch<T>(path: string, token: string): Promise<T> {
   const sep = path.includes("?") ? "&" : "?";
   const url = `${GRAPH_BASE}${path}${sep}access_token=${encodeURIComponent(token)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`IG ${path} ${res.status}: ${body}`);
@@ -202,8 +217,62 @@ export async function syncInstagram(): Promise<SyncResult> {
       if (mediaIds.length > 5000) break;
     } while (after);
 
-    // Hydrate each media id with details + insights
+    // ── Stalest-first queue (2026-06-11) ──────────────────────────────────
+    // why: the media walk is reverse-chronological. Under a time budget that
+    // ordering starves old posts forever. Unknown ids (new posts) go first,
+    // then known ids ordered by metric staleness; old-and-recently-refreshed
+    // ids are dropped before their detail call even fires.
+    const { data: knownRows } = await client
+      .from("posts")
+      .select("platform_post_id, last_synced_at, posted_at")
+      .eq("platform", "instagram");
+    const knownByPostId = new Map<string, { last_synced_at: string | null; posted_at: string | null }>(
+      (knownRows ?? []).map((r) => [
+        String(r.platform_post_id),
+        { last_synced_at: r.last_synced_at, posted_at: r.posted_at },
+      ]),
+    );
+    const staleAgeCutoff = Date.now() - STALE_AGE_DAYS * 86400_000;
+    const freshCutoff = Date.now() - FRESH_WINDOW_DAYS * 86400_000;
+
+    const newIds: string[] = [];
+    const knownIds: string[] = [];
+    let skippedFresh = 0;
     for (const mediaId of mediaIds) {
+      const known = knownByPostId.get(mediaId);
+      if (!known) {
+        newIds.push(mediaId);
+        continue;
+      }
+      const postedMs = known.posted_at ? new Date(known.posted_at).getTime() : Date.now();
+      const syncedMs = known.last_synced_at ? new Date(known.last_synced_at).getTime() : 0;
+      if (postedMs < staleAgeCutoff && syncedMs > freshCutoff) {
+        skippedFresh++;
+        continue;
+      }
+      knownIds.push(mediaId);
+    }
+    knownIds.sort((a, b) => {
+      const sa = knownByPostId.get(a)?.last_synced_at ?? "";
+      const sb = knownByPostId.get(b)?.last_synced_at ?? "";
+      return sa < sb ? -1 : sa > sb ? 1 : 0;
+    });
+    const queue = [...newIds, ...knownIds];
+    result.skipped_fresh = skippedFresh;
+
+    // Hydrate each media id with details + insights
+    let processed = 0;
+    for (const mediaId of queue) {
+      // why: never START a media id we might not finish; the remainder is
+      // intact and stalest-first puts it at the front of the next run.
+      if (Date.now() - start > TIME_BUDGET_MS) {
+        result.deferred = queue.length - processed;
+        console.warn(
+          `ig-sync: time budget reached after ${processed} media; deferring ${result.deferred} to next run`,
+        );
+        break;
+      }
+      processed++;
       try {
         const detail = await igFetch<IgMediaDetail>(
           `/${mediaId}?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp`,
