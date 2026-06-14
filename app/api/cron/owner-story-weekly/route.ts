@@ -19,6 +19,7 @@
 import { NextResponse } from "next/server";
 import { requireCronAuth } from "@/lib/cron-auth";
 import { runOwnerStoryWeeklyCron } from "@/lib/email/reports/owner-story-weekly";
+import { weeklyEmailsPaused, PAUSE_UNTIL_NY } from "@/lib/email/reports/email-pause";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,6 +28,14 @@ export const maxDuration = 300;
 export async function GET(req: Request) {
   const denied = requireCronAuth(req);
   if (denied) return denied;
+
+  // TEMPORARY one-week pause (see lib/email/reports/email-pause.ts). Stale
+  // FB/IG data after the 2026-06-11 Meta page-role lockout. Holding the
+  // 2026-06-15 blast; resumes automatically on 2026-06-22.
+  if (weeklyEmailsPaused()) {
+    return NextResponse.json({ ok: true, skipped: "paused", until: PAUSE_UNTIL_NY });
+  }
+
   const result = await runOwnerStoryWeeklyCron();
   return NextResponse.json({ ok: true, ...result });
 }
