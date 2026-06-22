@@ -4,13 +4,28 @@
  * Pulls posts + insights from a Facebook Page. Same Graph API base as IG;
  * different endpoints + insights metric names.
  *
- * Endpoints:
- *   GET /{page-id}/posts?fields=... — feed of page-authored posts
- *   GET /{post-id}/insights?metric=... — per-post insights
+ * ── 2026-06-22 metric-source rewrite ────────────────────────────────────────
+ * Meta deprecated ALL reach/impressions metrics on the AGGREGATED POST node
+ * effective 2026-06-15 (`post_impressions_unique` & friends now return
+ * `(#100) must be a valid insights metric`). Because the old code requested
+ * those fields BUNDLED with reactions in one call, the whole call 400'd and FB
+ * posts started syncing with null reach AND null likes.
  *
- * Auth note: page_access_token must be a Page-scoped token (not a User
- * token). Insights require pages_read_engagement permission, which Alliance
- * already validated 2026-05-08.
+ * The fix: those metrics are STILL ALIVE on the underlying VIDEO/REEL node's
+ * `video_insights` edge. For video posts we resolve the reel id from
+ * permalink_url (`/reel/{id}/`) and read:
+ *   fb_reels_total_plays   → plays   (== FB Content Library "Views")
+ *   post_impressions_unique→ reach   (== FB Content Library "Viewers")
+ *   post_video_avg_time_watched → avg watch (ms)
+ * Verified 2026-06-22 against the Sunshine Shore reel (974700268690768):
+ * API 49,016 plays / 35,865 reach vs FB native 49,014 Views / 36,805 Viewers.
+ *
+ * Engagement counts (reactions/comments/shares) come from the post node's
+ * summary edges, which match the FB native UI exactly (160 / 283 / 22).
+ *
+ * Photo/text posts have no video node, so reach is unavailable from the API
+ * post-deprecation — they keep accurate engagement and leave reach undefined
+ * (NOT a silent zero) until Meta ships the new Page Viewer metric.
  */
 // @ts-expect-error - Deno runtime
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -37,10 +52,8 @@ import type {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-// why: v25 returns fresher reach numbers than v21/v22 (~2% higher on a typical
-// Reel because Meta backfills delayed impressions into the newer endpoint).
-// Confirmed 2026-05-17 against the 110 W Garfield Reel: v22 returned 2,637;
-// v25 returned 2,681. Same `post_impressions_unique` field, fresher data.
+// why: v25 returns fresher reach numbers than v21/v22 and is the first version
+// where the reel-node `video_insights` edge carries fb_reels_total_plays.
 const GRAPH_VERSION = "v25.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
@@ -48,21 +61,10 @@ const BACKFILL_DAYS = Number(Deno.env.get("FB_BACKFILL_DAYS") ?? "365");
 const PAGE_SIZE = 50;
 
 // ── Time budgeting (2026-06-11) ─────────────────────────────────────────────
-// why: the per-post insight calls are sequential, and the catalog grew until
-// every run blew past the edge gateway's ~150s ceiling: 504 on every tick,
-// zero rows written, FB metrics frozen. The run now stops STARTING new posts
-// at this budget and returns 200 with a partial summary; the stalest-first
-// ordering below guarantees the next 4h tick continues where this one
-// stopped instead of re-doing the newest posts forever.
 const TIME_BUDGET_MS = Number(Deno.env.get("SYNC_TIME_BUDGET_MS") ?? "110000");
-// Age tier: posts older than STALE_AGE_DAYS whose metrics were refreshed in
-// the last FRESH_WINDOW_DAYS get skipped entirely. Engagement on old posts
-// barely moves; this cuts steady-state work by most of the catalog.
 const STALE_AGE_DAYS = 90;
 const FRESH_WINDOW_DAYS = 7;
-// Per-run cap on the priority plays-backfill loop (2 API calls per post).
 const BACKFILL_CAP_PER_RUN = 25;
-// why: one hung Meta call previously ate the whole run with no bound.
 const FETCH_TIMEOUT_MS = 15_000;
 
 const POST_FIELDS = [
@@ -75,34 +77,11 @@ const POST_FIELDS = [
   "is_published",
 ].join(",");
 
-// Meta deprecated `post_impressions` and `post_clicks` (without _by_type) in
-// Graph API v21 (Sep 2024). `post_impressions_unique` IS still supported and
-// returns the SAME value as organic_unique + paid_unique when there's no paid
-// promotion — which is always our case. Using the direct field saves one
-// per-post Graph API call.
-//
-// Reach (max available from Graph API) = post_impressions_unique
-// Clicks   = sum(values of post_clicks_by_type)
-// Reactions stays on post_reactions_by_type_total.
-//
-// We kept paid_unique in the request for one reason: when Alliance starts
-// running paid promotion someday, we want a non-zero value to surface in the
-// raw_payload for audit/debugging without code change.
-const INSIGHTS_METRICS_BASE = [
-  "post_impressions_unique",
-  "post_impressions_paid_unique",
-  "post_reactions_by_type_total",
-  "post_clicks_by_type",
-].join(",");
-
-// Video-only metrics. Calling these on a non-video post returns
-// "metric does not apply", so we fetch them in a separate request that
-// only fires when the post's media_type === "video".
-const INSIGHTS_METRICS_VIDEO = [
-  "post_video_views",
-  "post_video_avg_time_watched",
-  "post_video_complete_views_organic",
-].join(",");
+// Post-node insights that SURVIVED the 2026-06-15 deprecation. Reactions +
+// clicks are still valid here for every post type. Reach/impressions are NOT
+// (they moved to the video node) — do NOT add them back or the whole call 400s.
+// Kept as a single-metric request so one bad metric can't nuke the others.
+const INSIGHTS_METRICS_CLICKS = "post_clicks_by_type";
 
 interface FbFeedResponse {
   data: FbPost[];
@@ -120,14 +99,7 @@ interface FbPost {
     data: {
       media_type?: "photo" | "video" | "album" | "share";
       media?: { image?: { src?: string }; source?: string };
-      /**
-       * For video / Reel posts, `target.id` is the underlying video object id.
-       * We use it to query the Reel-canonical `views` field via
-       * /{video_id}?fields=views, which returns the same number Meta Business
-       * Suite shows (initial plays + replays). Probed against the 110 W
-       * Garfield Reel on 2026-05-17 — `views` = 4,447 vs Suite's 4,375 (~30
-       * min freshness lag is the entire gap).
-       */
+      /** For video/Reel posts, target.id is the underlying video object id. */
       target?: { id?: string; url?: string };
     }[];
   };
@@ -157,43 +129,63 @@ function parseMediaType(p: FbPost): NormalizedPost["media_type"] {
   return null;
 }
 
-function flattenInsights(insights: FbInsightsResponse): NormalizedMetrics {
+/**
+ * Resolve the underlying video/reel object id for a FB post. The permalink is
+ * the reliable source (`/reel/{id}/`, `/videos/{id}/`, `/watch/?v={id}`); the
+ * attachment target.id is a fallback. Returns undefined for non-video posts.
+ */
+function resolveVideoId(p: {
+  permalink_url?: string;
+  attachments?: FbPost["attachments"];
+}): string | undefined {
+  const m = p.permalink_url?.match(/\/(?:reel|videos?|watch)\/(?:\?v=)?(\d+)/);
+  if (m) return m[1];
+  return p.attachments?.data?.[0]?.target?.id;
+}
+
+/**
+ * Read reach + total plays from the VIDEO node's `video_insights` edge. These
+ * metrics are deprecated on the aggregated post node but remain live here.
+ * Called WITHOUT a metric param so Meta returns whatever applies to the video
+ * type (reel vs upload) instead of 400'ing on a type-specific metric name.
+ */
+async function fetchVideoInsights(
+  videoId: string,
+  token: string,
+): Promise<{ plays?: number; reach?: number; avgWatchSec?: number }> {
+  // The video node's `views` field is the UNIVERSAL play count — it matches
+  // Meta Business Suite's "Views" for both reels (== fb_reels_total_plays) and
+  // older non-reel uploads (which don't expose fb_reels_total_plays in the
+  // insights edge). Fetch it first so every video type gets a plays number.
+  let plays: number | undefined;
+  try {
+    const node = await fbFetch<{ views?: number }>(`/${videoId}?fields=views`, token);
+    if (typeof node.views === "number" && node.views > 0) plays = node.views;
+  } catch (_e) {
+    // fall through — the insights edge below provides a reel-only backup
+  }
+
+  const r = await fbFetch<FbInsightsResponse>(`/${videoId}/video_insights`, token);
   const map = new Map<string, number | Record<string, number>>();
-  for (const m of insights.data) {
-    map.set(m.name, m.values?.[0]?.value ?? 0);
-  }
-
-  // Reactions: object keyed by reaction type → count. Sum to single likes-ish.
-  const reactionsByType = (map.get("post_reactions_by_type_total") ?? {}) as Record<string, number>;
-  const totalReactions = Object.values(reactionsByType).reduce((s, n) => s + (Number(n) || 0), 0);
-
-  // Reach: use post_impressions_unique directly. v25 returns the highest
-  // available value (organic + paid combined, deduped per user). When we
-  // start running paid promotion this still captures the full reach in
-  // one field — no client-side summing needed.
-  const reach = Number(map.get("post_impressions_unique") ?? 0) || 0;
-
-  // Clicks: object keyed by click type → count. Sum across types.
-  const clicksByType = (map.get("post_clicks_by_type") ?? {}) as Record<string, number>;
-  const totalClicks = Object.values(clicksByType).reduce((s, n) => s + (Number(n) || 0), 0);
-
-  const metrics: NormalizedMetrics = {
-    reach: reach || undefined,
-    impressions: reach || undefined, // FB no longer exposes raw impressions; use reach as proxy
-    likes: totalReactions || undefined,
-    link_clicks: totalClicks || undefined,
-    plays: Number(map.get("post_video_views") ?? 0) || undefined,
+  for (const m of r.data) map.set(m.name, m.values?.[0]?.value ?? 0);
+  const num = (k: string): number | undefined => {
+    const v = Number(map.get(k));
+    return Number.isFinite(v) && v > 0 ? v : undefined;
   };
-  const completionViews = Number(map.get("post_video_complete_views_organic") ?? 0);
-  if (metrics.plays && completionViews) {
-    metrics.completion_rate = Math.round((completionViews / metrics.plays) * 10000) / 10000;
-  }
-  const avgWatch = Number(map.get("post_video_avg_time_watched") ?? 0);
-  if (avgWatch) metrics.avg_watch_time_sec = avgWatch / 1000; // FB returns ms
+  // Backup plays source if the node field was unavailable.
+  if (plays === undefined) plays = num("fb_reels_total_plays") ?? num("total_video_views");
+  const reach = num("post_impressions_unique");
+  const avgMs = num("post_video_avg_time_watched");
+  return { plays, reach, avgWatchSec: avgMs ? avgMs / 1000 : undefined };
+}
 
-  const er = computeEngagementRate(metrics);
-  if (er !== undefined) metrics.engagement_rate = er;
-  return metrics;
+/** Sum a Graph "by_type" object (e.g. post_clicks_by_type) to a single total. */
+function sumByType(v: unknown): number {
+  if (!v || typeof v !== "object") return 0;
+  return Object.values(v as Record<string, number>).reduce(
+    (s, n) => s + (Number(n) || 0),
+    0,
+  );
 }
 
 export async function syncFacebook(): Promise<SyncResult> {
@@ -218,8 +210,7 @@ export async function syncFacebook(): Promise<SyncResult> {
     const pageId = String(cred.credentials.page_id);
     const token = String(cred.credentials.page_access_token);
 
-    // Capture the page's follower count (FB calls it fan_count) once per
-    // sync run. Best-effort — failure here doesn't block the post sync.
+    // Page follower count (fan_count). Best-effort.
     try {
       const profile = await fbFetch<{ fan_count?: number; followers_count?: number }>(
         `/${pageId}?fields=fan_count,followers_count`,
@@ -231,81 +222,64 @@ export async function syncFacebook(): Promise<SyncResult> {
       console.error("fb-sync: follower count fetch failed:", e);
     }
 
-    // ── Priority backfill: posts missing the Reel-canonical plays field ──
-    //
-    // why: the main feed walk below is reverse-chronological — when the
-    // function hits its ~150s timeout, the oldest video posts may not get
-    // re-processed. That left 52 FB video posts in the DB without
-    // `metrics.plays` after the v12 deploy. This pass runs FIRST and is
-    // surgical: one cheap API call per post (`/{video_id}?fields=views`)
-    // patches just the plays + engagement_rate fields. Once every post
-    // has plays, this loop is a no-op + adds <100ms to a sync run.
+    // ── Priority backfill: video posts missing reach OR plays ──────────────
+    // why: aged-out posts fall out of the time-budgeted feed walk and froze at
+    // their day-one numbers (or null reach after the deprecation). This pass
+    // patches reach + plays straight from the video node for the stalest
+    // offenders first. Bounded per run; the rest catch up on later ticks.
     try {
-      const { data: missingRows } = await client
+      // Pull stalest video posts first, then filter in JS for a missing reach
+      // OR plays field (avoids brittle PostgREST json-arrow .or() filters).
+      const { data: videoRows } = await client
         .from("posts")
-        .select("id, platform_post_id, metrics")
+        .select("id, platform_post_id, permalink, metrics, last_synced_at")
         .eq("platform", "facebook")
         .in("media_type", ["video", "reel"])
-        .filter("metrics->>plays", "is", null)
-        // why: bounded per run; 2 API calls per candidate. The rest catch up
-        // on subsequent runs.
-        .limit(BACKFILL_CAP_PER_RUN);
+        .order("last_synced_at", { ascending: true, nullsFirst: true })
+        .limit(200);
 
-      const candidates = missingRows ?? [];
+      const candidates = (videoRows ?? [])
+        .filter((r) => {
+          const m = (r.metrics as Record<string, number>) ?? {};
+          return m.reach == null || m.plays == null;
+        })
+        .slice(0, BACKFILL_CAP_PER_RUN);
+      let patched = 0;
       for (const row of candidates) {
-        // why: never let the backfill eat the main loop's budget.
         if (Date.now() - start > TIME_BUDGET_MS / 4) break;
         try {
-          // Resolve the underlying video object id via the post's attachments.
-          // We need the video object's id (not the post id) to query the
-          // `views` field that matches Meta Business Suite.
-          const attached = await fbFetch<{
-            attachments?: { data: { target?: { id?: string } }[] };
-          }>(
-            `/${row.platform_post_id}?fields=attachments{target}`,
-            token,
-          );
-          const videoId = attached.attachments?.data?.[0]?.target?.id;
+          const videoId = resolveVideoId({
+            permalink_url: (row.permalink as string) ?? undefined,
+          });
           if (!videoId) continue;
+          const vi = await fetchVideoInsights(videoId, token);
+          if (vi.plays === undefined && vi.reach === undefined) continue;
 
-          const videoObj = await fbFetch<{ views?: number }>(
-            `/${videoId}?fields=views`,
-            token,
-          );
-          if (typeof videoObj.views !== "number" || videoObj.views <= 0) continue;
-
-          // Merge plays into the existing metrics blob and re-compute the
-          // engagement rate (the formula in _shared/parse.ts now divides by
-          // whichever number is largest — reach or plays — so adding plays
-          // can shift the rate).
           const existing = (row.metrics as Record<string, number>) ?? {};
-          const merged: Record<string, number> = {
-            ...existing,
-            plays: videoObj.views,
-          };
+          const merged: Record<string, number> = { ...existing };
+          if (vi.plays !== undefined) {
+            merged.plays = vi.plays;
+            merged.impressions = vi.plays;
+          }
+          if (vi.reach !== undefined) merged.reach = vi.reach;
+          if (vi.avgWatchSec !== undefined) merged.avg_watch_time_sec = vi.avgWatchSec;
           const er = computeEngagementRate(merged as NormalizedMetrics);
           if (er !== undefined) merged.engagement_rate = er;
 
           await client
             .from("posts")
-            .update({
-              metrics: merged,
-              last_synced_at: new Date().toISOString(),
-            })
+            .update({ metrics: merged, last_synced_at: new Date().toISOString() })
             .eq("id", row.id);
+          patched++;
         } catch (e) {
-          // why: don't bubble per-post errors here — the main feed walk will
-          // retry the post if the issue is transient (rate limit, etc).
           console.warn(
             `fb-sync: backfill failed for post ${row.platform_post_id}:`,
             (e as Error).message,
           );
         }
       }
-      if (candidates.length > 0) {
-        console.log(
-          `fb-sync: priority backfill processed ${candidates.length} missing-plays posts`,
-        );
+      if (patched > 0) {
+        console.log(`fb-sync: priority backfill patched ${patched} video posts`);
       }
     } catch (e) {
       console.error("fb-sync: priority backfill query failed:", e);
@@ -327,12 +301,6 @@ export async function syncFacebook(): Promise<SyncResult> {
     } while (after);
 
     // ── Stalest-first queue (2026-06-11) ──────────────────────────────────
-    // why: the feed walk is reverse-chronological. Under a time budget that
-    // ordering starves old posts forever (the newest get re-synced every
-    // run, the run stops, the tail never refreshes). Instead: posts we have
-    // never seen go first (newest content matters most), then known posts
-    // ordered by how stale their metrics are. Old-and-recently-refreshed
-    // posts are skipped outright via the age tier.
     const { data: knownRows } = await client
       .from("posts")
       .select("platform_post_id, last_synced_at, posted_at")
@@ -373,8 +341,6 @@ export async function syncFacebook(): Promise<SyncResult> {
 
     let processed = 0;
     for (const fb of queue) {
-      // why: never START a post we might not finish; the queue remainder is
-      // intact and stalest-first puts it at the front of the next run.
       if (Date.now() - start > TIME_BUDGET_MS) {
         result.deferred = queue.length - processed;
         console.warn(
@@ -386,99 +352,77 @@ export async function syncFacebook(): Promise<SyncResult> {
       try {
         if (fb.is_published === false) continue;
 
-        let metrics: NormalizedMetrics = {};
-        try {
-          // Always pull base metrics (impressions/clicks/reactions) — they're
-          // valid for every post type. Video-only metrics get a second call
-          // gated on media_type to avoid "metric does not apply" errors.
-          const insights = await fbFetch<FbInsightsResponse>(
-            `/${fb.id}/insights?metric=${INSIGHTS_METRICS_BASE}`,
-            token,
-          );
-          metrics = flattenInsights(insights);
-        } catch (e) {
-          result.errors.push({
-            post_id: fb.id,
-            message: `insights: ${(e as Error).message}`,
-          });
-        }
-        // Video-only second call. Failure here is non-fatal (some "video" posts
-        // are actually shared video links without insights eligibility).
-        if (parseMediaType(fb) === "video") {
-          try {
-            const videoInsights = await fbFetch<FbInsightsResponse>(
-              `/${fb.id}/insights?metric=${INSIGHTS_METRICS_VIDEO}`,
-              token,
-            );
-            const videoMetrics = flattenInsights(videoInsights);
-            // Merge video-specific fields into the base metrics object.
-            if (videoMetrics.plays !== undefined) metrics.plays = videoMetrics.plays;
-            if (videoMetrics.completion_rate !== undefined) {
-              metrics.completion_rate = videoMetrics.completion_rate;
-            }
-            if (videoMetrics.avg_watch_time_sec !== undefined) {
-              metrics.avg_watch_time_sec = videoMetrics.avg_watch_time_sec;
-            }
-          } catch (_e) {
-            // silent — video metrics are bonus; base metrics still present
-          }
+        const metrics: NormalizedMetrics = {};
 
-          // ── Reel-canonical play count ────────────────────────────────────
-          // why: /post/insights?metric=post_video_views returns only 3-second
-          // qualified views (= 2,024 for 110 W Garfield Reel). Meta Business
-          // Suite shows the broader "all plays incl. replays" count = 4,375
-          // — and the ONLY API surface that exposes that number is the video
-          // object's `views` field. Probed exhaustively on 2026-05-17 across
-          // every endpoint × candidate metric combination; `views` on the
-          // video object was the unique match (returned 4,447, +1.6% vs Suite
-          // due to API freshness lead).
-          //
-          // The video id lives in the post's first attachment's `target.id`.
-          // If we can't resolve it (rare — would need a malformed attachment)
-          // we leave metrics.plays at whatever the 3-sec count gave us.
-          const videoId = fb.attachments?.data?.[0]?.target?.id;
-          if (videoId) {
-            try {
-              const videoObj = await fbFetch<{ views?: number }>(
-                `/${videoId}?fields=views`,
-                token,
-              );
-              if (typeof videoObj.views === "number" && videoObj.views > 0) {
-                metrics.plays = videoObj.views;
-              }
-            } catch (_e) {
-              // silent — leave plays at the 3-sec fallback; this just means
-              // the canonical play count wasn't fetchable for this post
-              // (e.g., a shared external video without a video object on FB).
-            }
-          }
-        }
-
-        // Pull comments + shares from /{post-id}?fields=comments.summary(true),shares
+        // ── Engagement counts (all post types) ───────────────────────────
+        // Summary edges match the FB native UI exactly. reactions→likes,
+        // plus comments + shares in the same call.
         try {
           const counts = await fbFetch<{
+            reactions?: { summary?: { total_count?: number } };
             comments?: { summary?: { total_count?: number } };
             shares?: { count?: number };
           }>(
-            `/${fb.id}?fields=comments.summary(true),shares`,
+            `/${fb.id}?fields=reactions.summary(true).limit(0),comments.summary(true).limit(0),shares`,
             token,
           );
-          if (counts.comments?.summary?.total_count !== undefined) {
-            metrics.comments = counts.comments.summary.total_count;
-          }
-          if (counts.shares?.count !== undefined) {
-            metrics.shares = counts.shares.count;
-          }
+          const reactions = counts.reactions?.summary?.total_count;
+          if (reactions !== undefined) metrics.likes = reactions;
+          const comments = counts.comments?.summary?.total_count;
+          if (comments !== undefined) metrics.comments = comments;
+          if (counts.shares?.count !== undefined) metrics.shares = counts.shares.count;
         } catch (e) {
-          // Non-fatal — posts may have these disabled
+          result.errors.push({
+            post_id: fb.id,
+            message: `counts: ${(e as Error).message}`,
+          });
         }
+
+        // ── Link clicks (still valid on the post node) ───────────────────
+        try {
+          const clicks = await fbFetch<FbInsightsResponse>(
+            `/${fb.id}/insights?metric=${INSIGHTS_METRICS_CLICKS}`,
+            token,
+          );
+          const total = clicks.data.reduce(
+            (s, m) => s + sumByType(m.values?.[0]?.value),
+            0,
+          );
+          if (total > 0) metrics.link_clicks = total;
+        } catch (_e) {
+          // non-fatal — some post types have no clicks insight
+        }
+
+        // ── Reach + plays from the VIDEO node (deprecation-proof) ─────────
+        if (parseMediaType(fb) === "video") {
+          const videoId = resolveVideoId(fb);
+          if (videoId) {
+            try {
+              const vi = await fetchVideoInsights(videoId, token);
+              if (vi.plays !== undefined) {
+                metrics.plays = vi.plays;
+                metrics.impressions = vi.plays; // total plays ≈ impressions
+              }
+              if (vi.reach !== undefined) metrics.reach = vi.reach;
+              if (vi.avgWatchSec !== undefined) metrics.avg_watch_time_sec = vi.avgWatchSec;
+            } catch (e) {
+              // non-fatal — a shared external video may have no insights
+              console.warn(
+                `fb-sync: video_insights failed for ${fb.id}:`,
+                (e as Error).message,
+              );
+            }
+          }
+        }
+
+        const er = computeEngagementRate(metrics);
+        if (er !== undefined) metrics.engagement_rate = er;
 
         const thumb = fb.attachments?.data?.[0]?.media?.image?.src ?? fb.full_picture ?? null;
         const mediaUrl = fb.attachments?.data?.[0]?.media?.source ?? null;
         const fbMediaType = parseMediaType(fb);
 
-        // Cache the FB thumbnail to Storage if present. FB returns time-
-        // limited fbcdn URLs that expire when Meta rotates them.
+        // Cache the FB thumbnail to Storage (fbcdn URLs expire on rotation).
         let cachedThumbUrl: string | null = null;
         let cachedAt: string | null = null;
         if (thumb) {
@@ -493,15 +437,8 @@ export async function syncFacebook(): Promise<SyncResult> {
           cachedAt = cached.cachedAt;
         }
 
-        // media_url for photo posts is the full-res image. For video posts
-        // it's a video URL (don't cache as image). Only cache when it's an
-        // image AND distinct from the thumb we just cached.
         let cachedMediaUrl: string | null = null;
-        if (
-          mediaUrl &&
-          fbMediaType === "image" &&
-          mediaUrl !== thumb
-        ) {
+        if (mediaUrl && fbMediaType === "image" && mediaUrl !== thumb) {
           const m = await cacheThumbnailToStorage({
             supabaseUrl: SUPABASE_URL,
             serviceRoleKey: SERVICE_ROLE_KEY,
@@ -549,8 +486,6 @@ export async function syncFacebook(): Promise<SyncResult> {
     result.errors.push({ message: (e as Error).message });
   }
 
-  // Group new posts into cross-platform campaigns now (instead of waiting
-  // for the standalone grouper cron). No-op if no ungrouped posts remain.
   await runPostGrouper(client, "facebook");
 
   result.duration_ms = Date.now() - start;
