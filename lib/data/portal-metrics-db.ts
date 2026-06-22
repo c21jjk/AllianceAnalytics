@@ -651,7 +651,17 @@ export async function fetchBuildingPortalTraffic(
 ): Promise<BuildingRollup | null> {
   const building = await findBuildingForMls(mlsNumber);
   if (!building) return null;
+  return combineBuildingStrips(building);
+}
 
+/**
+ * Combine per-unit ListTrac portal strips into one building-level rollup.
+ * Shared by the address-view path (fetchBuildingPortalTraffic) and the
+ * building_id path (fetchBuildingPortalTrafficByBuildingId).
+ */
+async function combineBuildingStrips(
+  building: BuildingViewRow,
+): Promise<BuildingRollup> {
   // Earliest listing_date among members = window start. Falls back to 365
   // days if nothing parseable.
   const memberDates = building.members
@@ -760,6 +770,89 @@ export async function fetchBuildingPortalTraffic(
     strip,
     members: memberRows.sort((a, b) => b.views - a.views),
   };
+}
+
+/**
+ * Building-consolidation variant of fetchBuildingPortalTraffic that resolves
+ * members from `properties.building_id` (the manual-override-aware source of
+ * truth) instead of the address-derived `v_listing_buildings` view. Use this on
+ * the property detail page so staff merges/splits are reflected.
+ *
+ * Returns null when the MLS has no building_id. The portal combine logic is
+ * shared with the view-based path via combineBuildingStrips.
+ */
+export async function fetchBuildingPortalTrafficByBuildingId(
+  mlsNumber: string,
+): Promise<BuildingRollup | null> {
+  const supabase = getUntypedClient();
+
+  // 1) Resolve this MLS → its building_id.
+  const { data: prop } = await supabase
+    .from("properties")
+    .select("building_id")
+    .eq("mls_number", mlsNumber)
+    .maybeSingle();
+  const buildingId = (prop as { building_id?: string | null } | null)
+    ?.building_id;
+  if (!buildingId) return null;
+
+  // 2) Building row (display + primary).
+  const { data: bRow } = await supabase
+    .from("buildings")
+    .select("building_key, display_address, display_city, primary_property_id")
+    .eq("id", buildingId)
+    .maybeSingle();
+  if (!bRow) return null;
+  const b = bRow as {
+    building_key: string | null;
+    display_address: string | null;
+    display_city: string | null;
+    primary_property_id: string | null;
+  };
+
+  // 3) Members from properties.building_id.
+  const { data: memberRowsRaw } = await supabase
+    .from("properties")
+    .select("id, mls_number, source_mls, address, status, list_price, listing_date")
+    .eq("building_id", buildingId);
+  const memberRows = (memberRowsRaw ?? []) as Array<{
+    id: string;
+    mls_number: string;
+    source_mls: "cmc" | "sjsr" | null;
+    address: string | null;
+    status: string;
+    list_price: number | null;
+    listing_date: string | null;
+  }>;
+  if (memberRows.length === 0) return null;
+
+  // Primary MLS# for the strip's canonical anchor.
+  let primaryMls = memberRows[0].mls_number;
+  if (b.primary_property_id) {
+    const found = memberRows.find((m) => m.id === b.primary_property_id);
+    if (found) primaryMls = found.mls_number;
+  }
+
+  const view: BuildingViewRow = {
+    building_key: b.building_key ?? "",
+    display_address: b.display_address ?? memberRows[0].address ?? "",
+    display_city: b.display_city,
+    member_count: memberRows.length,
+    active_count: memberRows.filter((m) => m.status === "active").length,
+    pending_count: memberRows.filter((m) => m.status === "pending").length,
+    sold_count: memberRows.filter((m) => m.status === "sold").length,
+    primary_mls: primaryMls,
+    members: memberRows.map((m) => ({
+      mls_number: m.mls_number,
+      source_mls: m.source_mls,
+      address: m.address,
+      status: m.status,
+      list_price: m.list_price,
+      listing_date: m.listing_date,
+    })),
+  };
+
+  return combineBuildingStrips(view);
 }
 
 /**

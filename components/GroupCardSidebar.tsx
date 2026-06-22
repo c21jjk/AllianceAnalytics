@@ -10,7 +10,80 @@ import {
   type GroupCategory,
 } from "@/app/(app)/groups/actions";
 import type { AudienceScope, PostGroup } from "@/lib/types/group";
+import type { PropertyRef } from "@/lib/types/post";
 import { formatCurrency } from "@/lib/format";
+
+/**
+ * One display entry in the linkage list. A standalone listing is one entry
+ * with `memberMls = [mls]`. A consolidated building collapses ALL its linked
+ * member units into ONE entry: the master listing. `memberMls` carries every
+ * member so removing the chip unlinks the whole building at once.
+ */
+interface LinkageEntry {
+  /** Stable key + primary MLS (the building's primary, or the lone listing). */
+  primaryMls: string | null;
+  /** Label: building display address for a building, else the listing address. */
+  address: string | null;
+  hero_image_url?: string;
+  story_url_path?: string;
+  /** Every MLS# this entry represents (1 for standalone, N for a building). */
+  memberMls: string[];
+  /** Set when this entry is a consolidated building. */
+  buildingId?: string;
+  /** Unit count for the badge (buildings only; standalone listings are 1). */
+  unitCount: number;
+}
+
+/**
+ * Collapse a group's linked properties into display entries, folding every
+ * member of the same building into a single master entry. Standalone listings
+ * (no building_id) pass through one-to-one. Order is preserved by first
+ * appearance so the master row sits where its first member would have been.
+ */
+function collapseProperties(properties: PropertyRef[]): LinkageEntry[] {
+  const out: LinkageEntry[] = [];
+  const buildingIndex = new Map<string, number>();
+  for (const p of properties) {
+    const mls = typeof p.mls === "string" ? p.mls : null;
+    if (p.building_id) {
+      const existing = buildingIndex.get(p.building_id);
+      if (existing !== undefined) {
+        // Fold this unit into the existing master entry.
+        if (mls) out[existing].memberMls.push(mls);
+        out[existing].unitCount = out[existing].memberMls.length;
+        // Prefer a hero/story from any member that has one.
+        if (!out[existing].hero_image_url && p.hero_image_url) {
+          out[existing].hero_image_url = p.hero_image_url;
+        }
+        if (!out[existing].story_url_path && p.story_url_path) {
+          out[existing].story_url_path = p.story_url_path;
+        }
+        continue;
+      }
+      buildingIndex.set(p.building_id, out.length);
+      out.push({
+        primaryMls: mls,
+        address: p.building_display_address ?? p.address ?? mls,
+        hero_image_url: p.hero_image_url,
+        story_url_path: p.story_url_path,
+        memberMls: mls ? [mls] : [],
+        buildingId: p.building_id,
+        unitCount: mls ? 1 : 0,
+      });
+      continue;
+    }
+    // Standalone listing.
+    out.push({
+      primaryMls: mls,
+      address: p.address ?? mls,
+      hero_image_url: p.hero_image_url,
+      story_url_path: p.story_url_path,
+      memberMls: mls ? [mls] : [],
+      unitCount: 1,
+    });
+  }
+  return out;
+}
 
 /**
  * Shape returned by `/api/listings/search`. Subset of properties columns
@@ -120,6 +193,8 @@ function LinkageBlock({
   const linkedMlsNumbers = group.properties
     .map((p) => p.mls)
     .filter((m): m is string => typeof m === "string" && m.length > 0);
+  // Collapsed display entries — a multi-unit building shows as ONE master row.
+  const entries = collapseProperties(group.properties);
 
   // Debounced search-as-you-type against the existing listings endpoint.
   // Triggers on query length ≥ 2 so a single keystroke doesn't fire a request.
@@ -204,10 +279,14 @@ function LinkageBlock({
     }
   }
 
-  function handleRemove(mlsNumber: string) {
+  /** Remove an entry's MLS#s — one for a standalone listing, ALL members for
+   *  a consolidated building (so removing the master chip unlinks the whole
+   *  building in one click). */
+  function handleRemoveEntry(memberMls: string[]) {
     setError(null);
     setUnmatched([]);
-    const newList = linkedMlsNumbers.filter((m) => m !== mlsNumber);
+    const drop = new Set(memberMls);
+    const newList = linkedMlsNumbers.filter((m) => !drop.has(m));
     startTransition(async () => {
       const result = await setGroupPropertiesAction(group.id, newList);
       if (!result.ok) setError(result.error ?? "Unable to update.");
@@ -221,32 +300,32 @@ function LinkageBlock({
     >
       <div className="flex items-center justify-between gap-2">
         <h4 className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-          {group.properties.length > 1 ? "Listings" : "Listing"}
+          {entries.length > 1 ? "Listings" : "Listing"}
         </h4>
-        {group.properties.length > 0 ? (
+        {entries.length > 0 ? (
           <span className="text-[10px] text-neutral-400 tabular-nums">
-            {group.properties.length} linked
+            {entries.length} linked
           </span>
         ) : null}
       </div>
 
-      {group.properties.length === 0 && !adding ? (
+      {entries.length === 0 && !adding ? (
         <p className="mt-1.5 text-[11px] text-neutral-400 italic">
           No listing linked yet.
         </p>
       ) : null}
 
-      {group.properties.length > 0 ? (
+      {entries.length > 0 ? (
         <ul className="mt-1.5 space-y-1">
-          {group.properties.map((prop) => (
+          {entries.map((entry) => (
             <li
-              key={prop.mls}
+              key={entry.buildingId ?? entry.primaryMls ?? entry.address}
               className="flex items-center gap-1.5 rounded-md bg-neutral-50 ring-1 ring-neutral-200 px-1.5 py-1"
             >
-              {prop.hero_image_url ? (
+              {entry.hero_image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={prop.hero_image_url}
+                  src={entry.hero_image_url}
                   alt=""
                   className="w-7 h-7 rounded object-cover shrink-0"
                 />
@@ -255,22 +334,31 @@ function LinkageBlock({
               )}
               <Link
                 href={
-                  prop.mls
-                    ? `/properties/${encodeURIComponent(prop.mls)}`
+                  entry.primaryMls
+                    ? `/properties/${encodeURIComponent(entry.primaryMls)}`
                     : "#"
                 }
                 className="flex-1 min-w-0 text-[11px] font-medium text-neutral-800 hover:text-neutral-950 truncate"
               >
-                {prop.address ?? prop.mls ?? "Unknown property"}
+                {entry.address ?? entry.primaryMls ?? "Unknown property"}
+                {entry.buildingId && entry.unitCount > 1 ? (
+                  <span className="ml-1 inline-flex items-center rounded-full bg-gold-100 ring-1 ring-gold-300 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-gold-800 tabular-nums align-middle">
+                    {entry.unitCount} units
+                  </span>
+                ) : null}
               </Link>
               {isAdmin && !isSingleton ? (
                 <button
                   type="button"
-                  onClick={() => prop.mls && handleRemove(prop.mls)}
-                  disabled={isPending || !prop.mls}
+                  onClick={() => handleRemoveEntry(entry.memberMls)}
+                  disabled={isPending || entry.memberMls.length === 0}
                   className="text-[11px] text-neutral-400 hover:text-rose-600 px-1 leading-none disabled:opacity-50"
-                  title="Remove this property from the campaign"
-                  aria-label={`Remove ${prop.mls ?? ""}`}
+                  title={
+                    entry.buildingId && entry.unitCount > 1
+                      ? "Remove this building (all units) from the campaign"
+                      : "Remove this property from the campaign"
+                  }
+                  aria-label={`Remove ${entry.address ?? entry.primaryMls ?? ""}`}
                 >
                   ×
                 </button>
@@ -417,22 +505,22 @@ function LinkageBlock({
           No post-age gate — the story page handles freshly-listed states
           gracefully (FreshlyListedChapter), unlike the legacy Compass
           report which required at least 7 days of post data. */}
-      {group.properties.length > 0 ? (
+      {entries.length > 0 ? (
         <div className="mt-2 pt-2 border-t border-neutral-100 space-y-1.5">
-          {group.properties.map((prop) =>
-            prop.mls ? (
+          {entries.map((entry) =>
+            entry.primaryMls ? (
               <Link
-                key={prop.mls}
+                key={entry.buildingId ?? entry.primaryMls}
                 href={
-                  prop.story_url_path ??
-                  `/properties/${encodeURIComponent(prop.mls)}`
+                  entry.story_url_path ??
+                  `/properties/${encodeURIComponent(entry.primaryMls)}`
                 }
-                target={prop.story_url_path ? "_blank" : undefined}
+                target={entry.story_url_path ? "_blank" : undefined}
                 rel={
-                  prop.story_url_path ? "noopener noreferrer" : undefined
+                  entry.story_url_path ? "noopener noreferrer" : undefined
                 }
                 className="group flex items-center gap-2 rounded-md bg-gradient-to-r from-gold-500 to-gold-600 hover:from-gold-600 hover:to-gold-700 px-2.5 py-2 text-white shadow-sm hover:shadow transition-all"
-                title={`Open the Owner Story for ${prop.address ?? prop.mls}`}
+                title={`Open the Owner Story for ${entry.address ?? entry.primaryMls}`}
               >
                 <span
                   aria-hidden="true"
@@ -445,7 +533,10 @@ function LinkageBlock({
                     Owner Story
                   </div>
                   <div className="mt-0.5 text-[11px] font-medium text-white truncate leading-tight">
-                    {prop.address ?? prop.mls}
+                    {entry.address ?? entry.primaryMls}
+                    {entry.buildingId && entry.unitCount > 1
+                      ? ` — ${entry.unitCount} units`
+                      : ""}
                   </div>
                 </div>
                 <span

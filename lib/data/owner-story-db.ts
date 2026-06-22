@@ -2,6 +2,14 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reachOf, engagementsOf } from "@/lib/data/post-metrics";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
+import {
+  getBuildingForProperty,
+  type BuildingRecord,
+} from "@/lib/data/buildings-db";
+import {
+  fetchBuildingPortalTrafficByBuildingId,
+  type BuildingRollup,
+} from "@/lib/data/portal-metrics-db";
 
 /* ----------------------------------------------------------------------- *
  *  View tracking
@@ -448,6 +456,22 @@ export interface OwnerStoryData {
   days_since_launch: number | null;
   /** ISO timestamp of the first post for this listing (null if none). */
   first_post_at: string | null;
+  /**
+   * Building consolidation context. Null for single-unit listings (the story
+   * behaves exactly as before). When set, every aggregate above (posts,
+   * highlights, totals, open_houses, portal) already spans the WHOLE building,
+   * deduped by post.id so a building-promo post that links to several units is
+   * never double-counted.
+   */
+  building: {
+    id: string;
+    display_address: string | null;
+    display_city: string | null;
+    /** Number of MLS unit-listings rolled into this building. */
+    unit_count: number;
+    /** Combined ListTrac portal rollup across every unit, or null. */
+    portal: BuildingRollup | null;
+  } | null;
 }
 
 function asPlatform(v: unknown): Platform {
@@ -487,16 +511,52 @@ export async function fetchOwnerStoryByToken(
 
   if (reportErr || !reportRow) return null;
 
+  const PROP_COLUMNS =
+    "id, mls_number, source_mls, address, city, state, zip, list_price, listing_date, status, status_changed_at, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, agent_phone, listing_office_name";
+
   // 2) Property — pull the fields the story chapters need
-  const { data: propRow, error: propErr } = await supabase
+  const { data: tokenPropRow, error: propErr } = await supabase
     .from("properties")
-    .select(
-      "id, mls_number, source_mls, address, city, state, zip, list_price, listing_date, status, status_changed_at, hero_image_url, property_type, bedrooms, bathrooms_full, bathrooms_half, agent_name, agent_email, agent_phone, listing_office_name",
-    )
+    .select(PROP_COLUMNS)
     .eq("id", reportRow.property_id)
     .maybeSingle();
 
-  if (propErr || !propRow) return null;
+  if (propErr || !tokenPropRow) return null;
+
+  // 2b) Building consolidation — if this property belongs to a building, the
+  //     ENTIRE story (hero, posts, totals, open houses, portal) reframes to
+  //     the whole building. The hero/identity property becomes the building's
+  //     primary_property_id (earliest listing_date). Every member property_id
+  //     and mls_number is collected so the post/photo/open-house gathering
+  //     below fans out across all units. For a null building_id we keep the
+  //     token's own property and behave exactly as before — no regression.
+  let building: BuildingRecord | null = null;
+  try {
+    building = await getBuildingForProperty(reportRow.property_id);
+  } catch {
+    building = null;
+  }
+
+  // The "hero" / identity property the story is framed around.
+  let propRow = tokenPropRow;
+  if (
+    building &&
+    building.primary_property_id &&
+    building.primary_property_id !== tokenPropRow.id
+  ) {
+    const { data: primaryRow } = await supabase
+      .from("properties")
+      .select(PROP_COLUMNS)
+      .eq("id", building.primary_property_id)
+      .maybeSingle();
+    if (primaryRow) propRow = primaryRow;
+  }
+
+  // Property IDs + MLS#s the story aggregates over. Single property when no
+  // building; every member when consolidated.
+  const memberPropertyIds = building
+    ? Array.from(new Set(building.members.map((m) => m.id)))
+    : [propRow.id];
 
   // 3) Posts — three sources merged, newest-first:
   //   (a) Direct link via posts.property_id (the legacy anchor FK)
@@ -510,31 +570,43 @@ export async function fetchOwnerStoryByToken(
   // primary post_listings row has a matching posts.property_id — but the
   // dedupe makes that harmless. (c) provides resilience for pre-join-
   // table groups.
-  const [postDirect, postListings, groupFallback] = await Promise.all([
+  // Building-aware: union all three sources across EVERY member property_id.
+  // The dedup by post.id below (the `byId` Map) is what enforces the
+  // correctness invariant — a single building-promo post that links to many
+  // units surfaces once, so its reach/engagement is counted once, never per
+  // unit. For a single (non-building) property these are 1-element `.in()`
+  // lookups, behaviorally identical to the prior `.eq()` form.
+  const [postDirect, postListings, ...groupFallbacks] = await Promise.all([
     supabase
       .from("posts")
       .select(
         "id, platform, posted_at, caption, thumbnail_url, permalink, metrics, media_type, group_id",
       )
-      .eq("property_id", propRow.id)
+      .in("property_id", memberPropertyIds)
       .order("posted_at", { ascending: false }),
     // 2026-05-21 — join-table fan-out. Pulls post IDs for every post
-    // linked to this property (primary AND non-primary) so multi-OH
-    // carousels with this property anywhere in the slide list surface
-    // in the Owner Story.
+    // linked to any member property (primary AND non-primary) so multi-OH
+    // carousels surface in the Owner Story.
     supabase
       .from("post_listings")
       .select("post_id")
-      .eq("property_id", propRow.id),
-    supabase
-      .from("post_groups")
-      .select("id")
-      .contains("property_ids", [propRow.id]),
+      .in("property_id", memberPropertyIds),
+    // post_groups.property_ids[] is an array column, so `.contains` matches a
+    // single value at a time — fan out one query per member property id.
+    ...memberPropertyIds.map((pid) =>
+      supabase.from("post_groups").select("id").contains("property_ids", [pid]),
+    ),
   ]);
 
-  const groupIds = (groupFallback.data ?? [])
-    .map((g: { id: string }) => g.id)
-    .filter(Boolean);
+  const groupIds = Array.from(
+    new Set(
+      groupFallbacks.flatMap((res) =>
+        ((res.data ?? []) as Array<{ id: string }>)
+          .map((g) => g.id)
+          .filter(Boolean),
+      ),
+    ),
+  );
 
   type RawPost = {
     id: string;
@@ -658,18 +730,37 @@ export async function fetchOwnerStoryByToken(
   //    open_houses by property_id (already linked locally)
   //    Run in parallel with the company rollup below.
   const [{ data: photoRows }, { data: ohRows }, company] = await Promise.all([
+    // Photos still come from the hero/primary property only — the building
+    // hero is the primary unit's photos. Showing every unit's gallery would
+    // muddle the seller's page.
     supabase
       .from("listing_photos")
       .select("url, caption, sequence")
       .eq("mls_number", propRow.mls_number)
       .order("sequence", { ascending: true }),
+    // Open houses span every member property so the seller sees the whole
+    // building's open-house schedule.
     supabase
       .from("open_houses")
       .select("id, start_at, end_at, comments")
-      .eq("property_id", propRow.id)
+      .in("property_id", memberPropertyIds)
       .order("start_at", { ascending: true }),
     fetchCompanyRollup(),
   ]);
+
+  // 7b) Portal traffic — for a building, roll up ListTrac across every unit
+  //     using the primary MLS as the anchor. Non-fatal: a portal hiccup must
+  //     never break the story page.
+  let buildingPortal: BuildingRollup | null = null;
+  if (building) {
+    try {
+      buildingPortal = await fetchBuildingPortalTrafficByBuildingId(
+        propRow.mls_number,
+      );
+    } catch {
+      buildingPortal = null;
+    }
+  }
 
   // Skip the hero photo (sequence=1) — story page already shows it large
   // at the top, so the gallery is the *additional* photos only.
@@ -738,5 +829,14 @@ export async function fetchOwnerStoryByToken(
     company,
     days_since_launch: daysSinceLaunch,
     first_post_at: firstPostAt,
+    building: building
+      ? {
+          id: building.id,
+          display_address: building.display_address ?? propRow.address,
+          display_city: building.display_city ?? propRow.city,
+          unit_count: building.members.length,
+          portal: buildingPortal,
+        }
+      : null,
   };
 }

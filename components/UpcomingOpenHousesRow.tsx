@@ -196,6 +196,17 @@ function OpenHouseRow({
     .join(", ");
   const timeLabel = formatOpenHouseTimeLabel(openHouse.start_at, openHouse.end_at);
 
+  // Building consolidation: a multi-unit building shows as ONE entry. Use the
+  // building's display address as the headline and a "N open houses" badge in
+  // place of the single-unit identifier.
+  const isBuilding = Boolean(
+    openHouse.building_id && (openHouse.building_oh_count ?? 1) > 1,
+  );
+  const headlineAddress = isBuilding
+    ? openHouse.building_address ?? openHouse.address ?? "Unknown address"
+    : openHouse.address ?? "Unknown address";
+  const buildingOhCount = openHouse.building_oh_count ?? 1;
+
   const propertyHref = `/properties/${encodeURIComponent(openHouse.mls_number)}`;
   // Phase 7 — deep-link straight to Post Builder with the OH template
   // pre-selected. Skips the property-detail → builder hop entirely.
@@ -258,11 +269,31 @@ function OpenHouseRow({
             textOverflow: "ellipsis",
           }}
         >
-          {openHouse.address ?? "Unknown address"}
+          {headlineAddress}
+          {/* Building consolidation: one entry for the whole building, badged
+              with the count of open houses across its units. */}
+          {isBuilding ? (
+            <span
+              style={{
+                color: "#8a6d1f",
+                fontWeight: 600,
+                fontSize: 11,
+                marginLeft: 6,
+                padding: "1px 6px",
+                borderRadius: 999,
+                background: "#fbf3da",
+                border: "1px solid #ecd9a0",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {buildingOhCount} open houses
+            </span>
+          ) : null}
           {/* 2026-05-22 — condo/townhouse unit identifier so consumers
               know which unit to visit when multiple units at the same
-              building show separate OHs. */}
-          {openHouse.unit_number ? (
+              building show separate OHs. Hidden for collapsed building
+              entries (the building label already covers it). */}
+          {!isBuilding && openHouse.unit_number ? (
             <span style={{ color: "#525250", fontWeight: 500 }}>
               {" · "}
               {openHouse.unit_number}

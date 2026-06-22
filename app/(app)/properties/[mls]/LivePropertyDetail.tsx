@@ -16,7 +16,7 @@ import PortalMetricsStrip from "@/components/portal-metrics/PortalMetricsStrip";
 import BuildingRollupCard from "@/components/BuildingRollupCard";
 import {
   fetchPortalStrip,
-  fetchBuildingPortalTraffic,
+  fetchBuildingPortalTrafficByBuildingId,
 } from "@/lib/data/portal-metrics-db";
 import { fetchExistingOwnerReportForProperty } from "@/lib/data/owner-reports-db";
 import {
@@ -105,11 +105,15 @@ export default async function LivePropertyDetail({
 
   // Building rollup — renders the "Building total" card when this listing
   // is part of a 2+-unit building (e.g., 511 E 11th Ave's condo break-up).
-  // Returns null for single-unit listings, so the card simply doesn't
-  // render. Non-fatal on error.
+  // Resolves membership via properties.building_id (the manual-override-aware
+  // source of truth) so staff merges/splits in /settings/buildings show here.
+  // Returns null for single-unit listings, so the card simply doesn't render.
+  // Non-fatal on error.
   let buildingRollup = null;
   try {
-    buildingRollup = await fetchBuildingPortalTraffic(property.mls_number);
+    buildingRollup = await fetchBuildingPortalTrafficByBuildingId(
+      property.mls_number,
+    );
   } catch (e) {
     console.warn("building rollup fetch failed:", (e as Error).message);
   }

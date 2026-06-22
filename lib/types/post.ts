@@ -48,6 +48,19 @@ export interface PropertyRef {
    * the property row exists in the AllianceAnalytics DB.
    */
   story_url_path?: string;
+  /**
+   * Building consolidation: when this property is a unit in a consolidated
+   * building (properties.building_id is set), this is that building id. Used
+   * to collapse a multi-unit building's member chips into ONE master listing
+   * row on display surfaces (dashboard sidebar, post linker). Undefined for
+   * standalone single-family listings.
+   */
+  building_id?: string;
+  /**
+   * Building consolidation: the building's display address, when this ref is
+   * a member of a consolidated building. Used as the master-row label.
+   */
+  building_display_address?: string;
 }
 
 export interface PostMetrics {

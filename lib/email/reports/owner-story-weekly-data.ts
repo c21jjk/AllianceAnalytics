@@ -6,6 +6,7 @@ import {
 } from "@/lib/data/owner-story-db";
 import { fetchPortalStrip } from "@/lib/data/portal-metrics-db";
 import { loadAgentEmailResolver } from "@/lib/data/agent-email-resolver";
+import { getBuildingForProperty } from "@/lib/data/buildings-db";
 
 /**
  * Data layer for the weekly Owner Story email to listing agents.
@@ -112,6 +113,7 @@ export async function findEligibleOwnerStoryEmails(
     (p) => p.alliance_role === "listing" || p.alliance_role === "both",
   );
   if (activeProps.length === 0) return [];
+  const activePropIds = new Set(activeProps.map((p) => p.id));
 
   // 2) Already-sent reports for this week → skip.
   const { data: sentRows } = await untypedClient()
@@ -127,8 +129,40 @@ export async function findEligibleOwnerStoryEmails(
   const resolveAgentEmail = await loadAgentEmailResolver();
 
   // 3) Resolve each property → token → hydrated story → eligibility.
+  //
+  // Building consolidation: when a property belongs to a building we only emit
+  // the building's PRIMARY unit. Every other member is skipped so a 13-unit
+  // condo building yields ONE Owner Story email (about the whole building),
+  // not 13 near-duplicate emails to the agent. The hydrated story for the
+  // primary already spans the whole building (see fetchOwnerStoryByToken).
   const candidates: OwnerStoryEmailCandidate[] = [];
+  // Track buildings we've already emitted so two active members of the same
+  // building (both pointing at the same primary) never double-send.
+  const emittedBuildingIds = new Set<string>();
   for (const prop of activeProps) {
+    let building = null;
+    try {
+      building = await getBuildingForProperty(prop.id);
+    } catch {
+      building = null;
+    }
+    if (building) {
+      // One email per building. The representative is the primary unit when it
+      // is itself active; otherwise the earliest-listed ACTIVE member stands in
+      // (so a building whose primary already sold still reports its live units).
+      const primaryIsActive =
+        !!building.primary_property_id &&
+        activePropIds.has(building.primary_property_id);
+      const representativeId = primaryIsActive
+        ? building.primary_property_id
+        : building.members
+            .filter((m) => activePropIds.has(m.id))
+            .map((m) => m.id)[0] ?? null;
+      if (representativeId && representativeId !== prop.id) continue;
+      if (emittedBuildingIds.has(building.id)) continue;
+      emittedBuildingIds.add(building.id);
+    }
+
     let token: string | null = null;
     try {
       token = await getOrCreateStoryTokenForProperty(prop.id);
@@ -176,17 +210,25 @@ async function assembleCandidate(
   agentEmail: string,
 ): Promise<OwnerStoryEmailCandidate> {
   let portalViews = 0;
-  try {
-    if (story.listing.source_mls) {
-      const strip = await fetchPortalStrip(
-        story.listing.mls_number,
-        story.listing.source_mls,
-        { since: story.first_post_at },
-      );
-      portalViews = strip.total_views;
+  // Building consolidation: when the story spans a building, the headline
+  // portal number is the COMBINED rollup across every unit (already computed
+  // by fetchOwnerStoryByToken). Fall back to the single-listing strip for
+  // standalone listings or if the building rollup is unavailable.
+  if (story.building?.portal) {
+    portalViews = story.building.portal.strip.total_views;
+  } else {
+    try {
+      if (story.listing.source_mls) {
+        const strip = await fetchPortalStrip(
+          story.listing.mls_number,
+          story.listing.source_mls,
+          { since: story.first_post_at },
+        );
+        portalViews = strip.total_views;
+      }
+    } catch {
+      portalViews = 0;
     }
-  } catch {
-    portalViews = 0;
   }
 
   return {

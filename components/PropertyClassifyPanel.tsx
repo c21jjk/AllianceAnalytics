@@ -26,6 +26,12 @@ interface ListingResult {
   list_price: number | null;
   status: string;
   hero_image_url: string | null;
+  /** Present when this row is a consolidated building (master listing). */
+  building_id?: string;
+  /** Every member MLS# the link should write. Building rows only. */
+  member_mls?: string[];
+  /** Unit count for the building badge. Building rows only. */
+  unit_count?: number;
 }
 
 export interface OfficeOption {
@@ -105,6 +111,11 @@ export default function PropertyClassifyPanel({
   const [linkedRef, setLinkedRef] = useState<PropertyRef | null>(
     initialProperty ?? null,
   );
+  /** When the picked listing is a consolidated building, the full member MLS
+   *  list to link. Null for a standalone listing — `linkedMls` alone is used. */
+  const [linkedMemberMls, setLinkedMemberMls] = useState<string[] | null>(null);
+  /** Unit count for the master-listing badge on the selected-state chip. */
+  const [linkedUnitCount, setLinkedUnitCount] = useState<number | null>(null);
   const [agentName, setAgentName] = useState<string>(initialAgentName ?? "");
   const [audienceScope, setAudienceScope] = useState<string>(
     scopeToString(initialAudienceScope ?? null),
@@ -190,6 +201,9 @@ export default function PropertyClassifyPanel({
 
   function pickResult(r: ListingResult) {
     setLinkedMls(r.mls_number);
+    const isBuilding = Boolean(r.building_id && r.member_mls?.length);
+    setLinkedMemberMls(isBuilding ? (r.member_mls ?? null) : null);
+    setLinkedUnitCount(isBuilding ? (r.unit_count ?? null) : null);
     setLinkedRef({
       mls: r.mls_number,
       address: [r.address, r.city, r.state].filter(Boolean).join(", "),
@@ -205,6 +219,8 @@ export default function PropertyClassifyPanel({
   function unlink() {
     setLinkedMls(null);
     setLinkedRef(null);
+    setLinkedMemberMls(null);
+    setLinkedUnitCount(null);
   }
 
   /** Orchestrates group-level writes for Category / Audience / Listing plus
@@ -247,12 +263,19 @@ export default function PropertyClassifyPanel({
           }
         }
 
-        // 3) Group linked listing (cascades to all posts)
+        // 3) Group linked listing (cascades to all posts). For a consolidated
+        //    building, link EVERY member unit so the auto-linker, dashboard
+        //    chip, and Owner Story all reflect the whole building. The display
+        //    still collapses to one master row (see GroupCardSidebar).
         if (canEditGroup && dirtyListing && groupId) {
-          const mlsList =
-            linkedMls && (category === "property" || category === "sold")
-              ? [linkedMls]
-              : [];
+          const linkable = category === "property" || category === "sold";
+          const mlsList = !linkable
+            ? []
+            : linkedMemberMls && linkedMemberMls.length > 0
+              ? linkedMemberMls
+              : linkedMls
+                ? [linkedMls]
+                : [];
           const result = await setGroupPropertiesAction(groupId, mlsList);
           if (!result.ok) {
             setError(result.error ?? "Couldn't save linked listing.");
@@ -323,8 +346,13 @@ export default function PropertyClassifyPanel({
           {linkedRef ? (
             <div className="mt-2 flex items-center gap-3 rounded-lg border border-gold-200 bg-gold-50 px-3 py-2">
               <div className="flex flex-col min-w-0">
-                <span className="text-xs font-mono text-gold-800">
+                <span className="text-xs font-mono text-gold-800 flex items-center gap-1.5">
                   {linkedRef.mls}
+                  {linkedUnitCount && linkedUnitCount > 1 ? (
+                    <span className="inline-flex items-center rounded-full bg-gold-200/70 ring-1 ring-gold-300 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gold-900 tabular-nums">
+                      {linkedUnitCount} units
+                    </span>
+                  ) : null}
                 </span>
                 <span className="text-sm font-medium text-neutral-900 truncate">
                   {linkedRef.address}
@@ -386,6 +414,11 @@ export default function PropertyClassifyPanel({
                       <span className="text-xs font-mono text-neutral-700">
                         {r.mls_number}
                       </span>
+                      {r.unit_count && r.unit_count > 1 ? (
+                        <span className="inline-flex items-center rounded-full bg-gold-100 ring-1 ring-gold-300 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gold-800 tabular-nums">
+                          {r.unit_count} units
+                        </span>
+                      ) : null}
                       {r.list_price ? (
                         <span className="text-xs text-gold-700 tabular-nums">
                           {formatCurrency(Number(r.list_price))}

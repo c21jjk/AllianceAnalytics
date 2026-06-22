@@ -34,6 +34,20 @@ export interface UpcomingOpenHouse {
   /** When this OH was first inserted into our DB. Drives the dashboard's
    *  "fresh in last 24h" badge. */
   first_seen_at: string;
+  /** Building consolidation: set when this entry represents a multi-unit
+   *  building (collapsed from several units' open houses). Undefined for a
+   *  standalone single-unit listing. */
+  building_id?: string;
+  /** Building consolidation: the building's display address (master label).
+   *  Undefined for a standalone listing. */
+  building_address?: string | null;
+  /** Building consolidation: every member MLS# whose open houses this entry
+   *  represents. One element for a standalone listing; N for a building. */
+  building_member_mls?: string[];
+  /** Building consolidation: count of distinct open-house events across all
+   *  member units, so the UI can show "3 open houses this weekend". 1 for a
+   *  standalone single-OH listing. */
+  building_oh_count?: number;
 }
 
 interface DbOpenHouseRow {
@@ -57,6 +71,7 @@ interface DbPropertyRow {
   agent_name: string | null;
   list_price: number | null;
   office_id: string | null;
+  building_id: string | null;
 }
 
 interface DbOfficeRow {
@@ -82,6 +97,11 @@ export async function getUpcomingOpenHouses(
   opts: GetUpcomingOpenHousesOptions = {},
 ): Promise<UpcomingOpenHouse[]> {
   const supabase = createAdminClient();
+  // `properties.building_id` + the `buildings` table aren't in the generated
+  // Database type yet (building-consolidation feature). Use a permissive
+  // client for those reads; see lib/data/buildings-db.ts.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const untypedSupabase = supabase as any;
   const windowDays = opts.windowDays ?? 7;
   const limit = opts.limit ?? 25;
 
@@ -119,10 +139,10 @@ export async function getUpcomingOpenHouses(
   const propertyById = new Map<string, DbPropertyRow>();
   const propertyByMls = new Map<string, DbPropertyRow>();
   if (propertyIds.length > 0) {
-    const { data: byId } = await supabase
+    const { data: byId } = await untypedSupabase
       .from("properties")
       .select(
-        "id, mls_number, address, unit_number, city, state, hero_image_url, agent_name, list_price, office_id",
+        "id, mls_number, address, unit_number, city, state, hero_image_url, agent_name, list_price, office_id, building_id",
       )
       .in("id", propertyIds);
     for (const p of (byId ?? []) as DbPropertyRow[]) {
@@ -135,10 +155,10 @@ export async function getUpcomingOpenHouses(
     .filter((o) => !o.property_id || !propertyById.has(o.property_id))
     .map((o) => o.mls_number);
   if (missingMls.length > 0) {
-    const { data: byMls } = await supabase
+    const { data: byMls } = await untypedSupabase
       .from("properties")
       .select(
-        "id, mls_number, address, unit_number, city, state, hero_image_url, agent_name, list_price, office_id",
+        "id, mls_number, address, unit_number, city, state, hero_image_url, agent_name, list_price, office_id, building_id",
       )
       .in("mls_number", Array.from(new Set(missingMls)));
     for (const p of (byMls ?? []) as DbPropertyRow[]) {
@@ -179,14 +199,42 @@ export async function getUpcomingOpenHouses(
     }
   }
 
-  const out: UpcomingOpenHouse[] = [];
+  // Building consolidation: resolve display addresses for every building
+  // referenced by these OH properties, so a multi-unit building collapses
+  // into one entry labeled with the building address.
+  const buildingAddressById = new Map<string, string>();
+  const ohBuildingIds = Array.from(
+    new Set(
+      Array.from(propertyByMls.values())
+        .map((p) => p.building_id)
+        .filter((b): b is string => typeof b === "string" && b.length > 0),
+    ),
+  );
+  if (ohBuildingIds.length > 0) {
+    const { data: bRows } = await untypedSupabase
+      .from("buildings")
+      .select("id, display_address, display_city")
+      .in("id", ohBuildingIds);
+    for (const b of (bRows ?? []) as Array<{
+      id: string;
+      display_address: string | null;
+      display_city: string | null;
+    }>) {
+      const label = [b.display_address, b.display_city]
+        .filter(Boolean)
+        .join(", ");
+      if (label) buildingAddressById.set(b.id, label);
+    }
+  }
+
+  const rows: Array<UpcomingOpenHouse & { _building_id: string | null }> = [];
   for (const oh of ohList) {
     if (scopedMlsNumbers && !scopedMlsNumbers.has(oh.mls_number)) continue;
     const property =
       (oh.property_id && propertyById.get(oh.property_id)) ||
       propertyByMls.get(oh.mls_number) ||
       null;
-    out.push({
+    rows.push({
       id: oh.id,
       mls_number: oh.mls_number,
       start_at: oh.start_at,
@@ -207,7 +255,45 @@ export async function getUpcomingOpenHouses(
           ? officeShortByID.get(property.office_id) ?? null
           : null,
       first_seen_at: oh.created_at,
+      _building_id: property?.building_id ?? null,
     });
+  }
+
+  // Collapse multi-unit buildings into ONE entry. Standalone listings (no
+  // building_id) pass through unchanged. For a building, the soonest OH row
+  // is the representative (rows are already start_at-ascending), and we attach
+  // the full member MLS list + total OH count across its units, so picking the
+  // building entry = promoting the whole building's open houses at once.
+  const out: UpcomingOpenHouse[] = [];
+  const buildingIndex = new Map<string, number>();
+  for (const r of rows) {
+    const { _building_id, ...row } = r;
+    if (!_building_id) {
+      out.push(row);
+      continue;
+    }
+    const existing = buildingIndex.get(_building_id);
+    if (existing === undefined) {
+      buildingIndex.set(_building_id, out.length);
+      out.push({
+        ...row,
+        building_id: _building_id,
+        building_address: buildingAddressById.get(_building_id) ?? row.address,
+        building_member_mls: [row.mls_number],
+        building_oh_count: 1,
+      });
+    } else {
+      const entry = out[existing];
+      const members = entry.building_member_mls ?? [];
+      if (!members.includes(row.mls_number)) members.push(row.mls_number);
+      entry.building_member_mls = members;
+      entry.building_oh_count = (entry.building_oh_count ?? 1) + 1;
+      // Keep the freshest first_seen_at across the building's OHs so the
+      // dashboard "new in last 24h" badge fires when ANY unit's OH is new.
+      if (row.first_seen_at > entry.first_seen_at) {
+        entry.first_seen_at = row.first_seen_at;
+      }
+    }
   }
   return out;
   // mlsNumbers var is unused below — keep for future debug uses.

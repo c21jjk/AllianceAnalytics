@@ -91,7 +91,7 @@ const INSIGHTS_METRICS_VIDEO = ["plays"].join(",");
 const INSIGHTS_METRICS_MINIMAL = ["reach", "likes", "comments", "shares", "saved"].join(",");
 
 interface IgMediaListResponse {
-  data: { id: string }[];
+  data: { id: string; timestamp?: string }[];
   paging?: { next?: string; cursors?: { after?: string } };
 }
 
@@ -202,26 +202,56 @@ export async function syncInstagram(): Promise<SyncResult> {
     // Cutoff for backfill window
     const since = Math.floor(Date.now() / 1000) - BACKFILL_DAYS * 86400;
 
-    // Walk paginated /media
+    // Walk paginated /media.
+    //
+    // why (2026-06-22): IG's /media edge has NO server-side `since` filter, so
+    // it returns the account's ENTIRE lifetime catalog (~1,200 media). The old
+    // code fetched only `id`, queued every id, and only discarded out-of-window
+    // media AFTER a per-media detail call. With ~780 media not yet in the DB —
+    // most of them years old — every run burned its full time budget
+    // detail-fetching-then-skipping ancient media and NEVER reached the
+    // existing posts that needed a metrics refresh (they sit in `knownIds`,
+    // after `newIds`). Result: frozen posts never updated; row count crept up.
+    //
+    // Fix: fetch `timestamp` alongside `id` and drop out-of-window media HERE,
+    // before queueing. The feed is reverse-chronological, so the first media
+    // older than `since` means every later page is older too — stop paginating.
+    // This mirrors fb-sync, whose /posts call passes `&since=` server-side.
     let after: string | undefined;
-    const mediaIds: string[] = [];
+    const walked: { id: string; ts: number }[] = [];
+    let reachedWindowEdge = false;
     do {
-      const path = `/${igId}/media?fields=id&limit=${PAGE_SIZE}${
+      const path = `/${igId}/media?fields=id,timestamp&limit=${PAGE_SIZE}${
         after ? `&after=${encodeURIComponent(after)}` : ""
       }`;
       const page = await igFetch<IgMediaListResponse>(path, token);
-      mediaIds.push(...page.data.map((d) => d.id));
+      for (const d of page.data) {
+        const ts = d.timestamp
+          ? Math.floor(new Date(d.timestamp).getTime() / 1000)
+          : 0;
+        if (ts && ts < since) {
+          reachedWindowEdge = true;
+          break;
+        }
+        walked.push({ id: d.id, ts });
+      }
+      if (reachedWindowEdge) break;
       after = page.paging?.cursors?.after;
       if (!page.paging?.next) break;
       // Safety cap — avoid runaway pagination
-      if (mediaIds.length > 5000) break;
+      if (walked.length > 5000) break;
     } while (after);
 
-    // ── Stalest-first queue (2026-06-11) ──────────────────────────────────
-    // why: the media walk is reverse-chronological. Under a time budget that
-    // ordering starves old posts forever. Unknown ids (new posts) go first,
-    // then known ids ordered by metric staleness; old-and-recently-refreshed
-    // ids are dropped before their detail call even fires.
+    // ── Recency-first queue (2026-06-22) ──────────────────────────────────
+    // why this replaced the old new-first / known-stalest-first split: that
+    // ordering processed EVERY media not yet in the DB before ANY existing
+    // stale post. During catch-up that meant a backlog of older un-ingested
+    // media sat in front of recently-frozen posts (e.g. this month's reels),
+    // starving them indefinitely. Ordering the whole queue by post recency
+    // guarantees the posts that matter most for reports — the most recent —
+    // are always refreshed first, whether they're brand new or stale. The
+    // age tier still drops old posts whose metrics were refreshed in the last
+    // FRESH_WINDOW_DAYS so steady-state runs don't re-do unchanging old media.
     const { data: knownRows } = await client
       .from("posts")
       .select("platform_post_id, last_synced_at, posted_at")
@@ -235,29 +265,23 @@ export async function syncInstagram(): Promise<SyncResult> {
     const staleAgeCutoff = Date.now() - STALE_AGE_DAYS * 86400_000;
     const freshCutoff = Date.now() - FRESH_WINDOW_DAYS * 86400_000;
 
-    const newIds: string[] = [];
-    const knownIds: string[] = [];
     let skippedFresh = 0;
-    for (const mediaId of mediaIds) {
-      const known = knownByPostId.get(mediaId);
-      if (!known) {
-        newIds.push(mediaId);
-        continue;
-      }
-      const postedMs = known.posted_at ? new Date(known.posted_at).getTime() : Date.now();
-      const syncedMs = known.last_synced_at ? new Date(known.last_synced_at).getTime() : 0;
-      if (postedMs < staleAgeCutoff && syncedMs > freshCutoff) {
-        skippedFresh++;
-        continue;
-      }
-      knownIds.push(mediaId);
-    }
-    knownIds.sort((a, b) => {
-      const sa = knownByPostId.get(a)?.last_synced_at ?? "";
-      const sb = knownByPostId.get(b)?.last_synced_at ?? "";
-      return sa < sb ? -1 : sa > sb ? 1 : 0;
-    });
-    const queue = [...newIds, ...knownIds];
+    const queue = walked
+      .filter(({ id, ts }) => {
+        const known = knownByPostId.get(id);
+        if (!known) return true; // never ingested — must pull it
+        const postedMs = ts ? ts * 1000 : Date.now();
+        const syncedMs = known.last_synced_at
+          ? new Date(known.last_synced_at).getTime()
+          : 0;
+        if (postedMs < staleAgeCutoff && syncedMs > freshCutoff) {
+          skippedFresh++;
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.ts - a.ts) // most recent post first
+      .map((m) => m.id);
     result.skipped_fresh = skippedFresh;
 
     // Hydrate each media id with details + insights

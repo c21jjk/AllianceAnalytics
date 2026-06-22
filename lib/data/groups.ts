@@ -78,6 +78,8 @@ interface DbPropertyRow {
   state: string | null;
   list_price: number | null;
   hero_image_url: string | null;
+  /** Building consolidation FK. Null for standalone single-family listings. */
+  building_id: string | null;
 }
 
 const PLATFORM_LABEL: Record<Platform, string> = {
@@ -133,9 +135,13 @@ function readNum(value: unknown): number {
 function rowToPropertyRef(
   row: DbPropertyRow,
   storyTokenByPropertyId?: Map<string, string>,
+  buildingAddressById?: Map<string, string>,
 ): PropertyRef {
   const addressParts = [row.address, row.city, row.state].filter(Boolean);
   const token = storyTokenByPropertyId?.get(row.id) ?? null;
+  const buildingDisplay = row.building_id
+    ? buildingAddressById?.get(row.building_id)
+    : undefined;
   return {
     mls: row.mls_number,
     address: addressParts.join(", "),
@@ -145,6 +151,8 @@ function rowToPropertyRef(
         : Number(row.list_price),
     hero_image_url: row.hero_image_url ?? undefined,
     story_url_path: token ? `/home/${token}` : undefined,
+    building_id: row.building_id ?? undefined,
+    building_display_address: buildingDisplay,
   };
 }
 
@@ -382,11 +390,16 @@ export async function getGroupsLastNDays(
       const idList = Array.from(propIds);
       // Parallel: property rows + their report_token (for the dashboard's
       // "Owner Story" gold button to go straight to /home/[token]).
+      // `properties.building_id` + the `buildings` table aren't in the
+      // generated Database type yet (building-consolidation feature). Use a
+      // permissive client for those reads; see lib/data/buildings-db.ts.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const untypedSupabase = supabase as any;
       const [{ data: propRows }, { data: reportRows }] = await Promise.all([
-        supabase
+        untypedSupabase
           .from("properties")
           .select(
-            "id, mls_number, address, city, state, list_price, hero_image_url",
+            "id, mls_number, address, city, state, list_price, hero_image_url, building_id",
           )
           .in("id", idList),
         supabase
@@ -404,8 +417,37 @@ export async function getGroupsLastNDays(
         // every row points at the same /home/[token] semantic surface.
         tokenByProp.set(r.property_id, r.report_token);
       }
+
+      // Building consolidation: resolve the display address for every distinct
+      // building referenced by these properties, so member chips can collapse
+      // into one master row labeled with the building address.
+      const buildingAddressById = new Map<string, string>();
+      const buildingIds = Array.from(
+        new Set(
+          ((propRows ?? []) as DbPropertyRow[])
+            .map((p) => p.building_id)
+            .filter((b): b is string => typeof b === "string" && b.length > 0),
+        ),
+      );
+      if (buildingIds.length > 0) {
+        const { data: bRows } = await untypedSupabase
+          .from("buildings")
+          .select("id, display_address, display_city")
+          .in("id", buildingIds);
+        for (const b of (bRows ?? []) as Array<{
+          id: string;
+          display_address: string | null;
+          display_city: string | null;
+        }>) {
+          const label = [b.display_address, b.display_city]
+            .filter(Boolean)
+            .join(", ");
+          if (label) buildingAddressById.set(b.id, label);
+        }
+      }
+
       for (const p of (propRows ?? []) as DbPropertyRow[]) {
-        propMap.set(p.id, rowToPropertyRef(p, tokenByProp));
+        propMap.set(p.id, rowToPropertyRef(p, tokenByProp, buildingAddressById));
       }
     }
 

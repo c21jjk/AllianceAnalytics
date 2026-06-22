@@ -256,6 +256,25 @@ export default async function SettingsPage() {
               dismissed
             </div>
           </Link>
+
+          <Link
+            href="/settings/buildings"
+            className="group rounded-xl border border-neutral-200 bg-white shadow-card hover:border-gold-200 hover:shadow-card-hover transition p-5 flex flex-col gap-1"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-neutral-900 group-hover:text-gold-700">
+                Buildings
+              </h3>
+              <span className="text-xs text-neutral-400 group-hover:text-gold-600">
+                Open →
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500">
+              Consolidate multiple MLS unit-listings at one address into a single
+              logical building. Merge, split, or move units so Owner Stories and
+              metrics report the whole-building picture.
+            </p>
+          </Link>
         </div>
       </section>
 

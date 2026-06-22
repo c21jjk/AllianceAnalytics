@@ -322,12 +322,22 @@ export default function OwnerStoryIndexTable({ rows }: Props) {
                     ) : null}
                   </div>
                   <div className="min-w-0">
-                    <Link
-                      href={`/properties/${row.mls_number}`}
-                      className="block text-sm font-medium text-neutral-900 hover:text-gold-700 truncate"
-                    >
-                      {row.address ?? row.mls_number}
-                    </Link>
+                    <div className="flex items-center gap-1.5">
+                      <Link
+                        href={`/properties/${row.mls_number}`}
+                        className="block text-sm font-medium text-neutral-900 hover:text-gold-700 truncate"
+                      >
+                        {row.address ?? row.mls_number}
+                      </Link>
+                      {row.building_id && row.building_unit_count > 1 ? (
+                        <span
+                          className="shrink-0 inline-flex items-center rounded bg-gold-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gold-800"
+                          title={`${row.building_unit_count} units in this building`}
+                        >
+                          {row.building_unit_count} units
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="text-xs text-neutral-500 truncate">
                       {row.city && row.state ? (
                         <>
