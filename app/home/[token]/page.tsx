@@ -299,22 +299,11 @@ function describeBaths(full: number | null, half: number | null): string {
   return `${f}.${h}`;
 }
 
-function officeShortName(raw: string | null): string {
-  if (!raw) return "Century 21 Alliance";
-  const upper = raw.toUpperCase();
-  const idx = upper.indexOf("ALLIANCE");
-  if (idx < 0) return raw;
-  const tail = raw.slice(idx + "alliance".length).trim();
-  if (!tail) return "Century 21 Alliance";
-  return `Century 21 Alliance — ${titleCase(tail)}`;
-}
-
-function titleCase(s: string): string {
-  return s
-    .toLowerCase()
-    .split(/\s+/)
-    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
-    .join(" ");
+function officeShortName(_raw: string | null): string {
+  // The MLS listing_office_name carries an internal office code suffix
+  // (e.g. "-o1o4j") rather than a human-readable office location, so we always
+  // show the clean brokerage name on the seller-facing report.
+  return "Century 21 Alliance";
 }
 
 function initialsOf(name: string | null): string {
