@@ -22,11 +22,8 @@ const PLATFORM_LABEL: Record<Platform, string> = {
   tiktok: "TikTok",
 };
 
-const PLATFORM_COLOR: Record<Platform, string> = {
-  facebook: "#1877F2",
-  instagram: "#E1306C",
-  tiktok: "#000000",
-};
+// Brand colors are baked into the hosted logo chips
+// (public/email/icons/{platform}.png), so no in-template color map is needed.
 
 const APP_BASE_URL = "https://www.alliancesocialanalytics.com";
 
@@ -50,7 +47,7 @@ export function renderOfficePostAnnouncement(
   c: AnnouncementCandidate,
 ): RenderedAnnouncement {
   const addressLine = (c.listing.address ?? "your listing").trim();
-  const subject = `New listing post is live — share it to your pages`;
+  const subject = `New listing post is live: share it to your pages`;
   return {
     subject,
     html: renderHtml(c, addressLine),
@@ -94,7 +91,7 @@ function renderBrandBand(c: AnnouncementCandidate): string {
       Century 21<sup style="font-size:7px;">®</sup> <span style="color:${INK_SOFT};font-weight:500;">Alliance</span>
     </div>
     <div style="margin-top:4px;font-size:13px;font-weight:600;color:${INK};letter-spacing:0.02em;">
-      New post — ${escapeHtml(eyebrow)}
+      New post: ${escapeHtml(eyebrow)}
     </div>
   </div>`;
 }
@@ -135,7 +132,7 @@ function renderCta(): string {
   // thing read after the listing identity.
   return `<div style="margin:18px 20px 16px;padding:18px 20px;background:${GOLD_SOFT_BG};border:1px solid ${GOLD_BORDER};border-radius:12px;">
     <p style="margin:0;font-size:17px;font-weight:600;color:${INK};line-height:1.5;text-align:left;">
-      <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">Share this to your own pages.</strong> Reposting to your Facebook and Instagram puts the listing in front of your sphere — every repost grows its reach and sends leads back to <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">you</strong>.
+      <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">Share this to your own pages.</strong> Reposting to your Facebook and Instagram puts the listing in front of your sphere, and every repost grows its reach and sends leads back to <strong style="color:${GOLD};text-transform:uppercase;letter-spacing:0.04em;">you</strong>.
     </p>
   </div>`;
 }
@@ -149,40 +146,59 @@ function renderPlatformCards(c: AnnouncementCandidate): string {
 
 function platformCard(post: AnnouncementPostVariant): string {
   const label = PLATFORM_LABEL[post.platform];
-  const color = PLATFORM_COLOR[post.platform];
   const dateLabel = post.posted_at ? formatShortDate(post.posted_at) : "";
+  const href = escapeAttr(post.permalink ?? "#");
+  const iconUrl = `${APP_BASE_URL}/email/icons/${post.platform}.png`;
   const thumb = post.thumbnail_url
-    ? `<a href="${escapeAttr(post.permalink ?? "#")}" target="_blank" rel="noopener noreferrer" style="display:block;text-decoration:none;">
+    ? `<a href="${href}" target="_blank" rel="noopener noreferrer" style="display:block;text-decoration:none;">
          <img src="${escapeAttr(post.thumbnail_url)}" alt="${escapeAttr(label)} post thumbnail" style="display:block;width:100%;max-height:240px;object-fit:cover;background:#eeeeee;border-top-left-radius:10px;border-top-right-radius:10px;" />
        </a>`
     : `<div style="width:100%;height:160px;background:#eeeeee;border-top-left-radius:10px;border-top-right-radius:10px;"></div>`;
+
+  // Footer is TABLE-based (no flexbox, since Gmail strips it). The badge row uses a
+  // nested presentation table so the logo image and the text block sit side by
+  // side via vertical-align, and the button is a bulletproof block <a> inside
+  // a bgcolor cell so Outlook fills the gold background correctly. The whole
+  // layout is STACKED: badge on top, button directly below, identical on every
+  // client (no media queries).
+  const badgeRow = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td valign="middle" style="padding-right:10px;">
+            <img src="${escapeAttr(iconUrl)}" width="32" height="32" alt="${escapeAttr(label)}" style="display:block;width:32px;height:32px;border-radius:8px;" />
+          </td>
+          <td valign="middle">
+            <div style="font-size:14px;font-weight:600;color:${INK};line-height:1.2;">${escapeHtml(label)}</div>
+            ${
+              dateLabel
+                ? `<div style="font-size:12px;color:${INK_MUTED};line-height:1.3;margin-top:1px;">Posted ${escapeHtml(dateLabel)}</div>`
+                : ""
+            }
+          </td>
+        </tr>
+      </table>`;
+
+  const button = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;">
+        <tr>
+          <td bgcolor="${GOLD}" style="background-color:${GOLD};border-radius:10px;" align="center">
+            <a href="${href}" target="_blank" rel="noopener noreferrer" style="display:block;padding:13px 18px;font-size:14px;font-weight:600;line-height:18px;color:#ffffff;text-decoration:none;border-radius:10px;">
+              Open &amp; repost &#8594;
+            </a>
+          </td>
+        </tr>
+      </table>`;
+
   return `<div style="background:#ffffff;border:1px solid ${RULE};border-radius:12px;overflow:hidden;margin-bottom:14px;box-shadow:0 1px 2px rgba(24,24,27,0.04),0 1px 3px rgba(24,24,27,0.06);">
     ${thumb}
-    <div style="padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="width:24px;height:24px;border-radius:50%;background:${color};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;">
-          ${platformInitial(post.platform)}
-        </span>
-        <div>
-          <div style="font-size:13px;font-weight:600;color:${INK};line-height:1.1;">${escapeHtml(label)}</div>
-          ${
-            dateLabel
-              ? `<div style="font-size:11px;color:${INK_MUTED};margin-top:2px;">Posted ${escapeHtml(dateLabel)}</div>`
-              : ""
-          }
-        </div>
-      </div>
-      <a href="${escapeAttr(post.permalink ?? "#")}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:6px;padding:10px 14px;border-radius:999px;background:${GOLD};color:#ffffff;font-weight:600;font-size:13px;text-decoration:none;white-space:nowrap;min-height:36px;">
-        Open & repost →
-      </a>
-    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;">
+      <tr>
+        <td style="padding:14px;">
+          ${badgeRow}
+          <div style="height:12px;line-height:12px;font-size:0;">&nbsp;</div>
+          ${button}
+        </td>
+      </tr>
+    </table>
   </div>`;
-}
-
-function platformInitial(platform: Platform): string {
-  if (platform === "facebook") return "f";
-  if (platform === "instagram") return "IG";
-  return "TT";
 }
 
 function renderFooter(c: AnnouncementCandidate): string {
@@ -221,7 +237,7 @@ function renderText(c: AnnouncementCandidate, addressLine: string): string {
   if (c.listing.agent_name) lines.push(`Listed by ${c.listing.agent_name}`);
   lines.push(``);
   lines.push(
-    `SHARE THIS TO YOUR OWN PAGES. Reposting to your Facebook and Instagram puts the listing in front of your sphere — every repost grows its reach and sends leads back to YOU.`,
+    `SHARE THIS TO YOUR OWN PAGES. Reposting to your Facebook and Instagram puts the listing in front of your sphere, and every repost grows its reach and sends leads back to YOU.`,
   );
   lines.push(``);
   for (const p of c.posts) {
@@ -230,7 +246,7 @@ function renderText(c: AnnouncementCandidate, addressLine: string): string {
     if (p.permalink) lines.push(`  ${p.permalink}`);
     lines.push(``);
   }
-  lines.push(`—`);
+  lines.push(`- - -`);
   lines.push(
     `Sent because you're on the ${c.audience.label} roster. Manage preferences:`,
   );
