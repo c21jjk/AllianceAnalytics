@@ -96,32 +96,20 @@ function asPlatform(value: string): Platform {
 }
 
 function asCategory(value: string | null): PostCategory | undefined {
+  // 2026-07-17 — binary taxonomy. Data was migrated to property/other; this
+  // normalization folds any legacy value that slips through (e.g. an
+  // un-redeployed writer) into the right bucket for display.
+  if (value === "property" || value === "other") return value;
+  if (value === "sold" || value === "open_house") return "property";
   if (
-    value === "property" ||
     value === "agent" ||
     value === "educational" ||
     value === "marketing" ||
-    value === "community" ||
-    value === "sold" ||
-    value === "open_house" ||
-    value === "other"
+    value === "community"
   ) {
-    return value;
+    return "other";
   }
   return undefined;
-}
-
-/**
- * Heuristic: does this caption read as an Open House promotion? Used as the
- * last-resort category derivation for the engagement tracker so OH posts
- * auto-classify even before the platform sync writes posts.category. Kept
- * deliberately tight — requires the literal "open house" phrase — and callers
- * gate it on the post actually linking to a listing, so a stray mention never
- * mislabels a group. 2026-07-17.
- */
-function looksLikeOpenHouse(caption: string | null | undefined): boolean {
-  if (!caption) return false;
-  return /open\s*house/i.test(caption);
 }
 
 function asLinkMethod(value: string | null): PostLinkMethod | undefined {
@@ -204,6 +192,15 @@ function postingFromRow(row: DbPostRow): PlatformPosting {
     platform === "tiktok" || isVideo
       ? readNum(m.plays) || readNum(m.reach) || readNum(m.impressions)
       : readNum(m.reach) || readNum(m.impressions) || readNum(m.plays);
+  // 2026-07-17 — Meta deprecated reach for non-video FB posts (2026-06-15);
+  // the sync stores null there, NOT zero. Flag the distinction so the UI can
+  // say "n/a" instead of rendering a fake 0 that reads like a dead post.
+  const reachUnavailable =
+    platform === "facebook" &&
+    !isVideo &&
+    m.reach == null &&
+    m.impressions == null &&
+    m.plays == null;
   // why: matches Meta Business Suite's "Engagement" tally for FB Reels
   // (reactions + comments + shares + clicks). IG/TT have no link_clicks so
   // the field is 0/undefined on those rows. See post-detail.ts comment.
@@ -221,6 +218,7 @@ function postingFromRow(row: DbPostRow): PlatformPosting {
     thumbnail_url: row.thumbnail_url ?? row.media_url ?? undefined,
     caption: row.caption ?? "",
     reach,
+    reach_unavailable: reachUnavailable || undefined,
     engagements,
     is_video: row.media_type === "video" || row.media_type === "reel",
     shortcode: shortcodeFor(platform, permalink),
@@ -579,25 +577,17 @@ export async function getGroupsLastNDays(
                 ? [property]
                 : [];
 
-        // Category: post_groups.category wins; otherwise derive from the
-        // member posts (the sync auto-classifies Open House posts →
-        // "open_house", shown as "Open House Promotion"). Final fallback: a
-        // caption that clearly reads as an Open House promo AND links to at
-        // least one home is classified open_house even before the sync's
-        // category write lands. Read-only derivation — a human category on the
-        // group always takes precedence.
+        // Category: post_groups.category wins; then member posts; final
+        // fallback is the binary rule itself — linked to at least one home →
+        // Property Promotion. Read-only derivation; a human category on the
+        // group always takes precedence, and the hourly run_auto_classifier
+        // persists the same answer server-side.
         const derivedCategory =
           asCategory(g.category) ??
           memberRows
             .map((r) => asCategory(r.category))
             .find((c) => c !== undefined) ??
-          (unionedListingIds.length > 0 &&
-          looksLikeOpenHouse(
-            memberRows.map((r) => r.caption).find((c) => c && c.length > 0) ??
-              g.representative_caption,
-          )
-            ? "open_house"
-            : undefined);
+          (unionedListingIds.length > 0 ? "property" : undefined);
 
         return {
           id: g.id,

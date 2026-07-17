@@ -572,16 +572,10 @@ export interface SetGroupCategoryResult {
   error?: string;
 }
 
-const VALID_CATEGORIES: GroupCategory[] = [
-  "property",
-  "agent",
-  "educational",
-  "marketing",
-  "community",
-  "sold",
-  "open_house",
-  "other",
-];
+// 2026-07-17 — binary taxonomy: Property Promotion or Other. Legacy values
+// were folded by the collapse_category_taxonomy migration; the write path
+// only accepts the two the dropdown offers.
+const VALID_CATEGORIES: GroupCategory[] = ["property", "other"];
 
 /**
  * Set the editorial category on a group. Writes `post_groups.category` AND

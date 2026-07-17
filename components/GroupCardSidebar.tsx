@@ -576,14 +576,12 @@ function DocumentIcon() {
 // Block 1b — Category (editorial type of campaign)
 // ---------------------------------------------------------------------------
 
+// 2026-07-17 — taxonomy collapsed to a binary per John: the finer categories
+// were never used for tracking. Tied to a listing → Property Promotion;
+// everything else → Other. The hourly run_auto_classifier fills these
+// automatically from linkage; this dropdown is the manual override.
 const CATEGORY_OPTIONS: Array<{ value: GroupCategory; label: string }> = [
   { value: "property", label: "Property Promotion" },
-  { value: "open_house", label: "Open House Promotion" },
-  { value: "agent", label: "Agent Promotion" },
-  { value: "marketing", label: "Company Promotion" },
-  { value: "educational", label: "Real Estate Educational Tips" },
-  { value: "sold", label: "Sold / Just Sold" },
-  { value: "community", label: "Community / Local" },
   { value: "other", label: "Other" },
 ];
 

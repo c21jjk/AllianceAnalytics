@@ -60,13 +60,9 @@ const CATEGORY_OPTIONS: Array<{
   value: PostCategory;
   label: string;
 }> = [
+  // 2026-07-17 — collapsed to the binary taxonomy (see GroupCardSidebar):
+  // tied to a listing → Property Promotion; everything else → Other.
   { value: "property", label: "Property Promotion" },
-  { value: "open_house", label: "Open House Promotion" },
-  { value: "agent", label: "Agent Promotion" },
-  { value: "marketing", label: "Company Promotion" },
-  { value: "educational", label: "Real Estate Educational Tips" },
-  { value: "sold", label: "Sold / Just Sold" },
-  { value: "community", label: "Community / Local" },
   { value: "other", label: "Other" },
 ];
 
@@ -133,7 +129,8 @@ export default function PropertyClassifyPanel({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const showSearch = category === "property" || category === "sold";
+  // why: with the binary taxonomy, only Property Promotion needs the search.
+  const showSearch = category === "property";
   const showAgentName = category === "agent";
   const canEditGroup = Boolean(groupId);
 

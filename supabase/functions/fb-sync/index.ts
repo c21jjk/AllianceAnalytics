@@ -23,9 +23,11 @@
  * Engagement counts (reactions/comments/shares) come from the post node's
  * summary edges, which match the FB native UI exactly (160 / 283 / 22).
  *
- * Photo/text posts have no video node, so reach is unavailable from the API
- * post-deprecation — they keep accurate engagement and leave reach undefined
- * (NOT a silent zero) until Meta ships the new Page Viewer metric.
+ * Photo/text posts have no video node. 2026-07-17 update: Meta's replacement
+ * metric `post_total_media_view_unique` (lifetime "unique media viewers") is
+ * now live on the post node and works for photos — we map it to reach. Posts
+ * where the metric errors/returns nothing keep reach undefined (NOT a silent
+ * zero) and the UI renders "n/a".
  */
 // @ts-expect-error - Deno runtime
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -106,7 +108,12 @@ interface FbPost {
 }
 
 interface FbInsightsResponse {
-  data: { name: string; values: { value: number | Record<string, number> }[] }[];
+  data: {
+    name: string;
+    /** "lifetime" | "day" — the media-view metric returns both series. */
+    period?: string;
+    values: { value: number | Record<string, number> }[];
+  }[];
 }
 
 async function fbFetch<T>(path: string, token: string): Promise<T> {
@@ -412,6 +419,34 @@ export async function syncFacebook(): Promise<SyncResult> {
                 (e as Error).message,
               );
             }
+          }
+        } else {
+          // ── Reach for PHOTO/text posts via Meta's replacement metric ─────
+          // 2026-07-17 — Meta's June-15 deprecation killed
+          // post_impressions_unique on the post node, but the REPLACEMENT
+          // metric `post_total_media_view_unique` ("total unique media
+          // viewers for FB post") IS live and works on photo posts —
+          // verified against post 167003126646429_1781835637282562
+          // (returned 67). Note the SINGULAR "view": the plural
+          // `post_total_media_views_unique` some vendor docs mention 400s
+          // with "(#100) must be a valid insights metric".
+          try {
+            const mv = await fbFetch<FbInsightsResponse>(
+              `/${fb.id}/insights?metric=post_total_media_view_unique`,
+              token,
+            );
+            const lifetime = mv.data.find(
+              (m) =>
+                m.name === "post_total_media_view_unique" &&
+                m.period === "lifetime",
+            );
+            const v = lifetime?.values?.[0]?.value;
+            if (typeof v === "number" && v >= 0) {
+              metrics.reach = v;
+            }
+          } catch (_e) {
+            // non-fatal — older posts may predate the metric; the UI shows
+            // "n/a" for those rather than a fake zero.
           }
         }
 

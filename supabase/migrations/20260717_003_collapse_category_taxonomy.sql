@@ -1,0 +1,16 @@
+-- 20260717_003 — Collapse category taxonomy to Property Promotion / Other
+-- (applied to prod 2026-07-17 via MCP as collapse_category_taxonomy).
+--
+-- Repo mirror for history. Summary:
+--   • Data: posts + post_groups folded — sold/open_house → property;
+--     agent/educational/marketing/community → other.
+--   • derive_post_category(caption) → always 'property' (only called for
+--     posts being linked to a listing).
+--   • run_auto_classifier() rewritten to the binary rule: linked → property
+--     immediately; unlinked → other after a 48h grace window (feeds may lag);
+--     audience derivation unchanged. Fill-blanks-only; manual wins.
+--   • Enum keeps legacy members (dropping enum values is disruptive); the UI
+--     dropdowns and write-path validation only offer/accept the two.
+--
+-- Post-collapse state: posts 224 property / 370 other; groups 110 / 381.
+-- Authoritative SQL lives in the DB (MCP migration collapse_category_taxonomy).

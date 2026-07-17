@@ -101,17 +101,18 @@ function asPlatform(value: string): Platform {
 }
 
 function asCategory(value: string | null): PostCategory | undefined {
+  // 2026-07-17 — binary taxonomy: normalize legacy values into the two
+  // buckets so the classify panel's initial state matches the dropdown.
+  // Mirrors lib/data/groups.ts asCategory — keep in sync.
+  if (value === "property" || value === "other") return value;
+  if (value === "sold" || value === "open_house") return "property";
   if (
-    value === "property" ||
     value === "agent" ||
     value === "educational" ||
     value === "marketing" ||
-    value === "community" ||
-    value === "sold" ||
-    value === "open_house" ||
-    value === "other"
+    value === "community"
   ) {
-    return value;
+    return "other";
   }
   return undefined;
 }
@@ -163,6 +164,17 @@ function postingFromRow(row: DbPostRow): PlatformPosting {
   const reach = reachOf(row);
   const engagements = engagementsOf(row);
   const permalink = row.permalink ?? "";
+  // 2026-07-17 — Meta deprecated reach for non-video FB posts; distinguish
+  // "Meta won't say" from a true zero so the UI can render n/a. Mirrors
+  // lib/data/groups.ts postingFromRow — keep in sync.
+  const m = (row.metrics ?? {}) as Record<string, unknown>;
+  const isVideoRow = row.media_type === "video" || row.media_type === "reel";
+  const reachUnavailable =
+    platform === "facebook" &&
+    !isVideoRow &&
+    m.reach == null &&
+    m.impressions == null &&
+    m.plays == null;
   return {
     platform,
     post_id: row.id,
@@ -170,6 +182,7 @@ function postingFromRow(row: DbPostRow): PlatformPosting {
     thumbnail_url: row.thumbnail_url ?? row.media_url ?? undefined,
     caption: row.caption ?? "",
     reach,
+    reach_unavailable: reachUnavailable || undefined,
     engagements,
     is_video: row.media_type === "video" || row.media_type === "reel",
     shortcode: shortcodeFor(platform, permalink),

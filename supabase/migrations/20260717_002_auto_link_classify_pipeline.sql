@@ -1,0 +1,25 @@
+-- 20260717_002 — Autonomous post classification pipeline (applied to prod
+-- 2026-07-17 via MCP as auto_link_classify_pipeline + auto_linker_fix_primary_conflict).
+--
+-- Repo mirror for history. Final state:
+--   • derive_post_category(caption) — open house → open_house, sold/closing
+--     language → sold, else property.
+--   • run_auto_linker() — category COALESCEs now use derive_post_category;
+--     post_listings primary sync claims is_primary only when the post has no
+--     primary yet (fixes idx_post_listings_one_primary_per_post violation).
+--   • run_auto_classifier() — NEW. Fills post_groups.category (modal member
+--     category) and post_groups.audience_scope (office:<code> when all linked
+--     properties share one office; division:<d> when one division; else
+--     company). Fill-blanks-only; manual values always win.
+--   • cron 'auto-link-group-classify' @ 35 * * * * — linker → grouper →
+--     classifier hourly. Previously NONE of these ever ran on a schedule,
+--     which is why address-in-caption posts sat unlinked/uncategorized.
+--
+-- Backfill result on first run: 176 posts linked (96 full-address,
+-- 80 partial), 273 groups categorized, 75 groups audience-scoped.
+--
+-- The authoritative SQL lives in the database (applied via MCP migrations
+-- 20260717121612 + 20260717121724). To reproduce locally, run:
+--   select pg_get_functiondef('public.derive_post_category'::regproc);
+--   select pg_get_functiondef('public.run_auto_linker'::regproc);
+--   select pg_get_functiondef('public.run_auto_classifier'::regproc);

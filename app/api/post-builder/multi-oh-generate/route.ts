@@ -824,6 +824,15 @@ async function renderPerPropertyCards(
             hosting_agent_phone: hosting?.phone ?? null,
             hosting_agent_photo_url: hosting?.photo_url ?? null,
             oh_window: ohWindow,
+            // 2026-07-17 — BUG FIX: the wizard's selected session was never
+            // passed into the DB-template render token, so the render page
+            // fell back to properties.oh_start_at (commonly NULL in prod)
+            // and hide-if-empty silently dropped the date/time layers on
+            // most slides (Larissa's Jul-17 carousel: 3 of 4 slides had no
+            // day/time). The canvas branch below always passed these; now
+            // both branches do. Mirrors rerender-carousel's DB path.
+            open_house_start_utc: prop.oh_sessions?.[0]?.start_at ?? null,
+            open_house_end_utc: prop.oh_sessions?.[0]?.end_at ?? null,
           });
           if (!dbResult.ok) {
             const err = `db_template render failed: ${dbResult.error}`;

@@ -221,7 +221,16 @@ export async function renderSchemaHeadless(
       if (layer.boundField) {
         const resolved = resolveTextBoundField(layer.boundField, listing).trim();
         if (!resolved) continue;
-        canvas.add(createFabricTextbox(layer, resolved));
+        const tb = createFabricTextbox(layer, resolved);
+        // 2026-07-17 — shrink-to-fit for bound text. Live data can be longer
+        // than the design-time placeholder ("200 W Pittsburgh Avenue" wrapped
+        // onto a second line and overlapped the town on Larissa's Jul-17
+        // carousel). The layer's authored height tells us how many lines the
+        // designer intended; when the resolved text wraps past that, step the
+        // font down (to a floor of 55%) until it fits. Free-text layers are
+        // untouched — their content is exactly what the designer typed.
+        shrinkTextToIntendedLines(tb, layer.fontSize, layer.height, layer.lineHeight);
+        canvas.add(tb);
       } else {
         canvas.add(createFabricTextbox(layer, layer.text));
       }
@@ -291,4 +300,35 @@ function collectFontFamilies(schema: CanvasTemplateSchema): string[] {
     seen.add(unquoted);
   }
   return Array.from(seen);
+}
+
+
+/**
+ * Shrink a Textbox's font until its wrapped line count fits the line count
+ * the layer's authored height implies. Fabric wraps at the fixed box width,
+ * so overflow shows up as EXTRA LINES — which then collide with whatever
+ * layer sits below (the address/town overlap bug, 2026-07-17). Floor: 55% of
+ * the authored size, so pathological data can't shrink text into
+ * illegibility (at the floor, wrapping remains but that beats unreadable).
+ */
+function shrinkTextToIntendedLines(
+  tb: { textLines?: unknown[]; set: (props: Record<string, unknown>) => unknown; initDimensions?: () => void },
+  authoredFontSize: number,
+  authoredHeight: number,
+  lineHeight: number,
+): void {
+  const lh = lineHeight > 0 ? lineHeight : 1.16;
+  const intendedLines = Math.max(
+    1,
+    Math.round(authoredHeight / (authoredFontSize * lh)),
+  );
+  const minSize = Math.max(10, Math.floor(authoredFontSize * 0.55));
+  let size = authoredFontSize;
+  const lineCount = () =>
+    Array.isArray(tb.textLines) ? tb.textLines.length : 1;
+  while (lineCount() > intendedLines && size > minSize) {
+    size -= 1;
+    tb.set({ fontSize: size });
+    tb.initDimensions?.();
+  }
 }

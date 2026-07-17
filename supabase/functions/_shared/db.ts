@@ -342,11 +342,18 @@ export async function upsertPost(
     }
   }
   const propertyId = matches[0]?.property_id ?? null;
-  // Map the builder post_type onto the tracker's category vocabulary. Only
-  // Open House is auto-classified today (the explicit ask); other types stay
-  // null so the grouper/editor decides. Extend this map deliberately.
+  // Map the builder post_type onto the tracker's category vocabulary.
+  // 2026-07-17 — taxonomy collapsed to a binary (Property Promotion /
+  // Other): ANY promotional builder type is, by definition, tied to a
+  // listing → "property". Anything unrecognized stays null and the hourly
+  // run_auto_classifier settles it from linkage. Fill-blanks-only.
   const autoCategory: string | null =
-    builderPostType === "open_house" ? "open_house" : null;
+    builderPostType === "open_house" ||
+    builderPostType === "just_sold" ||
+    builderPostType === "just_listed" ||
+    builderPostType === "price_reduction"
+      ? "property"
+      : null;
 
   // Check existence by (platform, platform_post_id). Pull the current category
   // so we NEVER clobber a value a human already set in the tracker — auto

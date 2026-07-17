@@ -484,7 +484,13 @@ function PerPlatformCard({
           <div className="grid grid-cols-3 gap-x-3 gap-y-1">
             <SmallStat
               label={reachLabel}
-              value={formatCompactNumber(posting.reach)}
+              // 2026-07-17 — "n/a" when Meta can't report reach (non-video FB
+              // posts, post-June-2026 API). A fake 0 read like a dead post.
+              value={
+                posting.reach === 0 && posting.reach_unavailable
+                  ? "n/a"
+                  : formatCompactNumber(posting.reach)
+              }
             />
             <SmallStat
               label="Engagements"

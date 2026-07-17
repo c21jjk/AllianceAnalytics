@@ -28,6 +28,10 @@ export interface PlatformPosting {
   caption: string;
   /** For IG/FB this is reach. For TT this is plays. */
   reach: number;
+  /** 2026-07-17 — true when the platform CANNOT report reach for this post
+   *  (Meta deprecated reach for non-video FB posts on 2026-06-15). Lets the
+   *  UI render "n/a" instead of a misleading 0. Engagements are unaffected. */
+  reach_unavailable?: boolean;
   /** likes + comments + shares + saves */
   engagements: number;
   is_video: boolean;

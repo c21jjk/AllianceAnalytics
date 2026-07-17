@@ -107,6 +107,15 @@ export default function PlatformMetricCell({
   // Active tile — sum across all postings on this platform (usually 1)
   const reach = postings.reduce((sum, p) => sum + p.reach, 0);
   const engagements = postings.reduce((sum, p) => sum + p.engagements, 0);
+  // 2026-07-17 — Meta stopped reporting reach for non-video FB posts
+  // (2026-06-15 API deprecation). When every posting on this tile is
+  // reach-blind and nothing summed, show "n/a" with an explainer instead of
+  // a fake 0 — a real zero and a metric Meta won't share must not look
+  // identical. Engagements below are unaffected and still real.
+  const reachUnavailable =
+    reach === 0 &&
+    postings.length > 0 &&
+    postings.every((p) => p.reach_unavailable);
 
   return (
     <div
@@ -118,9 +127,18 @@ export default function PlatformMetricCell({
       <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
         {HEADER[platform]}
       </div>
+      {reachUnavailable ? (
+        <div
+          className="text-lg font-semibold text-neutral-400 leading-tight cursor-help"
+          title="Meta no longer reports reach for Facebook photo posts (API change, June 2026). Engagements below are still tracked."
+        >
+          n/a
+        </div>
+      ) : (
       <div className="text-lg font-semibold tabular-nums text-neutral-900 leading-tight">
         {formatCompactNumber(reach)}
       </div>
+      )}
       <div className="text-[11px] text-neutral-500 tabular-nums">
         {formatCompactNumber(engagements)} {PRIMARY_LABEL[platform] === "Plays" ? "engagements" : "engagements"}
       </div>
