@@ -17,6 +17,53 @@ import { Resend } from "resend";
 
 const FROM_ADDRESS = "Alliance Social Analytics <SocialMediaReport@c21anj.com>";
 
+/**
+ * 2026-07-17 — John's standing request: BCC him on outbound email so he sees
+ * what goes out — ONE copy PER CAMPAIGN, not one per recipient. A "New
+ * Listing" announcement blasted to 100 agents loops sendEmail() 100 times
+ * with the SAME subject; John gets the FIRST copy only. Dedupe is by
+ * normalized subject with a 6-hour window (a batch loop runs inside one
+ * invocation, so the module-level map reliably collapses it; the window
+ * lets tomorrow's same-subject campaign reach him again). Skipped when he's
+ * already a direct recipient (to/cc) of that message.
+ */
+const GLOBAL_BCC = "jkcrumb@me.com";
+const GLOBAL_BCC_WINDOW_MS = 6 * 3600_000;
+const bccSeenSubjects = new Map<string, number>();
+
+function withGlobalBcc(
+  to: string | string[],
+  cc: string | string[] | undefined,
+  bcc: string | string[] | undefined,
+  subject: string,
+): string[] | undefined {
+  const norm = (v: string | string[] | undefined): string[] =>
+    v === undefined ? [] : Array.isArray(v) ? v : [v];
+  const lower = (s: string) => s.trim().toLowerCase();
+  const merged = norm(bcc);
+
+  const alreadyRecipient = [...norm(to), ...norm(cc), ...merged].some((addr) =>
+    lower(addr).includes(lower(GLOBAL_BCC)),
+  );
+  if (alreadyRecipient) return merged.length > 0 ? merged : undefined;
+
+  const key = lower(subject);
+  const now = Date.now();
+  const lastSent = bccSeenSubjects.get(key);
+  if (lastSent !== undefined && now - lastSent < GLOBAL_BCC_WINDOW_MS) {
+    // Same campaign, later recipient — John already has his copy.
+    return merged.length > 0 ? merged : undefined;
+  }
+  bccSeenSubjects.set(key, now);
+  // Opportunistic cleanup so a long-lived instance doesn't grow the map.
+  if (bccSeenSubjects.size > 500) {
+    for (const [k, t] of bccSeenSubjects) {
+      if (now - t > GLOBAL_BCC_WINDOW_MS) bccSeenSubjects.delete(k);
+    }
+  }
+  return [...merged, GLOBAL_BCC];
+}
+
 let _client: Resend | null = null;
 
 function getClient(): Resend {
@@ -69,7 +116,7 @@ export async function sendEmail(
       html: input.html ?? "",
       text: input.text,
       cc: input.cc,
-      bcc: input.bcc,
+      bcc: withGlobalBcc(input.to, input.cc, input.bcc, input.subject),
       replyTo: input.replyTo,
       tags: input.tag ? [{ name: "category", value: input.tag }] : undefined,
     });
