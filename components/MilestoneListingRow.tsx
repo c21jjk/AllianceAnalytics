@@ -32,7 +32,9 @@ export default function MilestoneListingRow({
   isFirst,
 }: MilestoneListingRowProps) {
   const dateLabel = formatDateLabel(listing.reference_date);
-  const cityState = [listing.city, listing.state].filter(Boolean).join(", ");
+  // 2026-07-17 (approved mockup v2) — state dropped from all dashboard
+  // property chips: every listing is NJ. Name kept; carries just the town.
+  const cityState = listing.city ?? "";
 
   return (
     <Link
@@ -90,7 +92,9 @@ export default function MilestoneListingRow({
         >
           {listing.address ?? "Unknown address"}
           {cityState ? (
-            <span style={{ color: "#737373", fontWeight: 400 }}>
+            // why: town steps down a size so the address owns the line —
+            // approved mockup v2, consistent with the OH + Recently Listed chips.
+            <span style={{ color: "#737373", fontWeight: 400, fontSize: 11.5 }}>
               , {cityState}
             </span>
           ) : null}

@@ -192,9 +192,10 @@ function OpenHouseRow({
   openHouse: UpcomingOpenHouse;
   isFirst: boolean;
 }) {
-  const cityState = [openHouse.city, openHouse.state]
-    .filter(Boolean)
-    .join(", ");
+  // 2026-07-17 (approved mockup v2) — state dropped from the chip: every
+  // listing is NJ, so it was pure noise. Variable keeps its name to avoid
+  // touching every JSX read; it now carries just the town.
+  const cityState = openHouse.city ?? "";
   const timeLabel = formatOpenHouseTimeLabel(openHouse.start_at, openHouse.end_at);
 
   // Building consolidation: a multi-unit building shows as ONE entry. Use the
@@ -303,7 +304,9 @@ function OpenHouseRow({
             </span>
           ) : null}
           {cityState ? (
-            <span style={{ color: "#737373", fontWeight: 400 }}>
+            // why: town steps down a size (13 → 11.5) so the street address
+            // owns the line — approved mockup v2.
+            <span style={{ color: "#737373", fontWeight: 400, fontSize: 11.5 }}>
               , {cityState}
             </span>
           ) : null}

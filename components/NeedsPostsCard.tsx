@@ -53,7 +53,8 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
   const referenceLabel = listing.reference_date_kind === "listing_date"
     ? "Listed"
     : "Synced";
-  const cityState = [listing.city, listing.state].filter(Boolean).join(", ");
+  // 2026-07-17 (approved mockup v2) — state dropped: every listing is NJ.
+  const cityState = listing.city ?? "";
 
   function handleCopyMls() {
     void navigator.clipboard
@@ -149,7 +150,7 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
       )}
     >
       {/* Tiny thumbnail (48x48) — ribbon overlay shows status */}
-      <div className="relative w-12 h-12 shrink-0 rounded-md overflow-hidden bg-neutral-100">
+      <div className="relative w-14 h-14 shrink-0 rounded-md overflow-hidden bg-neutral-100">
         {listing.hero_image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -170,39 +171,53 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
         <ListingStatusRibbon status={listing.promotion_status} size="sm" />
       </div>
 
-      {/* Main info — single line on desktop, wraps gracefully on mobile */}
-      <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+      {/* Main info — 2026-07-17 (approved mockup v2): two-line layout
+          matching the Open Houses chip. Line 1 = address + town + office;
+          line 2 = price · days · FULL agent name (the whole line belongs to
+          it, so long names like "LeaRose Mazurie" never truncate the way the
+          old single-line flex-wrap did); mini-row 3 = platform coverage +
+          hashtag copy chip. */}
+      <div className="flex-1 min-w-0">
         <Link
           href={`/properties/${encodeURIComponent(listing.mls_number)}`}
-          className="text-sm font-semibold text-neutral-900 hover:text-neutral-700 truncate min-w-0"
+          className="block text-sm font-semibold text-neutral-900 hover:text-neutral-700 truncate"
         >
           {listing.address ?? "Unknown address"}
           {cityState ? (
-            <span className="text-neutral-500 font-normal">, {cityState}</span>
+            // why: town steps down a size + lighter so the street address
+            // owns the line — approved mockup v2.
+            <span className="text-[11.5px] text-neutral-500 font-normal">
+              , {cityState}
+            </span>
           ) : null}
           {listing.office_short_code ? (
             <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide text-gold-700">
               · {listing.office_short_code}
             </span>
           ) : null}
-          {listing.agent_name ? (
-            <span className="ml-1.5 text-[11px] font-normal text-neutral-500 truncate">
-              · {listing.agent_name}
-            </span>
-          ) : null}
         </Link>
 
-        <span className="text-sm font-semibold text-neutral-900 tabular-nums shrink-0">
-          {listing.list_price ? formatCurrency(listing.list_price) : "—"}
-        </span>
+        <div className="mt-0.5 text-[11px] text-neutral-500 truncate">
+          <span className="text-neutral-900 font-semibold tabular-nums">
+            {listing.list_price ? formatCurrency(listing.list_price) : "—"}
+          </span>
+          <span className="text-neutral-300"> · </span>
+          <span
+            title={`${referenceLabel} ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`}
+          >
+            {daysAgo}d
+          </span>
+          {listing.agent_name ? (
+            <>
+              <span className="text-neutral-300"> · </span>
+              <span className="text-neutral-700 font-medium">
+                {listing.agent_name}
+              </span>
+            </>
+          ) : null}
+        </div>
 
-        <span
-          className="text-[11px] text-neutral-500 shrink-0"
-          title={`${referenceLabel} ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`}
-        >
-          {daysAgo}d
-        </span>
-
+        <div className="mt-1 flex items-center gap-2">
         <PlatformCoverageBadges
           listing={listing}
           isPending={isPending}
@@ -225,6 +240,7 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
             {copyState === "copied" ? "✓" : "copy"}
           </span>
         </button>
+        </div>
       </div>
 
       {/* Right-side actions — three distinct outcomes for this row:
@@ -235,14 +251,12 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
                                Dismiss…, Reset.
           why this layout: the highest-volume job is "build a post for this"
           — making it the gold primary keeps the click path one-tap. The
-          housekeeping actions stay one menu away. */}
-      <div className="flex items-center gap-1 shrink-0">
-        <Link
-          href={`/properties/${encodeURIComponent(listing.mls_number)}`}
-          className="text-[11px] font-medium text-neutral-700 hover:text-neutral-900 px-1.5 py-1 rounded hover:bg-neutral-100"
-        >
-          Open
-        </Link>
+          housekeeping actions stay one menu away.
+          2026-07-17 (approved mockup v2) — actions now stack VERTICALLY:
+          "+ Build post" on top, Open + kebab tucked underneath, mirroring
+          the Open Houses chip. Frees the full chip width for the two info
+          lines so the agent name never competes with buttons. */}
+      <div className="flex flex-col items-end gap-1 shrink-0">
         {/* Hide the primary "Build post" CTA once the row is posted or
             dismissed — the headline action no longer applies; the kebab still
             offers Reset if Larissa changes her mind. */}
@@ -256,6 +270,13 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
             Build post
           </Link>
         ) : null}
+        <div className="flex items-center gap-0.5">
+        <Link
+          href={`/properties/${encodeURIComponent(listing.mls_number)}`}
+          className="text-[11px] font-medium text-neutral-700 hover:text-neutral-900 px-1.5 py-1 rounded hover:bg-neutral-100"
+        >
+          Open
+        </Link>
         <div className="relative">
           <button
             type="button"
@@ -363,6 +384,7 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
               ) : null}
             </div>
           ) : null}
+        </div>
         </div>
       </div>
 
