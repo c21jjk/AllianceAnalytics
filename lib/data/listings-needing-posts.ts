@@ -8,8 +8,11 @@ import type { Database } from "@/lib/supabase/types";
  * Returns active CMC + SJSR + Bright listings that:
  *   - Are within the recency window (listing_date OR created_at within N days)
  *   - Have NOT been manually dismissed (`promotion_dismissed_at IS NULL`)
- *   - Are missing at least one platform's coverage (zero linked posts on at
- *     least one of FB / IG / TT)
+ *   - Are missing a DEDICATED post on at least one of FB / IG / TT. A
+ *     dedicated post is a single-listing spotlight for THIS listing that
+ *     isn't an Open House or Just Sold post — so an OH roundup or a
+ *     multi-listing carousel no longer counts as coverage (per John,
+ *     2026-07-17). Reels count the same as stills.
  *
  * Each row carries the per-platform post count so the card can render gap
  * chips ("Need IG · TT") with precision instead of a generic "needs a post"
@@ -47,7 +50,9 @@ export interface ListingNeedingPosts {
   agent_name: string | null;
   /** Office short code (e.g. "WWC", "OCN") or null when unmapped. */
   office_short_code: string | null;
-  /** Per-platform post counts (auto-linked posts only). Zero ⇒ no auto-linked post on that platform. */
+  /** Per-platform DEDICATED-post counts (single-listing spotlights for this
+   *  listing, excluding Open House + Just Sold). Zero ⇒ no dedicated post on
+   *  that platform yet. */
   post_counts: Record<PostPlatform, number>;
   /**
    * Per-platform manual confirmations from properties.posts_confirmed_platforms[].
@@ -127,10 +132,18 @@ interface DbPropertyRow {
   posts_confirmed_platforms: string[] | null;
 }
 
-interface DbPostCountRow {
-  property_id: string | null;
-  platform: PostPlatform;
-}
+/**
+ * Intents that do NOT count as a dedicated post for a listing.
+ * - open_house: an Open House post spotlights the weekend event, not the
+ *   individual listing (per John, 2026-07-17). A listing that only ever
+ *   appeared in an OH roundup still needs its own dedicated post.
+ * - just_sold: a different milestone; the marketing job for that listing is
+ *   done. (Active listings shouldn't have one anyway.)
+ * Everything else on a SINGLE-listing post — new_listing, coming_soon,
+ * price_change, and creative-caption spotlights that classify as `other` —
+ * counts, and reels count the same as stills.
+ */
+const NON_DEDICATED_INTENTS = new Set<string>(["open_house", "just_sold"]);
 
 interface DbOfficeRow {
   id: string;
@@ -195,22 +208,87 @@ export async function getListingsNeedingPosts(
   const properties = (propertyRows ?? []) as DbPropertyRow[];
   if (properties.length === 0) return [];
 
-  // Per-property post counts by platform. One trip — we count in JS.
+  // Per-property, per-platform DEDICATED-post coverage.
+  //
+  // "Dedicated" = a live post that features THIS listing and only this listing
+  // (a single-listing spotlight), and isn't an Open House or Just Sold post.
+  // This is the fix for OH roundups and multi-listing carousels falsely
+  // marking a listing "posted": those link many listings (not dedicated) and
+  // classify as open_house, so they no longer count. Reel or still, doesn't
+  // matter. Coverage is read from the synced `posts` feed (what actually went
+  // live, including externally-created posts) via post_listings, the same
+  // source of truth the OH badge uses.
   const propertyIds = properties.map((p) => p.id);
-  const { data: postRows } = await supabase
-    .from("posts")
-    .select("property_id, platform")
-    .in("property_id", propertyIds);
+  // listing_intent isn't in the generated Database type yet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const untyped = supabase as any;
+
+  // 1) Candidate posts = any post that links one of our listings, via the
+  //    post_listings join table OR posts.property_id.
+  const [{ data: plForProps }, { data: postsByPropId }] = await Promise.all([
+    untyped.from("post_listings").select("post_id").in("property_id", propertyIds),
+    untyped.from("posts").select("id").in("property_id", propertyIds),
+  ]);
+  const candidatePostIds = Array.from(
+    new Set<string>([
+      ...((plForProps ?? []) as Array<{ post_id: string }>).map((r) => r.post_id),
+      ...((postsByPropId ?? []) as Array<{ id: string }>).map((r) => r.id),
+    ]),
+  );
 
   const counts = new Map<string, Record<PostPlatform, number>>();
   for (const id of propertyIds) {
     counts.set(id, { facebook: 0, instagram: 0, tiktok: 0 });
   }
-  for (const row of (postRows ?? []) as DbPostCountRow[]) {
-    if (!row.property_id) continue;
-    const bucket = counts.get(row.property_id);
-    if (!bucket) continue;
-    bucket[row.platform] = (bucket[row.platform] ?? 0) + 1;
+
+  if (candidatePostIds.length > 0) {
+    // 2) The candidate posts' platform + intent + own property_id.
+    const { data: candPosts } = await untyped
+      .from("posts")
+      .select("id, platform, listing_intent, property_id")
+      .in("id", candidatePostIds);
+    // 3) EVERY listing each candidate post links (to size the listing set).
+    const { data: candLinks } = await untyped
+      .from("post_listings")
+      .select("post_id, property_id")
+      .in("post_id", candidatePostIds);
+
+    // Build each post's full listing set (post_listings ∪ posts.property_id).
+    const listingSet = new Map<string, Set<string>>();
+    const meta = new Map<string, { platform: PostPlatform; intent: string | null }>();
+    for (const p of (candPosts ?? []) as Array<{
+      id: string;
+      platform: PostPlatform;
+      listing_intent: string | null;
+      property_id: string | null;
+    }>) {
+      meta.set(p.id, { platform: p.platform, intent: p.listing_intent });
+      const set = listingSet.get(p.id) ?? new Set<string>();
+      if (p.property_id) set.add(p.property_id);
+      listingSet.set(p.id, set);
+    }
+    for (const l of (candLinks ?? []) as Array<{
+      post_id: string;
+      property_id: string | null;
+    }>) {
+      if (!l.property_id) continue;
+      const set = listingSet.get(l.post_id) ?? new Set<string>();
+      set.add(l.property_id);
+      listingSet.set(l.post_id, set);
+    }
+
+    // 4) Credit a listing only when a DEDICATED (single-listing) post that
+    //    isn't OH/Just-Sold features it.
+    for (const [postId, set] of listingSet) {
+      if (set.size !== 1) continue; // multi-listing carousel / OH roundup
+      const m = meta.get(postId);
+      if (!m) continue;
+      if (m.intent && NON_DEDICATED_INTENTS.has(m.intent)) continue;
+      const [pid] = Array.from(set);
+      const bucket = counts.get(pid);
+      if (!bucket) continue;
+      bucket[m.platform] = (bucket[m.platform] ?? 0) + 1;
+    }
   }
 
   // Office short_code lookup so card can show which market this is.

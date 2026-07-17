@@ -165,14 +165,18 @@ interface PlatformStat {
   reach: number;
   engagements: number;
   posts: number;
+  /** Posts whose platform doesn't report reach at all (static FB posts —
+   *  Meta removed photo/carousel reach from the API, verified 2026-07-17).
+   *  Drives "Not reported by FB" rendering instead of a misleading 0. */
+  unreported: number;
 }
 
 function computePlatformStats(posts: OwnerStoryPost[]): PlatformStat[] {
   const platforms: Platform[] = ["facebook", "tiktok", "instagram"];
   const buckets: Record<Platform, PlatformStat> = {
-    facebook: { platform: "facebook", reach: 0, engagements: 0, posts: 0 },
-    instagram: { platform: "instagram", reach: 0, engagements: 0, posts: 0 },
-    tiktok: { platform: "tiktok", reach: 0, engagements: 0, posts: 0 },
+    facebook: { platform: "facebook", reach: 0, engagements: 0, posts: 0, unreported: 0 },
+    instagram: { platform: "instagram", reach: 0, engagements: 0, posts: 0, unreported: 0 },
+    tiktok: { platform: "tiktok", reach: 0, engagements: 0, posts: 0, unreported: 0 },
   };
   for (const p of posts) {
     const cell = buckets[p.platform];
@@ -180,6 +184,7 @@ function computePlatformStats(posts: OwnerStoryPost[]): PlatformStat[] {
     cell.reach += p.reach;
     cell.engagements += p.engagements;
     cell.posts += 1;
+    if (!p.reach_reported) cell.unreported += 1;
   }
   return platforms.map((p) => buckets[p]);
 }
@@ -200,6 +205,9 @@ export interface CampaignVariant {
   platform: Platform;
   permalink: string | null;
   reach: number;
+  /** False when the platform doesn't report reach for this post (static FB
+   *  posts). Rendered as "reach not reported by FB" instead of "0 reach". */
+  reach_reported: boolean;
   engagements: number;
   posted_at: string | null;
 }
@@ -210,6 +218,10 @@ export interface CampaignSummary {
   representative_caption: string;
   representative_thumbnail_url: string | null;
   merged_reach: number;
+  /** False when NO variant in the campaign reports reach (e.g. an FB-only
+   *  static post) — the merged number would be a fake 0, so render
+   *  "Not reported by FB" instead. */
+  reach_reported: boolean;
   variants: CampaignVariant[];
 }
 
@@ -265,6 +277,7 @@ function groupByCampaign(posts: OwnerStoryPost[]): CampaignSummary[] {
         platform,
         permalink: post.permalink,
         reach: post.reach,
+        reach_reported: post.reach_reported,
         engagements: post.engagements,
         posted_at: post.posted_at,
       });
@@ -278,6 +291,7 @@ function groupByCampaign(posts: OwnerStoryPost[]): CampaignSummary[] {
       representative_caption: rep.caption,
       representative_thumbnail_url: rep.thumbnail_url,
       merged_reach,
+      reach_reported: variants.some((v) => v.reach_reported),
       variants,
     });
   }
@@ -1148,15 +1162,29 @@ function CampaignCard({
           }}>
             Merged reach
           </div>
-          <div style={{
-            fontSize: 22,
-            fontWeight: 700,
-            color: INK,
-            lineHeight: 1,
-            marginTop: 2,
-          }}>
-            {formatNumber(campaign.merged_reach)}
-          </div>
+          {campaign.reach_reported ? (
+            <div style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: INK,
+              lineHeight: 1,
+              marginTop: 2,
+            }}>
+              {formatNumber(campaign.merged_reach)}
+            </div>
+          ) : (
+            // No variant reports reach (static FB post) — a "0" here would
+            // read as a failed post when it's a Meta reporting limitation.
+            <div style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: INK_MUTED,
+              lineHeight: 1.2,
+              marginTop: 4,
+            }}>
+              Not reported by FB
+            </div>
+          )}
           {captionSnippet ? (
             <p style={{
               margin: "10px 0 0 0",
@@ -1226,7 +1254,9 @@ function CampaignPlatformRow({
           {PLATFORM_LABEL[variant.platform]}
         </span>
         <span style={{ fontSize: 12, color: INK_MUTED, marginLeft: 8 }}>
-          {formatNumber(variant.reach)} reach
+          {variant.reach_reported
+            ? `${formatNumber(variant.reach)} reach`
+            : "reach not reported by FB"}
         </span>
         <span style={{ fontSize: 12, color: INK_MUTED }}>
           · {formatNumber(variant.engagements)} engagements
@@ -1359,21 +1389,41 @@ function PlatformPerformance({ stats }: { stats: PlatformStat[] }) {
               }}
             >
               <div>
-                <div
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 700,
-                    color: INK,
-                    lineHeight: 1,
-                  }}
-                >
-                  {formatNumber(s.reach)}
-                </div>
-                <div
-                  style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
-                >
-                  reach
-                </div>
+                {s.reach === 0 && s.unreported > 0 ? (
+                  // Every reach-bearing signal on this platform is unreported
+                  // (static FB posts — Meta removed photo/carousel reach).
+                  // "0" would read as a dead platform; say what's true.
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: INK_MUTED,
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    Not reported
+                    <br />
+                    by FB
+                  </div>
+                ) : (
+                  <>
+                    <div
+                      style={{
+                        fontSize: 22,
+                        fontWeight: 700,
+                        color: INK,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {formatNumber(s.reach)}
+                    </div>
+                    <div
+                      style={{ fontSize: 11, color: INK_MUTED, marginTop: 4 }}
+                    >
+                      {s.unreported > 0 ? "reach · video posts" : "reach"}
+                    </div>
+                  </>
+                )}
               </div>
               <div>
                 <div

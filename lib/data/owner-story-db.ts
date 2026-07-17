@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { reachOf, engagementsOf } from "@/lib/data/post-metrics";
+import { reachOf, engagementsOf, isReachReported } from "@/lib/data/post-metrics";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
 import {
   getBuildingForProperty,
@@ -379,6 +379,13 @@ export interface OwnerStoryPost {
   thumbnail_url: string | null;
   permalink: string | null;
   reach: number;
+  /**
+   * False when the platform doesn't report reach for this post at all —
+   * today that's static (photo/carousel) Facebook posts, whose reach
+   * metrics Meta removed from the API entirely (verified 2026-07-17).
+   * Surfaces render "Not reported by FB" instead of a misleading 0.
+   */
+  reach_reported: boolean;
   engagements: number;
   /** post_groups.id when set — lets the view re-aggregate by campaign. */
   group_id: string | null;
@@ -675,6 +682,7 @@ export async function fetchOwnerStoryByToken(
     thumbnail_url: p.thumbnail_url,
     permalink: p.permalink,
     reach: reachOf(p),
+    reach_reported: isReachReported(p),
     engagements: engagementsOf(p),
     group_id: p.group_id,
   }));

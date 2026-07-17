@@ -65,6 +65,28 @@ export function reachOf(row: PostMetricsRow): number {
  * link_clicks). On IG / TT this field is typically 0 or undefined so it has
  * no effect.
  */
+/**
+ * Whether the platform actually REPORTS a reach-type number for this post.
+ *
+ * Context (verified live against the Graph API 2026-07-17): Meta removed
+ * post-level reach/impressions/engaged_users for STATIC Facebook posts
+ * (photos + carousels) — the API returns "(#100) must be a valid insights
+ * metric", not zero. Only video/Reel FB posts still have reach (via the
+ * video-views node, fb-sync v17). So a static FB post whose metrics bag has
+ * no reach-type key isn't a zero-reach post — it's an unreported one.
+ *
+ * Surfaces should render these as "Not reported by FB" instead of "0" so
+ * sellers/agents don't read a Meta limitation as a failed post. A few
+ * pre-deprecation static posts still carry stale reach values; those keys
+ * exist, so they keep displaying their number.
+ */
+export function isReachReported(row: PostMetricsRow): boolean {
+  const isVideo = row.media_type === "video" || row.media_type === "reel";
+  if (row.platform !== "facebook" || isVideo) return true;
+  const m = row.metrics ?? {};
+  return "reach" in m || "impressions" in m || "plays" in m;
+}
+
 export function engagementsOf(row: { metrics: MetricsBag }): number {
   const m = row.metrics ?? {};
   return (
