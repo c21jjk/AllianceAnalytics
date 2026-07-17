@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import AddOpenHouseModal from "@/components/AddOpenHouseModal";
 import {
   AlertCircle,
   AlertTriangle,
@@ -294,6 +295,10 @@ export default function MultiOHWizardClient({
   dbTemplatesByFormat,
 }: Props) {
   const router = useRouter();
+  // Task 18 — "Add Open House" modal (manual OH entry). On save we
+  // router.refresh() so the server-fetched OH listings prop re-hydrates and
+  // the newly-added property appears in the Step 1 picker.
+  const [addOhOpen, setAddOhOpen] = useState(false);
   const searchParams = useSearchParams();
 
   // ---- persistence hydration --------------------------------------------
@@ -1114,6 +1119,7 @@ export default function MultiOHWizardClient({
             perPropertyHostingAgent={perPropertyHostingAgent}
             onHostingAgentChange={setHostingAgentForProperty}
             consolidationSummary={consolidationSummary}
+            onAddOpenHouse={() => setAddOhOpen(true)}
           />
         ) : null}
         {step === 2 ? (
@@ -1205,6 +1211,14 @@ export default function MultiOHWizardClient({
           onContinuePartial={continueWithPartial}
         />
       ) : null}
+
+      {/* Task 18 — manual "Add Open House" entry. router.refresh() re-runs
+          the server page fetch so the new OH's listing appears in Step 1. */}
+      <AddOpenHouseModal
+        open={addOhOpen}
+        onClose={() => setAddOhOpen(false)}
+        onSaved={() => router.refresh()}
+      />
     </div>
   );
 }
@@ -1320,6 +1334,8 @@ interface Step1Props {
         extraDuplicates: number;
       }
     | null;
+  /** Task 18 — opens the shared Add Open House modal (manual OH entry). */
+  onAddOpenHouse: () => void;
 }
 
 function Step1Pick({
@@ -1329,6 +1345,7 @@ function Step1Pick({
   perPropertyHostingAgent,
   onHostingAgentChange,
   consolidationSummary,
+  onAddOpenHouse,
 }: Step1Props) {
   const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
 
@@ -1346,14 +1363,24 @@ function Step1Pick({
             No open houses scheduled yet.
           </div>
           <div className="text-sm text-neutral-600 mb-4">
-            When new open houses are listed, they&apos;ll show up here.
+            When new open houses arrive from the feeds they&apos;ll show up
+            here automatically — or add one yourself right now.
           </div>
-          <Link
-            href="/post-builder"
-            className="inline-flex items-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
+          <div className="flex items-center justify-center gap-3">
+            <button
+            type="button"
+            onClick={onAddOpenHouse}
+            className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gold-600 transition shadow-sm"
           >
-            Go to Post Builder
-          </Link>
+            + Add Open House
+          </button>
+            <Link
+              href="/post-builder"
+              className="inline-flex items-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
+            >
+              Go to Post Builder
+            </Link>
+          </div>
         </div>
       </section>
     );
@@ -1373,14 +1400,24 @@ function Step1Pick({
             Only {listings.length} upcoming open house right now.
           </div>
           <div className="text-sm text-neutral-600 mb-4">
-            Use the standard single-listing flow for that one — and come back here once you have at least {MULTI_OH_MIN_PROPERTIES}.
+            Add another open house right here, or use the standard
+            single-listing flow for the one you have.
           </div>
-          <Link
-            href="/post-builder"
-            className="inline-flex items-center gap-2 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
-          >
-            Open standard Post Builder
-          </Link>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={onAddOpenHouse}
+              className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gold-600 transition shadow-sm"
+            >
+              + Add Open House
+            </button>
+            <Link
+              href="/post-builder"
+              className="inline-flex items-center gap-2 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
+            >
+              Open standard Post Builder
+            </Link>
+          </div>
         </div>
       </section>
     );
@@ -1388,11 +1425,22 @@ function Step1Pick({
 
   return (
     <section className="card p-6">
-      <h2 className="text-lg font-semibold text-neutral-900 mb-1">
-        Pick the open houses for this event
-      </h2>
+      <div className="mb-1 flex items-start justify-between gap-3">
+        <h2 className="text-lg font-semibold text-neutral-900">
+          Pick the open houses for this event
+        </h2>
+        {/* Task 18 — manual OH entry, right where a missing property is
+            noticed. Opens the shared AddOpenHouseModal. */}
+        <button
+          type="button"
+          onClick={onAddOpenHouse}
+          className="flex-none inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-gold-50/40 px-3 py-1.5 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
+        >
+          + Add Open House
+        </button>
+      </div>
       <p className="text-sm text-neutral-600 mb-4">
-        Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel.
+        Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Add it with the button above.
       </p>
 
       {/* Consolidation hint — only when picks > unique-MLS. Mirrors the

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import AddOpenHouseModal from "@/components/AddOpenHouseModal";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles,
@@ -497,6 +498,10 @@ export default function PostBuilderClient({
   // Next.js router — used by the Make-a-Reel and "+ Reel" entry points to
   // navigate from Post Builder → Reel Studio without a full page reload.
   const router = useRouter();
+  // Task 18 — "Add Open House" modal on the Open House tab. router.refresh()
+  // after save re-runs the server listings fetch so the property lands in
+  // the OH bucket (active + upcoming open_houses row within 14 days).
+  const [addOhOpen, setAddOhOpen] = useState(false);
   // Phase 5 — carousel slides (slide 0 is the hero render; these are 1..N
   // supporting photos that will publish alongside it as an IG/FB carousel).
   // Lives at PostBuilder level — not inside the editor — because the slides
@@ -3844,7 +3849,20 @@ export default function PostBuilderClient({
               where Larissa is already scanning open houses and deciding
               what to promote, so the affordance now sits right next to
               the list that drives the decision. */}
-          <div className="eyebrow mb-2">Listing</div>
+          <div className="mb-2 flex items-center justify-between">
+            <div className="eyebrow">Listing</div>
+            {postType === "open_house" ? (
+              // Task 18 — manual OH entry, surfaced exactly where Larissa
+              // notices a property is missing from the OH bucket.
+              <button
+                type="button"
+                onClick={() => setAddOhOpen(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-gold-300 bg-gold-50/40 px-2 py-1 text-[11px] font-semibold text-gold-800 hover:bg-gold-100 transition"
+              >
+                + Add Open House
+              </button>
+            ) : null}
+          </div>
           <input
             type="search"
             className="input mb-3"
@@ -3859,7 +3877,7 @@ export default function PostBuilderClient({
                 {POST_TYPES.find((p) => p.id === postType)?.label}
               </span>
               {postType === "open_house"
-                ? " in the next 14 days. Schedule an OH or pick a different post type."
+                ? " in the next 14 days. Use the + Add Open House button above to schedule one, or pick a different post type."
                 : ". Try a different post type or trigger a sync."}
             </div>
           ) : (
@@ -5072,6 +5090,15 @@ export default function PostBuilderClient({
           </span>
         </div>
       ) : null}
+
+      {/* Task 18 — manual "Add Open House" entry (shared modal, also used by
+          the Multi-OH wizard). Opened from the Listing header's button on the
+          Open House tab. */}
+      <AddOpenHouseModal
+        open={addOhOpen}
+        onClose={() => setAddOhOpen(false)}
+        onSaved={() => router.refresh()}
+      />
     </div>
   );
 }
