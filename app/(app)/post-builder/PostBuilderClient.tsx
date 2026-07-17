@@ -5808,15 +5808,31 @@ function PostNowModal(props: PostNowModalProps) {
                   </div>
                   {r.ok ? (
                     r.permalink ? (
-                      <a
-                        href={r.permalink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs inline-flex items-center gap-1 underline text-emerald-800 hover:text-emerald-900"
-                      >
-                        View post
-                        <ChevronRight size={12} aria-hidden="true" />
-                      </a>
+                      <>
+                        <a
+                          href={r.permalink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs inline-flex items-center gap-1 underline text-emerald-800 hover:text-emerald-900"
+                        >
+                          View post
+                          <ChevronRight size={12} aria-hidden="true" />
+                        </a>
+                        {/* 2026-07-17 — Larissa saw a fresh FB gallery post's
+                            photos in the Photos box but no timeline story,
+                            concluded the publish failed, and re-posted a
+                            duplicate. FB materializes API gallery posts on
+                            the Page timeline a few minutes AFTER the photos
+                            appear — say so, so nobody re-posts. */}
+                        {r.platform === "facebook" ? (
+                          <div className="mt-1 text-[11px] leading-snug text-emerald-800/80">
+                            Heads up: Facebook can take a few minutes to show
+                            a new photo post on the Page timeline (the photos
+                            appear under Photos first). It&apos;s live — use
+                            the link above to see it. No need to re-post.
+                          </div>
+                        ) : null}
+                      </>
                     ) : (
                       <div className="text-xs text-emerald-800">
                         ID: <code className="font-mono">{r.platform_post_id}</code>

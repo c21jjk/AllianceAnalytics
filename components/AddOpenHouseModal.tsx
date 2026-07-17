@@ -52,6 +52,34 @@ export interface AddOpenHouseModalProps {
 
 const EMPTY_DRAFT: SessionDraft = { date: "", startTime: "", endTime: "" };
 
+/**
+ * Top-of-the-hour choices for the start/end selects. Open houses always run
+ * whole hours (10:00 AM – 1:00 PM etc.), so a dropdown beats a free-form
+ * time input: no minutes to fumble, and — critically — no native picker
+ * popup whose dismissal click can hit the backdrop (2026-07-17 bug: closing
+ * Chrome's time popup closed the entire modal). Range 6 AM – 8 PM covers
+ * every realistic OH window.
+ */
+const HOUR_OPTIONS: Array<{ value: string; label: string }> = Array.from(
+  { length: 15 },
+  (_, i) => {
+    const h = 6 + i; // 6 → 20
+    const label =
+      h < 12 ? `${h}:00 AM` : h === 12 ? "12:00 PM" : `${h - 12}:00 PM`;
+    return { value: `${String(h).padStart(2, "0")}:00`, label };
+  },
+);
+
+/** "10:00" → "12:00" (start + 2h, clamped to the last option). Used to
+ *  auto-suggest the end time when a start is picked — the typical OH runs
+ *  two hours. Still fully editable. */
+function twoHoursAfter(start: string): string {
+  const h = parseInt(start.slice(0, 2), 10);
+  if (Number.isNaN(h)) return "";
+  const end = Math.min(h + 2, 20);
+  return `${String(end).padStart(2, "0")}:00`;
+}
+
 /** Format a UTC ISO into "Sat, Jul 18 · 12:00 PM – 2:00 PM" (browser-local). */
 function formatSession(startIso: string, endIso: string | null): string {
   const start = new Date(startIso);
@@ -222,14 +250,15 @@ export default function AddOpenHouseModal({
   if (!open) return null;
 
   return (
+    // why NO backdrop click-to-close (2026-07-17): Chrome's native picker
+    // popups dismiss on an outside click, and that same click could land on
+    // this backdrop — John clicked the end-time field and the whole modal
+    // vanished mid-entry. Data-entry modals close ONLY via X / Cancel.
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Add Open House"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !saving) onClose();
-      }}
     >
       <div className="w-full max-w-lg rounded-xl bg-white shadow-xl flex flex-col max-h-[85vh]">
         {/* Header */}
@@ -415,25 +444,48 @@ export default function AddOpenHouseModal({
                         className="input flex-1 text-sm"
                         aria-label={`Session ${i + 1} date`}
                       />
-                      <input
-                        type="time"
+                      <select
                         value={d.startTime}
                         onChange={(e) =>
-                          updateDraft(i, { startTime: e.target.value })
+                          updateDraft(i, {
+                            startTime: e.target.value,
+                            // Auto-suggest a 2-hour window when end is
+                            // still blank; a hand-picked end is preserved.
+                            ...(d.endTime
+                              ? {}
+                              : { endTime: twoHoursAfter(e.target.value) }),
+                          })
                         }
-                        className="input w-[104px] text-sm"
+                        className="input w-[110px] text-sm"
                         aria-label={`Session ${i + 1} start time`}
-                      />
+                      >
+                        <option value="" disabled>
+                          Start
+                        </option>
+                        {HOUR_OPTIONS.map((h) => (
+                          <option key={h.value} value={h.value}>
+                            {h.label}
+                          </option>
+                        ))}
+                      </select>
                       <span className="text-xs text-neutral-400">–</span>
-                      <input
-                        type="time"
+                      <select
                         value={d.endTime}
                         onChange={(e) =>
                           updateDraft(i, { endTime: e.target.value })
                         }
-                        className="input w-[104px] text-sm"
+                        className="input w-[110px] text-sm"
                         aria-label={`Session ${i + 1} end time`}
-                      />
+                      >
+                        <option value="" disabled>
+                          End
+                        </option>
+                        {HOUR_OPTIONS.map((h) => (
+                          <option key={h.value} value={h.value}>
+                            {h.label}
+                          </option>
+                        ))}
+                      </select>
                       {drafts.length > 1 ? (
                         <button
                           type="button"
