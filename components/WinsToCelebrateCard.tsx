@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { RecentStatusFlip } from "@/lib/data/recent-status-flips";
 import { formatCurrency, formatRelativeTime } from "@/lib/format";
+import OfficeThumbBadge from "./OfficeThumbBadge";
 
 interface Props {
   flips: RecentStatusFlip[];
@@ -54,7 +55,7 @@ export default function WinsToCelebrateCard({ flips }: Props) {
             key={flip.property_id}
             className="flex items-center gap-3 px-3 py-2.5"
           >
-            <div className="w-12 h-12 shrink-0 rounded bg-neutral-100 overflow-hidden">
+            <div className="relative w-12 h-12 shrink-0 rounded bg-neutral-100 overflow-hidden">
               {flip.hero_image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -64,6 +65,7 @@ export default function WinsToCelebrateCard({ flips }: Props) {
                   loading="lazy"
                 />
               ) : null}
+              <OfficeThumbBadge code={flip.office_short_code} />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 min-w-0">
@@ -84,6 +86,11 @@ export default function WinsToCelebrateCard({ flips }: Props) {
                     {flip.display_price !== null ? " · " : null}
                     {flip.agent_name}
                   </>
+                ) : null}
+                {flip.office_short_code ? (
+                  <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide text-gold-700">
+                    · {flip.office_short_code}
+                  </span>
                 ) : null}
                 <span className="ml-2 text-amber-700">
                   {formatRelativeTime(flip.status_changed_at)}

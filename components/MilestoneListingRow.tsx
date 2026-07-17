@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { AllianceRole, ListingMilestone } from "@/lib/data/recently-sold";
 import { formatCurrency } from "@/lib/format";
+import OfficeThumbBadge from "./OfficeThumbBadge";
 
 interface MilestoneListingRowProps {
   listing: ListingMilestone;
@@ -44,7 +45,8 @@ export default function MilestoneListingRow({
         borderTop: isFirst ? "none" : "1px solid #ececec",
       }}
     >
-      {/* Hero */}
+      {/* Hero — office short_code strip pinned to the bottom edge so every
+          section reads office attribution the same way Recently Listed does. */}
       <div
         style={{
           width: 56,
@@ -52,6 +54,7 @@ export default function MilestoneListingRow({
           backgroundColor: "#f4f4f4",
           borderRadius: 2,
           overflow: "hidden",
+          position: "relative",
         }}
       >
         {listing.hero_image_url ? (
@@ -68,6 +71,7 @@ export default function MilestoneListingRow({
             }}
           />
         ) : null}
+        <OfficeThumbBadge code={listing.office_short_code} />
       </div>
 
       {/* Body — address line + meta line + agent line. Truncates aggressively
@@ -122,7 +126,9 @@ export default function MilestoneListingRow({
           {listing.office_short_code ? (
             <>
               <span style={{ color: "#d4d4d4" }}> · </span>
-              <span style={{ color: "#737373" }}>{listing.office_short_code}</span>
+              <span className="text-gold-700 font-semibold uppercase tracking-wide">
+                {listing.office_short_code}
+              </span>
             </>
           ) : null}
         </div>

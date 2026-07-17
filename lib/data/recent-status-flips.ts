@@ -27,6 +27,8 @@ export interface RecentStatusFlip {
   state: string | null;
   hero_image_url: string | null;
   agent_name: string | null;
+  /** Office short_code (e.g. "medford") resolved from properties.office_id. */
+  office_short_code: string | null;
   list_price: number | null;
   close_price: number | null;
   display_price: number | null;
@@ -49,6 +51,7 @@ interface DbRow {
   state: string | null;
   hero_image_url: string | null;
   agent_name: string | null;
+  office_id: string | null;
   list_price: number | null;
   close_price: number | null;
   status: "active" | "pending" | "sold" | "expired";
@@ -87,7 +90,7 @@ export async function getRecentStatusFlips(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, hero_image_url, agent_name, list_price, close_price, status, status_changed_at",
+      "id, mls_number, address, city, state, hero_image_url, agent_name, office_id, list_price, close_price, status, status_changed_at",
     )
     .in("status", ["pending", "sold"])
     .gte("status_changed_at", cutoffIso)
@@ -119,6 +122,30 @@ export async function getRecentStatusFlips(
     }
   }
 
+  // Bulk-resolve office short_codes (office_id -> short_code) in one query,
+  // mirroring the hydrate pattern in recently-sold.ts. Drives the office
+  // chip on the Wins to Celebrate card.
+  const officeIds = Array.from(
+    new Set(
+      (data as DbRow[])
+        .map((r) => r.office_id)
+        .filter((v): v is string => v !== null),
+    ),
+  );
+  const officeShortById = new Map<string, string>();
+  if (officeIds.length > 0) {
+    const { data: officeRows } = await supabase
+      .from("offices")
+      .select("id, short_code")
+      .in("id", officeIds);
+    for (const o of (officeRows ?? []) as Array<{
+      id: string;
+      short_code: string;
+    }>) {
+      officeShortById.set(o.id, o.short_code);
+    }
+  }
+
   const now = Date.now();
   return (data as DbRow[]).map((r) => {
     const flippedAt = new Date(r.status_changed_at).getTime();
@@ -135,6 +162,9 @@ export async function getRecentStatusFlips(
       state: r.state,
       hero_image_url: r.hero_image_url,
       agent_name: r.agent_name,
+      office_short_code: r.office_id
+        ? officeShortById.get(r.office_id) ?? null
+        : null,
       list_price: r.list_price === null ? null : Number(r.list_price),
       close_price: r.close_price === null ? null : Number(r.close_price),
       display_price:

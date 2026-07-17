@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { UpcomingOpenHouse } from "@/lib/data/open-houses";
 import { formatCurrency } from "@/lib/format";
+import OfficeThumbBadge from "./OfficeThumbBadge";
 import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 
 interface UpcomingOpenHousesRowProps {
@@ -234,6 +235,7 @@ function OpenHouseRow({
           backgroundColor: "#f4f4f4",
           borderRadius: 2,
           overflow: "hidden",
+          position: "relative",
         }}
       >
         {openHouse.hero_image_url ? (
@@ -250,6 +252,7 @@ function OpenHouseRow({
             }}
           />
         ) : null}
+        <OfficeThumbBadge code={openHouse.office_short_code} />
       </Link>
 
       {/* Body — also a link into property detail */}
@@ -336,7 +339,7 @@ function OpenHouseRow({
           {openHouse.office_short_code ? (
             <>
               <span style={{ color: "#d4d4d4" }}> · </span>
-              <span style={{ color: "#737373" }}>
+              <span className="text-gold-700 font-semibold uppercase tracking-wide">
                 {openHouse.office_short_code}
               </span>
             </>
