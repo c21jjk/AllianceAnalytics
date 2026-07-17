@@ -34,6 +34,11 @@ export interface UpcomingOpenHouse {
   /** When this OH was first inserted into our DB. Drives the dashboard's
    *  "fresh in last 24h" badge. */
   first_seen_at: string;
+  /** 2026-07-17 — set when this property already appeared in a PUBLISHED
+   *  open_house post within the last 7 days (latest posted_at ISO). Drives
+   *  the "✓ Posted" badge so Larissa sees which OHs are already covered
+   *  and which still need a post. Null/undefined = not yet promoted. */
+  promoted_at?: string | null;
   /** Building consolidation: set when this entry represents a multi-unit
    *  building (collapsed from several units' open houses). Undefined for a
    *  standalone single-unit listing. */
@@ -227,6 +232,39 @@ export async function getUpcomingOpenHouses(
     }
   }
 
+  // Posted coverage — which of these properties already appeared in a
+  // PUBLISHED open_house post this week. Mirrors the Multi-OH wizard's
+  // Step 1 coverage badges (same source: generated_posts.linked_property_ids
+  // for carousels + property_id for single-listing OH posts).
+  const coverageByPropertyId = new Map<string, string>();
+  try {
+    const { data: covRows } = await untypedSupabase
+      .from("generated_posts")
+      .select("posted_at, property_id, linked_property_ids")
+      .eq("post_type", "open_house")
+      .not("posted_at", "is", null)
+      .gte(
+        "posted_at",
+        new Date(Date.now() - 7 * 24 * 3600_000).toISOString(),
+      );
+    for (const r of (covRows ?? []) as Array<{
+      posted_at: string;
+      property_id: string | null;
+      linked_property_ids: string[] | null;
+    }>) {
+      const ids: string[] = [];
+      if (r.property_id) ids.push(r.property_id);
+      if (Array.isArray(r.linked_property_ids)) ids.push(...r.linked_property_ids);
+      for (const id of ids) {
+        const prev = coverageByPropertyId.get(id);
+        if (!prev || prev < r.posted_at) coverageByPropertyId.set(id, r.posted_at);
+      }
+    }
+  } catch (e) {
+    // Coverage is decoration — never block the OH list on it.
+    console.warn("getUpcomingOpenHouses: coverage fetch failed", e);
+  }
+
   const rows: Array<UpcomingOpenHouse & { _building_id: string | null }> = [];
   for (const oh of ohList) {
     if (scopedMlsNumbers && !scopedMlsNumbers.has(oh.mls_number)) continue;
@@ -255,6 +293,9 @@ export async function getUpcomingOpenHouses(
           ? officeShortByID.get(property.office_id) ?? null
           : null,
       first_seen_at: oh.created_at,
+      promoted_at: property?.id
+        ? coverageByPropertyId.get(property.id) ?? null
+        : null,
       _building_id: property?.building_id ?? null,
     });
   }
@@ -288,6 +329,8 @@ export async function getUpcomingOpenHouses(
       if (!members.includes(row.mls_number)) members.push(row.mls_number);
       entry.building_member_mls = members;
       entry.building_oh_count = (entry.building_oh_count ?? 1) + 1;
+      // A building entry counts as promoted when ANY member unit was.
+      entry.promoted_at = entry.promoted_at ?? row.promoted_at ?? null;
       // Keep the freshest first_seen_at across the building's OHs so the
       // dashboard "new in last 24h" badge fires when ANY unit's OH is new.
       if (row.first_seen_at > entry.first_seen_at) {

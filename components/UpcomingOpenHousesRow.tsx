@@ -382,9 +382,29 @@ function OpenHouseRow({
       {/* Right column — primary "Build OH promo" CTA, with the chevron
           collapsed into a quiet "Open" link below. */}
       <div className="flex flex-col items-end gap-1 shrink-0">
+        {/* 2026-07-17 — coverage badge: this property already appeared in a
+            published OH post this week, so it's not outstanding. The Build
+            button stays (a second promo is legit) but unbadged rows are the
+            ones still needing a post. */}
+        {openHouse.promoted_at ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-emerald-50 ring-1 ring-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-800"
+            title="Already appeared in a published Open House post within the last 7 days."
+          >
+            ✓ Posted{" "}
+            {new Date(openHouse.promoted_at).toLocaleDateString(undefined, {
+              weekday: "short",
+            })}
+          </span>
+        ) : null}
         <Link
           href={buildHref}
-          className="inline-flex items-center rounded-md bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-semibold px-2.5 py-1 transition-colors"
+          className={[
+            "inline-flex items-center rounded-md text-[11px] font-semibold px-2.5 py-1 transition-colors",
+            openHouse.promoted_at
+              ? "bg-white ring-1 ring-sky-300 text-sky-700 hover:bg-sky-50"
+              : "bg-sky-600 hover:bg-sky-700 text-white",
+          ].join(" ")}
           title="Build a promo post for this open house"
         >
           + Build post
