@@ -60,6 +60,31 @@ export interface ScreenshotArgs {
   log_label?: string;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Launch serializer (ETXTBSY guard)
+// ──────────────────────────────────────────────────────────────────────────
+// @sparticuz/chromium-min extracts the Chromium binary to /tmp/chromium on
+// cold start, and puppeteer.launch() execs it. When several renders launch at
+// once (multi-OH fans out up to RENDER_CONCURRENCY slides in parallel) they
+// race on that single binary file and the exec fails with ETXTBSY ("text file
+// busy"). We serialize ONLY the extract+spawn window so one launch finishes
+// spawning before the next begins; page navigation + screenshotting still
+// overlap across renders. A short settle delay after each launch lets the
+// just-exec'd binary be fully released before the next launch reads it.
+let launchChain: Promise<void> = Promise.resolve();
+const LAUNCH_SETTLE_MS = 150;
+async function serializeLaunch<T>(fn: () => Promise<T>): Promise<T> {
+  const prior = launchChain;
+  let release!: () => void;
+  launchChain = new Promise<void>((r) => (release = r));
+  await prior.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    setTimeout(release, LAUNCH_SETTLE_MS);
+  }
+}
+
 export async function screenshotHtml(args: ScreenshotArgs): Promise<Buffer> {
   const t0 = Date.now();
   const label = args.log_label ?? "render";
@@ -109,23 +134,30 @@ export async function screenshotHtml(args: ScreenshotArgs): Promise<Buffer> {
   const chromium = (await import("@sparticuz/chromium-min")).default;
   stage("imports done");
 
-  const executablePath = isVercel
-    ? await chromium.executablePath(CHROMIUM_PACK_URL)
-    : process.env.PUPPETEER_EXECUTABLE_PATH ||
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  stage("executablePath resolved (binary + libs downloaded if cold)");
+  // Serialize the extract + spawn window across concurrent renders — this is
+  // the exact section that races on /tmp/chromium and throws ETXTBSY under
+  // parallel multi-OH generation. Everything after `browser` is per-instance
+  // and safe to overlap.
+  const browser = await serializeLaunch(async () => {
+    const executablePath = isVercel
+      ? await chromium.executablePath(CHROMIUM_PACK_URL)
+      : process.env.PUPPETEER_EXECUTABLE_PATH ||
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    stage("executablePath resolved (binary + libs downloaded if cold)");
 
-  const browser = await puppeteer.launch({
-    args: isVercel ? chromium.args : ["--no-sandbox", "--disable-setuid-sandbox"],
-    defaultViewport: {
-      width: args.width,
-      height: args.height,
-      deviceScaleFactor: 1,
-    },
-    executablePath,
-    headless: true,
+    const b = await puppeteer.launch({
+      args: isVercel ? chromium.args : ["--no-sandbox", "--disable-setuid-sandbox"],
+      defaultViewport: {
+        width: args.width,
+        height: args.height,
+        deviceScaleFactor: 1,
+      },
+      executablePath,
+      headless: true,
+    });
+    stage("browser launched");
+    return b;
   });
-  stage("browser launched");
 
   try {
     const page = await browser.newPage();

@@ -1661,6 +1661,27 @@ function Step2FormatVariant({
                         : "border-neutral-200 bg-white cursor-pointer hover:border-gold-300 hover:ring-2 hover:ring-gold-300/40 hover:shadow-sm",
                     ].join(" ")}
                   >
+                    {/* Task 16 (2026-07-17) — visual sample of each template
+                        so the picker isn't a blind name-only choice. Uses the
+                        preview PNG Studio saves alongside every published
+                        template; object-contain shows the whole design
+                        letterboxed (never cropped). Falls back to a labelled
+                        placeholder when a template has no saved preview. */}
+                    {t.preview_image_url ? (
+                      <div className="mb-2 aspect-square w-full overflow-hidden rounded-lg border border-neutral-100 bg-neutral-50">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={t.preview_image_url}
+                          alt={`${t.name} template preview`}
+                          className="h-full w-full object-contain"
+                          loading="lazy"
+                        />
+                      </div>
+                    ) : (
+                      <div className="mb-2 flex aspect-square w-full items-center justify-center rounded-lg border border-dashed border-neutral-200 bg-neutral-50 text-[11px] text-neutral-400">
+                        No preview yet
+                      </div>
+                    )}
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-sm font-semibold text-neutral-900 line-clamp-1">
                         {t.name}
@@ -1725,7 +1746,12 @@ function Step2FormatVariant({
 //      Cozy · Editorial) that bias the synth. Disabled when an override
 //      is active.
 //
-// Generate CTA + status copy stay on the sticky footer (unchanged).
+// Generate CTA + status copy stay on the sticky footer. The primary action
+// is "Review & Post": it renders every slide, then drops the user straight on
+// the Final Review screen (MultiOhFinalStage) where they confirm captions and
+// publish. Studio is NOT on the critical path — it's an opt-in per-slide edit
+// affordance inside that review screen. (Renamed 2026-07-17 from the old
+// "Build Slides in Studio" label, which wrongly implied a Studio-first flow.)
 
 interface Step3Props {
   selectedListings: readonly PostBuilderListing[];
@@ -2467,7 +2493,7 @@ function StickyFooter({
               ].join(" ")}
             >
               <span aria-hidden="true">✦</span>
-              {generating ? "Generating…" : "Build Slides in Studio"}
+              {generating ? "Generating…" : "Review & Post"}
             </button>
           )}
         </div>
@@ -2545,6 +2571,28 @@ function GeneratingOverlay({
             <div className="mt-0.5 text-sm text-neutral-600">{statusText}</div>
           </div>
         </div>
+
+        {/* Live progress bar — Task 15 (2026-07-17). The success/total counts
+            were only surfaced in the partial-failure footer; during a normal
+            run the user saw tiles flip but no explicit "X of N" progress. Now
+            a gold bar + count tracks completion live, and stays accurate for
+            retries (successCount recomputes from tile state each render). */}
+        {totalCount > 0 && !partialResult ? (
+          <div className="mt-4">
+            <div className="mb-1.5 flex items-center justify-between text-xs font-medium text-neutral-600">
+              <span>
+                {successCount} of {totalCount} slide{totalCount === 1 ? "" : "s"} rendered
+              </span>
+              <span>{Math.round((successCount / totalCount) * 100)}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
+              <div
+                className="h-full rounded-full bg-[#C9A84C] transition-all duration-500"
+                style={{ width: `${(successCount / totalCount) * 100}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
 
         {/* Per-slide grid (suppressed before `started` event arrives). */}
         {slideTiles.length > 0 ? (

@@ -1280,6 +1280,35 @@ export default function PostBuilderClient({
     [renderResult?.template_id],
   );
 
+  // Task 12 (2026-07-17) — earliest open-house start across the post's
+  // listings, as epoch ms (null when this isn't an OH post or no OH time is
+  // known). Drives OH-aware scheduling: the schedule default lands BEFORE
+  // this moment and the modal warns if the user picks a time at/after it.
+  // Multi-OH: min oh_start_at across every slide's listing. Single OH: the
+  // selected listing's oh_start_at.
+  const earliestOpenHouseMs = useMemo<number | null>(() => {
+    const ohListings = listingsByPostType["open_house"] ?? [];
+    const byMls = new Map(ohListings.map((l) => [l.mls_number, l]));
+    const times: number[] = [];
+    const push = (iso?: string | null) => {
+      if (!iso) return;
+      const t = Date.parse(iso);
+      if (!Number.isNaN(t)) times.push(t);
+    };
+    if (isMultiOHPost) {
+      for (const m of slideMetadata) push(byMls.get(m.listing_mls)?.oh_start_at);
+    } else if (postType === "open_house") {
+      push(selectedListing?.oh_start_at);
+    }
+    return times.length > 0 ? Math.min(...times) : null;
+  }, [
+    isMultiOHPost,
+    slideMetadata,
+    listingsByPostType,
+    postType,
+    selectedListing,
+  ]);
+
   const openStudio = useCallback((): void => {
     // why: bail if either listing or template is missing — the button SHOULD
     // already be disabled in that case, but defending against a race where the
@@ -3741,6 +3770,7 @@ export default function PostBuilderClient({
             // why: per-property count (no hero) — feeds the per-platform
             // "N-image carousel" copy on the platform cards.
             slideCount={carouselSlides.length}
+            earliestOpenHouseMs={earliestOpenHouseMs}
           />
         ) : null}
       </div>
@@ -4702,6 +4732,7 @@ export default function PostBuilderClient({
           // gates on a successful publish.
           onMakeReel={carouselSlides.length >= 1 ? handleMakeReel : undefined}
           makingReel={makingReel}
+          earliestOpenHouseMs={earliestOpenHouseMs}
         />
       ) : null}
       {/* === Canvas Editor (Path C) — overlay portal ===
@@ -5150,6 +5181,14 @@ interface PostNowModalProps {
    */
   slideCount: number;
   /**
+   * Task 12 (2026-07-17) — earliest open-house start (epoch ms) across the
+   * post's listings, or null when not an OH post / no OH time known. When set,
+   * the Schedule tab defaults each platform to its best optimal window BEFORE
+   * this moment and warns on any chosen time at/after it (a promo that goes
+   * out after the doors open is a wasted post).
+   */
+  earliestOpenHouseMs?: number | null;
+  /**
    * 2026-06-05 — "Make it a Reel" post-publish on-ramp. When provided AND the
    * post is a carousel (slideCount >= 2) AND at least one platform published
    * successfully, the success footer offers to turn the carousel into a Reel.
@@ -5185,6 +5224,7 @@ function PostNowModal(props: PostNowModalProps) {
     slideCount,
     onMakeReel,
     makingReel,
+    earliestOpenHouseMs,
   } = props;
 
   // why: render the full carousel strip whenever we have 2+ slides. The
@@ -5240,7 +5280,7 @@ function PostNowModal(props: PostNowModalProps) {
       const next = { ...prev };
       for (const p of platforms) {
         if (next[p]) continue;
-        next[p] = computeDefaultScheduleInput(p);
+        next[p] = computeDefaultScheduleInput(p, earliestOpenHouseMs ?? null);
       }
       // Remove inputs for platforms that have been unchecked.
       for (const k of Object.keys(next) as PostPlatform[]) {
@@ -5248,7 +5288,7 @@ function PostNowModal(props: PostNowModalProps) {
       }
       return next;
     });
-  }, [tab, platforms]);
+  }, [tab, platforms, earliestOpenHouseMs]);
 
   const armElapsed = armedAt ? Math.min(Date.now() - armedAt, POST_NOW_ARM_MS) : 0;
   const armed = armElapsed >= POST_NOW_ARM_MS;
@@ -5271,6 +5311,7 @@ function PostNowModal(props: PostNowModalProps) {
     localValue: string;
     iso: string | null;
     isFuture: boolean;
+    afterOh: boolean;
   }> = [...platforms].map((p) => {
     const localValue = scheduleInputs[p] ?? "";
     const parsed = localValue ? Date.parse(localValue) : NaN;
@@ -5280,6 +5321,14 @@ function PostNowModal(props: PostNowModalProps) {
       localValue,
       iso,
       isFuture: iso !== null && parsed - nowMs > 60_000,
+      // Task 12 — flag a schedule time that lands at/after the open house so
+      // the user can catch a promo that would go out after the doors open.
+      // Non-blocking: the post can still be scheduled (maybe intentional for a
+      // recap), but it's called out clearly.
+      afterOh:
+        !Number.isNaN(parsed) &&
+        earliestOpenHouseMs != null &&
+        parsed >= earliestOpenHouseMs,
     };
   });
   const validFutureCount = scheduleEntries.filter((e) => e.isFuture).length;
@@ -5679,6 +5728,20 @@ function PostNowModal(props: PostNowModalProps) {
                               Posts {formatHumanScheduleHint(entry.iso)}
                             </div>
                           ) : null}
+                          {/* Task 12 — after-open-house warning. Non-blocking:
+                              the schedule still submits, but a promo landing
+                              after the doors open is almost always a mistake,
+                              so it's flagged in amber. */}
+                          {entry?.afterOh ? (
+                            <div className="mt-1 flex items-start gap-1 text-[11px] text-amber-700">
+                              <span aria-hidden="true">⚠</span>
+                              <span>
+                                This lands at or after the open house begins —
+                                the promo would post after the doors open. Pick
+                                an earlier time to promote ahead of the event.
+                              </span>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -5919,9 +5982,19 @@ function PostNowModal(props: PostNowModalProps) {
  *   4. Fallback: 24 hours from now at startHour (handles edge case where
  *      preferredDays is empty for some future config change).
  */
-function computeDefaultScheduleInput(platform: PostPlatform): string {
+function computeDefaultScheduleInput(
+  platform: PostPlatform,
+  earliestOpenHouseMs: number | null = null,
+): string {
   const window = OPTIMAL_POSTING_WINDOWS[platform];
   const now = new Date();
+  // Task 12 — for Open House promos the post must land BEFORE the doors open.
+  // Treat the earliest OH as a hard ceiling on the default; the normal
+  // optimal-window search still runs, but only slots strictly before the OH
+  // (with a small buffer) are eligible.
+  const OH_BUFFER_MS = 30 * 60_000; // land ≥30 min before the OH starts
+  const ohCeiling =
+    earliestOpenHouseMs != null ? earliestOpenHouseMs - OH_BUFFER_MS : Infinity;
   for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
     const candidate = new Date(now);
     candidate.setDate(now.getDate() + dayOffset);
@@ -5930,9 +6003,27 @@ function computeDefaultScheduleInput(platform: PostPlatform): string {
     // why: at least 60s in the future so submitting the pre-fill doesn't
     // race the "must be in the future" validator in schedulePostAction.
     if (candidate.getTime() - now.getTime() < 60_000) continue;
+    // Optimal windows are scanned chronologically. Once we pass the OH
+    // ceiling, no later window qualifies either — stop and use the OH-lead
+    // fallback below (a slot just before the doors open beats an optimal
+    // window that lands after them).
+    if (candidate.getTime() >= ohCeiling) break;
     return toDateTimeLocalValue(candidate);
   }
-  // Fallback — tomorrow at the start hour.
+  // OH-lead fallback — no optimal window fits before the open house. Aim a
+  // few hours ahead of the doors (same-morning promo), clamped to the future
+  // and to strictly before the OH. Only used when an OH ceiling is in play.
+  if (earliestOpenHouseMs != null) {
+    const LEAD_MS = 3 * 60 * 60_000; // 3 hours before the OH when possible
+    const target = Math.max(now.getTime() + 5 * 60_000, ohCeiling - LEAD_MS);
+    if (target < earliestOpenHouseMs) {
+      return toDateTimeLocalValue(new Date(target));
+    }
+    // OH is essentially now/past — surface a near-future slot; the modal's
+    // after-OH warning will flag it so the user makes the call.
+    return toDateTimeLocalValue(new Date(now.getTime() + 5 * 60_000));
+  }
+  // Non-OH fallback — tomorrow at the start hour.
   const fallback = new Date(now);
   fallback.setDate(now.getDate() + 1);
   fallback.setHours(window.startHour, 0, 0, 0);

@@ -146,10 +146,14 @@ export type MultiOHStreamEvent =
   | { type: "fatal"; error: string };
 
 // why: cap parallelism so we don't blow past the function's memory ceiling
-// when all 9 Chromium instances + hero spin up at once. 5 in flight is a
-// gentle number — 9 properties takes 2 batches max, and total wall time is
-// roughly 2 × (worst per-property render), which is well inside maxDuration.
-const RENDER_CONCURRENCY = 5;
+// when all 9 Chromium instances + hero spin up at once. Lowered 5 → 3 on
+// 2026-07-17: at 5, the concurrent puppeteer.launch() calls raced on the
+// single /tmp/chromium binary and threw ETXTBSY on cold instances. The
+// launch itself is now serialized in chromium.ts (serializeLaunch), and 3
+// in-flight keeps peak memory well under the ceiling while page render/
+// screenshot still overlap. 9 properties = 3 batches; total wall time is
+// ~3 × (worst per-property render), comfortably inside maxDuration.
+const RENDER_CONCURRENCY = 3;
 
 // why: the three valid PostFormat literals. Pulled into a tuple so we can do
 // a typed runtime check without importing the type-only PostFormat alias.
