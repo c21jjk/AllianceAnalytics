@@ -27,21 +27,20 @@ export default async function EditMlsFeedPage({ params }: PageProps) {
 
   const boundAction = upsertMlsFeed.bind(null, decoded);
 
-  // Sync Now is wired to the mls-rets-sync Edge Function which currently
-  // handles CMC + SJSR (Paragon RETS). Bright (RESO Web API) will get its
-  // own function later — disable the button for now.
+  // Sync Now is wired to the RETS sync Edge Functions: cmc + sjsr via
+  // mls-rets-sync (Paragon), bright via bright-rets-sync (Cornerstone RETS).
   const isRets = feed.feed_type === "rets";
-  const isParagon = decoded === "cmc" || decoded === "sjsr";
-  const syncDisabled = !feed.is_active || !isRets || !isParagon;
+  const isWired =
+    decoded === "cmc" || decoded === "sjsr" || decoded === "bright";
+  const syncDisabled = !feed.is_active || !isRets || !isWired;
   let syncDisabledReason: string | undefined;
   if (!feed.is_active) {
     syncDisabledReason = "Feed is inactive — toggle it on to enable Sync now.";
   } else if (!isRets) {
+    syncDisabledReason = "Sync now is only wired for RETS feeds.";
+  } else if (!isWired) {
     syncDisabledReason =
-      "Sync now is currently only wired for Paragon RETS feeds (CMC, SJSR). Bright will be added next.";
-  } else if (!isParagon) {
-    syncDisabledReason =
-      "Sync now is currently wired for the cmc and sjsr feeds only.";
+      "Sync now is wired for the cmc, sjsr, and bright feeds only.";
   }
 
   return (

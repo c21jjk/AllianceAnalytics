@@ -205,8 +205,8 @@ export async function upsertMlsFeed(
 /**
  * Trigger an immediate sync for one MLS feed. Admin-only.
  *
- * Invokes the mls-rets-sync Edge Function (CMC + SJSR only — Bright is RESO
- * Web API and not yet wired up here). Returns the raw result so the UI can
+ * Invokes the RETS sync Edge Functions (cmc + sjsr via mls-rets-sync;
+ * bright via bright-rets-sync, Cornerstone RETS). Returns the raw result so the UI can
  * surface counts + class-level errors without polling.
  *
  * The Edge Function itself updates mls_feeds.last_sync_at /
@@ -257,8 +257,9 @@ export async function syncMlsFeed(
     };
   }
 
-  // Bright handled separately (RESO Web API, not RETS).
-  if (shortCode !== "cmc" && shortCode !== "sjsr") {
+  // cmc + sjsr use the Paragon function; bright uses its own Cornerstone
+  // RETS function (bright-rets-sync).
+  if (shortCode !== "cmc" && shortCode !== "sjsr" && shortCode !== "bright") {
     return {
       ok: false,
       feed_short_code: shortCode,
@@ -266,12 +267,15 @@ export async function syncMlsFeed(
       duration_ms: 0,
       classes: [],
       errors: [
-        `Sync now is currently wired for CMC + SJSR only. (${shortCode} feed type is not yet supported.)`,
+        `Sync now is wired for cmc, sjsr, and bright only. (${shortCode} is not yet supported.)`,
       ],
     };
   }
 
-  const fnUrl = `${url}/functions/v1/mls-rets-sync`;
+  const fnUrl =
+    shortCode === "bright"
+      ? `${url}/functions/v1/bright-rets-sync`
+      : `${url}/functions/v1/mls-rets-sync`;
   try {
     const res = await fetch(fnUrl, {
       method: "POST",
@@ -285,7 +289,22 @@ export async function syncMlsFeed(
     const body = await res.text();
     let parsed: MlsFeedSyncResult;
     try {
-      parsed = JSON.parse(body) as MlsFeedSyncResult;
+      const rawParsed = JSON.parse(body) as MlsFeedSyncResult & {
+        records_seen?: number;
+        records_upserted?: number;
+      };
+      // bright-rets-sync returns a flat shape (no per-class breakdown); adapt
+      // it to the classes[] shape the feed-edit UI renders.
+      if (!Array.isArray(rawParsed.classes)) {
+        rawParsed.classes = [
+          {
+            class: "ALL",
+            records_seen: rawParsed.records_seen ?? 0,
+            records_upserted: rawParsed.records_upserted ?? 0,
+          },
+        ];
+      }
+      parsed = rawParsed;
     } catch {
       parsed = {
         ok: false,
