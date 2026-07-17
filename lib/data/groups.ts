@@ -74,6 +74,7 @@ interface DbPropertyRow {
   id: string;
   mls_number: string;
   address: string | null;
+  unit_number: string | null;
   city: string | null;
   state: string | null;
   list_price: number | null;
@@ -138,7 +139,12 @@ function rowToPropertyRef(
   storyTokenByPropertyId?: Map<string, string>,
   buildingAddressById?: Map<string, string>,
 ): PropertyRef {
-  const addressParts = [row.address, row.city, row.state].filter(Boolean);
+  // 2026-07-17 — unit number joins the display line so multi-unit buildings
+  // (12 units at 511 E 11th Ave, all separately owned) stop reading as
+  // duplicate listings in the sidebar + Owner Story buttons. State dropped
+  // for consistency with the dashboard chips (everything is NJ).
+  const street = [row.address, row.unit_number].filter(Boolean).join(" · ");
+  const addressParts = [street || null, row.city].filter(Boolean);
   const token = storyTokenByPropertyId?.get(row.id) ?? null;
   const buildingDisplay = row.building_id
     ? buildingAddressById?.get(row.building_id)
@@ -436,7 +442,7 @@ export async function getGroupsLastNDays(
         untypedSupabase
           .from("properties")
           .select(
-            "id, mls_number, address, city, state, list_price, hero_image_url, building_id",
+            "id, mls_number, address, unit_number, city, state, list_price, hero_image_url, building_id",
           )
           .in("id", idList),
         supabase

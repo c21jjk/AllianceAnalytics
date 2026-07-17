@@ -79,6 +79,7 @@ interface DbPropertyRow {
   id: string;
   mls_number: string;
   address: string | null;
+  unit_number: string | null;
   city: string | null;
   state: string | null;
   list_price: number | null;
@@ -130,7 +131,11 @@ function asLinkMethod(value: string | null): PostLinkMethod | undefined {
 }
 
 function rowToPropertyRef(row: DbPropertyRow): PropertyRef {
-  const addressParts = [row.address, row.city, row.state].filter(Boolean);
+  // 2026-07-17 — unit number in the display line (multi-unit buildings are
+  // distinct listings); state dropped for chip consistency. Mirrors
+  // lib/data/groups.ts rowToPropertyRef — keep in sync.
+  const street = [row.address, row.unit_number].filter(Boolean).join(" · ");
+  const addressParts = [street || null, row.city].filter(Boolean);
   return {
     mls: row.mls_number,
     address: addressParts.join(", "),
@@ -345,7 +350,7 @@ export async function fetchGroupDetailBundleForPost(
     const { data: propRow } = await supabase
       .from("properties")
       .select(
-        "id, mls_number, address, city, state, list_price, hero_image_url, agent_name, agent_email",
+        "id, mls_number, address, unit_number, city, state, list_price, hero_image_url, agent_name, agent_email",
       )
       .eq("id", propertyId)
       .maybeSingle();

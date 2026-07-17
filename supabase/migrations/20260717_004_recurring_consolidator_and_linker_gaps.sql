@@ -1,0 +1,21 @@
+-- 20260717_004 — Recurring building consolidator + linker/classifier gaps
+-- (applied to prod 2026-07-17 via MCP as recurring_building_consolidator +
+-- linker_directional_addresses_and_group_level_links).
+--
+-- Repo mirror for history. Summary:
+--   • run_building_consolidator() — NEW. The 2026-06-22 consolidation was a
+--     one-shot migration; new multi-unit properties arrived with
+--     building_id NULL (511 E 11th Unit 210) and read as duplicates.
+--     Recurring version is fill-blanks-only (manual building moves are
+--     permanent). First run: 11 buildings created, 21 properties stamped.
+--   • run_auto_linker() Tier 3b — directional addresses ("184 W Oak",
+--     "122 E Park"): number + N/S/E/W + street word, optional period after
+--     the directional in captions. First run: 36 posts linked.
+--   • run_auto_classifier() — group-level links (post_groups.property_id /
+--     property_ids) now count toward Property Promotion, the "other"
+--     exclusion, AND audience derivation. First run: 2 groups categorized,
+--     15 audience-scoped. Tracker now has ZERO uncategorized groups.
+--   • Hourly cron chain is now: linker → grouper → classifier → building
+--     consolidator (job auto-link-group-classify @ :35).
+--
+-- Authoritative SQL lives in the DB; reproduce via pg_get_functiondef.
