@@ -152,13 +152,7 @@ export default function UpcomingOpenHousesRow({
               No upcoming Open Houses.
             </div>
           ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {openHouses.map((oh, idx) => (
-                <li key={oh.id}>
-                  <OpenHouseRow openHouse={oh} isFirst={idx === 0} />
-                </li>
-              ))}
-            </ul>
+            <OpenHousesList openHouses={openHouses} />
           )}
         </div>
       ) : null}
@@ -171,17 +165,124 @@ export default function UpcomingOpenHousesRow({
               No upcoming Open Houses.
             </div>
           ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {openHouses.map((oh, idx) => (
-                <li key={oh.id}>
-                  <OpenHouseRow openHouse={oh} isFirst={idx === 0} />
-                </li>
-              ))}
-            </ul>
+            <OpenHousesList openHouses={openHouses} />
           )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Division batching. Larissa asked for the OH card split into two clearly
+ * separated sections — South Jersey Division on top, Shore Division below,
+ * with a divider between (2026-07-17). Order + labels match the app's
+ * canonical DIVISION_LABELS used on the dashboard header.
+ *
+ * why not a color: the per-row "Build post" pill is already color-coded by
+ * coverage status (posted vs not), so division can't ride on color. A batched
+ * layout with subheaders is the unambiguous read.
+ */
+const DIVISION_SECTIONS: { key: string; label: string }[] = [
+  { key: "south_jersey", label: "South Jersey Division" },
+  { key: "shore", label: "Shore Division" },
+];
+
+interface DivisionSection {
+  key: string;
+  /** null label → render the rows with no subheader (single-group case). */
+  label: string | null;
+  rows: UpcomingOpenHouse[];
+}
+
+/**
+ * Bucket the (already start_at-ascending) open houses by office division,
+ * preserving chronological order within each bucket. Known divisions come
+ * first in DIVISION_SECTIONS order; anything with a missing/unknown division
+ * falls into a trailing "Other" bucket so no OH ever silently disappears.
+ */
+function groupByDivision(openHouses: UpcomingOpenHouse[]): DivisionSection[] {
+  const byKey = new Map<string, UpcomingOpenHouse[]>();
+  const other: UpcomingOpenHouse[] = [];
+  for (const oh of openHouses) {
+    const known = DIVISION_SECTIONS.some((s) => s.key === oh.division);
+    if (oh.division && known) {
+      const arr = byKey.get(oh.division) ?? [];
+      arr.push(oh);
+      byKey.set(oh.division, arr);
+    } else {
+      other.push(oh);
+    }
+  }
+  const sections: DivisionSection[] = [];
+  for (const { key, label } of DIVISION_SECTIONS) {
+    const rows = byKey.get(key);
+    if (rows && rows.length > 0) sections.push({ key, label, rows });
+  }
+  if (other.length > 0) {
+    // If everything is "Other" (no division data at all), this is the only
+    // section — OpenHousesList renders it headerless, matching prior behavior.
+    sections.push({ key: "other", label: "Other Offices", rows: other });
+  }
+  return sections;
+}
+
+/**
+ * Renders the OH rows, batched into division sections with a divider between
+ * them. When only one section is present (e.g. the dashboard office filter is
+ * scoped to a single office, or every OH shares a division), it collapses to a
+ * flat, un-headed list so there's no lone subheader or stray divider.
+ */
+function OpenHousesList({ openHouses }: { openHouses: UpcomingOpenHouse[] }) {
+  const sections = groupByDivision(openHouses);
+
+  if (sections.length <= 1) {
+    const rows = sections[0]?.rows ?? openHouses;
+    return (
+      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {rows.map((oh, idx) => (
+          <li key={oh.id}>
+            <OpenHouseRow openHouse={oh} isFirst={idx === 0} />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <div>
+      {sections.map((section, si) => (
+        <div
+          key={section.key}
+          className={si > 0 ? "mt-4 pt-4 border-t border-sky-200/70" : ""}
+        >
+          {section.label ? (
+            <DivisionHeader label={section.label} count={section.rows.length} />
+          ) : null}
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {section.rows.map((oh, idx) => (
+              <li key={oh.id}>
+                <OpenHouseRow openHouse={oh} isFirst={idx === 0} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Subheader that labels a division batch and counts its open houses. */
+function DivisionHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-1">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-sky-800">
+        {label}
+      </h3>
+      <span className="inline-flex items-center rounded-full bg-sky-100 ring-1 ring-sky-200 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 tabular-nums">
+        {count}
+      </span>
+    </div>
   );
 }
 

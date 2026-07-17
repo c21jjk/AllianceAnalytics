@@ -31,6 +31,10 @@ export interface UpcomingOpenHouse {
   list_price: number | null;
   /** Office short_code from the listing's office record (e.g. "WWC"). */
   office_short_code: string | null;
+  /** Division the listing's office belongs to (e.g. "shore" | "south_jersey").
+   *  Drives the dashboard OH card's division batching. Null when the office
+   *  has no division set or the office couldn't be resolved. */
+  division: string | null;
   /** When this OH was first inserted into our DB. Drives the dashboard's
    *  "fresh in last 24h" badge. */
   first_seen_at: string;
@@ -82,6 +86,7 @@ interface DbPropertyRow {
 interface DbOfficeRow {
   id: string;
   short_code: string;
+  division: string | null;
 }
 
 export interface GetUpcomingOpenHousesOptions {
@@ -180,13 +185,15 @@ export async function getUpcomingOpenHouses(
     ),
   );
   const officeShortByID = new Map<string, string>();
+  const officeDivisionByID = new Map<string, string | null>();
   if (officeIds.length > 0) {
     const { data: officeRows } = await supabase
       .from("offices")
-      .select("id, short_code")
+      .select("id, short_code, division")
       .in("id", officeIds);
     for (const o of (officeRows ?? []) as DbOfficeRow[]) {
       officeShortByID.set(o.id, o.short_code);
+      officeDivisionByID.set(o.id, o.division ?? null);
     }
   }
 
@@ -292,6 +299,10 @@ export async function getUpcomingOpenHouses(
         property?.office_id
           ? officeShortByID.get(property.office_id) ?? null
           : null,
+      division:
+        property?.office_id
+          ? officeDivisionByID.get(property.office_id) ?? null
+          : null,
       first_seen_at: oh.created_at,
       promoted_at: property?.id
         ? coverageByPropertyId.get(property.id) ?? null
@@ -380,13 +391,15 @@ export async function getOpenHousesForProperty(
     .maybeSingle();
   const property = (p ?? null) as DbPropertyRow | null;
   let officeShortCode: string | null = null;
+  let division: string | null = null;
   if (property?.office_id) {
     const { data: o } = await supabase
       .from("offices")
-      .select("short_code")
+      .select("short_code, division")
       .eq("id", property.office_id)
       .maybeSingle();
     officeShortCode = (o?.short_code as string | undefined) ?? null;
+    division = (o?.division as string | undefined) ?? null;
   }
 
   return ohList.map((oh) => ({
@@ -406,6 +419,7 @@ export async function getOpenHousesForProperty(
         ? null
         : Number(property.list_price),
     office_short_code: officeShortCode,
+    division,
     first_seen_at: oh.created_at,
   }));
 }
