@@ -29,6 +29,7 @@ import { getAnthropic } from "@/lib/ai/anthropic";
 import {
   buildGeoPhrase,
   detectTone,
+  sortPropertiesByOpenHouse,
   type CaptionTone,
   type MultiOHCaptionInput,
   type MultiOHCaptionProperty,
@@ -265,7 +266,11 @@ function resolveTone(
 export async function synthesizeMultiOHCaptionAI(
   input: MultiOHCaptionInput,
 ): Promise<MultiOHCaptionResult> {
-  const properties = input.properties;
+  // why: chronological order (earliest OH date first) so the AI's day
+  // sections never appear out of order. The prompt also instructs
+  // chronological grouping, but sorting the source list is the reliable
+  // guarantee — the model just lists what it's given, in order.
+  const properties = sortPropertiesByOpenHouse(input.properties);
   if (properties.length === 0) {
     throw new Error("[multi-oh-ai-caption] no properties supplied");
   }

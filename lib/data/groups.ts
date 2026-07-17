@@ -111,6 +111,19 @@ function asCategory(value: string | null): PostCategory | undefined {
   return undefined;
 }
 
+/**
+ * Heuristic: does this caption read as an Open House promotion? Used as the
+ * last-resort category derivation for the engagement tracker so OH posts
+ * auto-classify even before the platform sync writes posts.category. Kept
+ * deliberately tight — requires the literal "open house" phrase — and callers
+ * gate it on the post actually linking to a listing, so a stray mention never
+ * mislabels a group. 2026-07-17.
+ */
+function looksLikeOpenHouse(caption: string | null | undefined): boolean {
+  if (!caption) return false;
+  return /open\s*house/i.test(caption);
+}
+
 function asLinkMethod(value: string | null): PostLinkMethod | undefined {
   if (
     value === "manual" ||
@@ -358,6 +371,29 @@ export async function getGroupsLastNDays(
     }
     const posts = (postRows ?? []) as DbPostRowWithOffice[];
 
+    // Multi-property listing union. A single post can link to several homes
+    // via the post_listings join table (Open House carousels record EVERY
+    // property the post contained). We union these per post so a group's
+    // Listings field auto-populates with all homes even when nobody has set
+    // post_groups.property_ids by hand. The group's own property_ids[] still
+    // wins when present (manual override / authoritative). 2026-07-17.
+    const memberPostIds = posts.map((p) => p.id);
+    const listingsByPost = new Map<string, string[]>();
+    if (memberPostIds.length > 0) {
+      const { data: linkRows } = await supabase
+        .from("post_listings")
+        .select("post_id, property_id")
+        .in("post_id", memberPostIds);
+      for (const r of (linkRows ?? []) as Array<{
+        post_id: string;
+        property_id: string;
+      }>) {
+        const arr = listingsByPost.get(r.post_id) ?? [];
+        arr.push(r.property_id);
+        listingsByPost.set(r.post_id, arr);
+      }
+    }
+
     // Audience-aware filter: keep only groups whose audience_scope is in
     // the allowed set. Singletons (no group_id) have no audience scope, so
     // they're excluded entirely when an office filter is active — matches
@@ -384,6 +420,9 @@ export async function getGroupsLastNDays(
     }
     for (const p of posts) {
       if (p.property_id) propIds.add(p.property_id);
+    }
+    for (const ids of listingsByPost.values()) {
+      for (const id of ids) propIds.add(id);
     }
     const propMap = new Map<string, PropertyRef>();
     if (propIds.size > 0) {
@@ -515,25 +554,57 @@ export async function getGroupsLastNDays(
           memberRows.find((r) => r.media_url)?.media_url ??
           undefined;
 
-        // Build the multi-property list. When post_groups.property_ids is
-        // non-empty it's authoritative (Open House campaigns); otherwise
-        // fall back to the single derived `property` so existing data still
-        // populates an array of length 0 or 1.
+        // Build the multi-property list. Priority:
+        //   1. post_groups.property_ids[] — authoritative when a human set it.
+        //   2. Union of every member post's post_listings — auto-populates
+        //      Open House carousels with all homes (2026-07-17).
+        //   3. The single derived `property` — legacy single-listing fallback.
+        const unionedListingIds = (() => {
+          const set = new Set<string>();
+          for (const r of memberRows) {
+            for (const id of listingsByPost.get(r.id) ?? []) set.add(id);
+          }
+          return Array.from(set);
+        })();
         const properties: PropertyRef[] =
           g.property_ids && g.property_ids.length > 0
             ? g.property_ids
                 .map((id) => propMap.get(id))
                 .filter((p): p is PropertyRef => !!p)
-            : property
-              ? [property]
-              : [];
+            : unionedListingIds.length > 0
+              ? unionedListingIds
+                  .map((id) => propMap.get(id))
+                  .filter((p): p is PropertyRef => !!p)
+              : property
+                ? [property]
+                : [];
+
+        // Category: post_groups.category wins; otherwise derive from the
+        // member posts (the sync auto-classifies Open House posts →
+        // "open_house", shown as "Open House Promotion"). Final fallback: a
+        // caption that clearly reads as an Open House promo AND links to at
+        // least one home is classified open_house even before the sync's
+        // category write lands. Read-only derivation — a human category on the
+        // group always takes precedence.
+        const derivedCategory =
+          asCategory(g.category) ??
+          memberRows
+            .map((r) => asCategory(r.category))
+            .find((c) => c !== undefined) ??
+          (unionedListingIds.length > 0 &&
+          looksLikeOpenHouse(
+            memberRows.map((r) => r.caption).find((c) => c && c.length > 0) ??
+              g.representative_caption,
+          )
+            ? "open_house"
+            : undefined);
 
         return {
           id: g.id,
           posted_date: postedDate,
           representative_caption: repCaption,
           representative_thumbnail: repThumbnail ?? undefined,
-          category: asCategory(g.category),
+          category: derivedCategory,
           agent_name: agentName ?? undefined,
           property,
           properties,
@@ -571,15 +642,27 @@ export async function getGroupsLastNDays(
           : 0;
       const postedDate = row.posted_at?.slice(0, 10) ?? "";
       const property = row.property_id ? propMap.get(row.property_id) : undefined;
+      // Union this post's own post_listings so a single-platform Open House
+      // post (not yet grouped with its siblings) still auto-populates every
+      // home. Falls back to the single derived `property`.
+      const soloListingIds = listingsByPost.get(row.id) ?? [];
+      const soloProperties: PropertyRef[] =
+        soloListingIds.length > 0
+          ? soloListingIds
+              .map((id) => propMap.get(id))
+              .filter((p): p is PropertyRef => !!p)
+          : property
+            ? [property]
+            : [];
       return {
         id: `solo-${row.id}`,
         posted_date: postedDate,
         representative_caption: row.caption ?? "",
         representative_thumbnail:
           row.thumbnail_url ?? row.media_url ?? undefined,
-        // Singletons: no group-level property_ids[] yet, so reflect single
-        // property into the array.
-        properties: property ? [property] : [],
+        // Singletons: no group-level property_ids[] yet — union the post's
+        // own post_listings (Open House carousels) or the single property.
+        properties: soloProperties,
         audience_scope: null,
         category: asCategory(row.category),
         agent_name: row.agent_name ?? undefined,

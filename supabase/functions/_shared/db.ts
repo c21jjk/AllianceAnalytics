@@ -239,20 +239,24 @@ async function resolveBuilderMatches(
   platform: string,
   platformPostId: string | null,
   permalink: string | null,
-): Promise<PropertyMatch[]> {
-  if (!platformPostId && !permalink) return [];
+): Promise<{ matches: PropertyMatch[]; postType: string | null }> {
+  if (!platformPostId && !permalink) return { matches: [], postType: null };
   try {
     // Permalink is the reliable join key: it's identical on both sides (the
     // publish step and the sync both read it from the platform). The
     // platform_post_id stored at publish doesn't reliably match the id the
     // sync ingests (e.g. IG container vs media id), so it's only a fallback.
     let gp:
-      | { property_id: string | null; linked_property_ids: unknown }
+      | {
+          property_id: string | null;
+          linked_property_ids: unknown;
+          post_type: string | null;
+        }
       | null = null;
     if (permalink) {
       const { data } = await client
         .from("generated_posts")
-        .select("property_id, linked_property_ids")
+        .select("property_id, linked_property_ids, post_type")
         .eq(`platform_permalinks->>${platform}`, permalink)
         .maybeSingle();
       gp = data ?? null;
@@ -260,12 +264,13 @@ async function resolveBuilderMatches(
     if (!gp && platformPostId) {
       const { data } = await client
         .from("generated_posts")
-        .select("property_id, linked_property_ids")
+        .select("property_id, linked_property_ids, post_type")
         .eq(`platform_post_ids->>${platform}`, platformPostId)
         .maybeSingle();
       gp = data ?? null;
     }
-    if (!gp) return [];
+    if (!gp) return { matches: [], postType: null };
+    const postType = typeof gp.post_type === "string" ? gp.post_type : null;
 
     const ids: string[] = [];
     if (Array.isArray(gp.linked_property_ids)) {
@@ -276,7 +281,7 @@ async function resolveBuilderMatches(
     if (ids.length === 0 && typeof gp.property_id === "string" && gp.property_id) {
       ids.push(gp.property_id);
     }
-    if (ids.length === 0) return [];
+    if (ids.length === 0) return { matches: [], postType };
 
     const { data: props } = await client
       .from("properties")
@@ -294,13 +299,13 @@ async function resolveBuilderMatches(
           : "cmc";
       out.push({ property_id: id, mls_number: p.mls_number ?? "", source_mls: src });
     }
-    return out;
+    return { matches: out, postType };
   } catch (e) {
     console.warn(
       "[_shared/db] resolveBuilderMatches failed:",
       (e as Error).message,
     );
-    return [];
+    return { matches: [], postType: null };
   }
 }
 
@@ -316,23 +321,39 @@ export async function upsertPost(
   // caption order; matches[0] is the anchor that lands on posts.property_id
   // for backward compat, every match feeds the post_listings join table.
   let matches = await autoLinkAllProperties(client, post.caption);
+  // why: track the originating builder post_type so we can auto-classify the
+  // synced post's category (e.g. an Open House carousel → category
+  // "open_house", surfaced in the tracker as "Open House Promotion"). Only
+  // set from the builder fallback path — caption-linked posts keep whatever
+  // category the grouper/editor assigns.
+  let builderPostType: string | null = null;
   // Caption had no MLS (e.g. an Open House post) — fall back to the builder's
   // recorded property selection so the post still links to its home(s).
   if (matches.length === 0) {
-    const builderMatches = await resolveBuilderMatches(
+    const builder = await resolveBuilderMatches(
       client,
       post.platform,
       post.platform_post_id,
       post.permalink,
     );
-    if (builderMatches.length > 0) matches = builderMatches;
+    if (builder.matches.length > 0) {
+      matches = builder.matches;
+      builderPostType = builder.postType;
+    }
   }
   const propertyId = matches[0]?.property_id ?? null;
+  // Map the builder post_type onto the tracker's category vocabulary. Only
+  // Open House is auto-classified today (the explicit ask); other types stay
+  // null so the grouper/editor decides. Extend this map deliberately.
+  const autoCategory: string | null =
+    builderPostType === "open_house" ? "open_house" : null;
 
-  // Check existence by (platform, platform_post_id)
+  // Check existence by (platform, platform_post_id). Pull the current category
+  // so we NEVER clobber a value a human already set in the tracker — auto
+  // classification only fills a blank.
   const { data: existing } = await client
     .from("posts")
-    .select("id")
+    .select("id, category")
     .eq("platform", post.platform)
     .eq("platform_post_id", post.platform_post_id)
     .maybeSingle();
@@ -356,6 +377,15 @@ export async function upsertPost(
   // the existing column value alone on update, or null on insert.
   if (post.thumbnail_cached_at) {
     row.thumbnail_cached_at = post.thumbnail_cached_at;
+  }
+  // Auto-classify Open House posts. Fill only when we have a category AND the
+  // existing row has none — a human-set category (or a later grouper cascade)
+  // is always preserved. On first insert `existing` is null, so the auto value
+  // seeds the row.
+  const existingCategory = (existing as { category?: string | null } | null)
+    ?.category;
+  if (autoCategory && !existingCategory) {
+    row.category = autoCategory;
   }
 
   let postId: string | null = null;

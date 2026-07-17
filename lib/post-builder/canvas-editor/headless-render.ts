@@ -208,11 +208,23 @@ export async function renderSchemaHeadless(
     }
 
     if (isTextLayer(layer)) {
-      const resolved = layer.boundField
-        ? resolveTextBoundField(layer.boundField, listing).trim() || layer.text
-        : layer.text;
-      const tb = createFabricTextbox(layer, resolved);
-      canvas.add(tb);
+      // why: bound text layers resolve from live listing data ONLY. A bound
+      // layer's `text` is the DESIGN-TIME placeholder token (e.g.
+      // "{hosting_agent_name}"), so we must NEVER publish it. `createFabric-
+      // Textbox` internally falls back to `layer.text` when handed an empty
+      // string, so we CANNOT pass "" for an empty bound field — instead we
+      // skip the layer outright. Empty bound fields are also dropped by the
+      // hide-if-empty pass above; this is the final guard so the raw token
+      // can never ship even if that pass ever misses a layer (this is what
+      // published a literal "{hosting_agent_name}" onto the 2026-07-17
+      // 71 Palmer OH carousel — a manual listing with no agent name).
+      if (layer.boundField) {
+        const resolved = resolveTextBoundField(layer.boundField, listing).trim();
+        if (!resolved) continue;
+        canvas.add(createFabricTextbox(layer, resolved));
+      } else {
+        canvas.add(createFabricTextbox(layer, layer.text));
+      }
     } else if (isImageLayer(layer)) {
       const resolvedSrc = layer.boundField
         ? resolveImageBoundField(layer.boundField, listing)

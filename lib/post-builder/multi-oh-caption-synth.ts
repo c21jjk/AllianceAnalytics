@@ -548,6 +548,52 @@ export function buildGeoPhrase(
 }
 
 // ---------------------------------------------------------------------------
+// Chronological ordering
+// ---------------------------------------------------------------------------
+
+/**
+ * Earliest open-house start time for a property, in epoch ms. Scans every
+ * session (falling back to the single oh_start_at pair) and returns the
+ * minimum valid start. Properties with no parseable date return
+ * Number.POSITIVE_INFINITY so they sort to the END of the list.
+ */
+export function earliestOpenHouseMs(p: MultiOHCaptionProperty): number {
+  const sessions =
+    p.oh_sessions && p.oh_sessions.length > 0
+      ? p.oh_sessions
+      : [{ start_at: p.oh_start_at ?? null, end_at: p.oh_end_at ?? null }];
+  let min = Number.POSITIVE_INFINITY;
+  for (const s of sessions) {
+    if (!s.start_at) continue;
+    const t = new Date(s.start_at).getTime();
+    if (Number.isNaN(t)) continue;
+    if (t < min) min = t;
+  }
+  return min;
+}
+
+/**
+ * Sort properties strictly by their earliest open-house date/time (earliest
+ * first). Ties (and undated properties) preserve their original relative
+ * order via a stable index tiebreak. Returns a NEW array; the input is not
+ * mutated.
+ *
+ * why: both the deterministic and AI caption builders — and any consumer
+ * that lists properties in the caption — must present open houses in
+ * chronological order. Without this, a July 23 OH could appear before a
+ * July 17 one (John flagged this 2026-07-17). Sorting at the caption source
+ * guarantees every downstream day-section and bullet is date-ordered.
+ */
+export function sortPropertiesByOpenHouse<T extends MultiOHCaptionProperty>(
+  properties: readonly T[],
+): T[] {
+  return properties
+    .map((p, i) => ({ p, i, t: earliestOpenHouseMs(p) }))
+    .sort((a, b) => (a.t !== b.t ? a.t - b.t : a.i - b.i))
+    .map((x) => x.p);
+}
+
+// ---------------------------------------------------------------------------
 // Day-grouped bullet rendering
 // ---------------------------------------------------------------------------
 
@@ -784,7 +830,9 @@ function overrideAlreadyHasHashtags(text: string): boolean {
 export function synthesizeMultiOHCaption(
   input: MultiOHCaptionInput,
 ): MultiOHCaptionResult {
-  const properties = input.properties;
+  // why: present open houses in strict chronological order (earliest date
+  // first). See sortPropertiesByOpenHouse — fixes out-of-order day sections.
+  const properties = sortPropertiesByOpenHouse(input.properties);
   const count = properties.length;
 
   const firstProp = properties[0];

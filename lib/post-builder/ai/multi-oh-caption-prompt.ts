@@ -115,7 +115,7 @@ Whether you're looking for a beach getaway, investment property, or your forever
 
 Structural rules drawn from the exemplar:
   1. Opening paragraph: emoji prefix + 2-3 short sentences + closing emoji bookend (tone-specific — see "Tone descriptors" below).
-  2. Day-grouped bullet sections with 📍 day headers. One section per OH date. Inside each section, one bullet per property with the exact \`• {Address}, {City} | {TimeRange}\` format.
+  2. Day-grouped bullet sections with 📍 day headers. One section per OH date. Inside each section, one bullet per property with the exact \`• {Address}, {City} | {TimeRange}\` format. Order the day sections STRICTLY CHRONOLOGICALLY — earliest date first (e.g. July 17 before July 18 before July 23). The EVENT DATA list is already sorted earliest-first; preserve that order and never reorder days.
   3. Closing paragraph: ONE sentence with multi-path hooks ("beach getaway, investment property, or your forever shore home" is the canonical example — three audience paths separated by commas/or, with an em-dash before the action). End with the tone-specific closing emoji bookend.
   4. Hashtag block: exactly 5 hashtags, comma-separated arrays NOT inline.
 
