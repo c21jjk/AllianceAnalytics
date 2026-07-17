@@ -93,6 +93,14 @@ type PerPropertyVariant = "v2" | "v3" | "v6" | "v8";
 interface Props {
   /** All upcoming-OH eligible listings, pre-fetched server-side. */
   listings: PostBuilderListing[];
+  /** 2026-07-17 — listing.id → latest posted_at ISO for properties already
+   *  covered by a PUBLISHED open_house post in the last 7 days. Drives the
+   *  "✓ Posted" badges + the coverage summary in Step 1. */
+  postedCoverage?: Record<string, string>;
+  /** 2026-07-17 — company agent roster (sorted display names). The hosting
+   *  agent combobox restricts entry to these so attribution (phone/photo by
+   *  exact-name match) always resolves. */
+  agentRoster?: string[];
   /** Office name pre-fill (defaults to "Century 21 Alliance"). */
   defaultOfficeName: string;
   /**
@@ -291,6 +299,8 @@ function clearPersistedState(): void {
  */
 export default function MultiOHWizardClient({
   listings,
+  postedCoverage = {},
+  agentRoster = [],
   defaultOfficeName,
   dbTemplatesByFormat,
 }: Props) {
@@ -1114,6 +1124,8 @@ export default function MultiOHWizardClient({
         {step === 1 ? (
           <Step1Pick
             listings={listings}
+            postedCoverage={postedCoverage}
+            agentRoster={agentRoster}
             selectedMls={selectedMls}
             onToggle={toggleSelect}
             perPropertyHostingAgent={perPropertyHostingAgent}
@@ -1314,6 +1326,10 @@ function Stepper({ currentStep, onJump, skipStep2 }: StepperProps) {
 
 interface Step1Props {
   listings: readonly PostBuilderListing[];
+  /** listing.id → latest published-OH-post ISO within 7 days (see Props). */
+  postedCoverage: Record<string, string>;
+  /** Company agent roster for the hosting-agent combobox. */
+  agentRoster: readonly string[];
   selectedMls: readonly string[];
   onToggle: (mls: string) => void;
   /**
@@ -1338,8 +1354,17 @@ interface Step1Props {
   onAddOpenHouse: () => void;
 }
 
+/** "2026-07-17T12:23:00Z" → "Posted Fri" — compact coverage badge label. */
+function formatPostedBadge(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Posted";
+  return `Posted ${d.toLocaleDateString(undefined, { weekday: "short" })}`;
+}
+
 function Step1Pick({
   listings,
+  postedCoverage,
+  agentRoster,
   selectedMls,
   onToggle,
   perPropertyHostingAgent,
@@ -1443,6 +1468,30 @@ function Step1Pick({
         Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Add it with the button above.
       </p>
 
+      {/* 2026-07-17 — coverage summary. Larissa's morning post covered 9 of
+          what later became 11 OHs; this line + the per-row badges make the
+          outstanding ones obvious at a glance. Auto-derived from published
+          OH posts (last 7 days) — nothing to mark off by hand. */}
+      {(() => {
+        const covered = listings.filter(
+          (l) => l.id && postedCoverage[l.id],
+        ).length;
+        if (covered === 0) return null;
+        const outstanding = listings.length - covered;
+        return (
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
+            <span aria-hidden="true">✓</span>
+            <span>
+              {covered} of {listings.length} open houses already promoted this
+              week
+              {outstanding > 0
+                ? ` — ${outstanding} still outstanding (no badge).`
+                : " — all covered."}
+            </span>
+          </div>
+        );
+      })()}
+
       {/* Consolidation hint — only when picks > unique-MLS. Mirrors the
           server-side consolidatePropertiesByMls behavior so the user sees
           ahead-of-time that "5 windows → 4 slides" is intentional. */}
@@ -1519,6 +1568,18 @@ function Step1Pick({
                         <span>{formatOhBadge(l.oh_start_at, l.oh_end_at ?? null)}</span>
                       </span>
                     ) : null}
+                    {l.id && postedCoverage[l.id] ? (
+                      // Already covered by a published OH post this week —
+                      // pickable again (a second promo is legit), but Larissa
+                      // sees at a glance it's not outstanding.
+                      <span
+                        className="inline-flex items-center gap-1 rounded-md bg-sky-50 ring-1 ring-sky-200 px-1.5 py-0.5 font-medium text-sky-800"
+                        title="This property already appeared in a published Open House post within the last 7 days."
+                      >
+                        <span aria-hidden="true">✓</span>
+                        <span>{formatPostedBadge(postedCoverage[l.id])}</span>
+                      </span>
+                    ) : null}
                     {typeof l.list_price === "number" ? (
                       <span className="text-gold-700 font-medium">
                         ${l.list_price.toLocaleString()}
@@ -1537,6 +1598,7 @@ function Step1Pick({
                   mls={l.mls_number}
                   value={hostingAgentValue}
                   onChange={onHostingAgentChange}
+                  roster={agentRoster}
                 />
               ) : null}
             </li>
@@ -1573,6 +1635,8 @@ interface HostingAgentRowProps {
   mls: string;
   value: string;
   onChange: (mls: string, value: string) => void;
+  /** Company roster names — the combobox restricts entry to these. */
+  roster: readonly string[];
 }
 
 /**
@@ -1588,7 +1652,23 @@ interface HostingAgentRowProps {
  * row's select toggle — the wrapper has `onClick={stop}` so a user can
  * click the input without inadvertently deselecting the row.
  */
-function HostingAgentRow({ mls, value, onChange }: HostingAgentRowProps) {
+function HostingAgentRow({ mls, value, onChange, roster }: HostingAgentRowProps) {
+  // 2026-07-17 — roster combobox replaces free-hand entry. Attribution
+  // (phone via Alliance Dash, headshot via the Agents library) matches by
+  // EXACT name, so a typo like "Barb Hunt" silently dropped the phone +
+  // photo from the slide. Typing filters the company roster; clicking a
+  // match commits the canonical spelling. A value that matches no roster
+  // name gets an amber flag so Larissa knows attribution won't resolve.
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const matches = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (q.length < 1) return [];
+    return roster.filter((n) => n.toLowerCase().includes(q)).slice(0, 6);
+  }, [value, roster]);
+  const exactMatch = useMemo(
+    () => roster.some((n) => n.toLowerCase() === value.trim().toLowerCase()),
+    [value, roster],
+  );
   return (
     <div
       className="mt-1.5 ml-3 mr-3 rounded-md border border-neutral-200 bg-white/70 px-3 py-2"
@@ -1603,17 +1683,61 @@ function HostingAgentRow({ mls, value, onChange }: HostingAgentRowProps) {
       >
         Hosting agent
       </label>
-      <input
-        id={`hosting-agent-${mls}`}
-        type="text"
-        value={value}
-        onChange={(e) => onChange(mls, e.target.value)}
-        placeholder="Hosting agent name"
-        className="block w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
-      />
-      <div className="mt-1 text-[10px] text-neutral-500">
-        Defaults to the listing agent. Override if a different agent is hosting this open house.
+      <div className="relative">
+        <input
+          id={`hosting-agent-${mls}`}
+          type="text"
+          value={value}
+          onChange={(e) => {
+            onChange(mls, e.target.value);
+            setDropdownOpen(true);
+          }}
+          onFocus={() => setDropdownOpen(true)}
+          // why: delay the close so a click on a dropdown option lands
+          // before the list unmounts (blur fires first otherwise).
+          onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
+          placeholder="Start typing an agent's name…"
+          autoComplete="off"
+          className="block w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+        />
+        {dropdownOpen && matches.length > 0 && !exactMatch ? (
+          <ul
+            className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-md border border-neutral-200 bg-white shadow-lg"
+            role="listbox"
+          >
+            {matches.map((name) => (
+              <li key={name}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected="false"
+                  // onMouseDown (not onClick) so selection commits BEFORE
+                  // the input's blur closes the dropdown.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    onChange(mls, name);
+                    setDropdownOpen(false);
+                  }}
+                  className="block w-full px-2.5 py-1.5 text-left text-sm text-neutral-900 hover:bg-gold-50"
+                >
+                  {name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
+      {value.trim().length > 0 && !exactMatch ? (
+        <div className="mt-1 text-[10px] font-medium text-amber-700">
+          ⚠ Not in the agent roster — pick a name from the list so the
+          agent&apos;s phone and photo appear on the slide.
+        </div>
+      ) : (
+        <div className="mt-1 text-[10px] text-neutral-500">
+          Defaults to the listing agent. Override if a different agent is
+          hosting this open house.
+        </div>
+      )}
     </div>
   );
 }
