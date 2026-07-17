@@ -239,10 +239,17 @@ export async function getUpcomingOpenHouses(
     }
   }
 
-  // Posted coverage — which of these properties already appeared in a
-  // PUBLISHED open_house post this week. Mirrors the Multi-OH wizard's
-  // Step 1 coverage badges (same source: generated_posts.linked_property_ids
-  // for carousels + property_id for single-listing OH posts).
+  // Posted coverage — which of these properties already got airtime this week.
+  // Two sources are UNIONED into coverageByPropertyId (latest posted_at wins):
+  //   1. the Post Builder (generated_posts) — posts published through the tool.
+  //   2. the post TRACKER (posts + post_listings) — what actually went live on
+  //      FB/IG per the platform sync, incl. posts made OUTSIDE this system.
+  // Source 1 alone misses externally-posted open houses (the common case), so
+  // the tracker is the authoritative "did this go live" signal. See below.
+  //
+  // Source 1 (builder): mirrors the Multi-OH wizard's Step 1 coverage badges
+  // (generated_posts.linked_property_ids for carousels + property_id for
+  // single-listing OH posts).
   const coverageByPropertyId = new Map<string, string>();
   try {
     const { data: covRows } = await untypedSupabase
@@ -270,6 +277,53 @@ export async function getUpcomingOpenHouses(
   } catch (e) {
     // Coverage is decoration — never block the OH list on it.
     console.warn("getUpcomingOpenHouses: coverage fetch failed", e);
+  }
+
+  // Source 2 (tracker): the synced social feed. `post_listings` auto-links each
+  // live FB/IG post to the listings it features (by address/MLS), so a post
+  // made from a phone or Meta Business Suite still counts here even though it
+  // never touched the builder. Agreed defaults (2026-07-17): count ANY post
+  // linking the listing in the last 7 days — partial-address links and any
+  // category both qualify, since the badge means "this listing got airtime."
+  const candidatePropertyIds = Array.from(
+    new Set(
+      [...propertyById.values(), ...propertyByMls.values()]
+        .map((p) => p.id)
+        .filter((x): x is string => !!x),
+    ),
+  );
+  if (candidatePropertyIds.length > 0) {
+    try {
+      const sinceIso = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
+      const { data: trackerRows } = await untypedSupabase
+        .from("post_listings")
+        .select("property_id, posts!inner(posted_at)")
+        .in("property_id", candidatePropertyIds)
+        .not("posts.posted_at", "is", null)
+        .gte("posts.posted_at", sinceIso);
+      for (const r of (trackerRows ?? []) as Array<{
+        property_id: string | null;
+        // PostgREST returns the embedded parent as an object for a many-to-one
+        // FK; tolerate an array shape defensively.
+        posts:
+          | { posted_at: string | null }
+          | { posted_at: string | null }[]
+          | null;
+      }>) {
+        if (!r.property_id) continue;
+        const postedAt = Array.isArray(r.posts)
+          ? r.posts[0]?.posted_at ?? null
+          : r.posts?.posted_at ?? null;
+        if (!postedAt) continue;
+        const prev = coverageByPropertyId.get(r.property_id);
+        if (!prev || prev < postedAt) {
+          coverageByPropertyId.set(r.property_id, postedAt);
+        }
+      }
+    } catch (e) {
+      // Tracker coverage is decoration — never block the OH list on it.
+      console.warn("getUpcomingOpenHouses: tracker coverage fetch failed", e);
+    }
   }
 
   const rows: Array<UpcomingOpenHouse & { _building_id: string | null }> = [];
