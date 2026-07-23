@@ -52,6 +52,13 @@ import {
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
+import { sendAgentEngagementEmail } from "@/lib/email/agent-post-notification";
+import {
+  AUTO_REEL_TEMPLATE_ID,
+  finalizeAutoReels,
+  maybeKickoffAutoReel,
+  type FinalizeAutoReelsSummary,
+} from "@/lib/post-builder/auto-reel";
 import type {
   Json,
   Database,
@@ -93,6 +100,8 @@ interface CronResponseOk {
   succeeded: number;
   failed: number;
   details: CronRowSummary[];
+  /** 2026-07-23 — auto-reel render-finalize summary for this tick. */
+  auto_reel?: FinalizeAutoReelsSummary;
 }
 
 interface CronResponseErr {
@@ -113,6 +122,19 @@ export async function GET(request: Request): Promise<NextResponse> {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
+
+  // ---- auto-reel finalize ----------------------------------------------
+  // 2026-07-23 — poll pending auto-reel render jobs FIRST, so a reel that
+  // just finished rendering AND is already past its publish time gets
+  // scheduled here and published by the drain below in the SAME tick.
+  // finalizeAutoReels never throws; the belt-and-suspenders try/catch
+  // keeps any surprise from killing the publish drain.
+  let autoReelSummary: FinalizeAutoReelsSummary | undefined;
+  try {
+    autoReelSummary = await finalizeAutoReels();
+  } catch (e) {
+    console.error("[cron/publish-scheduled] auto-reel finalize failed:", e);
+  }
 
   // ---- find due rows ---------------------------------------------------
   // why: scheduled_for is jsonb keyed by platform → ISO. A row is "due" if
@@ -147,7 +169,9 @@ export async function GET(request: Request): Promise<NextResponse> {
       // version token to CLAIM a due row before publishing, so two
       // overlapping cron ticks (or a manual trigger racing the scheduled
       // one) can't publish the same row twice. See the claim step in processRow.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url, test_mode, updated_at",
+      // 2026-07-23 — template_id added so the outbox email + auto-reel
+      // kickoff below can tell auto-generated reels apart from source posts.
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url, test_mode, updated_at, template_id",
     )
     .neq("scheduled_for", "{}")
     .or(orPredicate)
@@ -171,6 +195,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       succeeded: 0,
       failed: 0,
       details: [],
+      ...(autoReelSummary ? { auto_reel: autoReelSummary } : {}),
     } satisfies CronResponseOk);
   }
 
@@ -222,6 +247,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     succeeded: succeededTotal,
     failed: failedTotal,
     details,
+    ...(autoReelSummary ? { auto_reel: autoReelSummary } : {}),
   } satisfies CronResponseOk);
 }
 
@@ -630,16 +656,37 @@ async function processRow(
       const postUrls = successPermalinks
         .filter((s) => s.url)
         .map((s) => ({ platform: s.platform, url: s.url as string }));
-      await createOutboxRowForPost({
+      const outbox = await createOutboxRowForPost({
         generated_post_id: row.id,
         property_id: row.property_id,
         post_urls: postUrls,
         caption,
         thumbnail_url: row.image_url,
       });
+      // 2026-07-23 — engagement seeding, mirrored from the Post Now route:
+      // email the listing agent immediately with a like/comment/share-now
+      // CTA. SKIPPED for auto-generated reels — the agent already got the
+      // photo-post email ~45 min earlier; two pings in an hour is spam.
+      // The outbox row itself is still created for the admin view.
+      if ("id" in outbox && row.template_id !== AUTO_REEL_TEMPLATE_ID) {
+        await sendAgentEngagementEmail({ outboxRowId: outbox.id });
+      }
     } catch (e) {
       console.error("[cron/publish-scheduled] outbox failed:", e);
     }
+  }
+
+  // 2026-07-23 — Auto-Reel kickoff for SCHEDULED image posts, mirroring the
+  // Post Now route: a photo post published by this cron spawns its delayed
+  // Reel too. Guards (image-only, not test, not multi-OH, has photos, once
+  // per source) live inside maybeKickoffAutoReel; it never throws. Reels
+  // themselves are excluded here so an auto reel can't spawn another reel.
+  if (
+    summary.succeeded.length > 0 &&
+    row.media_type !== "reel" &&
+    row.test_mode !== true
+  ) {
+    await maybeKickoffAutoReel(row.id);
   }
 
   return summary;

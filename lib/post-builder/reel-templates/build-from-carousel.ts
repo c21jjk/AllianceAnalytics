@@ -181,6 +181,18 @@ export interface BuildReelFromCarouselParams {
   sourceListingMls?: string;
   /** Pacing feel. Defaults to cinematic per the agreed design. */
   pace?: ReelPace;
+  /**
+   * 2026-07-23 — Auto-Reel pipeline. When set, scene 0 is a PHOTO scene
+   * playing this pre-rendered 9:16 hero PNG (slow zoom) instead of a
+   * design scene. why: the render worker expects design scenes to ship
+   * PRE-HYDRATED (bound fields already resolved into concrete text), which
+   * the interactive Reel editor does but a headless server flow cannot do
+   * cheaply. The auto-reel pipeline instead renders the 9:16 hero template
+   * to a PNG server-side (renderCanvasSchema hydrates bound fields via the
+   * Chromium render page) and plays that PNG as the opener. Manual "Make it
+   * a Reel" flows omit this and keep the editable design hero.
+   */
+  heroImageUrl?: string | null;
 }
 
 /**
@@ -196,17 +208,35 @@ export function buildReelFromCarousel(
   if (photoUrls.length === 0) return null;
 
   const photoSceneMs = PACE_PHOTO_SCENE_MS[pace];
-  const heroTemplate = findCanvasTemplate(postType, variant, "story_9x16");
 
-  const heroScene: Scene = {
-    id: crypto.randomUUID(),
-    startMs: 0,
-    durationMs: HERO_SCENE_MS,
-    content: { kind: "design", template: heroTemplate },
-    // First scene transitions in from black — a cut keeps the opener crisp.
-    transitionIn: "cut" as TransitionType,
-    transitionMs: 0,
-  };
+  const heroScene: Scene = params.heroImageUrl
+    ? {
+        // Photo-hero path (auto-reel): the pre-rendered 9:16 hero PNG plays
+        // as a photo scene with a gentle zoom. No hydration needed — the
+        // PNG already carries the resolved address/price/branding.
+        id: crypto.randomUUID(),
+        startMs: 0,
+        durationMs: HERO_SCENE_MS,
+        content: {
+          kind: "photo",
+          photoUrl: params.heroImageUrl,
+          motion: MOTION_PRESETS.zoom_in ?? MOTION_PRESETS.static!,
+        },
+        transitionIn: "cut" as TransitionType,
+        transitionMs: 0,
+      }
+    : {
+        id: crypto.randomUUID(),
+        startMs: 0,
+        durationMs: HERO_SCENE_MS,
+        content: {
+          kind: "design",
+          template: findCanvasTemplate(postType, variant, "story_9x16"),
+        },
+        // First scene transitions in from black — a cut keeps the opener crisp.
+        transitionIn: "cut" as TransitionType,
+        transitionMs: 0,
+      };
 
   // why slice at maxScenes - 1: the hero occupies scene 0 and the worker's
   // zod schema hard-rejects compositions above REEL_CAPS.maxScenes scenes.

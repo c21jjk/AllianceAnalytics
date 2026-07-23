@@ -29,6 +29,8 @@ import {
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
+import { sendAgentEngagementEmail } from "@/lib/email/agent-post-notification";
+import { maybeKickoffAutoReel } from "@/lib/post-builder/auto-reel";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -534,16 +536,36 @@ export async function POST(request: Request) {
       const postUrls = successResults
         .filter((r) => r.permalink)
         .map((r) => ({ platform: r.platform, url: r.permalink as string }));
-      await createOutboxRowForPost({
+      const outbox = await createOutboxRowForPost({
         generated_post_id: gp.id,
         property_id: gp.property_id,
         post_urls: postUrls,
         caption: captionBody,
         thumbnail_url: gp.image_url,
       });
+      // 2026-07-23 — engagement seeding: email the listing agent the moment
+      // the post is live with a like/comment/share-now CTA. Early engagement
+      // is a feed-ranking lever; the mailto-only outbox meant most agents
+      // were never actually pinged. One send per outbox row, ever (sent_at
+      // guard inside). Best-effort — never blocks the publish response.
+      if ("id" in outbox) {
+        await sendAgentEngagementEmail({ outboxRowId: outbox.id });
+      }
     } catch (e) {
       console.error("[post] agent outbox row create failed:", e);
     }
+  }
+
+  // 2026-07-23 — Auto-Reel pipeline (John: "fully automatic, no extra steps
+  // for Larissa"). Every successfully-published standard image post spawns a
+  // ~45-min-delayed Reel of the same card + photos for FB + IG, because
+  // API photo-album posts get poor personal-feed distribution while video
+  // gets FB's best. All guards (image-only, not test, not multi-OH, has
+  // photos, once per source post) live inside maybeKickoffAutoReel; it
+  // never throws. Awaited (not fire-and-forget) because Vercel may freeze
+  // the function right after the response is returned.
+  if (successResults.length > 0 && gp.media_type !== "reel" && !test_mode) {
+    await maybeKickoffAutoReel(gp.id);
   }
 
   const response: SuccessResponse = {
