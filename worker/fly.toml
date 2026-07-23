@@ -16,15 +16,17 @@ primary_region = "iad"
 [http_service]
   internal_port = 8080
   force_https = true
-  # why auto_stop_machines = "stop" + auto_start: idle stops are free,
-  # cold-start on first request is ~1-2s. For a worker called from
-  # human-driven Studio actions this is a great cost trade — the
-  # alternative is ~$5/mo of idle compute.
-  auto_stop_machines = "stop"
+  # 2026-07-23 — autostop DISABLED + one machine always on. why: Fly's
+  # proxy stops a machine when it has no ACTIVE CONNECTIONS — background
+  # CPU work doesn't count. The auto-reel pipeline submits a render and
+  # disconnects (202 fire-and-forget), so the proxy saw an "idle" machine
+  # and killed it MID-RENDER, losing the in-memory job (Palmer Drive reel,
+  # 2026-07-23). The manual Studio flow never hit this because its 1.5s
+  # status polling kept a connection open. Cost of always-on shared-cpu-2x
+  # is ~$4/mo — cheaper than one lost reel.
+  auto_stop_machines = "off"
   auto_start_machines = true
-  # min_machines_running = 0 means a fully idle worker costs $0 in
-  # compute (you still pay for the volume / image storage).
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["app"]
 
   # Fly's built-in HTTP health check, in addition to the Dockerfile's

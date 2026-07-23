@@ -66,6 +66,14 @@ const PUBLISH_DELAY_MS = 45 * 60_000;
 /** Give up on a render job that hasn't finished after this long. */
 const JOB_STALE_MS = 30 * 60_000;
 
+/**
+ * 2026-07-23 — max times finalize will RE-SUBMIT a render whose job the
+ * worker no longer knows about (machine restart / deploy wiped the
+ * in-memory job store — exactly what killed the first Palmer Drive reel).
+ * Capped so a systematically-broken render can't loop forever.
+ */
+const MAX_RESUBMITS = 2;
+
 /** Shape stored under customizations.auto_reel on the reel row. */
 interface AutoReelMeta {
   source_gp_id: string;
@@ -73,6 +81,8 @@ interface AutoReelMeta {
   submitted_at: string;
   /** Source post's posted_at — anchor for the 45-min publish delay. */
   source_posted_at: string | null;
+  /** How many times finalize has re-submitted the render (lost-job heal). */
+  resubmit_count?: number;
   finalized_at?: string;
   failed_at?: string;
   fail_reason?: string;
@@ -134,9 +144,12 @@ async function submitRenderJob(
 
 async function fetchRenderJob(
   jobId: string,
-): Promise<{ ok: true; job: ReelRenderJob } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; job: ReelRenderJob }
+  | { ok: false; notFound: boolean; error: string }
+> {
   const env = readWorkerEnv();
-  if (!env.ok) return { ok: false, error: env.error };
+  if (!env.ok) return { ok: false, notFound: false, error: env.error };
   try {
     const res = await fetch(
       `${env.baseUrl}/render/${encodeURIComponent(jobId)}`,
@@ -147,11 +160,21 @@ async function fetchRenderJob(
     );
     const body = (await res.json()) as ReelRenderJob & { error?: string };
     if (!res.ok) {
-      return { ok: false, error: body.error ?? `worker HTTP ${res.status}` };
+      return {
+        ok: false,
+        // why: 404 means the worker doesn't know this job — its in-memory
+        // store was wiped by a restart/deploy. The caller resubmits.
+        notFound: res.status === 404,
+        error: body.error ?? `worker HTTP ${res.status}`,
+      };
     }
     return { ok: true, job: body };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return {
+      ok: false,
+      notFound: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 
@@ -382,7 +405,7 @@ export async function finalizeAutoReels(): Promise<FinalizeAutoReelsSummary> {
     const sinceIso = new Date(Date.now() - 24 * 3600_000).toISOString();
     const { data: rows, error } = await sbAny
       .from("generated_posts")
-      .select("id, image_url, customizations")
+      .select("id, image_url, customizations, composition_json")
       .eq("template_id", AUTO_REEL_TEMPLATE_ID)
       .eq("media_type", "reel")
       .eq("status", "draft")
@@ -399,19 +422,52 @@ export async function finalizeAutoReels(): Promise<FinalizeAutoReelsSummary> {
       id: string;
       image_url: string | null;
       customizations: unknown;
+      composition_json: unknown;
     }>) {
       const meta = readMeta(row.customizations);
       if (!meta || !meta.job_id) continue;
-      if (meta.failed_at) continue;
+      const resubmits = meta.resubmit_count ?? 0;
+
+      // 2026-07-23 — self-heal previously-failed rows when the failure was
+      // recoverable (lost job / hung worker), up to MAX_RESUBMITS. A render
+      // that FAILED on the worker's side (bad input) stays failed.
+      if (meta.failed_at) {
+        const retryable = /worker unreachable|job not found|not found|did not finish|HTTP 404/i.test(
+          meta.fail_reason ?? "",
+        );
+        if (!retryable || resubmits >= MAX_RESUBMITS) continue;
+        summary.checked += 1;
+        if (await resubmitRow(sbAny, row, meta)) {
+          summary.still_rendering += 1;
+        } else {
+          summary.failed += 1;
+        }
+        continue;
+      }
       summary.checked += 1;
 
       const polled = await fetchRenderJob(meta.job_id);
       if (!polled.ok) {
-        // Transient worker hiccup — try again next tick unless stale.
-        if (isStale(meta)) {
+        if (polled.notFound && resubmits < MAX_RESUBMITS) {
+          // Worker restarted/deployed and lost the in-memory job — resubmit.
+          if (await resubmitRow(sbAny, row, meta)) {
+            summary.still_rendering += 1;
+          } else {
+            summary.failed += 1;
+          }
+        } else if (polled.notFound) {
+          await markFailed(
+            sbAny,
+            row.id,
+            meta,
+            "render job lost and max resubmits reached",
+          );
+          summary.failed += 1;
+        } else if (isStale(meta)) {
           await markFailed(sbAny, row.id, meta, `worker unreachable: ${polled.error}`);
           summary.failed += 1;
         } else {
+          // Transient worker hiccup — try again next tick.
           summary.still_rendering += 1;
         }
         continue;
@@ -464,8 +520,17 @@ export async function finalizeAutoReels(): Promise<FinalizeAutoReelsSummary> {
       } else {
         // queued / processing
         if (isStale(meta)) {
-          await markFailed(sbAny, row.id, meta, "render did not finish in 30 min");
-          summary.failed += 1;
+          // A hung job after 30 min: resubmit once/twice before giving up.
+          if (resubmits < MAX_RESUBMITS) {
+            if (await resubmitRow(sbAny, row, meta)) {
+              summary.still_rendering += 1;
+            } else {
+              summary.failed += 1;
+            }
+          } else {
+            await markFailed(sbAny, row.id, meta, "render did not finish in 30 min");
+            summary.failed += 1;
+          }
         } else {
           summary.still_rendering += 1;
         }
@@ -498,6 +563,57 @@ function readMeta(customizations: unknown): AutoReelMeta | null {
 function isStale(meta: AutoReelMeta): boolean {
   const t = Date.parse(meta.submitted_at);
   return Number.isNaN(t) ? true : Date.now() - t > JOB_STALE_MS;
+}
+
+/**
+ * Re-submit a render whose job the worker lost (restart/deploy wiped the
+ * in-memory store) or that hung past the stale window. Consumes one
+ * resubmit slot and clears any failed_at marker so the normal poll path
+ * resumes next tick. Returns true when the row is back in flight.
+ *
+ * why a failed submit returns true WITHOUT consuming a slot: a transient
+ * network error submitting shouldn't burn one of the two heal attempts —
+ * the row stays in its current state and the next tick tries again.
+ */
+async function resubmitRow(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sbAny: any,
+  row: { id: string; composition_json: unknown },
+  meta: AutoReelMeta,
+): Promise<boolean> {
+  if (!row.composition_json) {
+    await markFailed(sbAny, row.id, meta, "cannot resubmit: row has no composition_json");
+    return false;
+  }
+  const submitted = await submitRenderJob(row.composition_json);
+  if (!submitted.ok) {
+    console.warn(
+      `[auto-reel] resubmit attempt for ${row.id} could not reach worker (${submitted.error}) — will retry next tick`,
+    );
+    return true;
+  }
+  const nextMeta: AutoReelMeta = {
+    source_gp_id: meta.source_gp_id,
+    job_id: submitted.job_id,
+    submitted_at: new Date().toISOString(),
+    source_posted_at: meta.source_posted_at,
+    resubmit_count: (meta.resubmit_count ?? 0) + 1,
+  };
+  const { error } = await sbAny
+    .from("generated_posts")
+    .update({
+      customizations: { auto_reel: nextMeta } as unknown as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id);
+  if (error) {
+    console.error(`[auto-reel] resubmit meta update failed for ${row.id}: ${error.message}`);
+  } else {
+    console.log(
+      `[auto-reel] resubmitted render for ${row.id}: new job ${submitted.job_id} (attempt ${nextMeta.resubmit_count})`,
+    );
+  }
+  return true;
 }
 
 async function markFailed(

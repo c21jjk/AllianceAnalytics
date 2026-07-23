@@ -31,7 +31,10 @@
  *
  *   {closer_line} 🖤💛
  *
- *   #century21alliance #shoredivision #southjerseyrealestate #openhouse #{region}
+ *   #century21alliance [#shoredivision] [#southjerseyrealestate] #openhouse #{region}
+ *
+ * Division tags are CONDITIONAL (2026-07-23): each appears only when the
+ * post actually includes a property from that division.
  *
  * Caption emojis are allowed; the no-emoji rule applies to canvas/image
  * text only. IG / FB cap at 5 hashtags total. TT shortens to one line.
@@ -203,12 +206,39 @@ const TOWN_TAGS: Record<string, string> = {
   longport: "#longportnj",
 };
 
-const BRAND_TAGS: readonly string[] = [
-  "#century21alliance",
-  "#shoredivision",
-  "#southjerseyrealestate",
-  "#openhouse",
-];
+// 2026-07-23 (John) — division tags are CONDITIONAL on what the post
+// actually contains. The old fixed list stamped #shoredivision AND
+// #southjerseyrealestate on every multi-OH caption, so an all-mainland
+// (Bright / South Jersey division) weekend got #shoredivision — on a
+// caption whose own opener said "doesn't have to mean the shore." Rule:
+// a division's tag appears only when at least one property in the post
+// belongs to that division. Division inference reuses SHORE_CITY_PATTERNS
+// (the same signal the tone auto-detector trusts): shore-town match →
+// shore division, everything else → South Jersey division.
+const CORE_LEAD_TAG = "#century21alliance";
+const SHORE_DIVISION_TAG = "#shoredivision";
+const SOUTH_JERSEY_TAG = "#southjerseyrealestate";
+const CORE_TAIL_TAG = "#openhouse";
+
+function buildBrandTags(
+  properties: ReadonlyArray<MultiOHCaptionProperty>,
+): string[] {
+  let shore = 0;
+  let southJersey = 0;
+  for (const p of properties) {
+    const city = (p.city ?? "").toLowerCase();
+    if (SHORE_CITY_PATTERNS.some((pat) => city.includes(pat))) {
+      shore += 1;
+    } else {
+      southJersey += 1;
+    }
+  }
+  const tags: string[] = [CORE_LEAD_TAG];
+  if (shore > 0) tags.push(SHORE_DIVISION_TAG);
+  if (southJersey > 0) tags.push(SOUTH_JERSEY_TAG);
+  tags.push(CORE_TAIL_TAG);
+  return tags;
+}
 
 // ---------------------------------------------------------------------------
 // Tone auto-detection
@@ -867,8 +897,11 @@ export function synthesizeMultiOHCaption(
   const closer = pool.closers[(seed >>> 6) % pool.closers.length];
 
   // ---- Hashtags ----
+  // Division tags are conditional on the post's actual property mix —
+  // see buildBrandTags (2026-07-23).
+  const brandTags = buildBrandTags(properties);
   const regionalTag = pickRegionalTag(properties, resolvedTone);
-  const fixedTags = regionalTag ? [...BRAND_TAGS, regionalTag] : [...BRAND_TAGS];
+  const fixedTags = regionalTag ? [...brandTags, regionalTag] : [...brandTags];
   const igTags = fixedTags.slice(0, 5);
   const fbTags = fixedTags.slice(0, 5);
   const ttTags = fixedTags.slice(0, 5);

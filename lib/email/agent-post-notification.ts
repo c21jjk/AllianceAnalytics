@@ -26,7 +26,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
-import { getPublicAppUrl } from "@/lib/app-url";
 
 const PLATFORM_LABELS: Record<string, string> = {
   facebook: "Facebook",
@@ -111,25 +110,17 @@ export async function sendAgentEngagementEmail(args: {
     )
     .join("");
 
-  let storyLine = "";
-  if (row.story_url_path) {
-    try {
-      const base = await getPublicAppUrl();
-      storyLine = `<p style="margin:16px 0 0;">Your seller's live report: <a href="${escapeAttr(
-        `${base}${row.story_url_path}`,
-      )}" style="color:#C9A84C;">Owner Story</a></p>`;
-    } catch {
-      // Base URL resolution is a nice-to-have; skip the line on failure.
-    }
-  }
-
+  // 2026-07-23 (John) — NO Owner Story link in this email. Minutes after a
+  // post goes live the report's reach/engagement numbers are zero or near
+  // zero, which undercuts the email's one job: "go engage with the post
+  // right now." The weekly Monday Owner Story email remains the metrics
+  // surface, by which point there are real numbers to show.
   const html = `
   <div style="font-family:Barlow,Helvetica,Arial,sans-serif;color:#252526;max-width:560px;margin:0 auto;padding:24px;">
     <p style="margin:0 0 12px;">Hi ${escapeHtml(firstName)},</p>
     <p style="margin:0 0 12px;">Your listing at <strong>${escapeHtml(address)}</strong> just went live on ${escapeHtml(platformsText)}:</p>
     <ul style="margin:0 0 4px;padding-left:20px;">${linksHtml}</ul>
     <p style="margin:16px 0 0;"><strong>One quick favor: open the post and like, comment, or share it now.</strong> Engagement in the first hour tells Facebook and Instagram to show the post to far more people, so a 10 second tap directly buys your seller more exposure.</p>
-    ${storyLine}
     <p style="margin:24px 0 0;color:#6b6b6b;font-size:13px;">Century 21 Alliance | Alliance Social Analytics</p>
   </div>`;
 

@@ -1098,6 +1098,42 @@
     coming_soon: "COMING SOON",
   };
 
+  // Open-house date/time formatters — PINNED to America/New_York
+  // (2026-07-23). why: this file runs in headless Chromium whose clock is
+  // UTC; formatting without an explicit timeZone printed UTC wall time on
+  // published slides ("4:00 PM – 6:00 PM" for a 12–2 PM open house).
+  // Mirrors fabric-factory.ts's formatOpenHouseDate / TimeRange exactly.
+  var OPEN_HOUSE_DATE_FMT = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    timeZone: "America/New_York",
+  });
+  var OPEN_HOUSE_TIME_FMT = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  });
+
+  function formatOpenHouseDateET(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return OPEN_HOUSE_DATE_FMT.format(d);
+  }
+
+  function formatOpenHouseTimeRangeET(startIso, endIso) {
+    if (!startIso) return "";
+    var start = new Date(startIso);
+    if (isNaN(start.getTime())) return "";
+    var startStr = OPEN_HOUSE_TIME_FMT.format(start);
+    if (!endIso) return startStr;
+    var end = new Date(endIso);
+    if (isNaN(end.getTime())) return startStr;
+    // en-dash per C21 brand style, same as fabric-factory.ts.
+    return startStr + " – " + OPEN_HOUSE_TIME_FMT.format(end);
+  }
+
   /**
    * Resolve a TextBoundField against an MLSListingPayload-shaped object.
    * Returns empty string for unknown fields rather than throwing — keeps
@@ -1161,15 +1197,14 @@
       case "office_name":
         return listing.officeName || "";
       case "open_house_date":
+        // 2026-07-23 — real formatting (Eastern-pinned), replacing the old
+        // raw-ISO fallback that leaked ISO strings onto rendered slides.
+        return formatOpenHouseDateET(listing.openHouseStartUtc);
       case "open_house_time":
-        // why: full date / time formatting matches the main app's
-        // formatOpenHouseDate / formatOpenHouseTimeRange — those use the
-        // browser's Intl.DateTimeFormat. For server-side renders the
-        // raw ISO string is the safest fallback; richer formatting can
-        // be added if templates start using these fields.
-        return field === "open_house_date"
-          ? listing.openHouseStartUtc || ""
-          : listing.openHouseStartUtc || "";
+        return formatOpenHouseTimeRangeET(
+          listing.openHouseStartUtc,
+          listing.openHouseEndUtc,
+        );
       default:
         // why: warn-not-throw matches the layer-kind dispatch — an unknown
         // field is recoverable (text just renders empty); a throw would

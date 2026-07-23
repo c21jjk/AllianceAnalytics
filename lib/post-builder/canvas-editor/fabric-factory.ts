@@ -142,15 +142,26 @@ export function formatSquareFeet(sqft: number | null): string {
   return `${sqft.toLocaleString("en-US")} Sq Ft`;
 }
 
+// why timeZone is PINNED (2026-07-23): without it, Intl.DateTimeFormat uses
+// the RUNTIME's timezone. In an agent's Eastern-timezone browser the preview
+// looked right, but the headless Chromium render pipeline runs in UTC — so a
+// published slide printed "4:00 PM – 6:00 PM" for a 12–2 PM open house
+// (Larissa caught it on the 7/23 multi-OH post; the caption path in
+// captions.ts always pinned the zone, which is why IT was correct). An
+// evening open house could even print the wrong DAY. All listings are New
+// Jersey, so America/New_York is always the right wall clock. Never remove
+// these timeZone pins.
 const OPEN_HOUSE_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   weekday: "long",
   month: "long",
   day: "numeric",
+  timeZone: "America/New_York",
 });
 
 const OPEN_HOUSE_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit",
+  timeZone: "America/New_York",
 });
 
 export function formatOpenHouseDate(iso: string | null): string {
