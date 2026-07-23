@@ -45,6 +45,13 @@ interface SuccessResponse {
   ok: true;
   results: PublishResult[];
   posted_to: Platform[];
+  /**
+   * 2026-07-23 — platforms that were requested but skipped because this row
+   * already published to them. Lets the UI say "already posted to Facebook"
+   * instead of silently double-posting (which is what used to happen when a
+   * partial-failure retry re-sent every checked platform).
+   */
+  skipped_already_posted?: Platform[];
 }
 
 interface ErrorResponse {
@@ -155,6 +162,28 @@ export async function POST(request: Request) {
     );
   }
 
+  // 2026-07-23 — never double-post. Platforms this row already published to
+  // are removed from the requested set instead of being re-published. Before
+  // this, a retry after a partial failure (e.g. FB ok, IG "Media ID is not
+  // available") re-sent every checked platform and produced a duplicate FB
+  // post. Skipped platforms are surfaced in the response so the UI can say
+  // "already posted" rather than showing a fresh success.
+  const alreadyPostedTo = (gp.posted_to ?? []) as Platform[];
+  const skippedAlreadyPosted = platforms.filter((p) =>
+    alreadyPostedTo.includes(p),
+  );
+  const platformsToPublish = platforms.filter(
+    (p) => !alreadyPostedTo.includes(p),
+  );
+  if (platformsToPublish.length === 0) {
+    return NextResponse.json({
+      ok: true,
+      results: [],
+      posted_to: alreadyPostedTo,
+      skipped_already_posted: skippedAlreadyPosted,
+    } satisfies SuccessResponse);
+  }
+
   // Phase D — per-platform captions. Each platform reads its tuned
   // variant from `captions_by_platform`, falling back to the legacy
   // single `caption` column when the per-platform map is empty or
@@ -230,7 +259,7 @@ export async function POST(request: Request) {
     // why: FB Page videos only require the MP4 URL. No cover required —
     // FB pulls a poster automatically (and we don't expose a cover picker
     // for FB videos anyway).
-    if (platforms.includes("facebook") && creds) {
+    if (platformsToPublish.includes("facebook") && creds) {
       if (!gp.video_url) {
         tasks.push(
           Promise.resolve({
@@ -255,7 +284,7 @@ export async function POST(request: Request) {
     // gp.image_url (the rendered cover frame produced by the worker on
     // Day 2). Without it Meta will pull frame[0] which is usually a
     // blank / black frame for ours.
-    if (platforms.includes("instagram") && creds) {
+    if (platformsToPublish.includes("instagram") && creds) {
       if (!gp.video_url) {
         tasks.push(
           Promise.resolve({
@@ -290,7 +319,7 @@ export async function POST(request: Request) {
     // /v2/post/publish/video/init/ endpoint, poll status with a 60s
     // deadline. The TT credential lookup already ran; if it's null we
     // just skip silently like the other branches.
-    if (platforms.includes("tiktok") && ttCreds) {
+    if (platformsToPublish.includes("tiktok") && ttCreds) {
       if (!gp.video_url) {
         tasks.push(
           Promise.resolve({
@@ -389,7 +418,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (platforms.includes("facebook") && creds) {
+    if (platformsToPublish.includes("facebook") && creds) {
       tasks.push(
         publishToFBPage({
           creds,
@@ -399,7 +428,7 @@ export async function POST(request: Request) {
         }),
       );
     }
-    if (platforms.includes("instagram") && creds) {
+    if (platformsToPublish.includes("instagram") && creds) {
       tasks.push(
         publishToIG({
           creds,
@@ -409,7 +438,7 @@ export async function POST(request: Request) {
         }),
       );
     }
-    if (platforms.includes("tiktok") && ttCreds) {
+    if (platformsToPublish.includes("tiktok") && ttCreds) {
       tasks.push(
         publishToTikTok({
           creds: ttCreds,
@@ -439,7 +468,24 @@ export async function POST(request: Request) {
   // post back to this builder row by permalink (stable, identical on both
   // sides), which is what links Open House posts (no MLS# in caption) to their
   // homes. Stored on platform_permalinks (jsonb), keyed by platform.
-  const newPermalinks: Record<string, string> = {};
+  //
+  // 2026-07-23 — MERGE with the existing permalinks instead of overwriting.
+  // Before this, an IG-only retry after a partial failure wiped the stored
+  // FB permalink (the update wrote only the current attempt's links).
+  // platform_permalinks isn't in the generated Database types yet, so it's
+  // read through an untyped client — same pattern as the update below.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sbAnyRead = supabase as any;
+  const { data: permRow } = await sbAnyRead
+    .from("generated_posts")
+    .select("platform_permalinks")
+    .eq("id", gp.id)
+    .maybeSingle();
+  const existingPermalinks = (permRow?.platform_permalinks ?? {}) as Record<
+    string,
+    string
+  >;
+  const newPermalinks: Record<string, string> = { ...existingPermalinks };
   for (const r of successResults) {
     if (r.permalink) newPermalinks[r.platform] = r.permalink;
   }
@@ -504,6 +550,9 @@ export async function POST(request: Request) {
     ok: true,
     results,
     posted_to: newPostedTo as Platform[],
+    ...(skippedAlreadyPosted.length > 0
+      ? { skipped_already_posted: skippedAlreadyPosted }
+      : {}),
   };
   return NextResponse.json(response);
 }

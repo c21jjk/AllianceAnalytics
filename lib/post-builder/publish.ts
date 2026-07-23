@@ -253,7 +253,7 @@ export async function publishToFBPage(args: {
         // platform_post_id above for downstream traceability.
         permalink: test_mode
           ? `https://business.facebook.com/latest/content?asset_id=${creds.page_id}`
-          : `https://www.facebook.com/${postId}`,
+          : fbPostPermalink(postId, creds.page_id),
       };
     }
 
@@ -303,7 +303,7 @@ export async function publishToFBPage(args: {
       platform_post_id: String(json.id),
       permalink: test_mode
         ? `https://business.facebook.com/latest/content?asset_id=${creds.page_id}`
-        : `https://www.facebook.com/${json.id}`,
+        : fbPostPermalink(String(json.id), creds.page_id),
     };
   } catch (e) {
     return {
@@ -312,6 +312,26 @@ export async function publishToFBPage(args: {
       error: fetchErrorMessage(e),
     };
   }
+}
+
+/**
+ * Build a Page-post permalink that resolves everywhere.
+ *
+ * why: `https://www.facebook.com/{pageId}_{storyId}` and even Graph's own
+ * `permalink_url` (`/{numericProfileId}/posts/{storyId}`) open fine on
+ * desktop but the FB mobile app / in-app browsers intermittently refuse
+ * them with "This isn't available" (seen 2026-07-23 — Larissa couldn't
+ * open the 1 Palmer Drive post John could). The long-standing
+ * `permalink.php?story_fbid=...&id=...` form redirects correctly on every
+ * surface, so it's what we store and show. Falls back to the raw-id form
+ * when the post id isn't the expected `{pageId}_{storyId}` shape.
+ */
+function fbPostPermalink(postId: string, pageId: string): string {
+  const parts = postId.split("_");
+  if (parts.length === 2 && parts[1]) {
+    return `https://www.facebook.com/permalink.php?story_fbid=${parts[1]}&id=${pageId}`;
+  }
+  return `https://www.facebook.com/${postId}`;
 }
 
 /**
@@ -429,19 +449,80 @@ export async function publishToIG(args: {
       };
     }
 
+    // 2026-07-23 — wait for the container to finish processing before
+    // publishing. Image/carousel containers are processed asynchronously by
+    // Meta, exactly like Reels — just faster. Publishing immediately fails
+    // intermittently with Graph code 9007 "Media ID is not available"
+    // (container still IN_PROGRESS) — this is what killed Larissa's
+    // 1 Palmer Drive carousel on the 6:55 AM publish. Mirrors the poll loop
+    // in publishReelToIG. Image containers typically finish in 1–5s; the
+    // first check runs immediately so the fast path adds no latency.
+    // 15 polls × 2s = 30s ceiling keeps the worst case inside the route's
+    // 60s maxDuration even after the child-creation round-trips.
+    const POLL_INTERVAL_MS = 2_000;
+    const MAX_POLLS = 15;
+    let containerStatus = "IN_PROGRESS";
+    for (let i = 0; i < MAX_POLLS; i++) {
+      const statusRes = await fetch(
+        `${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(igAccessToken)}`,
+        { signal: AbortSignal.timeout(POLL_FETCH_TIMEOUT_MS) },
+      );
+      const statusJson = (await statusRes.json()) as IGContainerStatus;
+      if (!statusRes.ok && statusJson.error) {
+        return classifyFBError(statusJson, "instagram");
+      }
+      containerStatus = statusJson.status_code ?? "IN_PROGRESS";
+      if (containerStatus === "FINISHED" || containerStatus === "PUBLISHED") {
+        break;
+      }
+      if (containerStatus === "ERROR" || containerStatus === "EXPIRED") {
+        return {
+          ok: false,
+          platform: "instagram",
+          error: `IG container ${containerStatus} during processing. One of the images may be unreachable, too large, or an unsupported format.`,
+        };
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    if (containerStatus !== "FINISHED" && containerStatus !== "PUBLISHED") {
+      return {
+        ok: false,
+        platform: "instagram",
+        error: `IG container did not finish processing in ${(POLL_INTERVAL_MS * MAX_POLLS) / 1000}s (last status: ${containerStatus}). Try again — Meta may still be processing the images.`,
+      };
+    }
+
     // Publish the container.
+    // why: belt-and-suspenders — even after status_code=FINISHED, Meta can
+    // briefly return code 9007 ("Media ID is not available") while the
+    // container propagates. Retry a couple of times with a short backoff
+    // before surfacing the error; any other error code fails immediately.
     const publishUrl = `${GRAPH}/${igId}/media_publish`;
-    const body = new URLSearchParams({
-      creation_id: creationId,
-      access_token: igAccessToken,
-    });
-    const res = await fetch(publishUrl, {
-      method: "POST",
-      body,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    const json = await res.json();
-    if (!res.ok || !json.id) return classifyFBError(json, "instagram");
+    const PUBLISH_ATTEMPTS = 3;
+    const PUBLISH_RETRY_DELAY_MS = 4_000;
+    let json: {
+      id?: string;
+      error?: { message?: string; code?: number; error_subcode?: number };
+    } = {};
+    for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
+      const body = new URLSearchParams({
+        creation_id: creationId,
+        access_token: igAccessToken,
+      });
+      const res = await fetch(publishUrl, {
+        method: "POST",
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      json = (await res.json()) as typeof json;
+      if (res.ok && json.id) break;
+      const notReady = json?.error?.code === 9007;
+      if (!notReady || attempt === PUBLISH_ATTEMPTS - 1) {
+        return classifyFBError(json, "instagram");
+      }
+      await new Promise((r) => setTimeout(r, PUBLISH_RETRY_DELAY_MS));
+    }
+    if (!json.id) return classifyFBError(json, "instagram");
 
     const mediaId = String(json.id);
 
