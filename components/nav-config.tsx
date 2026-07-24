@@ -36,6 +36,19 @@ const ICON: Record<string, ReactNode> = {
         h("circle", { key: "h2", cx: "17", cy: "9", r: "2.6", ...STROKE }),
         h("path", { key: "b2", d: "M14.5 16.5c.7-1.7 2.4-2.7 4.4-2.7 1.5 0 2.7.5 3.5 1.4", ...STROKE, strokeLinecap: "round" }),
     ]),
+    // --- Mobile bottom-tab icons (PWA shell) ---
+    create: h("svg", SVG_PROPS, [
+        h("circle", { key: "c", cx: "12", cy: "12", r: "8.5", ...STROKE }),
+        h("path", { key: "p", d: "M12 8.5v7M8.5 12h7", ...STROKE, strokeLinecap: "round" }),
+    ]),
+    track: h("svg", SVG_PROPS, [
+        h("path", { key: "axis", d: "M4 4v15a1 1 0 001 1h15", ...STROKE, strokeLinecap: "round" }),
+        h("path", { key: "line", d: "M7.5 15.5l3.5-4 3 2.5 4.5-6", ...STROKE, strokeLinecap: "round", strokeLinejoin: "round" }),
+    ]),
+    alerts: h("svg", SVG_PROPS, [
+        h("path", { key: "bell", d: "M18 9.5a6 6 0 10-12 0c0 5-1.8 6.3-1.8 6.3h15.6S18 14.5 18 9.5z", ...STROKE, strokeLinecap: "round", strokeLinejoin: "round" }),
+        h("path", { key: "clapper", d: "M10.3 19.5a2 2 0 003.4 0", ...STROKE, strokeLinecap: "round" }),
+    ]),
 };
 export function getNavItems(role: "admin" | "user"): NavItem[] {
     // Users management lives under Settings → Users (via the AccountMenu).
@@ -50,4 +63,20 @@ export function getNavItems(role: "admin" | "user"): NavItem[] {
         { href: "/reports", label: "Reports", icon: ICON.reports },
         ];
     return base.filter(function (i) { return !i.adminOnly || role === "admin"; });
+}
+
+/**
+ * Mobile bottom-tab items (phone widths only — the desktop TopNav keeps
+ * the full getNavItems set). Four thumb-sized tabs matching the on-the-go
+ * jobs: Home (dashboard), Create (mobile quick-create + multi-OH), Track
+ * (recent-post performance), Alerts (publish results + AI performance
+ * alerts, plus the push-notification opt-in).
+ */
+export function getMobileNavItems(_role: "admin" | "user"): NavItem[] {
+    return [
+        { href: "/", label: "Home", icon: ICON.dashboard },
+        { href: "/m/create", label: "Create", icon: ICON.create },
+        { href: "/m/track", label: "Track", icon: ICON.track },
+        { href: "/m/alerts", label: "Alerts", icon: ICON.alerts },
+    ];
 }

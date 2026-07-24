@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/office-post-announcements",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/performance-alerts",
+      "schedule": "0 14 * * *"
     }
   ],
   "functions": {

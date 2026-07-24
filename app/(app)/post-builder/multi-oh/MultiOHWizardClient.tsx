@@ -8,6 +8,8 @@ import {
   AlertCircle,
   AlertTriangle,
   Check,
+  ChevronLeft,
+  ChevronRight,
   GripVertical,
   Loader2,
   Pencil,
@@ -720,6 +722,23 @@ export default function MultiOHWizardClient({
     [],
   );
 
+  // ---- touch reorder (mobile) ------------------------------------------
+  // why: native HTML5 drag events never fire on touch screens, so the
+  // iPhone PWA gets explicit "move earlier / later" buttons on each tile.
+  // Same pure splice on selectedMls the drop handler performs — one state
+  // shape, two input methods. (2026-07-24, mobile build.)
+  const onMoveSlide = useCallback((mls: string, direction: -1 | 1): void => {
+    setSelectedMls((prev) => {
+      const fromIdx = prev.indexOf(mls);
+      const toIdx = fromIdx + direction;
+      if (fromIdx < 0 || toIdx < 0 || toIdx >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  }, []);
+
   // ---- generate (NDJSON streaming) -------------------------------------
 
   /**
@@ -1163,6 +1182,7 @@ export default function MultiOHWizardClient({
             onDragStart={onDragStart}
             onDragOver={onDragOver}
             onDrop={onDrop}
+            onMoveSlide={onMoveSlide}
           />
         ) : null}
       </div>
@@ -1947,6 +1967,8 @@ interface Step3Props {
   onDragStart: (mls: string) => void;
   onDragOver: (e: React.DragEvent<HTMLElement>) => void;
   onDrop: (targetMls: string) => void;
+  /** Touch-friendly reorder (mobile) — move a slide one step earlier/later. */
+  onMoveSlide: (mls: string, direction: -1 | 1) => void;
 }
 
 function Step3Review({
@@ -1963,6 +1985,7 @@ function Step3Review({
   onDragStart,
   onDragOver,
   onDrop,
+  onMoveSlide,
 }: Step3Props) {
   // ---- Caption synth — debounced AI preview with deterministic fallback -
   // 2026-05-28 — switched from local deterministic synth to a debounced
@@ -2104,7 +2127,9 @@ function Step3Review({
           </h3>
           <span className="text-xs text-neutral-500">
             {selectedListings.length} slide{selectedListings.length === 1 ? "" : "s"}
-            {" · "}drag tiles to reorder
+            {" · "}
+            <span className="hidden sm:inline">drag tiles to reorder</span>
+            <span className="sm:hidden">tap arrows to reorder</span>
           </span>
         </div>
         <CarouselReorderGrid
@@ -2112,6 +2137,7 @@ function Step3Review({
           onDragStart={onDragStart}
           onDragOver={onDragOver}
           onDrop={onDrop}
+          onMoveSlide={onMoveSlide}
         />
       </div>
 
@@ -2246,6 +2272,8 @@ interface CarouselReorderGridProps {
   onDragStart: (mls: string) => void;
   onDragOver: (e: React.DragEvent<HTMLElement>) => void;
   onDrop: (targetMls: string) => void;
+  /** Touch reorder — move a slide one step earlier/later. */
+  onMoveSlide: (mls: string, direction: -1 | 1) => void;
 }
 
 function CarouselReorderGrid({
@@ -2253,6 +2281,7 @@ function CarouselReorderGrid({
   onDragStart,
   onDragOver,
   onDrop,
+  onMoveSlide,
 }: CarouselReorderGridProps) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -2264,6 +2293,12 @@ function CarouselReorderGrid({
           onDragStart={() => onDragStart(l.mls_number)}
           onDragOver={onDragOver}
           onDrop={() => onDrop(l.mls_number)}
+          onMoveEarlier={idx > 0 ? () => onMoveSlide(l.mls_number, -1) : null}
+          onMoveLater={
+            idx < selectedListings.length - 1
+              ? () => onMoveSlide(l.mls_number, 1)
+              : null
+          }
         />
       ))}
     </div>
@@ -2276,6 +2311,9 @@ interface CarouselReorderTileProps {
   onDragStart: () => void;
   onDragOver: (e: React.DragEvent<HTMLElement>) => void;
   onDrop: () => void;
+  /** Null at the ends of the list (button hidden). */
+  onMoveEarlier: (() => void) | null;
+  onMoveLater: (() => void) | null;
 }
 
 function CarouselReorderTile({
@@ -2284,6 +2322,8 @@ function CarouselReorderTile({
   onDragStart,
   onDragOver,
   onDrop,
+  onMoveEarlier,
+  onMoveLater,
 }: CarouselReorderTileProps) {
   const baseAddress = (listing.address ?? "").trim();
   const unit = (listing.unit_number ?? "").trim();
@@ -2325,13 +2365,37 @@ function CarouselReorderTile({
         >
           {position}
         </span>
-        {/* Grip handle */}
+        {/* Grip handle (pointer devices) */}
         <span
           aria-hidden="true"
-          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-white/85 text-neutral-700 flex items-center justify-center shadow-sm opacity-70 group-hover:opacity-100"
+          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-white/85 text-neutral-700 hidden sm:flex items-center justify-center shadow-sm opacity-70 group-hover:opacity-100"
         >
           <GripVertical size={14} />
         </span>
+        {/* Touch reorder buttons — HTML5 drag never fires on touch, so
+            phones get explicit earlier/later controls (2026-07-24). */}
+        <div className="absolute bottom-1.5 right-1.5 flex gap-1 sm:hidden">
+          {onMoveEarlier ? (
+            <button
+              type="button"
+              aria-label="Move slide earlier"
+              onClick={onMoveEarlier}
+              className="w-8 h-8 rounded-md bg-white/90 text-neutral-800 flex items-center justify-center shadow-sm active:bg-white"
+            >
+              <ChevronLeft size={16} />
+            </button>
+          ) : null}
+          {onMoveLater ? (
+            <button
+              type="button"
+              aria-label="Move slide later"
+              onClick={onMoveLater}
+              className="w-8 h-8 rounded-md bg-white/90 text-neutral-800 flex items-center justify-center shadow-sm active:bg-white"
+            >
+              <ChevronRight size={16} />
+            </button>
+          ) : null}
+        </div>
       </div>
       {/* Caption block */}
       <div className="p-2.5">

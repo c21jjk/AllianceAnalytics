@@ -29,6 +29,7 @@ import {
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
+import { notifyAdmins } from "@/lib/push/send";
 import { maybeKickoffAutoReel } from "@/lib/post-builder/auto-reel";
 
 export const dynamic = "force-dynamic";
@@ -550,6 +551,49 @@ export async function POST(request: Request) {
     } catch (e) {
       console.error("[post] agent notification failed:", e);
     }
+  }
+
+  // 2026-07-24 — Mobile push (Phase D). Ping the admins' phones the moment
+  // the post is live / failed, alongside the agent email hook. Best-effort:
+  // a notification problem never affects the publish response.
+  try {
+    const prettyPlatform = (p: string) =>
+      p === "facebook" ? "Facebook" : p === "instagram" ? "Instagram" : "TikTok";
+    if (successResults.length > 0) {
+      const livePlatforms = successResults.map((r) => prettyPlatform(r.platform));
+      const firstPermalink =
+        successResults.find((r) => r.permalink)?.permalink ?? null;
+      await notifyAdmins({
+        type: "publish_result",
+        title: `Post live on ${livePlatforms.join(" + ")}`,
+        body: `${gp.mls_number} — ${(captionBody || "").slice(0, 120)}`,
+        url: firstPermalink ?? "/m/track",
+        tag: `publish-${gp.id}`,
+        metadata: {
+          generated_post_id: gp.id,
+          mls_number: gp.mls_number,
+          platforms: successResults.map((r) => r.platform),
+          url: firstPermalink ?? "/m/track",
+        },
+      });
+    }
+    if (failureResults.length > 0) {
+      await notifyAdmins({
+        type: "publish_failure",
+        title: `Publish failed on ${failureResults.map((r) => prettyPlatform(r.platform)).join(" + ")}`,
+        body: `${gp.mls_number} — ${failureResults.map((r) => r.error).join(" · ").slice(0, 160)}`,
+        url: "/saved-posts",
+        tag: `publish-fail-${gp.id}`,
+        metadata: {
+          generated_post_id: gp.id,
+          mls_number: gp.mls_number,
+          errors: failureResults.map((r) => ({ platform: r.platform, error: r.error })),
+          url: "/saved-posts",
+        },
+      });
+    }
+  } catch (e) {
+    console.error("[post] admin push notification failed:", e);
   }
 
   // 2026-07-23 — Auto-Reel pipeline (John: "fully automatic, no extra steps

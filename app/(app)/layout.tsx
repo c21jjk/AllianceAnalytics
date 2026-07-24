@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { TopNav, BottomNav } from "@/components/Nav";
-import { getNavItems } from "@/components/nav-config";
+import { getNavItems, getMobileNavItems } from "@/components/nav-config";
 import BackButton from "@/components/BackButton";
 import LastActiveBeacon from "@/components/LastActiveBeacon";
 
@@ -25,7 +25,9 @@ export default async function ProtectedLayout({
         </div>
         {children}
       </main>
-      <BottomNav items={items} />
+      {/* Phone widths get the 4-tab mobile set (Home/Create/Track/Alerts);
+          desktop keeps the full TopNav tab list. */}
+      <BottomNav items={getMobileNavItems(profile.role)} />
       {/* @modal parallel slot: renders the post-detail drawer overlay when an
           intercepting (.)posts/[id] route is matched. Empty otherwise. */}
       {modal}

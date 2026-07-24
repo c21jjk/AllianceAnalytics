@@ -52,6 +52,7 @@ import {
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
+import { notifyAdmins } from "@/lib/push/send";
 import {
   AUTO_REEL_TEMPLATE_ID,
   finalizeAutoReels,
@@ -671,6 +672,60 @@ async function processRow(
     } catch (e) {
       console.error("[cron/publish-scheduled] agent notification failed:", e);
     }
+  }
+
+  // 2026-07-24 — Mobile push (Phase D), mirroring the Post Now route.
+  // Success pushes are SKIPPED for auto-generated reels (same rule as the
+  // agent email — the photo post already pinged ~45 min earlier); failures
+  // always push, auto-reel or not, because a stuck pipeline is exactly
+  // what the admins need to know about. Best-effort; never blocks the row.
+  try {
+    const prettyPlatform = (p: string) =>
+      p === "facebook" ? "Facebook" : p === "instagram" ? "Instagram" : "TikTok";
+    if (
+      summary.succeeded.length > 0 &&
+      row.template_id !== AUTO_REEL_TEMPLATE_ID
+    ) {
+      const firstPermalink =
+        successPermalinks.find((s) => s.url)?.url ?? null;
+      await notifyAdmins({
+        type: "publish_result",
+        title: `Scheduled post live on ${summary.succeeded.map(prettyPlatform).join(" + ")}`,
+        body: `${row.mls_number} — ${(caption ?? "").slice(0, 120)}`,
+        url: firstPermalink ?? "/m/track",
+        tag: `publish-${row.id}`,
+        metadata: {
+          generated_post_id: row.id,
+          mls_number: row.mls_number,
+          platforms: summary.succeeded,
+          url: firstPermalink ?? "/m/track",
+        },
+      });
+    }
+    // Only push a failure the FIRST time a platform fails for this row —
+    // the cron retries every 5 minutes and a persistent outage would
+    // otherwise buzz the phone at the same cadence.
+    const newlyFailed = summary.failed.filter((p) => !existingErrors[p]);
+    if (newlyFailed.length > 0) {
+      const failDetails = newlyFailed
+        .map((p) => `${prettyPlatform(p)}: ${nextErrors[p]?.error ?? "failed"}`)
+        .join(" · ");
+      await notifyAdmins({
+        type: "publish_failure",
+        title: `Scheduled publish failed on ${newlyFailed.map(prettyPlatform).join(" + ")}`,
+        body: `${row.mls_number} — ${failDetails.slice(0, 160)} (will retry next tick)`,
+        url: "/saved-posts",
+        tag: `publish-fail-${row.id}`,
+        metadata: {
+          generated_post_id: row.id,
+          mls_number: row.mls_number,
+          failed_platforms: newlyFailed,
+          url: "/saved-posts",
+        },
+      });
+    }
+  } catch (e) {
+    console.error("[cron/publish-scheduled] admin push failed:", e);
   }
 
   // 2026-07-23 — Auto-Reel kickoff for SCHEDULED image posts, mirroring the

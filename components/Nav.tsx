@@ -118,12 +118,17 @@ export function TopNav({
   );
 }
 
-/** Mobile bottom nav — unchanged from the sidebar era. */
+/**
+ * Mobile bottom tab bar (PWA shell). Thumb-sized targets, safe-area
+ * padding for the iPhone home indicator (requires viewport-fit=cover,
+ * set in the root layout's viewport export).
+ */
 export function BottomNav({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
   return (
     <nav
       className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-neutral-200 bg-white/95 backdrop-blur"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Primary"
     >
       <ul
@@ -139,7 +144,7 @@ export function BottomNav({ items }: { items: NavItem[] }) {
               <Link
                 href={item.href}
                 className={clsx(
-                  "flex flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-medium",
+                  "flex min-h-[52px] flex-col items-center justify-center gap-1 py-2 text-[11px] font-medium",
                   active ? "text-gold-700" : "text-neutral-500",
                 )}
               >
