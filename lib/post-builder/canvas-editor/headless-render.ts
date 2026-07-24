@@ -40,6 +40,7 @@ import {
   drawImageBorders,
   resolveImageBoundField,
   resolveTextBoundField,
+  shrinkTextToIntendedLines,
 } from "./fabric-factory";
 
 // ---------------------------------------------------------------------------
@@ -302,33 +303,6 @@ function collectFontFamilies(schema: CanvasTemplateSchema): string[] {
   return Array.from(seen);
 }
 
-
-/**
- * Shrink a Textbox's font until its wrapped line count fits the line count
- * the layer's authored height implies. Fabric wraps at the fixed box width,
- * so overflow shows up as EXTRA LINES — which then collide with whatever
- * layer sits below (the address/town overlap bug, 2026-07-17). Floor: 55% of
- * the authored size, so pathological data can't shrink text into
- * illegibility (at the floor, wrapping remains but that beats unreadable).
- */
-function shrinkTextToIntendedLines(
-  tb: { textLines?: unknown[]; set: (props: Record<string, unknown>) => unknown; initDimensions?: () => void },
-  authoredFontSize: number,
-  authoredHeight: number,
-  lineHeight: number,
-): void {
-  const lh = lineHeight > 0 ? lineHeight : 1.16;
-  const intendedLines = Math.max(
-    1,
-    Math.round(authoredHeight / (authoredFontSize * lh)),
-  );
-  const minSize = Math.max(10, Math.floor(authoredFontSize * 0.55));
-  let size = authoredFontSize;
-  const lineCount = () =>
-    Array.isArray(tb.textLines) ? tb.textLines.length : 1;
-  while (lineCount() > intendedLines && size > minSize) {
-    size -= 1;
-    tb.set({ fontSize: size });
-    tb.initDimensions?.();
-  }
-}
+// shrinkTextToIntendedLines moved to fabric-factory.ts (2026-07-24) so
+// CanvasEditor.tsx (the live Studio editor) can share the same fix — see
+// that file for the full doc comment.

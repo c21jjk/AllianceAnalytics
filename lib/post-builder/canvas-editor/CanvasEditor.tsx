@@ -114,6 +114,7 @@ import {
   resolveTextBoundField,
   setLayerBoundField,
   setLayerData,
+  shrinkTextToIntendedLines,
 } from "./fabric-factory";
 import {
   buildPlaceholderObject,
@@ -1320,6 +1321,19 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             // satisfy TS.
             if (obj instanceof Textbox) {
               obj.set({ text: resolved });
+              // 2026-07-24 — re-run the same shrink-to-fit the initial
+              // hydrate + the headless publish render apply. Without this,
+              // rebinding onto a NEW listing (e.g. reopening Studio, or the
+              // wizard swapping in fresh MLS data) could re-wrap a long
+              // address across two lines and overlap the layer below, even
+              // though the initial mount already fit it — same bug, one
+              // more path in.
+              shrinkTextToIntendedLines(
+                obj,
+                schemaLayer.fontSize,
+                schemaLayer.height,
+                schemaLayer.lineHeight,
+              );
             }
           }
         } else if (
@@ -1404,6 +1418,22 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             layer,
             resolved.trim() || layer.text,
           );
+          // 2026-07-24 — shrink-to-fit for bound text, mirroring the
+          // headless publish render (headless-render.ts). Live MLS data
+          // can be longer than the design-time placeholder — "210
+          // Congressional Court" wrapped onto a second line and overlapped
+          // "MOORESTOWN" below it in Studio, even though the published PNG
+          // was already correct (that path has applied this fix since
+          // 2026-07-17). Free-text (non-bound) layers are left untouched —
+          // their content is exactly what the designer typed.
+          if (layer.boundField) {
+            shrinkTextToIntendedLines(
+              tb,
+              layer.fontSize,
+              layer.height,
+              layer.lineHeight,
+            );
+          }
           fabricRef.current.add(tb);
         } else if (isImageLayer(layer)) {
           // why: the load was started eagerly above; this await just joins
@@ -2111,6 +2141,115 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     onAutosaveDesignRef.current = onAutosaveDesign;
   }, [onAutosaveDesign]);
 
+  // 2026-07-24 (John) — "Save Changes" button + a data-loss fix for the
+  // per-slide Multi-OH editor. Switching slides (clicking a different
+  // carousel thumbnail's pencil while Studio stays open, via CarouselStrip
+  // → onSlideEditClick) re-keys this component, which UNMOUNTS it.
+  // Previously the only cleanup here just cleared the pending debounce
+  // timer — if the user's last edit landed inside the 1s debounce window,
+  // the slide switch silently discarded it: no save, no warning. That's
+  // exactly "a slide's edits get lost if we move onto another slide to
+  // edit."
+  //
+  // `runAutosaveNow` is now the single serialize-and-persist routine used
+  // by three callers: the debounce timer below, the unmount-flush effect
+  // right after it (the actual data-loss fix — catches the case even if
+  // the user forgets to click anything), and the new manual "Save Changes"
+  // button in the bottom action bar (a guaranteed, visible checkpoint the
+  // user can hit right before switching slides).
+  const runAutosaveNow = useCallback((): boolean => {
+    if (autosaveWriteTimerRef.current) {
+      clearTimeout(autosaveWriteTimerRef.current);
+      autosaveWriteTimerRef.current = null;
+    }
+    const persist = onAutosaveDesignRef.current;
+    if (!persist) return false;
+    const canvas = fabricRef.current;
+    if (!canvas) return false;
+    // Strip the live hover-preview rect AND any LEGACY leaked hover-preview
+    // objects (older builds serialized them as permanent layers) so they're
+    // removed for good and never re-persisted. The live one is re-added
+    // after serialize; the legacy ones stay gone.
+    const hover = hoverHighlightRef.current;
+    const leakedHovers = canvas
+      .getObjects()
+      .filter((o) =>
+        getLayerData(o)?.layerId?.startsWith("__hover_preview__"),
+      );
+    for (const o of leakedHovers) canvas.remove(o);
+    let json: unknown = null;
+    try {
+      // Fabric v6: toObject(propertiesToInclude) preserves our `data`
+      // metadata — crucially `boundField` — so the snapshot re-hydrates
+      // with fresh listing data on reopen. Same propsToInclude as the
+      // explicit-save handler (handleExport) so autosave and Save produce
+      // an identical snapshot shape.
+      const propsToInclude: string[] = [
+        "data",
+        "selectable",
+        "evented",
+        "lockMovementX",
+        "lockMovementY",
+      ];
+      json = canvas.toObject(propsToInclude);
+    } catch (err) {
+      console.warn("[CanvasEditor] autosave toObject failed:", err);
+    } finally {
+      if (hover) {
+        canvas.add(hover);
+        canvas.bringObjectToFront(hover);
+      }
+    }
+    if (!json) return false;
+    // Fire-and-forget; the parent owns persistence + error handling.
+    void Promise.resolve(persist(json)).catch((e) => {
+      console.warn("[CanvasEditor] onAutosaveDesign failed:", e);
+    });
+    return true;
+  }, []);
+
+  const [manualSaveState, setManualSaveState] = useState<
+    "idle" | "saved"
+  >("idle");
+  const manualSaveResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  useEffect(() => {
+    return () => {
+      if (manualSaveResetTimerRef.current) {
+        clearTimeout(manualSaveResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleManualSave = useCallback((): void => {
+    const didSave = runAutosaveNow();
+    if (!didSave) return;
+    if (manualSaveResetTimerRef.current) {
+      clearTimeout(manualSaveResetTimerRef.current);
+    }
+    setManualSaveState("saved");
+    manualSaveResetTimerRef.current = setTimeout(() => {
+      setManualSaveState("idle");
+    }, 2_000);
+  }, [runAutosaveNow]);
+
+  // Flush-on-unmount. Empty deps so this cleanup runs ONLY when the
+  // component actually unmounts (slide switch, Studio close) — not on
+  // every layerVersion change, which would fight the debounce below.
+  // Declared BEFORE the debounce effect: React cleans up effects in
+  // declaration order, so on unmount this fires first (flushing + clearing
+  // the pending timer via runAutosaveNow), and the debounce effect's own
+  // cleanup right after finds the timer ref already null and no-ops.
+  useEffect(() => {
+    return () => {
+      if (autosaveWriteTimerRef.current) {
+        runAutosaveNow();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     // Skip the initial hydration bump — the user hasn't changed anything yet.
     if (layerVersion === 0) return;
@@ -2120,56 +2259,13 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     // open, which could bake a transient hydration state (failed-image
     // placeholder, half-rebound fields) into fabric_json with zero input.
     if (!autosaveArmedRef.current) return;
-    const persist = onAutosaveDesignRef.current;
-    if (!persist) return;
-    const canvas = fabricRef.current;
-    if (!canvas) return;
+    if (!onAutosaveDesignRef.current) return;
+    if (!fabricRef.current) return;
     if (autosaveWriteTimerRef.current) {
       clearTimeout(autosaveWriteTimerRef.current);
     }
     autosaveWriteTimerRef.current = setTimeout(() => {
-      const current = fabricRef.current;
-      if (!current) return;
-      // Strip the live hover-preview rect AND any LEGACY leaked hover-preview
-      // objects (older builds serialized them as permanent layers) so they're
-      // removed for good and never re-persisted. The live one is re-added
-      // after serialize; the legacy ones stay gone.
-      const hover = hoverHighlightRef.current;
-      const leakedHovers = current
-        .getObjects()
-        .filter((o) =>
-          getLayerData(o)?.layerId?.startsWith("__hover_preview__"),
-        );
-      for (const o of leakedHovers) current.remove(o);
-      let json: unknown = null;
-      try {
-        // Fabric v6: toObject(propertiesToInclude) preserves our `data`
-        // metadata — crucially `boundField` — so the snapshot re-hydrates
-        // with fresh listing data on reopen. Same propsToInclude as the
-        // explicit-save handler (handleExport) so autosave and Save produce
-        // an identical snapshot shape.
-        const propsToInclude: string[] = [
-          "data",
-          "selectable",
-          "evented",
-          "lockMovementX",
-          "lockMovementY",
-        ];
-        json = current.toObject(propsToInclude);
-      } catch (err) {
-        console.warn("[CanvasEditor] autosave toObject failed:", err);
-      } finally {
-        if (hover) {
-          current.add(hover);
-          current.bringObjectToFront(hover);
-        }
-      }
-      if (json) {
-        // Fire-and-forget; the parent owns persistence + error handling.
-        void Promise.resolve(persist(json)).catch((e) => {
-          console.warn("[CanvasEditor] onAutosaveDesign failed:", e);
-        });
-      }
+      runAutosaveNow();
     }, 1_000);
 
     return () => {
@@ -2178,7 +2274,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         autosaveWriteTimerRef.current = null;
       }
     };
-  }, [layerVersion]);
+  }, [layerVersion, runAutosaveNow]);
 
   const handleHoverEntry = useCallback(
     (layerId: string | null): void => {
@@ -4026,6 +4122,35 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           ) : null}
         </div>
         <div className="flex items-center gap-1.5">
+          {onAutosaveDesign ? (
+            // 2026-07-24 (John) — explicit "Save Changes" so a slide's
+            // edits are guaranteed saved before switching to another slide
+            // (see the runAutosaveNow/unmount-flush comment above). The
+            // debounced autosave already covers most cases 1s after the
+            // last edit, but switching slides right after a quick edit
+            // could previously beat that timer; this button (plus the
+            // unmount-flush) closes the gap and gives visible confirmation.
+            <button
+              type="button"
+              onClick={handleManualSave}
+              disabled={effectiveSaving || dimensionWarning !== null}
+              aria-label="Save changes to this slide"
+              title="Save this slide's changes now — do this before switching to another slide"
+              className="focus-ring-dark inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--studio-border)] bg-transparent px-3 text-[13px] font-semibold text-[var(--studio-text)] transition-colors hover:bg-[var(--studio-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {manualSaveState === "saved" ? (
+                <>
+                  <LCheck size={16} className="text-emerald-400" />
+                  Saved
+                </>
+              ) : (
+                <>
+                  <LSave size={16} />
+                  Save Changes
+                </>
+              )}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={handleExport}

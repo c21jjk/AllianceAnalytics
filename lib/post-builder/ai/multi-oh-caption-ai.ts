@@ -27,6 +27,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 
 import { getAnthropic } from "@/lib/ai/anthropic";
 import {
+  buildBrandTags,
   buildGeoPhrase,
   detectTone,
   sortPropertiesByOpenHouse,
@@ -171,6 +172,42 @@ function canonicalMlsHashtag(
     return `#${normalized.toUpperCase()}`;
   }
   return `#${normalized}`;
+}
+
+// ---------------------------------------------------------------------------
+// Division-tag reconciliation — mirror of the MLS hashtag helper above
+// ---------------------------------------------------------------------------
+
+/**
+ * 2026-07-24 (John) — "#shoredivision is still showing up on South Jersey
+ * Division posts." The prompt (multi-oh-caption-prompt.ts) now instructs
+ * Claude to include division tags conditionally, but a prompt instruction
+ * is a request, not a guarantee — the same reason `canonicalMlsHashtag`
+ * above never trusts Claude for the MLS tag. This applies the identical
+ * pattern to the two division tags: strip whatever Claude returned for
+ * `#century21alliance` / `#shoredivision` / `#southjerseyrealestate` /
+ * `#openhouse` (any case) and replace them with `buildBrandTags()`'s
+ * deterministic result, keeping the AI's own hashtags (typically just the
+ * one regional tag, e.g. `#wildwoodnj`) appended after in their original
+ * order. This is the actual fix — it holds even if Claude ignores the
+ * prompt entirely.
+ */
+const FIXED_BRAND_TAG_SET = new Set([
+  "#century21alliance",
+  "#shoredivision",
+  "#southjerseyrealestate",
+  "#openhouse",
+]);
+
+function reconcileHashtags(
+  aiTags: readonly string[],
+  properties: readonly MultiOHCaptionProperty[],
+): string[] {
+  const brandTags = buildBrandTags(properties);
+  const nonFixedTags = aiTags.filter(
+    (t) => !FIXED_BRAND_TAG_SET.has(t.trim().toLowerCase()),
+  );
+  return [...brandTags, ...nonFixedTags];
 }
 
 // ---------------------------------------------------------------------------
@@ -351,18 +388,25 @@ export async function synthesizeMultiOHCaptionAI(
     ? canonicalMlsHashtag(firstProp.mls_number, firstProp.source_mls ?? null)
     : "";
 
+  // 2026-07-24 — reconcile Claude's hashtags against the deterministic
+  // division logic (see reconcileHashtags above). Don't trust the prompt
+  // alone to keep #shoredivision off a South Jersey-only post.
+  const igHashtags = reconcileHashtags(payload.ig.hashtags, properties);
+  const fbHashtags = reconcileHashtags(payload.fb.hashtags, properties);
+  const ttHashtags = reconcileHashtags(payload.tt.hashtags, properties);
+
   // why: keep the legacy mirror = IG variant. Downstream consumers that
   // haven't migrated to `captions_by_platform` read `.legacy.caption`.
   const result: MultiOHCaptionResult = {
     legacy: {
       caption: payload.ig.body,
-      hashtags: payload.ig.hashtags,
+      hashtags: igHashtags,
       mls_hashtag: anchorMls,
     },
     captions: {
-      instagram: { caption: payload.ig.body, hashtags: payload.ig.hashtags },
-      facebook: { caption: payload.fb.body, hashtags: payload.fb.hashtags },
-      tiktok: { caption: payload.tt.body, hashtags: payload.tt.hashtags },
+      instagram: { caption: payload.ig.body, hashtags: igHashtags },
+      facebook: { caption: payload.fb.body, hashtags: fbHashtags },
+      tiktok: { caption: payload.tt.body, hashtags: ttHashtags },
     },
     resolved_tone: resolvedTone,
   };

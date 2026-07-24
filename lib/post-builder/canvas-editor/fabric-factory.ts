@@ -575,6 +575,46 @@ export function createFabricTextbox(
   return tb;
 }
 
+/**
+ * Shrink a Textbox's font until its wrapped line count fits the line count
+ * the layer's authored height implies. Fabric wraps at the fixed box width,
+ * so overflow shows up as EXTRA LINES — which then collide with whatever
+ * layer sits below (the address/town overlap bug, 2026-07-17: "200 W
+ * Pittsburgh Avenue" wrapped onto a second line and overlapped the town).
+ * Floor: 55% of the authored size, so pathological data can't shrink text
+ * into illegibility (at the floor, wrapping remains but that beats
+ * unreadable).
+ *
+ * 2026-07-24 — moved here from headless-render.ts (the server publish
+ * render) so `CanvasEditor.tsx` (the live Studio editing canvas) can call
+ * the SAME fix. Until this move, the published image was already
+ * shrink-to-fit corrected but the in-browser Studio editor was not — so a
+ * long address ("210 Congressional Court") still visibly wrapped onto and
+ * overlapped the town line while editing, even though the eventually
+ * published post looked right. Both callers now share one implementation.
+ */
+export function shrinkTextToIntendedLines(
+  tb: { textLines?: unknown[]; set: (props: Record<string, unknown>) => unknown; initDimensions?: () => void },
+  authoredFontSize: number,
+  authoredHeight: number,
+  lineHeight: number,
+): void {
+  const lh = lineHeight > 0 ? lineHeight : 1.16;
+  const intendedLines = Math.max(
+    1,
+    Math.round(authoredHeight / (authoredFontSize * lh)),
+  );
+  const minSize = Math.max(10, Math.floor(authoredFontSize * 0.55));
+  let size = authoredFontSize;
+  const lineCount = () =>
+    Array.isArray(tb.textLines) ? tb.textLines.length : 1;
+  while (lineCount() > intendedLines && size > minSize) {
+    size -= 1;
+    tb.set({ fontSize: size });
+    tb.initDimensions?.();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Image layer factory (async — FabricImage.fromURL returns a Promise)
 // ---------------------------------------------------------------------------

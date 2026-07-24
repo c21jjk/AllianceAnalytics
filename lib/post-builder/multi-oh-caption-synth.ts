@@ -220,7 +220,14 @@ const SHORE_DIVISION_TAG = "#shoredivision";
 const SOUTH_JERSEY_TAG = "#southjerseyrealestate";
 const CORE_TAIL_TAG = "#openhouse";
 
-function buildBrandTags(
+// 2026-07-24 (John) — exported so the AI caption path
+// (multi-oh-caption-ai.ts) can reconcile Claude's hashtag output against
+// the SAME deterministic division logic, rather than trusting the model's
+// prompt-following. See that file for why: the AI path is the primary path
+// (this deterministic synth is only the error-fallback), so the fix here
+// alone didn't stop #shoredivision from appearing on South Jersey-only
+// posts — the AI prompt was still telling Claude to always include both.
+export function buildBrandTags(
   properties: ReadonlyArray<MultiOHCaptionProperty>,
 ): string[] {
   let shore = 0;

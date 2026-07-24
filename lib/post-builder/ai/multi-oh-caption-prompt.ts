@@ -110,14 +110,16 @@ Output shape — match this exemplar closely:
 
 Whether you're looking for a beach getaway, investment property, or your forever shore home — stop by and take a look. 🖤💛
 
-#century21alliance #shoredivision #southjerseyrealestate #openhouse #wildwoodnj
+#century21alliance #shoredivision #openhouse #wildwoodnj
 \`\`\`
+
+(Note the exemplar has NO \`#southjerseyrealestate\` — every property in it sits in a shore town, so the South Jersey division tag does not apply. See HASHTAGS below.)
 
 Structural rules drawn from the exemplar:
   1. Opening paragraph: emoji prefix + 2-3 short sentences + closing emoji bookend (tone-specific — see "Tone descriptors" below).
   2. Day-grouped bullet sections with 📍 day headers. One section per OH date. Inside each section, one bullet per property with the exact \`• {Address}, {City} | {TimeRange}\` format. Order the day sections STRICTLY CHRONOLOGICALLY — earliest date first (e.g. July 17 before July 18 before July 23). The EVENT DATA list is already sorted earliest-first; preserve that order and never reorder days.
   3. Closing paragraph: ONE sentence with multi-path hooks ("beach getaway, investment property, or your forever shore home" is the canonical example — three audience paths separated by commas/or, with an em-dash before the action). End with the tone-specific closing emoji bookend.
-  4. Hashtag block: exactly 5 hashtags, comma-separated arrays NOT inline.
+  4. Hashtag block: 4-5 hashtags depending on the division mix (see HASHTAGS below), comma-separated arrays NOT inline.
 
 TONE DESCRIPTORS — pick exactly the one matching \`resolvedTone\`:
   • coastal — Shore lifestyle. Sand-between-toes, ocean-adjacent, beach getaway language. Opener prefix: 🌊. Closing bookend: 🌞🏡 on opener, 🖤💛 on closer.
@@ -131,10 +133,15 @@ PLATFORM RULES:
   • Facebook ("fb"): same body as IG with a slightly more conversational closing. Hard ceiling: 1400 chars.
   • TikTok ("tt"): one-line opener + "Full schedule in the carousel." + one-line closer. Hard ceiling: 280 chars.
 
-HASHTAGS — exactly 5 per platform, brand-fixed:
-  • Always include these 4: \`#century21alliance\`, \`#shoredivision\`, \`#southjerseyrealestate\`, \`#openhouse\`
-  • Plus exactly ONE regional tag based on the dominant city: \`#wildwoodnj\` (any Wildwood), \`#capemaynj\` (any Cape May), \`#oceancitynj\` (Ocean City), or \`#capemaycounty\` (mixed Cape May County).
-  • For the \`editorial\` tone, still return 5 hashtags — Larissa wants the hashtag set consistent across platforms.`;
+HASHTAGS — brand-fixed core, division tags are CONDITIONAL:
+  • Always include \`#century21alliance\` and \`#openhouse\`.
+  • Include \`#shoredivision\` ONLY if at least one property in EVENT DATA sits in a shore town (Wildwood, Cape May, Ocean City, Sea Isle, Stone Harbor, Avalon, Margate, Ventnor, Atlantic City, Brigantine, Longport, Strathmere, or any city whose name contains "beach", "shore", "coast", or "bay").
+  • Include \`#southjerseyrealestate\` ONLY if at least one property sits OUTSIDE those shore towns (mainland / South Jersey division).
+  • NEVER include a division tag when zero properties in EVENT DATA belong to that division — a Moorestown/Cherry Hill-only weekend gets \`#southjerseyrealestate\` and NOT \`#shoredivision\`; an all-Wildwood weekend gets \`#shoredivision\` and NOT \`#southjerseyrealestate\`. Mixed weekends (both kinds of towns) get both.
+  • Plus exactly ONE regional tag based on the dominant city: \`#wildwoodnj\` (any Wildwood), \`#capemaynj\` (any Cape May), \`#oceancitynj\` (Ocean City), or \`#capemaycounty\` (mixed Cape May County). Skip the regional tag (or pick your best judgment) when no property matches those specific towns.
+  • Total count will vary — 3 to 5 hashtags depending on how many of the above actually apply. Do NOT pad the array to hit a fixed count; a real 4-tag result is correct where a 5th tag doesn't apply.
+  • For the \`editorial\` tone, apply the exact same conditional rules above — editorial doesn't change hashtag selection, only body prose.
+  • Note: the consuming code re-derives the two division tags deterministically from the property list and will overwrite whatever you output here if it disagrees, so getting this right doesn't need to be perfect — but matching it means your caption preview (before reconciliation) looks correct too.`;
 
 // ---------------------------------------------------------------------------
 // Output contract footer — explicit JSON shape Claude must return
@@ -144,12 +151,12 @@ const JSON_CONTRACT_FOOTER = `\
 Return ONLY a valid JSON object matching this exact schema. No prose, no commentary, no markdown fences, no trailing notes.
 
 {
-  "ig": { "body": "<string>", "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"] },
-  "fb": { "body": "<string>", "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"] },
-  "tt": { "body": "<string>", "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"] }
+  "ig": { "body": "<string>", "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4"] },
+  "fb": { "body": "<string>", "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4"] },
+  "tt": { "body": "<string>", "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4"] }
 }
 
-Hashtag arrays MUST contain exactly 5 strings each. Body strings MUST NOT include the hashtags inline — they're carried in the arrays so the consumer can render them per-platform. Body strings MUST honor the per-platform character ceilings above.`;
+Hashtag arrays MUST contain 3 to 5 strings each per the conditional HASHTAGS policy above — do not pad to a fixed count. Body strings MUST NOT include the hashtags inline — they're carried in the arrays so the consumer can render them per-platform. Body strings MUST honor the per-platform character ceilings above.`;
 
 // ---------------------------------------------------------------------------
 // System prompt builder
