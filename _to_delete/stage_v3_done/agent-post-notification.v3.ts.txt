@@ -26,10 +26,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
-import {
-  createOutboxRowForPost,
-  type PostUrlEntry as OutboxPostUrlEntry,
-} from "@/lib/data/agent-outbox-db";
 
 const PLATFORM_LABELS: Record<string, string> = {
   facebook: "Facebook",
@@ -43,20 +39,12 @@ interface PostUrlEntry {
 }
 
 /**
- * Send the engagement email for a just-created outbox row. Returns the
- * lowercase address the email was actually sent to (for caller-side
- * dedupe), or null on any guard miss. Never throws in practice; callers
- * still wrap in try/catch.
- *
- * `excludeEmails` (lowercase set): skip sending when this agent was
- * already emailed for the same publish — one agent with two listings in
- * the same multi-property post gets ONE email, not two. The skipped
- * row's sent_at stays null so the admin Outbox view can still surface it.
+ * Send the engagement email for a just-created outbox row. Returns quietly
+ * on every guard miss; callers fire-and-forget inside a try/catch.
  */
 export async function sendAgentEngagementEmail(args: {
   outboxRowId: string;
-  excludeEmails?: ReadonlySet<string>;
-}): Promise<string | null> {
+}): Promise<void> {
   const supabase = createAdminClient();
 
   const { data: row, error } = await supabase
@@ -71,13 +59,12 @@ export async function sendAgentEngagementEmail(args: {
       `[agent-email] outbox lookup failed for ${args.outboxRowId}:`,
       error?.message ?? "not found",
     );
-    return null;
+    return;
   }
   // Already notified (mailto click or a previous auto-send) — never respam.
-  if (row.sent_at) return null;
+  if (row.sent_at) return;
   const agentEmail = (row.agent_email ?? "").trim();
-  if (!agentEmail) return null;
-  if (args.excludeEmails?.has(agentEmail.toLowerCase())) return null;
+  if (!agentEmail) return;
 
   const urls: PostUrlEntry[] = [];
   if (Array.isArray(row.post_urls)) {
@@ -94,7 +81,7 @@ export async function sendAgentEngagementEmail(args: {
       }
     }
   }
-  if (urls.length === 0) return null;
+  if (urls.length === 0) return;
 
   // properties(...) join comes back as an object for a many-to-one FK.
   const prop = row.properties as unknown as {
@@ -168,95 +155,6 @@ export async function sendAgentEngagementEmail(args: {
     if (updErr) {
       console.error(
         `[agent-email] failed to record last_error on ${row.id}: ${updErr.message}`,
-      );
-    }
-    return null;
-  }
-  return agentEmail.toLowerCase();
-}
-
-/**
- * 2026-07-23 (John) — notify EVERY listing agent featured in a published
- * post, not just the anchor property's agent. The 7/23 multi-OH post (7
- * properties) emailed 1 of 7 agents; this closes that gap.
- *
- * For each property in the post (anchor ∪ linked_property_ids, deduped):
- *   1. create/refresh an outbox row (idempotent per post+property),
- *   2. send the engagement email — deduped by agent address, so an agent
- *      with two listings in the same post gets ONE email.
- *
- * Single-listing posts hit the same path with a one-element list, so
- * behavior is identical to before. `send_emails: false` still creates the
- * outbox rows (admin visibility) but skips the sends — used for
- * auto-generated reels, whose agents were already emailed for the source
- * photo post minutes earlier.
- *
- * Best-effort everywhere: failures log and never propagate to the publish
- * flow that called us.
- */
-export async function notifyListingAgentsForPost(args: {
-  generated_post_id: string;
-  anchor_property_id: string;
-  post_urls: OutboxPostUrlEntry[];
-  caption: string | null;
-  thumbnail_url: string | null;
-  send_emails: boolean;
-}): Promise<void> {
-  const supabase = createAdminClient();
-
-  // Resolve the full property set. linked_property_ids isn't in the
-  // generated Database types yet — read through an untyped client, same
-  // pattern as the publish routes.
-  const propertyIds: string[] = [args.anchor_property_id];
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sbAny = supabase as any;
-    const { data: gp } = await sbAny
-      .from("generated_posts")
-      .select("linked_property_ids")
-      .eq("id", args.generated_post_id)
-      .maybeSingle();
-    if (gp && Array.isArray(gp.linked_property_ids)) {
-      for (const pid of gp.linked_property_ids) {
-        if (typeof pid === "string" && pid && !propertyIds.includes(pid)) {
-          propertyIds.push(pid);
-        }
-      }
-    }
-  } catch (e) {
-    console.error(
-      "[agent-email] linked property lookup failed (anchor-only fallback):",
-      e instanceof Error ? e.message : e,
-    );
-  }
-
-  const emailed = new Set<string>();
-  for (const propertyId of propertyIds) {
-    try {
-      const outbox = await createOutboxRowForPost({
-        generated_post_id: args.generated_post_id,
-        property_id: propertyId,
-        post_urls: args.post_urls,
-        caption: args.caption,
-        thumbnail_url: args.thumbnail_url,
-      });
-      if (!("id" in outbox)) {
-        console.error(
-          `[agent-email] outbox create failed for post ${args.generated_post_id} / property ${propertyId}: ${outbox.error}`,
-        );
-        continue;
-      }
-      if (args.send_emails) {
-        const sentTo = await sendAgentEngagementEmail({
-          outboxRowId: outbox.id,
-          excludeEmails: emailed,
-        });
-        if (sentTo) emailed.add(sentTo);
-      }
-    } catch (e) {
-      console.error(
-        `[agent-email] notify loop failed for property ${propertyId}:`,
-        e instanceof Error ? e.message : e,
       );
     }
   }

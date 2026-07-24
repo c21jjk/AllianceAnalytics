@@ -26,7 +26,7 @@ import type {
 export type { AgentOutboxRow, OutboxCounts, OutboxNotificationType };
 export { buildOutboxMailto } from "./agent-outbox-shared";
 
-export interface PostUrlEntry {
+interface PostUrlEntry {
   platform: "facebook" | "instagram" | "tiktok";
   url: string;
 }
@@ -49,15 +49,8 @@ function parseUrls(raw: unknown): string[] {
 
 /**
  * Create one outbox row for a freshly-published generated_post. Idempotent
- * per `(generated_post_id, property_id)` — repeated calls (e.g. user
- * re-publishes after a partial failure) update the same row instead of
- * stacking duplicates.
- *
- * 2026-07-23 (John) — idempotency widened from per-post to per-(post,
- * property) so a multi-property Open House post can notify EVERY listing
- * agent featured in it, not just the anchor property's agent (the 7/23
- * OH post notified 1 of 7). Single-listing posts behave exactly as
- * before: same post + same property resolves to the same single row.
+ * per `generated_post_id` — repeated calls (e.g. user re-publishes after a
+ * partial failure) update the same row instead of stacking duplicates.
  *
  * Snapshots the agent contact + listing address + post URLs at notification
  * time. If the property has no agent_email, the row still gets created so
@@ -105,16 +98,13 @@ export async function createOutboxRowForPost(args: {
     .trim()
     .slice(0, 280);
 
-  // Idempotency: upsert by (generated_post_id, property_id). If a row
-  // already exists for this post+property we refresh content snapshot +
-  // URLs but PRESERVE sent_at / acknowledged_at so we don't lose the
-  // delivery history. Legacy rows (pre-2026-07-23, one per post) still
-  // match here because their property_id was the anchor property.
+  // Idempotency: upsert by generated_post_id. If a row already exists for
+  // this post we refresh content snapshot + URLs but PRESERVE sent_at /
+  // acknowledged_at so we don't lose the delivery history.
   const { data: existing } = await supabase
     .from("agent_post_outbox")
     .select("id")
     .eq("generated_post_id", args.generated_post_id)
-    .eq("property_id", args.property_id)
     .maybeSingle();
 
   if (existing) {

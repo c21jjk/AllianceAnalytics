@@ -51,7 +51,8 @@ import {
   type TikTokCredentials,
   type PublishResult,
 } from "@/lib/post-builder/publish";
-import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
+import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
+import { sendAgentEngagementEmail } from "@/lib/email/agent-post-notification";
 import {
   AUTO_REEL_TEMPLATE_ID,
   finalizeAutoReels,
@@ -655,21 +656,23 @@ async function processRow(
       const postUrls = successPermalinks
         .filter((s) => s.url)
         .map((s) => ({ platform: s.platform, url: s.url as string }));
-      // 2026-07-23 — engagement seeding for EVERY listing agent in the post
-      // (anchor + linked properties, deduped per agent), mirrored from the
-      // Post Now route. Emails SKIPPED for auto-generated reels — the agent
-      // already got the photo-post email ~45 min earlier; two pings in an
-      // hour is spam. Outbox rows are still created for the admin view.
-      await notifyListingAgentsForPost({
+      const outbox = await createOutboxRowForPost({
         generated_post_id: row.id,
-        anchor_property_id: row.property_id,
+        property_id: row.property_id,
         post_urls: postUrls,
         caption,
         thumbnail_url: row.image_url,
-        send_emails: row.template_id !== AUTO_REEL_TEMPLATE_ID,
       });
+      // 2026-07-23 — engagement seeding, mirrored from the Post Now route:
+      // email the listing agent immediately with a like/comment/share-now
+      // CTA. SKIPPED for auto-generated reels — the agent already got the
+      // photo-post email ~45 min earlier; two pings in an hour is spam.
+      // The outbox row itself is still created for the admin view.
+      if ("id" in outbox && row.template_id !== AUTO_REEL_TEMPLATE_ID) {
+        await sendAgentEngagementEmail({ outboxRowId: outbox.id });
+      }
     } catch (e) {
-      console.error("[cron/publish-scheduled] agent notification failed:", e);
+      console.error("[cron/publish-scheduled] outbox failed:", e);
     }
   }
 

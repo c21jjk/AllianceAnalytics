@@ -28,7 +28,8 @@ import {
   publishVideoToTikTok,
   type PublishResult,
 } from "@/lib/post-builder/publish";
-import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
+import { createOutboxRowForPost } from "@/lib/data/agent-outbox-db";
+import { sendAgentEngagementEmail } from "@/lib/email/agent-post-notification";
 import { maybeKickoffAutoReel } from "@/lib/post-builder/auto-reel";
 
 export const dynamic = "force-dynamic";
@@ -535,20 +536,23 @@ export async function POST(request: Request) {
       const postUrls = successResults
         .filter((r) => r.permalink)
         .map((r) => ({ platform: r.platform, url: r.permalink as string }));
-      // 2026-07-23 — engagement seeding for EVERY listing agent in the post
-      // (anchor + linked properties; a multi-OH weekend post notifies all
-      // featured agents, deduped per agent). Outbox rows + emails are both
-      // handled inside; best-effort — never blocks the publish response.
-      await notifyListingAgentsForPost({
+      const outbox = await createOutboxRowForPost({
         generated_post_id: gp.id,
-        anchor_property_id: gp.property_id,
+        property_id: gp.property_id,
         post_urls: postUrls,
         caption: captionBody,
         thumbnail_url: gp.image_url,
-        send_emails: true,
       });
+      // 2026-07-23 — engagement seeding: email the listing agent the moment
+      // the post is live with a like/comment/share-now CTA. Early engagement
+      // is a feed-ranking lever; the mailto-only outbox meant most agents
+      // were never actually pinged. One send per outbox row, ever (sent_at
+      // guard inside). Best-effort — never blocks the publish response.
+      if ("id" in outbox) {
+        await sendAgentEngagementEmail({ outboxRowId: outbox.id });
+      }
     } catch (e) {
-      console.error("[post] agent notification failed:", e);
+      console.error("[post] agent outbox row create failed:", e);
     }
   }
 
