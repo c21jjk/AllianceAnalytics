@@ -3021,6 +3021,52 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   }, [selection.isMulti, selectedEntry]);
 
   // -------------------------------------------------------------------------
+  // 2026-07-24 — selection-aware FloatingToolbar docking
+  // -------------------------------------------------------------------------
+  // why (Larissa's 7/24 screen recording): the toolbar docks across the TOP
+  // of the canvas area, and on smaller windows the fitted canvas reaches
+  // right up under it. Selecting anything near the top of the slide (the
+  // date/time block, the "Open" script) made the toolbar land ON the very
+  // object being edited, with no way to pan the slide out from under it.
+  // Fix: measure the active selection's on-screen position; when it sits in
+  // the toolbar's top band (and not also in the bottom band), dock the
+  // toolbar at the BOTTOM of the canvas area instead. Falls back to top on
+  // any measurement hiccup.
+  const canvasAreaRef = useRef<HTMLDivElement | null>(null);
+  const [toolbarDock, setToolbarDock] = useState<"top" | "bottom">("top");
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    const area = canvasAreaRef.current;
+    if (!canvas || !area) return;
+    const active = canvas.getActiveObject();
+    if (!active) {
+      setToolbarDock("top");
+      return;
+    }
+    try {
+      // Zoom is applied via CSS transform on the canvas element (not
+      // fabric's viewportTransform), so getBoundingRect() is in template
+      // coordinates and the element's DOM rect carries the on-screen scale.
+      const objRect = active.getBoundingRect();
+      const el = canvas.getElement();
+      const elRect = el.getBoundingClientRect();
+      const areaRect = area.getBoundingClientRect();
+      const scale = elRect.height / Math.max(1, canvas.getHeight());
+      const objTop = elRect.top - areaRect.top + objRect.top * scale;
+      const objBottom = objTop + objRect.height * scale;
+      // Bands: top-6 (24px) + toolbar rows that wrap to 2 on narrow
+      // windows (~110px); bottom band mirrors with a single-row estimate.
+      const TOP_BAND_PX = 140;
+      const BOTTOM_BAND_PX = 100;
+      const inTopBand = objTop < TOP_BAND_PX;
+      const inBottomBand = objBottom > areaRect.height - BOTTOM_BAND_PX;
+      setToolbarDock(inTopBand && !inBottomBand ? "bottom" : "top");
+    } catch {
+      setToolbarDock("top");
+    }
+  }, [selection.layerId, selection.isMulti, selection.count, layerVersion, zoom, displayScale]);
+
+  // -------------------------------------------------------------------------
   // 2026-05-26 — FontPickerPanel selection wiring
   // -------------------------------------------------------------------------
   // why: keep the panel locally coherent with the selected text object —
@@ -3737,6 +3783,7 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               The dot-pattern SVG is rendered at 4% opacity so it adds
               texture without competing for attention. */}
           <div
+            ref={canvasAreaRef}
             className="canvas-bg-pattern relative flex flex-1 flex-col items-center justify-center overflow-auto p-6"
           >
             {/* 2026-05-28 — the localStorage autosave "restore?" banner that
@@ -3759,7 +3806,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             {((selectedEntry && !selectedEntry.locked) ||
               (selection.isMulti && selection.count > 0)) &&
             fabricRef.current ? (
-              <div className="absolute top-6 z-10 flex flex-col items-center gap-1">
+              <div
+                className={[
+                  "absolute z-10 flex flex-col items-center gap-1",
+                  // 2026-07-24 — dock at the bottom when the selection sits
+                  // under the top band (see toolbarDock effect above).
+                  toolbarDock === "bottom" ? "bottom-6" : "top-6",
+                ].join(" ")}
+              >
                 <FloatingToolbar
                   canvas={fabricRef.current}
                   mode={selectionMode === "none" ? "multi" : selectionMode}
