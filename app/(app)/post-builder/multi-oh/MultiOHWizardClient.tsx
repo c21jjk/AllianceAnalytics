@@ -156,6 +156,27 @@ interface MultiOhWizardPersistedState {
   dbTemplateId: string | null;
   tone: CaptionTone;
   captionOverride: string | null;
+  /**
+   * 2026-07-24 — sorted, comma-joined mls_numbers the caption override was
+   * WRITTEN against. Lets Step 3 warn when the user went back and changed
+   * the selection after authoring a custom caption (the override's embedded
+   * schedule bullets go stale silently otherwise). Null when no override;
+   * absent on legacy snapshots (treated as not-stale, no false alarms).
+   */
+  captionOverrideMlsKey?: string | null;
+  /**
+   * 2026-07-24 — set (ISO timestamp) when this snapshot's event was
+   * successfully GENERATED. Replaces the old clear-on-success behavior:
+   * clearing meant browser-back from the final-review screen landed on
+   * /post-builder/multi-oh?step=3 with an empty wizard, and the
+   * persistence write-effect then immediately saved that empty step-3
+   * state — poisoning the snapshot so every subsequent wizard entry ALSO
+   * opened on an empty Step 3 ("the system gets confused ... I need to
+   * back out and start completely over", John 2026-07-24). Now the
+   * snapshot survives generation carrying this stamp; the next mount
+   * restores the picks, lands on Step 1, and offers Start-fresh.
+   */
+  completedAt?: string | null;
   captionPreviewPlatform: "instagram" | "facebook" | "tiktok";
   /** ISO timestamp the snapshot was taken — used to age it out. */
   savedAt: string;
@@ -225,6 +246,23 @@ function readPersistedState(): MultiOhWizardPersistedState | null {
     ) {
       return null;
     }
+    // 2026-07-24 additions — OPTIONAL fields, so legacy snapshots (written
+    // before this deploy) stay valid. Malformed values coerce to null
+    // rather than invalidating the whole snapshot.
+    if (
+      parsed.captionOverrideMlsKey !== undefined &&
+      parsed.captionOverrideMlsKey !== null &&
+      typeof parsed.captionOverrideMlsKey !== "string"
+    ) {
+      parsed.captionOverrideMlsKey = null;
+    }
+    if (
+      parsed.completedAt !== undefined &&
+      parsed.completedAt !== null &&
+      typeof parsed.completedAt !== "string"
+    ) {
+      parsed.completedAt = null;
+    }
     if (typeof parsed.savedAt !== "string") return null;
 
     // Age check.
@@ -256,6 +294,31 @@ function clearPersistedState(): void {
   } catch {
     // Ignore — same defensive posture as the writer.
   }
+}
+
+/**
+ * Canonical order-insensitive identity for a property selection. Used to
+ * detect when a caption override was authored against a DIFFERENT set of
+ * properties than the one currently selected (reordering slides is fine —
+ * the schedule bullets don't change — so we sort before joining).
+ */
+function mlsKeyOf(mls: readonly string[]): string {
+  return [...mls].sort().join(",");
+}
+
+/**
+ * Compact "5m ago" / "2h ago" formatter for the restored-picks banner.
+ * Coarse on purpose — the banner only needs enough precision for the
+ * user to recognize WHICH event was restored.
+ */
+function formatRelativeAgeShort(iso: string): string {
+  const thenMs = Date.parse(iso);
+  if (Number.isNaN(thenMs)) return "recently";
+  const deltaMin = Math.floor(Math.max(0, Date.now() - thenMs) / 60_000);
+  if (deltaMin < 1) return "just now";
+  if (deltaMin < 60) return `${deltaMin}m ago`;
+  const deltaHr = Math.floor(deltaMin / 60);
+  return `${deltaHr}h ago`;
 }
 
 // 2026-05-22 — FormatCardMeta / FORMAT_CARDS / FormatCard removed. The
@@ -329,18 +392,39 @@ export default function MultiOHWizardClient({
   }
   const initial = persistedOnMount.current;
 
-  // why: URL ?step=N takes precedence over the persisted step. This way
-  // browser back/forward "just works" — back goes to ?step=1 even if the
-  // last snapshot was step 3. We only honour 2 or 3 because Step 1 doesn't
-  // get a URL param (keeps the entry URL clean).
+  // why: URL ?step=N seeds the mounted step (subject to the validation in
+  // the step initializer below) so a refresh restores to the same screen.
+  // We only honour 2 or 3 because Step 1 doesn't get a URL param (keeps
+  // the entry URL clean).
   const urlStepRaw = searchParams?.get("step");
   const urlStep =
     urlStepRaw === "2" ? 2 : urlStepRaw === "3" ? 3 : null;
 
   // ---- step machine ------------------------------------------------------
-  const [step, setStep] = useState<StepIndex>(
-    urlStep ?? initial?.step ?? 1,
-  );
+  // 2026-07-24 — the mounted step is now VALIDATED against what the
+  // restored state can actually support, instead of trusting the URL /
+  // snapshot blindly. Two rules:
+  //
+  //   1. A COMPLETED snapshot (its event already generated) always lands
+  //      on Step 1 — the picks are restored for tweak-and-regenerate, but
+  //      Steps 2/3 assume an in-progress editing session. This is the
+  //      browser-back-from-final-review path: the URL still says ?step=3
+  //      but the right destination is the start of a fresh pass.
+  //   2. Steps 2/3 REQUIRE a valid selection (≥ MULTI_OH_MIN_PROPERTIES
+  //      surviving listings). Mounting on Step 3 with zero properties —
+  //      which is what a stale ?step=3 URL produced before this guard —
+  //      rendered an empty review screen whose Generate could never
+  //      succeed, and the write-effect then persisted that broken state.
+  const [step, setStep] = useState<StepIndex>(() => {
+    if (initial?.completedAt) return 1;
+    const wanted: StepIndex = urlStep ?? initial?.step ?? 1;
+    if (wanted === 1) return 1;
+    const availableSet = new Set(listings.map((l) => l.mls_number));
+    const restoredCount = initial
+      ? initial.selectedMls.filter((mls) => availableSet.has(mls)).length
+      : 0;
+    return restoredCount >= MULTI_OH_MIN_PROPERTIES ? wanted : 1;
+  });
 
   // ---- step 1 — selection -----------------------------------------------
   /** mls_numbers in selection order; the carousel slide order follows this
@@ -437,12 +521,34 @@ export default function MultiOHWizardClient({
   const [captionOverride, setCaptionOverride] = useState<string | null>(
     initial?.captionOverride ?? null,
   );
+  /**
+   * 2026-07-24 — the selection identity (sorted mls key) the current
+   * captionOverride was authored against. Compared to the live selection
+   * in Step 3 to warn when the override's embedded schedule went stale
+   * because the user went back and changed the property picks.
+   */
+  const [captionOverrideMlsKey, setCaptionOverrideMlsKey] = useState<
+    string | null
+  >(initial?.captionOverrideMlsKey ?? null);
   /** Which platform tab is active in the Step 3 caption preview. */
   const [captionPreviewPlatform, setCaptionPreviewPlatform] = useState<
     "instagram" | "facebook" | "tiktok"
   >(initial?.captionPreviewPlatform ?? "instagram");
   /** Whether the full-screen "Edit caption" overlay is mounted. */
   const [captionEditorOpen, setCaptionEditorOpen] = useState(false);
+
+  // ---- restored-after-generation banner ---------------------------------
+  // 2026-07-24 — when the mount snapshot carries completedAt, we restored
+  // the picks from an ALREADY-GENERATED event (the user navigated back
+  // from, or after, final review). Surface that so tweak-and-regenerate
+  // is a choice, not a surprise — with a one-click Start-fresh escape.
+  // Reads the mount-time ref (not live storage) so the banner survives
+  // the write-effect immediately re-stamping the snapshot as in-progress.
+  const [restoredBanner, setRestoredBanner] = useState<{
+    completedAt: string;
+  } | null>(() =>
+    initial?.completedAt ? { completedAt: initial.completedAt } : null,
+  );
 
   // ---- step 3 — generate state -----------------------------------------
   const [generating, setGenerating] = useState(false);
@@ -473,7 +579,19 @@ export default function MultiOHWizardClient({
   // transient state (generating / partialResult / slide tiles) because
   // mid-flight progress isn't recoverable across a refresh anyway —
   // the user re-clicks Generate and we re-stream.
+  //
+  // 2026-07-24 — completedStampRef: once the generate flow stamps the
+  // snapshot completed (see runGenerateStream's success path), this
+  // effect must STOP writing. The success path triggers state updates
+  // (setPartialResult(null) etc.) whose re-renders would otherwise fire
+  // this effect one more time and overwrite the completed stamp with a
+  // plain in-progress snapshot, resurrecting the empty-Step-3 bug the
+  // stamp exists to fix. The ref is one-way for the component's
+  // lifetime — after stamping, the wizard's next act is always the
+  // redirect out.
+  const completedStampRef = useRef(false);
   useEffect(() => {
+    if (completedStampRef.current) return;
     writePersistedState({
       step,
       selectedMls: [...selectedMls],
@@ -482,6 +600,8 @@ export default function MultiOHWizardClient({
       dbTemplateId,
       tone,
       captionOverride,
+      captionOverrideMlsKey,
+      completedAt: null,
       captionPreviewPlatform,
       savedAt: new Date().toISOString(),
     });
@@ -493,16 +613,54 @@ export default function MultiOHWizardClient({
     dbTemplateId,
     tone,
     captionOverride,
+    captionOverrideMlsKey,
+    captionPreviewPlatform,
+  ]);
+
+  /**
+   * 2026-07-24 — stamp the CURRENT wizard state into sessionStorage as a
+   * completed snapshot, then block the write-effect from overwriting it.
+   * Called on both success exits (full success + continue-with-partial)
+   * in place of the old clearPersistedState(): the picks survive so the
+   * user can navigate back to tweak-and-regenerate, and the next mount
+   * knows (via completedAt) to land on Step 1 with the restore banner
+   * instead of trusting a stale ?step=3 URL into an empty review screen.
+   */
+  const markPersistedCompleted = useCallback((): void => {
+    completedStampRef.current = true;
+    writePersistedState({
+      step,
+      selectedMls: [...selectedMls],
+      perPropertyHostingAgent,
+      format,
+      dbTemplateId,
+      tone,
+      captionOverride,
+      captionOverrideMlsKey,
+      completedAt: new Date().toISOString(),
+      captionPreviewPlatform,
+      savedAt: new Date().toISOString(),
+    });
+  }, [
+    step,
+    selectedMls,
+    perPropertyHostingAgent,
+    format,
+    dbTemplateId,
+    tone,
+    captionOverride,
+    captionOverrideMlsKey,
     captionPreviewPlatform,
   ]);
 
   // ---- URL ?step= sync --------------------------------------------------
-  // why: keeping ?step= in the URL means browser back/forward steps
-  // through the wizard exactly like the user expects — back from Step 3
-  // lands on Step 2, back from Step 2 lands on Step 1 (then leaves the
-  // wizard entirely). We use router.replace so we don't pollute the
-  // history stack with each click of an internal Back/Continue button —
-  // the natural forward progression replaces ?step=2 with ?step=3.
+  // why: the wizard's step state is the single source of truth and the
+  // URL mirrors it (router.replace, so internal Back/Continue clicks
+  // don't stack history entries — the browser's own Back always exits
+  // the wizard cleanly to wherever the user came from, with
+  // sessionStorage carrying their progress for when they return). The
+  // ?step= param exists so a refresh restores to the same screen and so
+  // the mount-time clamp above can sanity-check deep links.
   //
   // Step 1 deliberately has NO query param (the bare URL is the entry
   // point) so we strip ?step= when stepping back to 1.
@@ -1028,10 +1186,15 @@ export default function MultiOHWizardClient({
         // why: clear partialResult before navigating so a stale card
         // doesn't flash if the user comes back via browser-back.
         setPartialResult(null);
-        // why: a successful generation should start the next multi-OH
-        // from a clean slate. Clear the persisted snapshot so the wizard
-        // doesn't restore yesterday's picks on the next visit.
-        clearPersistedState();
+        // 2026-07-24 — stamp the snapshot COMPLETED instead of clearing
+        // it. Clearing meant browser-back from final review re-mounted
+        // the wizard on ?step=3 with nothing selected, and the write
+        // effect then persisted that empty state — every later entry
+        // opened broken until Cancel was clicked from Step 1. With the
+        // stamp, the next mount restores these picks on Step 1 with a
+        // "restored" banner + Start-fresh button. The 24h age-out still
+        // guarantees tomorrow starts clean.
+        markPersistedCompleted();
         router.push(completedEvent.redirectPath);
         return;
       }
@@ -1057,7 +1220,7 @@ export default function MultiOHWizardClient({
       });
       setGenerating(false);
     },
-    [router],
+    [router, markPersistedCompleted],
   );
 
   /**
@@ -1116,11 +1279,32 @@ export default function MultiOHWizardClient({
     if (!partialResult) return;
     setPartialResult(null);
     // why: same rationale as the zero-failure success path — the user is
-    // leaving the wizard with a generated post in hand. Clear persistence
-    // so a subsequent multi-OH starts fresh.
-    clearPersistedState();
+    // leaving the wizard with a generated post in hand. Stamp the
+    // snapshot completed (2026-07-24, was clearPersistedState) so a
+    // back-navigation restores the picks instead of an empty wizard.
+    markPersistedCompleted();
     router.push(partialResult.redirectPath);
-  }, [partialResult, router]);
+  }, [partialResult, router, markPersistedCompleted]);
+
+  /**
+   * 2026-07-24 — one-click reset from the restored-picks banner. Clears
+   * both the persisted snapshot and every piece of restored state so the
+   * wizard is exactly as if entered for the first time.
+   */
+  const startFresh = useCallback((): void => {
+    clearPersistedState();
+    setRestoredBanner(null);
+    setStep(1);
+    setSelectedMls([]);
+    setPerPropertyHostingAgent({});
+    setFormat("square_1x1");
+    setDbTemplateId(null);
+    setTone("auto");
+    setCaptionOverride(null);
+    setCaptionOverrideMlsKey(null);
+    setCaptionPreviewPlatform("instagram");
+    setError(null);
+  }, []);
 
   // ---- render -----------------------------------------------------------
 
@@ -1131,6 +1315,38 @@ export default function MultiOHWizardClient({
         onJump={goToStep}
         skipStep2={skipStep2}
       />
+
+      {restoredBanner ? (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold-200 bg-gold-50 px-4 py-3 text-sm text-gold-900">
+          <div>
+            <span className="font-semibold">
+              Restored the picks from your last event
+            </span>{" "}
+            <span className="text-gold-800">
+              (generated {formatRelativeAgeShort(restoredBanner.completedAt)}).
+              Tweak anything and generate again to make a new post, or start
+              over from scratch.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={startFresh}
+              className="rounded-md border border-gold-300 bg-white px-3 py-1 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
+            >
+              Start fresh
+            </button>
+            <button
+              type="button"
+              onClick={() => setRestoredBanner(null)}
+              aria-label="Dismiss"
+              className="rounded-md p-1 text-gold-700 hover:bg-gold-100 transition"
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -1173,7 +1389,22 @@ export default function MultiOHWizardClient({
             tone={tone}
             onToneChange={setTone}
             captionOverride={captionOverride}
-            onCaptionOverrideChange={setCaptionOverride}
+            onCaptionOverrideChange={(next) => {
+              // 2026-07-24 — record WHICH property set the override was
+              // written against so Step 3 can flag it stale if the user
+              // later goes back and changes the selection. Clearing the
+              // override clears the key.
+              setCaptionOverride(next);
+              setCaptionOverrideMlsKey(
+                next !== null && next.length > 0 ? mlsKeyOf(selectedMls) : null,
+              );
+            }}
+            overrideStale={
+              captionOverride !== null &&
+              captionOverride.length > 0 &&
+              captionOverrideMlsKey !== null &&
+              captionOverrideMlsKey !== mlsKeyOf(selectedMls)
+            }
             captionPreviewPlatform={captionPreviewPlatform}
             onCaptionPreviewPlatformChange={setCaptionPreviewPlatform}
             captionEditorOpen={captionEditorOpen}
@@ -1954,6 +2185,13 @@ interface Step3Props {
    *  full-caption override via the Edit overlay. */
   captionOverride: string | null;
   onCaptionOverrideChange: (next: string | null) => void;
+  /**
+   * 2026-07-24 — true when the custom caption was written against a
+   * DIFFERENT property selection than the current one (user went back to
+   * Step 1 and added/removed homes after authoring it). Renders an amber
+   * warning so the stale embedded schedule can't slip into a live post.
+   */
+  overrideStale: boolean;
   /** Which platform tab is selected in the caption preview. */
   captionPreviewPlatform: "instagram" | "facebook" | "tiktok";
   onCaptionPreviewPlatformChange: (
@@ -1977,6 +2215,7 @@ function Step3Review({
   onToneChange,
   captionOverride,
   onCaptionOverrideChange,
+  overrideStale,
   captionPreviewPlatform,
   onCaptionPreviewPlatformChange,
   captionEditorOpen,
@@ -2189,6 +2428,39 @@ function Step3Review({
             );
           })}
         </div>
+
+        {/* 2026-07-24 — stale-override guard. The custom caption embeds
+            the day-by-day schedule bullets, so a selection change made
+            AFTER authoring it silently leaves wrong addresses/times in
+            the caption. Warn + offer the one-click reset. */}
+        {overrideStale ? (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle size={13} aria-hidden="true" className="shrink-0" />
+              <span>
+                Your custom caption was written for a{" "}
+                <span className="font-semibold">different property list</span> —
+                the schedule inside it may be out of date.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={onOpenCaptionEditor}
+                className="rounded border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100 transition"
+              >
+                Review it
+              </button>
+              <button
+                type="button"
+                onClick={() => onCaptionOverrideChange(null)}
+                className="rounded border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100 transition"
+              >
+                Reset to auto
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {/* why: surface in-flight state inline under the platform tabs.
             We keep the previously-rendered captionResult visible while a

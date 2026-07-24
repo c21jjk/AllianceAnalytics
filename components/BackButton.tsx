@@ -27,6 +27,17 @@ export default function BackButton() {
 
   if (pathname === "/" || pathname === "/login") return null;
 
+  // 2026-07-24 (John) — the Multi-OH wizard owns its navigation: its
+  // sticky footer has a step-aware Back (and Cancel on step 1), and its
+  // stepper pills jump to completed steps. Rendering the sitewide Back on
+  // top of that put TWO differently-behaved "Back" buttons on one screen:
+  // this one pops browser history (exiting the wizard entirely, since the
+  // wizard's internal steps use router.replace and leave no history
+  // entries), while the footer's steps backward within the wizard. John
+  // reported exactly that confusion. Hide this one there — one screen,
+  // one Back.
+  if (pathname.startsWith("/post-builder/multi-oh")) return null;
+
   const fallback = inferParent(pathname);
 
   function handleClick(e: React.MouseEvent) {
@@ -71,6 +82,10 @@ function inferParent(pathname: string): string {
   if (pathname === "/properties") return "/";
   // /posts/[id] → dashboard
   if (/^\/posts\//.test(pathname)) return "/";
+  // /post-builder/* (multi-oh wizard, deep links) → /post-builder
+  if (pathname.startsWith("/post-builder/")) return "/post-builder";
+  // /post-builder root → dashboard
+  if (pathname === "/post-builder") return "/";
   // /settings/[deep]/* → /settings
   if (pathname.startsWith("/settings/")) return "/settings";
   // /settings root → dashboard
