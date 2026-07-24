@@ -53,31 +53,43 @@ export interface AddOpenHouseModalProps {
 const EMPTY_DRAFT: SessionDraft = { date: "", startTime: "", endTime: "" };
 
 /**
- * Top-of-the-hour choices for the start/end selects. Open houses always run
- * whole hours (10:00 AM – 1:00 PM etc.), so a dropdown beats a free-form
+ * Half-hour choices for the start/end selects. A dropdown beats a free-form
  * time input: no minutes to fumble, and — critically — no native picker
  * popup whose dismissal click can hit the backdrop (2026-07-17 bug: closing
- * Chrome's time popup closed the entire modal). Range 6 AM – 8 PM covers
- * every realistic OH window.
+ * Chrome's time popup closed the entire modal). Range 6:00 AM – 8:00 PM
+ * covers every realistic OH window.
+ *
+ * 2026-07-24 (John) — was top-of-the-hour only ("open houses always run
+ * whole hours"). Then an agent scheduled a 9:30 AM start. Half-hour steps
+ * now; the dropdown stays short enough to scan (29 options).
  */
 const HOUR_OPTIONS: Array<{ value: string; label: string }> = Array.from(
-  { length: 15 },
+  { length: 29 },
   (_, i) => {
-    const h = 6 + i; // 6 → 20
-    const label =
-      h < 12 ? `${h}:00 AM` : h === 12 ? "12:00 PM" : `${h - 12}:00 PM`;
-    return { value: `${String(h).padStart(2, "0")}:00`, label };
+    const totalMinutes = 6 * 60 + i * 30; // 06:00 → 20:00 in 30-min steps
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    const mm = String(m).padStart(2, "0");
+    const h12 = h === 12 ? 12 : h % 12;
+    const suffix = h < 12 ? "AM" : "PM";
+    return {
+      value: `${String(h).padStart(2, "0")}:${mm}`,
+      label: `${h12}:${mm} ${suffix}`,
+    };
   },
 );
 
-/** "10:00" → "12:00" (start + 2h, clamped to the last option). Used to
+/** "09:30" → "11:30" (start + 2h, clamped to the last option). Used to
  *  auto-suggest the end time when a start is picked — the typical OH runs
- *  two hours. Still fully editable. */
+ *  two hours. Still fully editable. Preserves the half-hour minutes. */
 function twoHoursAfter(start: string): string {
   const h = parseInt(start.slice(0, 2), 10);
+  const m = parseInt(start.slice(3, 5), 10) || 0;
   if (Number.isNaN(h)) return "";
-  const end = Math.min(h + 2, 20);
-  return `${String(end).padStart(2, "0")}:00`;
+  const total = Math.min(h * 60 + m + 120, 20 * 60);
+  const eh = Math.floor(total / 60);
+  const em = total % 60;
+  return `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
 }
 
 /** Format a UTC ISO into "Sat, Jul 18 · 12:00 PM – 2:00 PM" (browser-local). */
