@@ -4943,6 +4943,26 @@ export default function PostBuilderClient({
                   slide_index: editingSlideIndex,
                   design,
                 });
+                // 2026-07-24 (John) — ALSO mirror the snapshot into local
+                // state. The server write above persists fine, but nothing
+                // updated the in-memory slideMetadata / editedFabricJson,
+                // so re-opening the same slide DURING the session hydrated
+                // from the stale page-load snapshot and the user's edits
+                // (e.g. a manually placed agent headshot) silently
+                // disappeared — "Save Changes isn't working". The explicit
+                // per-slide Save path already did this mirror (see
+                // setSlideMetadata in the slide-save handler); the
+                // autosave/Save-Changes path was the gap.
+                if (editingSlideIndex === null) {
+                  setEditedFabricJson(design);
+                } else {
+                  const idx = editingSlideIndex;
+                  setSlideMetadata((prev) =>
+                    prev.map((m, i) =>
+                      i === idx ? { ...m, fabric_json: design } : m,
+                    ),
+                  );
+                }
               }
             : undefined
         }
