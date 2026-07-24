@@ -4179,7 +4179,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           open={carouselPickerOpen}
           photos={carousel.availableListingPhotos}
           existingSlides={carousel.slides}
-          maxSlides={10}
+          // 2026-07-24 — 9, not 10: the hero publishes as slide 0 on
+          // single-listing carousels, so 10 picked slides made 11 images
+          // and Instagram (hard cap 10) rejected the whole carousel.
+          maxSlides={9}
           onAdd={handleCarouselPickerAdd}
           onCancel={() => setCarouselPickerOpen(false)}
         />

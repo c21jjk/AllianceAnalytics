@@ -41,7 +41,7 @@
  */
 
 import { useMemo, useState, type JSX } from "react";
-import { ChevronRight, RotateCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, RotateCw, XCircle } from "lucide-react";
 import type {
   PostBuilderListing,
   PostFormat,
@@ -281,6 +281,142 @@ function buildPreviewString(text: string): string {
   return `${body}\n\n${hashtags.join(" ")}`;
 }
 
+// ---------------------------------------------------------------------------
+// Pre-flight checks (2026-07-24)
+// ---------------------------------------------------------------------------
+//
+// One glance before Post Now: is anything silently wrong? Three checks,
+// all pure client-side computation over props already on this screen —
+// no extra fetches. Severity model: "fail" would produce a broken or
+// embarrassing publish (surface red), "warn" is degraded-but-publishable
+// (amber), "ok" is green. Post Now is NOT hard-blocked here — the server
+// guards (stale-OH block, IG trim) are the enforcement layer; this panel
+// exists so Larissa never has to discover those the hard way.
+
+/** Instagram rejects captions over 2,200 characters outright. */
+const IG_CAPTION_HARD_CAP = 2200;
+/** TikTok's photo-post caption ceiling (API). */
+const TT_CAPTION_HARD_CAP = 4000;
+/** Instagram publishes at most 10 carousel images; extras get trimmed. */
+const IG_SLIDE_CAP = 10;
+
+interface PreflightCheck {
+  key: string;
+  status: "ok" | "warn" | "fail";
+  label: string;
+}
+
+function computePreflightChecks(args: {
+  editedCaptions: Record<SchedulablePlatform, string>;
+  slideCount: number;
+  slideMetadata: readonly SlideMetadata[];
+  listingsByMls: ReadonlyMap<string, PostBuilderListing>;
+  nowMs: number;
+}): PreflightCheck[] {
+  const checks: PreflightCheck[] = [];
+
+  // ---- captions ---------------------------------------------------------
+  const missing: string[] = [];
+  const overCap: string[] = [];
+  for (const p of CAPTION_PLATFORMS) {
+    const text = (args.editedCaptions[p] ?? "").trim();
+    if (text.length === 0) {
+      missing.push(CAPTION_PLATFORM_LABELS[p]);
+      continue;
+    }
+    if (p === "instagram" && text.length > IG_CAPTION_HARD_CAP) {
+      overCap.push(`Instagram (${text.length.toLocaleString()} > ${IG_CAPTION_HARD_CAP.toLocaleString()})`);
+    }
+    if (p === "tiktok" && text.length > TT_CAPTION_HARD_CAP) {
+      overCap.push(`TikTok (${text.length.toLocaleString()} > ${TT_CAPTION_HARD_CAP.toLocaleString()})`);
+    }
+  }
+  if (overCap.length > 0) {
+    checks.push({
+      key: "captions",
+      status: "fail",
+      label: `Caption over the platform limit: ${overCap.join(", ")} — that platform will reject the post`,
+    });
+  } else if (missing.length > 0) {
+    checks.push({
+      key: "captions",
+      status: "warn",
+      label: `No caption yet for ${missing.join(", ")}`,
+    });
+  } else {
+    checks.push({
+      key: "captions",
+      status: "ok",
+      label: "Captions present and within platform limits",
+    });
+  }
+
+  // ---- slide count ------------------------------------------------------
+  if (args.slideCount === 0) {
+    checks.push({
+      key: "slides",
+      status: "fail",
+      label: "No per-property slides on this post",
+    });
+  } else if (args.slideCount > IG_SLIDE_CAP) {
+    checks.push({
+      key: "slides",
+      status: "warn",
+      label: `${args.slideCount} slides — Instagram will trim to the first ${IG_SLIDE_CAP}`,
+    });
+  } else {
+    checks.push({
+      key: "slides",
+      status: "ok",
+      label: `${args.slideCount} slide${args.slideCount === 1 ? "" : "s"}, within Instagram's ${IG_SLIDE_CAP}-image cap`,
+    });
+  }
+
+  // ---- open-house windows ----------------------------------------------
+  // Uses the listing rows' soonest-upcoming OH window (page-load data).
+  // A listing with no window data is skipped rather than flagged — the
+  // feed omits windows on some manual rows and a false alarm erodes trust.
+  const passedAddresses: string[] = [];
+  let checkedCount = 0;
+  const seenMls = new Set<string>();
+  for (const meta of args.slideMetadata) {
+    if (!meta.listing_mls || seenMls.has(meta.listing_mls)) continue;
+    seenMls.add(meta.listing_mls);
+    const listing = args.listingsByMls.get(meta.listing_mls);
+    const endIso = listing?.oh_end_at ?? null;
+    if (!endIso) continue;
+    const endMs = Date.parse(endIso);
+    if (Number.isNaN(endMs)) continue;
+    checkedCount += 1;
+    if (endMs < args.nowMs) {
+      passedAddresses.push(listing?.address ?? meta.listing_mls);
+    }
+  }
+  if (checkedCount > 0) {
+    if (passedAddresses.length === checkedCount) {
+      checks.push({
+        key: "oh",
+        status: "fail",
+        label: "Every open house in this post has already ended — publishing is blocked until the dates are refreshed",
+      });
+    } else if (passedAddresses.length > 0) {
+      checks.push({
+        key: "oh",
+        status: "warn",
+        label: `Open house already ended for: ${passedAddresses.join(", ")}`,
+      });
+    } else {
+      checks.push({
+        key: "oh",
+        status: "ok",
+        label: "All open-house windows are still upcoming",
+      });
+    }
+  }
+
+  return checks;
+}
+
 export default function MultiOhFinalStage({
   heroImageUrl: _heroImageUrl,
   carouselSlides,
@@ -321,6 +457,22 @@ export default function MultiOhFinalStage({
   const captionPreviewString = useMemo(
     () => buildPreviewString(editedCaptions[activeCaptionPlatform] ?? ""),
     [editedCaptions, activeCaptionPlatform],
+  );
+
+  // 2026-07-24 — pre-flight checks. nowMs is captured once per mount;
+  // minute-level drift while the screen is open doesn't matter for
+  // whole-day OH windows.
+  const preflightNowMs = useMemo(() => Date.now(), []);
+  const preflightChecks = useMemo(
+    () =>
+      computePreflightChecks({
+        editedCaptions,
+        slideCount: carouselSlides.length,
+        slideMetadata,
+        listingsByMls,
+        nowMs: preflightNowMs,
+      }),
+    [editedCaptions, carouselSlides.length, slideMetadata, listingsByMls, preflightNowMs],
   );
 
   return (
@@ -444,6 +596,39 @@ export default function MultiOhFinalStage({
             No caption yet.
           </div>
         )}
+      </div>
+
+      {/* 3.5 Pre-flight checks (2026-07-24) — one glance before posting.
+             Server-side guards enforce the hard failures; this panel makes
+             them visible BEFORE the click instead of as an error after. */}
+      <div className="card p-4">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-500 mb-2">
+          Pre-flight checks
+        </h2>
+        <ul className="space-y-1.5">
+          {preflightChecks.map((c) => (
+            <li key={c.key} className="flex items-start gap-2 text-sm">
+              {c.status === "ok" ? (
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" aria-hidden="true" />
+              ) : c.status === "warn" ? (
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
+              ) : (
+                <XCircle size={16} className="mt-0.5 shrink-0 text-rose-600" aria-hidden="true" />
+              )}
+              <span
+                className={
+                  c.status === "ok"
+                    ? "text-neutral-600"
+                    : c.status === "warn"
+                      ? "text-amber-800"
+                      : "text-rose-800 font-medium"
+                }
+              >
+                {c.label}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
 
       {/* 4. Action row — single primary Post Now button, right-aligned.

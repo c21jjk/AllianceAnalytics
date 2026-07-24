@@ -217,18 +217,21 @@ async function kickoff(sourceGpId: string): Promise<void> {
   }
 
   // ---- guards ----------------------------------------------------------
-  // Image posts only (reels don't spawn reels), never test posts, never
-  // multi-OH event roundups (their info lives across slides + caption; a
-  // single-listing hero makes no sense), and only when there are carousel
-  // photos to sequence.
+  // Image posts only (reels don't spawn reels), never test posts, and only
+  // when there are carousel photos to sequence.
+  //
+  // 2026-07-24 — multi-OH event roundups are now SUPPORTED (previously an
+  // early return). They're the highest-value weekly post and their
+  // per-property slides are already-rendered PNGs, i.e. perfect reel
+  // scenes. Differences from the single-listing path are flagged on
+  // isMultiOh below: the scene list is the slide set itself, and the
+  // square event hero opens the reel as-is (cover-cropped) — the 9:16
+  // story re-render only exists for single-listing canvas templates.
   if (src.media_type === "reel") return;
   if (src.test_mode === true) return;
-  if (
+  const isMultiOh =
     typeof src.template_id === "string" &&
-    src.template_id.startsWith("multi_oh_event_")
-  ) {
-    return;
-  }
+    src.template_id.startsWith("multi_oh_event_");
   if (src.template_id === AUTO_REEL_TEMPLATE_ID) return;
   if (!src.property_id || !src.image_url) return;
 
@@ -246,9 +249,10 @@ async function kickoff(sourceGpId: string): Promise<void> {
       }
     }
   }
-  if (photoUrls.length === 0) {
+  if (photoUrls.length === 0 || (isMultiOh && photoUrls.length < 2)) {
     // Single-image post with no carousel photos — a one-scene reel isn't
-    // worth publishing (worker minScenes is 2 anyway).
+    // worth publishing (worker minScenes is 2 anyway). Multi-OH events
+    // additionally need at least 2 property slides to read as a roundup.
     return;
   }
 
@@ -277,9 +281,16 @@ async function kickoff(sourceGpId: string): Promise<void> {
   // but never a blocked pipeline.
   let heroImageUrl: string = src.image_url;
   try {
-    const schema =
-      (await resolveTemplateForStatus(postType, "story_9x16")) ??
-      findCanvasTemplate(postType, variant, "story_9x16");
+    // 2026-07-24 — multi-OH: keep the square event hero. The 9:16 render
+    // below binds SINGLE-listing fields via renderCanvasSchema; the event
+    // hero comes from multi-oh-render.ts and has no canvas schema, so a
+    // story re-render would produce a wrong-listing card. The worker
+    // cover-crops the square opener; acceptable, and never a blocked
+    // pipeline.
+    const schema = isMultiOh
+      ? null
+      : ((await resolveTemplateForStatus(postType, "story_9x16")) ??
+        findCanvasTemplate(postType, variant, "story_9x16"));
     if (schema) {
       const rendered = await renderCanvasSchema({
         schema,
@@ -335,7 +346,28 @@ async function kickoff(sourceGpId: string): Promise<void> {
     source_posted_at: src.posted_at,
   };
 
-  const { error: insErr } = await supabase.from("generated_posts").insert({
+  // 2026-07-24 — carry the multi-OH property linkage onto the reel row so
+  // posted-coverage badges, Owner Stories, and the stale-OH publish guard
+  // all see every property this reel features. Untyped read/insert because
+  // linked_property_ids isn't in the generated types yet (same pattern as
+  // the publish routes).
+  let linkedPropertyIds: string[] | null = null;
+  if (isMultiOh) {
+    const { data: linkRow } = await sbAny
+      .from("generated_posts")
+      .select("linked_property_ids")
+      .eq("id", sourceGpId)
+      .maybeSingle();
+    if (linkRow && Array.isArray(linkRow.linked_property_ids)) {
+      const ids = linkRow.linked_property_ids.filter(
+        (v: unknown): v is string => typeof v === "string" && v.length > 0,
+      );
+      if (ids.length > 0) linkedPropertyIds = ids;
+    }
+  }
+
+  const { error: insErr } = await sbAny.from("generated_posts").insert({
+    linked_property_ids: linkedPropertyIds,
     mls_number: mls,
     source_mls: src.source_mls,
     property_id: src.property_id,

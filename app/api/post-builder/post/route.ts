@@ -29,6 +29,7 @@ import {
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
+import { openHousePublishGuard } from "@/lib/post-builder/oh-publish-guard";
 import { notifyAdmins } from "@/lib/push/send";
 import { maybeKickoffAutoReel } from "@/lib/post-builder/auto-reel";
 
@@ -41,6 +42,12 @@ type Platform = "facebook" | "instagram" | "tiktok";
 interface RequestBody {
   generated_post_id?: string;
   platforms?: Platform[];
+  /**
+   * 2026-07-24 — explicit escape hatch for the stale open-house guard.
+   * When true, the "every open house in this post has already ended"
+   * block is skipped (e.g. an intentional recap). Defaults to false.
+   */
+  allow_past_open_house?: boolean;
 }
 
 interface SuccessResponse {
@@ -153,7 +160,7 @@ export async function POST(request: Request) {
       // 2026-05-28 — posted_at + posted_by added so a partial-success RETRY
       // preserves a prior successful publish's timestamp/author instead of
       // nulling them when the current attempt has zero successes.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, posted_by, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode, template_id",
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, posted_by, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode, template_id, post_type",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -162,6 +169,31 @@ export async function POST(request: Request) {
       { ok: false, error: `generated_post not found: ${gpErr?.message ?? "not found"}` } satisfies ErrorResponse,
       { status: 404 },
     );
+  }
+
+  // 2026-07-24 — stale open-house guard. Block publishing an open-house
+  // post when EVERY open house across its properties has already ended
+  // (a late Post Now would advertise a past event). Posts with at least
+  // one upcoming/running window pass; lookup failures fail open; the
+  // body's allow_past_open_house flag is the intentional-recap escape
+  // hatch. See lib/post-builder/oh-publish-guard.ts.
+  if (body.allow_past_open_house !== true) {
+    const ohGuard = await openHousePublishGuard({
+      generated_post_id: gp.id,
+      property_id: gp.property_id,
+      post_type: gp.post_type,
+      template_id: gp.template_id,
+    });
+    if (ohGuard.applicable && !ohGuard.upcoming) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Every open house in this post has already ended, so publishing it now would advertise a past event. If this is an intentional recap, retry with allow_past_open_house set.",
+        } satisfies ErrorResponse,
+        { status: 412 },
+      );
+    }
   }
 
   // 2026-07-23 — never double-post. Platforms this row already published to
@@ -410,14 +442,20 @@ export async function POST(request: Request) {
     const isMultiOhEvent =
       typeof gp.template_id === "string" &&
       gp.template_id.startsWith("multi_oh_event_");
-    const imageUrls: string[] =
+    let imageUrls: string[] =
       isMultiOhEvent && validatedAdditionalUrls.length > 0
         ? validatedAdditionalUrls
         : [gp.image_url, ...validatedAdditionalUrls];
+    // 2026-07-24 — actually TRIM to IG's 10-image cap. publishToIG hard
+    // ERRORS above 10 (it never trimmed, despite this comment's previous
+    // claim), so an 11-image carousel (hero + 10 Studio slides) failed
+    // the IG publish outright. Trailing slides are dropped with a warn;
+    // the Studio picker is also capped at 9 now so this is a backstop.
     if (imageUrls.length > IG_MAX_SLIDES) {
       console.warn(
-        `[post] gp ${gp.id} has ${imageUrls.length} slides; IG accepts at most ${IG_MAX_SLIDES} — publishToIG will trim. Consider trimming before save.`,
+        `[post] gp ${gp.id} has ${imageUrls.length} slides; trimming to IG's cap of ${IG_MAX_SLIDES} (dropping ${imageUrls.length - IG_MAX_SLIDES}).`,
       );
+      imageUrls = imageUrls.slice(0, IG_MAX_SLIDES);
     }
 
     if (platformsToPublish.includes("facebook") && creds) {

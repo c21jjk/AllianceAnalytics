@@ -1306,6 +1306,31 @@ export default function MultiOHWizardClient({
     setError(null);
   }, []);
 
+  // ---- duplicate-promotion confirm (2026-07-24) -------------------------
+  // Step 1 badges properties that were already featured in a published OH
+  // post this week (postedCoverage, derived server-side from the last 7
+  // days), but nothing stopped Generate from double-promoting them. This
+  // is a soft gate, not a block: re-promoting is sometimes intentional
+  // (new weekend, second push), so the dialog asks instead of refusing.
+  const [dupConfirm, setDupConfirm] = useState<{
+    addresses: string[];
+  } | null>(null);
+
+  const requestGenerate = useCallback((): void => {
+    const already: string[] = [];
+    for (const l of selectedListings) {
+      if (l.id && postedCoverage[l.id]) {
+        const label = (l.address ?? "").trim() || l.mls_number;
+        if (!already.includes(label)) already.push(label);
+      }
+    }
+    if (already.length > 0) {
+      setDupConfirm({ addresses: already });
+      return;
+    }
+    void generate();
+  }, [selectedListings, postedCoverage, generate]);
+
   // ---- render -----------------------------------------------------------
 
   return (
@@ -1459,7 +1484,7 @@ export default function MultiOHWizardClient({
             setStep(skipStep2 ? 3 : 2);
           } else if (step === 2) setStep(3);
         }}
-        onGenerate={generate}
+        onGenerate={requestGenerate}
         generating={generating}
       />
 
@@ -1473,6 +1498,63 @@ export default function MultiOHWizardClient({
           onRetryFailed={retryFailedSlides}
           onContinuePartial={continueWithPartial}
         />
+      ) : null}
+
+      {/* 2026-07-24 — duplicate-promotion confirm dialog. */}
+      {dupConfirm ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dup-confirm-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/60 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDupConfirm(null);
+          }}
+        >
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-5">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
+              <div className="min-w-0">
+                <h3 id="dup-confirm-title" className="text-base font-semibold text-neutral-900">
+                  Already promoted this week
+                </h3>
+                <p className="mt-1 text-sm text-neutral-600">
+                  {dupConfirm.addresses.length === 1
+                    ? "This property was already featured in a published open-house post within the last 7 days:"
+                    : `${dupConfirm.addresses.length} of these properties were already featured in a published open-house post within the last 7 days:`}
+                </p>
+                <ul className="mt-2 space-y-0.5 text-sm text-neutral-800 font-medium">
+                  {dupConfirm.addresses.map((a) => (
+                    <li key={a}>• {a}</li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-neutral-500">
+                  Posting again is fine for a new weekend — this is just a
+                  heads-up so it isn&apos;t an accident.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDupConfirm(null)}
+                className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 transition"
+              >
+                Go back
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDupConfirm(null);
+                  void generate();
+                }}
+                className="rounded-md bg-gold-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-gold-600 transition shadow-sm"
+              >
+                Post anyway
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {/* Task 18 — manual "Add Open House" entry. router.refresh() re-runs

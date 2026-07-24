@@ -23,6 +23,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createListingsAdminClient } from "@/lib/supabase/listings-admin";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -218,6 +219,47 @@ export async function addManualOpenHouseSessionsAction(
     return { ok: false, error: `Save failed: ${insErr.message}` };
   }
 
+  // 2026-07-24 — best-effort mirror to the Alliance Listings project. The
+  // Matrix-portal syncs dual-write open_houses to BOTH projects; manual
+  // in-app entries previously landed only here, so any Listings-project
+  // consumer never saw them. Property ids differ across projects, so the
+  // mirror re-resolves by mls_number over there; a missing property or
+  // missing env config logs and moves on — the primary save above already
+  // succeeded and must never be rolled back by a mirror hiccup.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const listingsDb = createListingsAdminClient() as any;
+    const { data: remoteProp } = await listingsDb
+      .from("properties")
+      .select("id")
+      .eq("mls_number", prop.mls_number as string)
+      .maybeSingle();
+    if (remoteProp?.id) {
+      const mirrorRows = rows.map((r) => ({
+        ...r,
+        property_id: remoteProp.id as string,
+      }));
+      const { error: mirrorErr } = await listingsDb
+        .from("open_houses")
+        .upsert(mirrorRows, { onConflict: "feed_short_code,oh_unique_id" });
+      if (mirrorErr) {
+        console.warn(
+          "[open-house-actions] listings-project mirror failed (primary saved):",
+          mirrorErr.message,
+        );
+      }
+    } else {
+      console.warn(
+        `[open-house-actions] mls ${prop.mls_number} not found in listings project; mirror skipped`,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      "[open-house-actions] listings-project mirror unavailable (primary saved):",
+      e instanceof Error ? e.message : e,
+    );
+  }
+
   // Refresh every surface that lists OHs.
   revalidatePath("/post-builder");
   revalidatePath("/post-builder/multi-oh");
@@ -235,6 +277,15 @@ export async function deleteManualOpenHouseAction(
   await requireAdmin();
   if (!openHouseId) return { ok: false, error: "Missing session id." };
   const supabase = createAdminClient();
+  // 2026-07-24 — capture oh_unique_id BEFORE deleting so the mirror row in
+  // the Listings project (same unique id, different property_id) can be
+  // removed too. Best-effort: mirror failures log and never block.
+  const { data: doomed } = await supabase
+    .from("open_houses")
+    .select("oh_unique_id")
+    .eq("id", openHouseId)
+    .eq("feed_short_code", "manual")
+    .maybeSingle();
   // why: the .eq guard on feed_short_code means a feed-sourced row can never
   // be deleted through this action, even with a valid id — those belong to
   // their sync and would resurrect next run anyway.
@@ -246,6 +297,28 @@ export async function deleteManualOpenHouseAction(
   if (error) {
     console.error("[open-house-actions] delete failed:", error.message);
     return { ok: false, error: `Delete failed: ${error.message}` };
+  }
+  if (doomed?.oh_unique_id) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const listingsDb = createListingsAdminClient() as any;
+      const { error: mirrorErr } = await listingsDb
+        .from("open_houses")
+        .delete()
+        .eq("feed_short_code", "manual")
+        .eq("oh_unique_id", doomed.oh_unique_id);
+      if (mirrorErr) {
+        console.warn(
+          "[open-house-actions] listings-project delete mirror failed:",
+          mirrorErr.message,
+        );
+      }
+    } catch (e) {
+      console.warn(
+        "[open-house-actions] listings-project delete mirror unavailable:",
+        e instanceof Error ? e.message : e,
+      );
+    }
   }
   revalidatePath("/post-builder");
   revalidatePath("/post-builder/multi-oh");

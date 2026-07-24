@@ -52,6 +52,7 @@ import {
   type PublishResult,
 } from "@/lib/post-builder/publish";
 import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
+import { openHousePublishGuard } from "@/lib/post-builder/oh-publish-guard";
 import { notifyAdmins } from "@/lib/push/send";
 import {
   AUTO_REEL_TEMPLATE_ID,
@@ -171,7 +172,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       // one) can't publish the same row twice. See the claim step in processRow.
       // 2026-07-23 — template_id added so the outbox email + auto-reel
       // kickoff below can tell auto-generated reels apart from source posts.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url, test_mode, updated_at, template_id",
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, platform_post_ids, property_id, additional_images, scheduled_for, status, last_schedule_error, created_by, media_type, video_url, test_mode, updated_at, template_id, post_type",
     )
     .neq("scheduled_for", "{}")
     .or(orPredicate)
@@ -354,6 +355,26 @@ async function processRow(
     return await failAndClear(supabase, row, duePlatforms, "missing caption");
   }
 
+  // 2026-07-24 — stale open-house guard. A scheduled OH post that fires
+  // after every open house across its properties has ENDED would advertise
+  // a past event. failAndClear (not a silent skip) so the row surfaces in
+  // the UI with a clear error instead of retrying forever. Lookup failures
+  // fail open inside the guard — a DB hiccup never blocks a publish.
+  const ohGuard = await openHousePublishGuard({
+    generated_post_id: row.id,
+    property_id: row.property_id,
+    post_type: row.post_type,
+    template_id: row.template_id,
+  });
+  if (ohGuard.applicable && !ohGuard.upcoming) {
+    return await failAndClear(
+      supabase,
+      row,
+      duePlatforms,
+      "open houses in this post have already ended — publish blocked (repost manually with a fresh date if intended)",
+    );
+  }
+
   // why: media_type drives which publishers fire. "reel" routes through
   // the video publishers (publishReelToIG / publishVideoToFB /
   // publishVideoToTikTok); anything else (default "image") routes through
@@ -412,9 +433,9 @@ async function processRow(
   // relevant on the image branch — reels publish a single video URL.
   // Mirror the validation from app/api/post-builder/post/route.ts so the
   // publish shape is identical between Post Now and cron.
-  const imageUrls: string[] = [];
+  let imageUrls: string[] = [];
   if (!isReel && row.image_url) {
-    imageUrls.push(row.image_url);
+    const validatedAdditionalUrls: string[] = [];
     const rawAdditional: unknown = row.additional_images;
     if (Array.isArray(rawAdditional)) {
       for (const entry of rawAdditional) {
@@ -425,9 +446,31 @@ async function processRow(
           typeof (entry as { url: unknown }).url === "string" &&
           (entry as { url: string }).url.trim().length > 0
         ) {
-          imageUrls.push((entry as { url: string }).url);
+          validatedAdditionalUrls.push((entry as { url: string }).url);
         }
       }
+    }
+    // 2026-07-24 — multi-OH hero exclusion, mirrored from the Post Now
+    // route (2026-05-27 decision): the event-summary hero is a Studio
+    // preview graphic, NOT a published slide. This branch was missing
+    // here, so a multi-OH post published via SCHEDULE went out with the
+    // hero as slide 1 while Post Now (correctly) omitted it — the two
+    // paths now produce identical carousels.
+    const isMultiOhEvent =
+      typeof row.template_id === "string" &&
+      row.template_id.startsWith("multi_oh_event_");
+    imageUrls =
+      isMultiOhEvent && validatedAdditionalUrls.length > 0
+        ? validatedAdditionalUrls
+        : [row.image_url, ...validatedAdditionalUrls];
+    // 2026-07-24 — trim to IG's 10-image cap (publishToIG hard-errors
+    // above 10; it does not trim). Same backstop as the Post Now route.
+    const IG_MAX_SLIDES = 10;
+    if (imageUrls.length > IG_MAX_SLIDES) {
+      console.warn(
+        `[cron/publish-scheduled] gp ${row.id} has ${imageUrls.length} slides; trimming to ${IG_MAX_SLIDES}.`,
+      );
+      imageUrls = imageUrls.slice(0, IG_MAX_SLIDES);
     }
   }
 
