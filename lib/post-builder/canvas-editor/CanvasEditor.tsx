@@ -3034,6 +3034,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // any measurement hiccup.
   const canvasAreaRef = useRef<HTMLDivElement | null>(null);
   const [toolbarDock, setToolbarDock] = useState<"top" | "bottom">("top");
+  // Pan offset (declared here because the dock effect below re-measures
+  // whenever the view is panned; full pan implementation further down).
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   useEffect(() => {
     const canvas = fabricRef.current;
     const area = canvasAreaRef.current;
@@ -3064,7 +3067,174 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
     } catch {
       setToolbarDock("top");
     }
-  }, [selection.layerId, selection.isMulti, selection.count, layerVersion, zoom, displayScale]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection.layerId, selection.isMulti, selection.count, layerVersion, zoom, displayScale, pan]);
+
+  // -------------------------------------------------------------------------
+  // 2026-07-24 (John) — canvas panning, Canva-style
+  // -------------------------------------------------------------------------
+  // Three ways to move the slide around the viewport:
+  //   1. Hold SPACE and drag anywhere (hand cursor, exactly like Canva).
+  //      While space is held the fabric canvas's pointer events are
+  //      suspended so a drag can never grab/move an object by accident.
+  //   2. Click-drag the dark background AROUND the slide.
+  //   3. Trackpad / mouse-wheel scrolling pans; ctrl/cmd+wheel (trackpad
+  //      pinch) zooms around the current view.
+  // "Fit" resets both zoom and pan. Pan also resets when switching slides
+  // (sessionKey change) so each slide opens centered.
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [panActive, setPanActive] = useState(false);
+  const spaceHeldRef = useRef(false);
+  const panDragRef = useRef<{
+    pointerStartX: number;
+    pointerStartY: number;
+    panStartX: number;
+    panStartY: number;
+  } | null>(null);
+
+  /** Clamp so at least a slice of the card always stays visible — a wild
+   *  fling can't lose the slide entirely (Fit rescues regardless). */
+  const clampPan = useCallback(
+    (p: { x: number; y: number }): { x: number; y: number } => {
+      const area = canvasAreaRef.current;
+      if (!area) return p;
+      const cardW = template.width * displayScale * zoom;
+      const cardH = template.height * displayScale * zoom;
+      const maxX = area.clientWidth / 2 + cardW / 2 - 80;
+      const maxY = area.clientHeight / 2 + cardH / 2 - 80;
+      return {
+        x: Math.max(-maxX, Math.min(maxX, p.x)),
+        y: Math.max(-maxY, Math.min(maxY, p.y)),
+      };
+    },
+    [template.width, template.height, displayScale, zoom],
+  );
+
+  // Space key → hand tool. Guarded so typing a space into text (fabric
+  // inline editing or any input/textarea) never triggers panning.
+  useEffect(() => {
+    const isTypingContext = (): boolean => {
+      const el = document.activeElement;
+      if (el) {
+        const tag = el.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+        if ((el as HTMLElement).isContentEditable) return true;
+      }
+      const active = fabricRef.current?.getActiveObject() as
+        | { isEditing?: boolean }
+        | undefined
+        | null;
+      return active?.isEditing === true;
+    };
+    const down = (e: KeyboardEvent): void => {
+      if (e.code !== "Space" || e.repeat) return;
+      if (isTypingContext()) return;
+      e.preventDefault(); // stop the page/scroll-space default
+      spaceHeldRef.current = true;
+      setSpaceHeld(true);
+      const upper = fabricRef.current?.upperCanvasEl as
+        | HTMLCanvasElement
+        | undefined;
+      if (upper) upper.style.pointerEvents = "none";
+    };
+    const up = (e: KeyboardEvent): void => {
+      if (e.code !== "Space") return;
+      spaceHeldRef.current = false;
+      setSpaceHeld(false);
+      const upper = fabricRef.current?.upperCanvasEl as
+        | HTMLCanvasElement
+        | undefined;
+      if (upper) upper.style.pointerEvents = "";
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      // Defensive: never leave the canvas input-dead on unmount mid-hold.
+      const upper = fabricRef.current?.upperCanvasEl as
+        | HTMLCanvasElement
+        | undefined;
+      if (upper) upper.style.pointerEvents = "";
+    };
+  }, []);
+
+  /** Begin a pan drag from a mousedown; window-level listeners track the
+   *  move so the drag survives leaving the area element. */
+  const beginPanDrag = useCallback(
+    (clientX: number, clientY: number): void => {
+      panDragRef.current = {
+        pointerStartX: clientX,
+        pointerStartY: clientY,
+        panStartX: pan.x,
+        panStartY: pan.y,
+      };
+      setPanActive(true);
+      const move = (e: MouseEvent): void => {
+        const d = panDragRef.current;
+        if (!d) return;
+        setPan(
+          clampPan({
+            x: d.panStartX + (e.clientX - d.pointerStartX),
+            y: d.panStartY + (e.clientY - d.pointerStartY),
+          }),
+        );
+      };
+      const upListener = (): void => {
+        panDragRef.current = null;
+        setPanActive(false);
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", upListener);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", upListener);
+    },
+    [pan.x, pan.y, clampPan],
+  );
+
+  const handleAreaMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>): void => {
+      // Space-drag pans from anywhere; without space, only a drag that
+      // STARTS on the dark background (the area div itself or the card's
+      // shadow frame, not the canvas) pans — clicks on the canvas keep
+      // their normal select/move behavior.
+      if (e.button !== 0) return;
+      const onBackground = e.target === e.currentTarget;
+      if (!spaceHeldRef.current && !onBackground) return;
+      e.preventDefault();
+      beginPanDrag(e.clientX, e.clientY);
+    },
+    [beginPanDrag],
+  );
+
+  // Wheel: pan (natural trackpad scrolling) or ctrl/cmd+wheel zoom (pinch).
+  // Native non-passive listener because React's synthetic wheel can't
+  // preventDefault reliably (browser marks it passive at the document root).
+  useEffect(() => {
+    const area = canvasAreaRef.current;
+    if (!area) return;
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch/ctrl zoom — same clamps as the footer control.
+        setZoom((z) => {
+          const next = z * (e.deltaY < 0 ? 1.05 : 0.95);
+          return Math.max(0.25, Math.min(2, +next.toFixed(3)));
+        });
+        return;
+      }
+      setPan((p) =>
+        clampPan({ x: p.x - e.deltaX, y: p.y - e.deltaY }),
+      );
+    };
+    area.addEventListener("wheel", onWheel, { passive: false });
+    return () => area.removeEventListener("wheel", onWheel);
+  }, [clampPan]);
+
+  // Re-center when switching slides / editing identity.
+  useEffect(() => {
+    setPan({ x: 0, y: 0 });
+  }, [sessionKey, template.id]);
 
   // -------------------------------------------------------------------------
   // 2026-05-26 — FontPickerPanel selection wiring
@@ -3784,7 +3954,14 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               texture without competing for attention. */}
           <div
             ref={canvasAreaRef}
-            className="canvas-bg-pattern relative flex flex-1 flex-col items-center justify-center overflow-auto p-6"
+            onMouseDown={handleAreaMouseDown}
+            className="canvas-bg-pattern relative flex flex-1 flex-col items-center justify-center overflow-hidden p-6"
+            style={{
+              // 2026-07-24 — pan affordance cursors. overflow switched
+              // auto → hidden: panning replaces native scrolling (mixing
+              // both fought over the viewport).
+              cursor: panActive ? "grabbing" : spaceHeld ? "grab" : undefined,
+            }}
           >
             {/* 2026-05-28 — the localStorage autosave "restore?" banner that
                 used to sit here was removed. Edits now persist via a debounced
@@ -3898,6 +4075,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               style={{
                 width: template.width * displayScale * zoom,
                 height: template.height * displayScale * zoom,
+                // 2026-07-24 — pan offset (see pan state above). Plain
+                // translate keeps the flex centering as the origin, so
+                // {0,0} is always "centered" and Fit can reset cleanly.
+                transform: `translate(${pan.x}px, ${pan.y}px)`,
               }}
             >
               {/* why (2026-06-10): the wrapper div is KEYED on the editing
@@ -3939,7 +4120,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
             onZoomOut={() =>
               setZoom((z) => Math.max(0.25, +(z - 0.1).toFixed(2)))
             }
-            onZoomFit={() => setZoom(1)}
+            onZoomFit={() => {
+              setZoom(1);
+              // 2026-07-24 — Fit means "show me the whole slide again":
+              // reset the pan offset along with the zoom.
+              setPan({ x: 0, y: 0 });
+            }}
             onZoomChange={(z) =>
               // why: clamp to the same range the +/- buttons use so the
               // slider can never drive zoom out-of-bounds even if the
