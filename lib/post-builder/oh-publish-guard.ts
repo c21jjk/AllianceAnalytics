@@ -82,12 +82,23 @@ export async function openHousePublishGuard(args: {
       return { applicable: false, upcoming: true, detail: "no linked properties" };
     }
 
-    const nowIso = new Date().toISOString();
-    const { data: ohRow, error: ohErr } = await supabase
+    // 2026-07-28 — fetch the LATEST window instead of filtering on
+    // end_at > now. This distinguishes three cases the old query merged:
+    //   1. no open_houses rows at all  -> FAIL OPEN. Our open_houses table
+    //      is not authoritative for every listing (e.g. the Bright OH feed
+    //      is not wired), and a mislabeled post_type must not hard-block a
+    //      publish. The guard only exists to stop advertising an event we
+    //      KNOW has ended — with zero rows we know no such thing. This was
+    //      the 7/28 false positive: a Just Listed carousel carrying
+    //      post_type "open_house" on a property with no OH rows was blocked
+    //      with "every open house has already ended".
+    //   2. latest window still upcoming/running -> pass.
+    //   3. rows exist and every window has ended -> block (the real case).
+    const { data: latestOh, error: ohErr } = await supabase
       .from("open_houses")
-      .select("id")
+      .select("end_at")
       .in("property_id", propertyIds)
-      .gt("end_at", nowIso)
+      .order("end_at", { ascending: false })
       .limit(1)
       .maybeSingle();
     if (ohErr) {
@@ -97,13 +108,21 @@ export async function openHousePublishGuard(args: {
       );
       return { applicable: true, upcoming: true, detail: "lookup failed, failed open" };
     }
-    if (ohRow) {
+    if (!latestOh) {
+      return {
+        applicable: false,
+        upcoming: true,
+        detail:
+          "no open_houses rows on record for the linked properties — cannot confirm an ended event, failing open",
+      };
+    }
+    if (new Date(latestOh.end_at).getTime() > Date.now()) {
       return { applicable: true, upcoming: true, detail: "upcoming open house found" };
     }
     return {
       applicable: true,
       upcoming: false,
-      detail: `no upcoming open house across ${propertyIds.length} propert${propertyIds.length === 1 ? "y" : "ies"}`,
+      detail: `every open house across ${propertyIds.length} propert${propertyIds.length === 1 ? "y" : "ies"} has ended (latest end_at ${latestOh.end_at})`,
     };
   } catch (e) {
     console.warn(
