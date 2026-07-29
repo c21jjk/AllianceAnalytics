@@ -98,7 +98,10 @@ export async function openHousePublishGuard(args: {
       .from("open_houses")
       .select("end_at")
       .in("property_id", propertyIds)
-      .order("end_at", { ascending: false })
+      // end_at is nullable in the schema; a windowless row proves nothing
+      // either way, and NULLS FIRST on a desc order would mask real rows.
+      .not("end_at", "is", null)
+      .order("end_at", { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle();
     if (ohErr) {
@@ -116,7 +119,7 @@ export async function openHousePublishGuard(args: {
           "no open_houses rows on record for the linked properties — cannot confirm an ended event, failing open",
       };
     }
-    if (new Date(latestOh.end_at).getTime() > Date.now()) {
+    if (latestOh.end_at !== null && new Date(latestOh.end_at).getTime() > Date.now()) {
       return { applicable: true, upcoming: true, detail: "upcoming open house found" };
     }
     return {
