@@ -190,7 +190,11 @@ function findTextLayerByLiteral(
  */
 export function checkHardRules(
   schema: CanvasTemplateSchema,
-  brief: CompositionBrief,
+  // 2026-07-29: brief is now optional so non-AI callers (template save
+  // validation in lib/template-builder/storage.ts) can run the checker
+  // without fabricating a composition. When absent, the photo-subject
+  // rule (HR7) is skipped; every schema-only rule still runs.
+  brief?: CompositionBrief,
 ): HardRuleViolation[] {
   const violations: HardRuleViolation[] = [];
   const category = schema.category;
@@ -217,12 +221,24 @@ export function checkHardRules(
 
   // -------------------------------------------------------------------------
   // HR2 — no agent fields on restricted categories
+  //
+  // 2026-07-29: extended to hosting_agent_* bound fields (they don't
+  // match the agent_ prefix). Business rule: open_house is the ONE
+  // restricted category where hosting_agent_* is allowed, in fact
+  // required, see HR10 below (John's rule 2026-07-29: hosting agent on
+  // every OH template). Everywhere else in the restricted set,
+  // hosting_agent_* is just as forbidden as agent_*.
   // -------------------------------------------------------------------------
   if (RESTRICTED_AGENT_CATEGORIES.has(category)) {
+    const hostingForbidden = category !== "open_house";
     for (const layer of iterateLayers(schema.layers)) {
       if (isTextLayer(layer)) {
         const bf = layer.boundField;
-        if (bf && bf.startsWith("agent_")) {
+        if (
+          bf &&
+          (bf.startsWith("agent_") ||
+            (hostingForbidden && bf.startsWith("hosting_agent_")))
+        ) {
           violations.push({
             rule: "HR2_agent_on_restricted_category",
             severity: "fail",
@@ -232,16 +248,52 @@ export function checkHardRules(
           });
         }
       } else if (isImageLayer(layer)) {
-        if (layer.boundField === "agent_photo") {
+        if (
+          layer.boundField === "agent_photo" ||
+          (hostingForbidden && layer.boundField === "hosting_agent_photo")
+        ) {
           violations.push({
             rule: "HR2_agent_on_restricted_category",
             severity: "fail",
             layerId: layer.id,
-            detail: `Image layer "${layer.name}" binds to "agent_photo" but category "${category}" forbids agent fields.`,
+            detail: `Image layer "${layer.name}" binds to "${layer.boundField}" but category "${category}" forbids agent fields.`,
             fix_hint: `Strip this layer entirely. Category ${category} posts must contain zero agent_* references.`,
           });
         }
       }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // HR10 (2026-07-29): open_house templates MUST carry a hosting-agent block
+  //
+  // 2026-07-29 (John's explicit rule, reaffirming Larissa's 5/27 design
+  // rules): every Open House template must surface who is hosting. At
+  // least one hosting_agent_name text layer OR hosting_agent_photo image
+  // layer is required. Numbered HR10 (not "HR4" as first drafted) because
+  // HR4 is already the eyebrow-size rule.
+  // -------------------------------------------------------------------------
+  if (category === "open_house") {
+    let sawHostingBlock = false;
+    for (const layer of iterateLayers(schema.layers)) {
+      if (isTextLayer(layer) && layer.boundField === "hosting_agent_name") {
+        sawHostingBlock = true;
+        break;
+      }
+      if (isImageLayer(layer) && layer.boundField === "hosting_agent_photo") {
+        sawHostingBlock = true;
+        break;
+      }
+    }
+    if (!sawHostingBlock) {
+      violations.push({
+        rule: "HR10_oh_hosting_agent_required",
+        severity: "fail",
+        detail:
+          "Category \"open_house\" requires a hosting-agent block: no layer binds to `hosting_agent_name` or `hosting_agent_photo`.",
+        fix_hint:
+          "Add a text layer with boundField='hosting_agent_name' (and ideally an image layer with boundField='hosting_agent_photo'). Every OH post must show who is hosting.",
+      });
     }
   }
 
@@ -434,8 +486,9 @@ export function checkHardRules(
   // HR7 — hero photo subject containment vs. composition.subject_position
   // Skip when the photo box spans the full canvas width (full-bleed).
   // -------------------------------------------------------------------------
-  const subjectPos = brief.subject_position;
-  if (subjectPos !== "balanced") {
+  // 2026-07-29: brief is optional now; no brief = skip the subject rule.
+  const subjectPos = brief?.subject_position;
+  if (subjectPos && subjectPos !== "balanced") {
     for (const layer of iterateLayers(schema.layers)) {
       if (!isImageLayer(layer)) continue;
       if (layer.boundField !== "hero_photo") continue;
@@ -548,8 +601,76 @@ export function checkHardRules(
     }
   }
 
-  // canvasH unused today but retained in signature for future zone-based rules.
-  void canvasH;
+  // -------------------------------------------------------------------------
+  // HR11 (2026-07-29): layers must sit on the canvas
+  //
+  // A layer whose bounding box extends beyond the canvas by more than
+  // OFF_CANVAS_TOLERANCE px on any edge, or sits fully outside, is a
+  // violation. Catches the "parked off to the side and forgotten" layers
+  // that render as clipped fragments (or nothing) in production PNGs.
+  //
+  // Scope notes:
+  //   • Top-level layers only. Group children carry group-relative coords
+  //     in Fabric, so recursing would false-positive; the group's own
+  //     bbox at the top level covers the composition.
+  //   • Hidden layers (visible=false) are skipped; they don't render, so
+  //     an off-canvas hidden layer is harmless scratch.
+  //   • scaleX/scaleY aren't part of the schema type (width/height are
+  //     post-scale), but Fabric round-trips can leave them on stored
+  //     JSON; honor them defensively when present.
+  //   • Rotation is ignored (axis-aligned approximation); the tolerance
+  //     absorbs small rotated overhangs.
+  // -------------------------------------------------------------------------
+  const OFF_CANVAS_TOLERANCE = 4;
+  for (const layer of schema.layers) {
+    if (layer.visible === false) continue;
+    const loose = layer as unknown as Record<string, unknown>;
+    const scaleX =
+      typeof loose.scaleX === "number" && Number.isFinite(loose.scaleX)
+        ? (loose.scaleX as number)
+        : 1;
+    const scaleY =
+      typeof loose.scaleY === "number" && Number.isFinite(loose.scaleY)
+        ? (loose.scaleY as number)
+        : 1;
+    const left = layer.left;
+    const top = layer.top;
+    const right = left + layer.width * scaleX;
+    const bottom = top + layer.height * scaleY;
+
+    const fullyOutside =
+      right <= 0 || bottom <= 0 || left >= canvasW || top >= canvasH;
+    const overhangsEdge =
+      left < -OFF_CANVAS_TOLERANCE ||
+      top < -OFF_CANVAS_TOLERANCE ||
+      right > canvasW + OFF_CANVAS_TOLERANCE ||
+      bottom > canvasH + OFF_CANVAS_TOLERANCE;
+
+    // 2026-07-29: intentional bleed is a normal design device. Cover-crop
+    // hero/property photos and background shapes routinely extend past the
+    // canvas edge (every live library template has at least one), so a
+    // partial overhang only counts as a defect where clipping loses real
+    // content: text layers, and images that are NOT property photos (logos,
+    // seals, headshots). Fully-outside layers are flagged regardless of kind.
+    const isPhotoImage =
+      layer.kind === "image" &&
+      typeof (loose.boundField as string | undefined) === "string" &&
+      /^(hero_photo|photo_\d+)$/.test(loose.boundField as string);
+    const overhangMatters =
+      layer.kind === "text" || (layer.kind === "image" && !isPhotoImage);
+
+    if (fullyOutside || (overhangsEdge && overhangMatters)) {
+      violations.push({
+        rule: "HR11_layer_off_canvas",
+        severity: "fail",
+        layerId: layer.id,
+        detail: fullyOutside
+          ? `Layer "${layer.name}" (id ${layer.id}) sits entirely outside the ${canvasW}x${canvasH} canvas (bbox left=${Math.round(left)}, top=${Math.round(top)}, right=${Math.round(right)}, bottom=${Math.round(bottom)}).`
+          : `Layer "${layer.name}" (id ${layer.id}) extends beyond the ${canvasW}x${canvasH} canvas by more than ${OFF_CANVAS_TOLERANCE}px (bbox left=${Math.round(left)}, top=${Math.round(top)}, right=${Math.round(right)}, bottom=${Math.round(bottom)}).`,
+        fix_hint: `Move or resize layer ${layer.id} so its box stays within 0..${canvasW} x 0..${canvasH} (within ${OFF_CANVAS_TOLERANCE}px), or delete it if it is leftover scratch.`,
+      });
+    }
+  }
 
   return violations;
 }

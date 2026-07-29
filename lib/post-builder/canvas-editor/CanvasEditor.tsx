@@ -303,6 +303,18 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [layerVersion, setLayerVersion] = useState<number>(0);
   const [editorError, setEditorError] = useState<EditorError | null>(null);
   const [isLocalSaving, setIsLocalSaving] = useState<boolean>(false);
+  // 2026-07-29: names of TEXT layers whose boundField resolved to EMPTY
+  // for the current listing. The editor keeps showing the design-time
+  // fallback text for these (so the canvas "looks fine"), but the headless
+  // publish render DROPS empty-bound layers entirely: the published PNG
+  // gets holes the editor never showed. Collected during both hydration
+  // passes (schema-driven + fabric-json rebind) and surfaced as a
+  // non-blocking amber strip over the canvas. Image layers are excluded:
+  // their empty state already shows honestly (dashed placeholder, or the
+  // intentional hideIfEmpty drop).
+  const [emptyBoundLayerNames, setEmptyBoundLayerNames] = useState<
+    readonly string[]
+  >([]);
 
   // 2026-06-10: the matboard-crop-era state/refs (cropMode, currentClipRect,
   // cropOverlayRef + the CropModeState interface) that lived here were dead
@@ -920,6 +932,9 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       clearTimeout(autosaveWriteTimerRef.current);
       autosaveWriteTimerRef.current = null;
     }
+    // 2026-07-29: drop the previous canvas's empty-bound-field warning;
+    // the hydration pass below recomputes it for the new template/listing.
+    setEmptyBoundLayerNames([]);
 
     // why: `cancelled` flag protects against late-arriving async work (font
     // loading, image fetches) when the effect has been cleaned up. Without it,
@@ -1307,6 +1322,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // 1:1 for the layers the user kept. Layers the user added (e.g.
       // new text via the toolbar) have no schema entry and are left as-is.
       const objectsForRebind = fabricRef.current.getObjects();
+      // 2026-07-29: collect text layers whose bound field has NO data for
+      // this listing (see emptyBoundLayerNames docs). The canvas keeps the
+      // stale/design text so the user sees something, but the published
+      // render will drop the layer, warn instead of staying silent.
+      const emptyBoundNames = new Set<string>();
       for (const obj of objectsForRebind) {
         const data = getLayerData(obj);
         if (!data) continue;
@@ -1314,6 +1334,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         if (!schemaLayer) continue;
         if (isTextLayer(schemaLayer) && schemaLayer.boundField) {
           const resolved = resolveTextBoundField(schemaLayer.boundField, listing);
+          if (
+            (!resolved || resolved.trim().length === 0) &&
+            obj.visible !== false
+          ) {
+            emptyBoundNames.add(schemaLayer.name || schemaLayer.boundField);
+          }
           if (resolved && resolved.trim().length > 0) {
             // why: Textbox is the only Fabric text class we emit in
             // createFabricTextbox. set() with `text` updates the content
@@ -1360,6 +1386,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       }
 
       if (cancelled || !fabricRef.current) return;
+      // 2026-07-29: publish the empty-bound-field warning for this pass.
+      setEmptyBoundLayerNames([...emptyBoundNames]);
       fabricRef.current.requestRenderAll();
       setLayerVersion((v) => v + 1);
       // 2026-06-10: hydration is complete: from here on, canvas mutation
@@ -1392,6 +1420,12 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       // (failures come back as ok:false outcomes), so firing them eagerly is
       // safe. The loop below still ADDS objects in z-order, awaiting each
       // image's already-in-flight promise, so stacking stays schema-faithful.
+      // 2026-07-29: collect text layers whose bound field has NO data for
+      // this listing (see emptyBoundLayerNames docs); published at the end
+      // of this pass. The canvas shows the design-time fallback text for
+      // them, the headless publish render drops them.
+      const emptyBoundNames = new Set<string>();
+
       const imageOutcomePromises = new Map<
         string,
         Promise<ImageLoadOutcome>
@@ -1411,6 +1445,16 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
           const resolved = layer.boundField
             ? resolveTextBoundField(layer.boundField, listing)
             : layer.text;
+          // 2026-07-29: flag the no-data case for the warning strip; the
+          // fallback below keeps the canvas looking populated while the
+          // publish render will drop this layer.
+          if (
+            layer.boundField &&
+            resolved.trim().length === 0 &&
+            layer.visible !== false
+          ) {
+            emptyBoundNames.add(layer.name || layer.boundField);
+          }
           // why: if the bound field resolves to empty, fall back to the
           // template's literal `text` value so the canvas still shows
           // something sensible. The user can edit/delete after.
@@ -1511,6 +1555,8 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
       }
 
       if (cancelled || !fabricRef.current) return;
+      // 2026-07-29: publish the empty-bound-field warning for this pass.
+      setEmptyBoundLayerNames([...emptyBoundNames]);
       fabricRef.current.requestRenderAll();
       // why: prime the layer panel with the freshly added objects.
       setLayerVersion((v) => v + 1);
@@ -4035,6 +4081,28 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
               </div>
             ) : null}
 
+            {/* 2026-07-29: empty bound-field warning. Non-blocking amber
+                strip (same shape as dimensionWarning, amber palette) that
+                lists the layers whose listing data is missing: the canvas
+                shows their design-time fallback text, but the published
+                render drops them, leaving holes the editor never showed.
+                Recomputed on every hydration (listing/template change).
+                Drops below the dimension warning when both are up. */}
+            {emptyBoundLayerNames.length > 0 ? (
+              <div
+                className={[
+                  "absolute left-1/2 z-20 flex max-w-[80%] -translate-x-1/2 items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-2 text-sm text-amber-200 shadow-lg shadow-black/40",
+                  dimensionWarning ? "top-20" : "top-6",
+                ].join(" ")}
+              >
+                <LAlertTriangle size={16} className="mt-0.5 shrink-0" />
+                <span>
+                  Won&apos;t appear on the published image (no data):{" "}
+                  {emptyBoundLayerNames.join(", ")}
+                </span>
+              </div>
+            ) : null}
+
             {/* Non-blocking error toast.
                 2026-05-25 — unified palette with dimensionWarning (rose-*)
                 and AlertTriangle icon swapped in for visual parity. */}
@@ -4264,6 +4332,11 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
         <CarouselStrip
           slides={carousel.slides}
           heroFormat={template.format}
+          // 2026-07-29: without this the strip fell back to its default of
+          // 10 while the slide PICKER below caps at 9 (hero + 9 = IG's 10
+          // total). The "N of max" copy in the strip overstated the budget
+          // by one; keep both surfaces on the same number.
+          maxSlides={9}
           onSlidesChanged={carousel.onSlidesChanged}
           onAddSlideClick={() => setCarouselPickerOpen(true)}
           onPreviewClick={() => setCarouselPreviewOpen(true)}

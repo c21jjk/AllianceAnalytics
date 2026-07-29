@@ -569,6 +569,21 @@ function LibraryCard({
             {POST_TYPE_DISPLAY[post.post_type]} · {fmtFormat(post.format)} · {post.variant}
           </div>
           <div className="text-[11px] text-neutral-500">Edited {relative}</div>
+          {/* 2026-07-29 — scheduled-publish error indicator. The cron
+              records per-platform failures on last_schedule_error; without
+              this the only trace of a stuck schedule was a row that quietly
+              never posted. Amber to match the Test chip's warning palette;
+              full message in the tooltip so the card stays compact. Lives
+              in the info block (not the image overlay) so it can't collide
+              with the status/Test chips or the Reel duration pill. */}
+          {post.schedule_error ? (
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 truncate"
+              title={post.schedule_error}
+            >
+              Schedule error
+            </div>
+          ) : null}
         </div>
       </Link>
 

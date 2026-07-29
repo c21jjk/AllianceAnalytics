@@ -81,6 +81,17 @@ export interface RenderTokenPayload {
   open_house_start_utc?: string | null;
   open_house_end_utc?: string | null;
   /**
+   * 2026-07-29: Photo threading for library-template renders. Ordered
+   * photo URLs picked in the Post Builder (index 0 = hero). When set, the
+   * render page uses these as the listing's photos array BEFORE
+   * mapListingToPayload builds the canvas payload, so a user's photo pick
+   * actually reaches DB-template renders (previously the page always fell
+   * back to properties.hero_image_url). Capped at 6 entries by the signer
+   * to keep the token/URL small. Optional; absent tokens render exactly
+   * as before (backward compatible).
+   */
+  photo_urls?: string[] | null;
+  /**
    * Phase 2 AI Design — when set, the render page reads the
    * `CanvasTemplateSchema` from `render_schema_cache.id = <this>` instead
    * of looking up template_id. This is how a freshly-generated AI design

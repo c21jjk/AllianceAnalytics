@@ -51,3 +51,5 @@ next-env.d.ts
 /housekeeping.command
 supabase/.temp/
 tsconfig.tsbuildinfo
+.fuse_hidden*
+_to_delete_*

@@ -61,6 +61,37 @@ export interface CreatedPostRow {
    * chip on the card so the row is identifiable at a glance.
    */
   test_mode: boolean;
+  /**
+   * 2026-07-29 — human-readable summary of the row's scheduled-publish
+   * error(s), flattened from the last_schedule_error jsonb (one clause per
+   * platform, e.g. "facebook: token expired · instagram: …"). Null when no
+   * platform has a recorded schedule error. The library card renders a
+   * small "Schedule error" indicator with this as the tooltip so a stuck
+   * schedule is visible without opening the row.
+   */
+  schedule_error: string | null;
+}
+
+/**
+ * 2026-07-29 — flatten the last_schedule_error jsonb map
+ * ({ platform: { error, at, count? } }, written by the publish cron) into a
+ * single display string. Returns null on empty/malformed input so callers
+ * can boolean-check the result directly.
+ */
+function summarizeScheduleError(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const parts: string[] = [];
+  for (const [platform, entry] of Object.entries(
+    raw as Record<string, unknown>,
+  )) {
+    if (entry && typeof entry === "object") {
+      const msg = (entry as { error?: unknown }).error;
+      if (typeof msg === "string" && msg.trim().length > 0) {
+        parts.push(`${platform}: ${msg}`);
+      }
+    }
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /**
@@ -78,7 +109,9 @@ export async function fetchCreatedPostsByMls(
   const { data, error } = await supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms, test_mode",
+      // 2026-07-29 — last_schedule_error added so the card surfaces a
+      // "Schedule error" indicator when the publish cron recorded one.
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms, test_mode, last_schedule_error",
     )
     .eq("mls_number", mlsNumber)
     .order("updated_at", { ascending: false, nullsFirst: false })
@@ -111,6 +144,7 @@ export async function fetchCreatedPostsByMls(
     video_url: row.video_url,
     reel_duration_ms: row.reel_duration_ms,
     test_mode: row.test_mode === true,
+    schedule_error: summarizeScheduleError(row.last_schedule_error),
   }));
 }
 
@@ -453,7 +487,9 @@ export async function fetchCreatedPostsLibrary(
   let rowsQ = supabase
     .from("generated_posts")
     .select(
-      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms, test_mode",
+      // 2026-07-29 — last_schedule_error added so the card surfaces a
+      // "Schedule error" indicator when the publish cron recorded one.
+      "id, mls_number, property_id, source_mls, post_type, variant, format, template_id, image_url, caption, status, updated_at, created_at, posted_at, media_type, video_url, reel_duration_ms, test_mode, last_schedule_error",
     );
   let countQ = supabase
     .from("generated_posts")
@@ -530,6 +566,7 @@ export async function fetchCreatedPostsLibrary(
     video_url: row.video_url,
     reel_duration_ms: row.reel_duration_ms,
     test_mode: row.test_mode === true,
+    schedule_error: summarizeScheduleError(row.last_schedule_error),
   }));
 
   return {

@@ -69,7 +69,21 @@ function extractFormatSchema(
 }
 
 /**
- * Resolve the LIBRARY template for a (post_type, format) slot.
+ * 2026-07-29: Resolved library template WITH row provenance. `schema` is
+ * the per-format CanvasTemplateSchema; `template_row_id` is the
+ * `template_definitions.id` (v4 UUID) the schema came from. Callers that
+ * persist a template_id (render route -> generated_posts) must use the row
+ * UUID, NOT schema.id; the inner schema's id can be a stale copy of a
+ * different template (the 7/28 open_house mislabel came from exactly that).
+ */
+export interface ResolvedLibraryTemplate {
+  schema: CanvasTemplateSchema;
+  template_row_id: string;
+}
+
+/**
+ * Resolve the LIBRARY template for a (post_type, format) slot, returning
+ * both the schema and the library row's UUID.
  *
  * Library-first consolidation (2026-05-30): every status-driven render
  * resolves its design from `template_definitions` — the single source of
@@ -90,14 +104,14 @@ function extractFormatSchema(
  * generation fallback only, so statuses without an approved design still
  * render rather than 404.
  */
-export async function resolveTemplateForStatus(
+export async function resolveTemplateRowForStatus(
   postType: PostType,
   format: PostFormat,
-): Promise<CanvasTemplateSchema | null> {
+): Promise<ResolvedLibraryTemplate | null> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("template_definitions")
-    .select("schema, is_default, display_order, created_at")
+    .select("id, schema, is_default, display_order, created_at")
     .contains("post_types", [postType])
     .eq("publish_state", "published")
     .order("is_default", { ascending: false })
@@ -121,7 +135,24 @@ export async function resolveTemplateForStatus(
       (row as { schema?: unknown }).schema,
       format,
     );
-    if (schema) return schema;
+    const rowId = (row as { id?: unknown }).id;
+    if (schema && typeof rowId === "string") {
+      return { schema, template_row_id: rowId };
+    }
   }
   return null;
+}
+
+/**
+ * Schema-only convenience wrapper: the original public shape, kept so the
+ * other render surfaces (multi-OH, rerender-carousel, design-and-render,
+ * auto-reel) don't need signature churn. New callers that persist a
+ * template_id should prefer `resolveTemplateRowForStatus` (2026-07-29).
+ */
+export async function resolveTemplateForStatus(
+  postType: PostType,
+  format: PostFormat,
+): Promise<CanvasTemplateSchema | null> {
+  const resolved = await resolveTemplateRowForStatus(postType, format);
+  return resolved?.schema ?? null;
 }

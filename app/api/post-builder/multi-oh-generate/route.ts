@@ -98,6 +98,7 @@ import {
   type SourceMls,
 } from "@/lib/post-builder/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPublishTestMode } from "@/lib/data/system-config";
 import {
   getAgentAttribution,
   type AgentAttribution,
@@ -195,6 +196,8 @@ interface PropertyRow {
   bedrooms: number | null;
   bathrooms_full: number | null;
   bathrooms_half: number | null;
+  /** 2026-07-29: living-area sqft; threads into PostBuilderListing.square_feet. */
+  square_feet: number | null;
   property_type: string | null;
   unit_number: string | null;
   public_remarks: string | null;
@@ -494,7 +497,9 @@ async function fetchListingRows(
   const { data, error } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, unit_number",
+      // 2026-07-29: square_feet added (was omitted, so Square Ft
+      // placeholders on per-property slides rendered blank).
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, unit_number",
     )
     .in("mls_number", [...mlsNumbers]);
   if (error) {
@@ -547,6 +552,9 @@ function toRenderListing(
     bedrooms: prop.bedrooms ?? row?.bedrooms ?? null,
     bathrooms_full: prop.bathrooms_full ?? row?.bathrooms_full ?? null,
     bathrooms_half: prop.bathrooms_half ?? row?.bathrooms_half ?? null,
+    // 2026-07-29: sqft comes from the DB row only (the wizard's property
+    // summary doesn't carry it). Null-safe; Square Ft layers hide-if-empty.
+    square_feet: row?.square_feet ?? null,
     property_type: prop.property_type ?? row?.property_type ?? null,
     public_remarks: row?.public_remarks ?? null,
     hero_image_url: prop.hero_image_url ?? row?.hero_image_url ?? null,
@@ -1413,6 +1421,12 @@ export async function POST(request: Request): Promise<Response> {
         ),
       );
 
+      // 2026-07-29: seed test_mode from the global publish default, same
+      // as every other generated_posts save path (see actions.ts
+      // saveGeneratedPostAction). This insert was the one path that
+      // skipped it, so multi-OH rows ignored publish_test_mode.
+      const test_mode_default = await getPublishTestMode();
+
       // linked_property_ids isn't in the generated Database types yet; use a
       // permissive client for this insert (mirrors the untyped-client pattern
       // already used for the new owner-story + portal tables).
@@ -1485,6 +1499,9 @@ export async function POST(request: Request): Promise<Response> {
           hosting_agents_by_index: hostingAgentsByIndex as unknown as Json,
           status: "draft",
           created_by: profile.id,
+          // 2026-07-29: see test_mode_default above; user can still
+          // override per-post via setPostTestModeAction after insert.
+          test_mode: test_mode_default,
         })
         .select("id")
         .maybeSingle();

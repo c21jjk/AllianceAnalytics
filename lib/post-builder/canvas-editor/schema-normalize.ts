@@ -70,11 +70,13 @@ export function buildStarterSchema(
     id: template.id,
     name: template.name,
     description: template.description ?? "",
-    // why: 'just_listed' is the most generic category in the canvas-editor
-    // enum. Admin-authored templates aren't pegged to a single category —
-    // they're tagged via template_definitions.post_types (multi-select)
-    // and the picker queries that array, not this field.
-    category: "just_listed" satisfies PostType,
+    // why (2026-07-29): the category placeholder used to hardcode
+    // 'just_listed'. Now that normalizeOrBuildStarter always takes the
+    // STARTER's category (stored inner schemas can carry a stale donor
+    // category, the 7/28 mislabel), the starter must reflect the record's
+    // real identity: the first template_definitions.post_types tag. Falls
+    // back to 'just_listed' (the most generic member) for untagged rows.
+    category: (template.post_types?.[0] ?? "just_listed") satisfies PostType,
     // why: 'v8' Standard is the canvas-editor's most layout-agnostic
     // variant. Used as a placeholder so the type-check passes; the
     // Post Builder picker (Phase 2C) routes DB templates by template
@@ -121,7 +123,14 @@ export function normalizeOrBuildStarter(
   return {
     ...starter,
     // Stored fields override starter defaults for the soft fields.
-    ...(typeof s.id === "string" && s.id.length > 0 ? { id: s.id } : {}),
+    // why (2026-07-29): ID is intentionally NOT overridable by the stored
+    // inner schema; same treatment as name below. A library row cloned or
+    // seeded from another template kept the donor's inner id (e.g. a
+    // just_listed row whose inner schema still said open_house_square_v1),
+    // and that stale identity leaked into renders and generated_posts
+    // labeling (the 7/28 OH-guard mislabel). The starter's id IS the
+    // template_definitions row UUID; always use it, and the next save
+    // re-stamps the inner schema to match.
     // why (2026-05-31): NAME is intentionally NOT overridable by the stored
     // inner schema. The canonical name is the Template Builder record name
     // (`template_definitions.name`, already baked into the starter via
@@ -149,13 +158,15 @@ export function normalizeOrBuildStarter(
     width: dims.width,
     height: dims.height,
     schemaVersion: 1,
-    // category + variant: use stored if they look like valid enum members,
-    // otherwise fall back to starter defaults. The canvas editor validates
-    // these internally, so a clearly-bad value would crash anyway.
-    category:
-      typeof s.category === "string"
-        ? (s.category as CanvasTemplateSchema["category"])
-        : starter.category,
+    // why (2026-07-29): CATEGORY is no longer overridable by the stored
+    // inner schema either. The record's post_types tagging is the canonical
+    // identity; honoring a stale inner category let a just_listed row whose
+    // inner schema still said "open_house" win, which is how the 7/28
+    // post_type mislabel happened. Always use the starter's category.
+    category: starter.category,
+    // variant: use stored if it looks like a valid enum member, otherwise
+    // fall back to the starter default. The canvas editor validates it
+    // internally, so a clearly-bad value would crash anyway.
     variant:
       typeof s.variant === "string"
         ? (s.variant as CanvasTemplateSchema["variant"])

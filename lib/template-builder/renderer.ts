@@ -35,6 +35,12 @@ import type {
 
 const STORAGE_BUCKET = "post-builder-renders";
 
+// 2026-07-29: hard cap on photo URLs carried in the signed render token.
+// The token rides in a URL path segment; Supabase Storage URLs run ~150
+// chars each, so 6 keeps the total well under practical URL limits while
+// covering every carousel photo slot a template can bind.
+const MAX_TOKEN_PHOTO_URLS = 6;
+
 const FORMAT_DIMS: Record<PostFormat, { width: number; height: number }> = {
   square_1x1: { width: 1080, height: 1080 },
   // why: portrait_4x5 retained during the 2026-05-24 transition so existing
@@ -98,6 +104,14 @@ export interface RenderInput {
   open_house_start_utc?: string | null;
   open_house_end_utc?: string | null;
   /**
+   * 2026-07-29: Ordered photo URLs from the Post Builder photo picker
+   * (index 0 = hero). Forwarded into the signed token so the render page
+   * uses the picked photos instead of falling back to
+   * properties.hero_image_url. Capped at MAX_TOKEN_PHOTO_URLS below to
+   * keep the token/URL compact. Optional; absent = legacy behavior.
+   */
+  photo_urls?: string[] | null;
+  /**
    * Carousel re-render (2026-05-28) — `generated_posts` row id to pull
    * `carousel_layout_overrides` from. Forwarded into the token; the render
    * page merges the overrides onto the schema before mounting the canvas.
@@ -135,6 +149,17 @@ export async function renderDbTemplate(
     return { ok: false, error: "listing missing id (uuid required for render)" };
   }
 
+  // 2026-07-29: sanitize + cap the picked photo URLs before they enter the
+  // token. Only http(s) strings survive; empty list collapses to null so the
+  // token stays byte-identical to the pre-photo_urls shape when the caller
+  // didn't pick photos (backward compatible with older verifiers).
+  const photoUrls = (input.photo_urls ?? [])
+    .filter(
+      (u): u is string =>
+        typeof u === "string" && /^https?:\/\//i.test(u.trim()),
+    )
+    .slice(0, MAX_TOKEN_PHOTO_URLS);
+
   // Sign the token. Short TTL — render is typically <30s; 5 min is
   // comfortable headroom for cold Chromium starts.
   let token: string;
@@ -149,6 +174,7 @@ export async function renderDbTemplate(
       oh_window: input.oh_window ?? null,
       open_house_start_utc: input.open_house_start_utc ?? null,
       open_house_end_utc: input.open_house_end_utc ?? null,
+      photo_urls: photoUrls.length > 0 ? photoUrls : null,
       gp_id: input.gp_id ?? null,
     });
   } catch (e) {

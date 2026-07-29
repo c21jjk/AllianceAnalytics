@@ -151,10 +151,24 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
   const listing = await fetchListingById(payload.listing_id);
   if (!listing) notFound();
 
+  // 2026-07-29: Photo threading. When the token carries the Post Builder's
+  // picked photos (photo_urls, index 0 = hero), use them as the listing's
+  // ordered photos array so hero_photo / photo_N bound fields resolve to the
+  // user's picks instead of properties.hero_image_url. Absent or empty =>
+  // legacy behavior (mapListingToPayload falls back to hero_image_url).
+  const tokenPhotos = Array.isArray(payload.photo_urls)
+    ? payload.photo_urls.filter(
+        (u): u is string => typeof u === "string" && u.length > 0,
+      )
+    : [];
+
   // Map V1 PostBuilderListing → MLSListingPayload (the canvas-editor's
   // internal listing shape). The headless renderer consumes this shape
   // exactly like the editor does, so identical bound-field resolution.
-  const mlsPayload = mapListingToPayload(listing);
+  const mlsPayload = mapListingToPayload(
+    listing,
+    tokenPhotos.length > 0 ? { photos: tokenPhotos } : {},
+  );
 
   // 2026-05-30 — Agent-photo placeholder resolution. When a template binds
   // `agent_photo`, fill the LISTING agent's headshot from the Studio "Agents"
@@ -364,7 +378,10 @@ async function fetchListingById(
   const { data, error } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
+      // 2026-07-29: square_feet added; it was omitted from this select so
+      // every Square Ft placeholder rendered blank (mapListingToPayload reads
+      // listing.square_feet into squareFeet).
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
     )
     .eq("id", id)
     .maybeSingle();

@@ -160,7 +160,11 @@ export async function POST(request: Request) {
       // 2026-05-28 — posted_at + posted_by added so a partial-success RETRY
       // preserves a prior successful publish's timestamp/author instead of
       // nulling them when the current attempt has zero successes.
-      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, posted_by, platform_post_ids, property_id, additional_images, media_type, video_url, reel_duration_ms, test_mode, template_id, post_type",
+      // 2026-07-29 — scheduled_for added so Post Now can consume the schedule
+      // keys of the platforms it just published; without this a scheduled
+      // row that was manually posted early stayed "due" and the cron
+      // re-published it on the next tick (double post).
+      "id, mls_number, caption, hashtags, captions_by_platform, image_url, posted_to, posted_at, posted_by, platform_post_ids, property_id, additional_images, scheduled_for, media_type, video_url, reel_duration_ms, test_mode, template_id, post_type",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -533,6 +537,26 @@ export async function POST(request: Request) {
     ? failureResults.map((r) => `[${r.platform}] ${r.error}`).join(" | ")
     : null;
 
+  // 2026-07-29 — consume schedule keys for every platform this row has now
+  // published to (newPostedTo covers this attempt's successes PLUS any
+  // earlier publishes). scheduled_for is a jsonb map {platform: ISO}; the
+  // cron's due scan selects rows via `.neq("scheduled_for", "{}")` plus a
+  // per-key timestamp OR-predicate, so an all-keys-consumed map must be
+  // written as {} (not null) to fall out of that scan. Keys for platforms
+  // that have NOT published (e.g. a future TikTok schedule) are preserved
+  // untouched, and the update below only includes scheduled_for when a key
+  // was actually removed so we never clobber a concurrent schedule edit.
+  const existingSched: Record<string, string> =
+    gp.scheduled_for &&
+    typeof gp.scheduled_for === "object" &&
+    !Array.isArray(gp.scheduled_for)
+      ? { ...(gp.scheduled_for as Record<string, string>) }
+      : {};
+  const remainingSched: Record<string, string> = { ...existingSched };
+  for (const p of newPostedTo) delete remainingSched[p];
+  const schedChanged =
+    Object.keys(remainingSched).length !== Object.keys(existingSched).length;
+
   // platform_permalinks isn't in the generated Database types yet; use a
   // permissive client for this update (mirrors the untyped-client pattern
   // used elsewhere for new columns).
@@ -556,6 +580,25 @@ export async function POST(request: Request) {
       posted_by:
         gp.posted_by ?? (successResults.length > 0 ? profile.id : null),
       last_post_error: lastError,
+      // 2026-07-29 — flip status to "posted" (the exact value the cron
+      // writes on its path) once the row has published anywhere: either
+      // this attempt succeeded or a prior publish already stamped
+      // posted_at. Post Now previously never wrote status, so a published
+      // row stayed filed under Draft/Scheduled on /saved-posts forever.
+      // Omitted entirely when the row has never published, leaving
+      // whatever status it already has untouched.
+      ...(successResults.length > 0 || gp.posted_at
+        ? { status: "posted" }
+        : {}),
+      // 2026-07-29 — see remainingSched above: strip published platforms
+      // from the schedule map so the cron cannot re-publish them.
+      ...(schedChanged ? { scheduled_for: remainingSched } : {}),
+      // 2026-07-29 — bump updated_at whenever we consumed a schedule key.
+      // The cron claims due rows with an optimistic-concurrency guard on
+      // updated_at; flipping the token here makes any cron tick that
+      // SELECTed this row before Post Now finished lose its claim and
+      // bail instead of double publishing.
+      ...(schedChanged ? { updated_at: new Date().toISOString() } : {}),
     })
     .eq("id", gp.id);
   if (updateErr) {

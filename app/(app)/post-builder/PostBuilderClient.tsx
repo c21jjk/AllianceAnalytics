@@ -268,11 +268,17 @@ const POST_TYPES: { id: PostType; label: string; helper: string }[] = [
   { id: "price_reduction", label: "Price Reduced", helper: "Active · pick" },
 ];
 
-const FORMATS: PostFormat[] = ["square_1x1", "story_9x16"];
+// 2026-07-29: the FORMATS validation list went away with the format
+// restore below; nothing else consumed it.
 
 const STORAGE_KEY_POST_TYPE = "post-builder.post_type";
 const STORAGE_KEY_VARIANT = "post-builder.variant";
-const STORAGE_KEY_FORMAT = "post-builder.format";
+// 2026-07-29: STORAGE_KEY_FORMAT ("post-builder.format") removed. The
+// format picker UI was deleted, so a persisted story_9x16 restore trapped
+// the builder in story format with NO way out of it from the UI. Format
+// now always defaults to square_1x1 on fresh mounts; initialResume /
+// initialPick flows that explicitly set format are unaffected. The stale
+// localStorage key is left in place (harmless, nothing reads it).
 
 /**
  * Inline duplicate of the same helper in lib/post-builder/captions.ts.
@@ -427,6 +433,12 @@ export default function PostBuilderClient({
    *  fill in captions automatically. The Regenerate button is still
    *  available to retry. Null = no hint. */
   const [aiCaptionHint, setAiCaptionHint] = useState<string | null>(null);
+  /** 2026-07-29: abort handle for the in-flight AI Design stream. Set at
+   *  the top of runAiDesign, cleared in its finally. The watchdog timers
+   *  inside runAiDesign abort it on stall/overrun; the Cancel button next
+   *  to the progress line aborts it manually. Ref (not state) because the
+   *  button only needs the latest controller, never a re-render. */
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   const [studioOpen, setStudioOpen] = useState<boolean>(false);
   const [studioContext, setStudioContext] = useState<{
@@ -456,6 +468,20 @@ export default function PostBuilderClient({
      * been Studio-edited (Generate only).
      */
     initialFabricJson?: unknown;
+    /**
+     * 2026-07-29: user-intent pin for the Studio save path. The canvas
+     * schema's category/id can carry stale inner metadata (library
+     * templates duplicated from another post type keep the source
+     * template's category), which mislabeled a live post's post_type on
+     * 2026-07-28. These fields freeze what the USER was building at the
+     * moment Studio opened: the active post-type tab and, when the
+     * on-screen render came from a DB template, that template's id.
+     * handleStudioSave prefers these over result.schema.category /
+     * result.schema.id.
+     */
+    pinnedPostType?: PostType;
+    /** Null when the active render wasn't produced by a DB template. */
+    pinnedDbTemplateId?: string | null;
   } | null>(null);
 
   // === Custom Templates (2026-05-17) ===
@@ -630,6 +656,13 @@ export default function PostBuilderClient({
   const [regeneratingCaption, setRegeneratingCaption] = useState(false);
   const [downloadSaving, setDownloadSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 2026-07-29: success channel for the schedule flow. "Scheduled for
+  // Sat Aug 1 at 9:00 AM ET" used to ride the ERROR banner (rose +
+  // AlertTriangle) because there was no toast lib; Larissa read a
+  // successful schedule as a failure. Rendered as a green banner next to
+  // the error banner; cleared alongside error whenever the user changes
+  // post type / listing so it can't linger against a different post.
+  const [scheduleNotice, setScheduleNotice] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
   // Phase 2L (2026-05-22) — auto-scroll the error banner into view when an
@@ -926,10 +959,8 @@ export default function PostBuilderClient({
       // the user's preferred output dimensions stay sticky across sessions.
       setPostType(initialPick.postType);
       setSelectedMls(initialPick.mls);
-      const savedFmtPick = localStorage.getItem(STORAGE_KEY_FORMAT) as PostFormat | null;
-      if (savedFmtPick && FORMATS.includes(savedFmtPick)) {
-        setFormat(savedFmtPick);
-      }
+      // 2026-07-29: format restore removed here (see STORAGE_KEY_FORMAT
+      // note above); the default square_1x1 stands. Variant stays sticky.
       const savedVPick = localStorage.getItem(STORAGE_KEY_VARIANT) as PostVariant | null;
       if (savedVPick && (savedVPick === "v1" || savedVPick === "v2" || savedVPick === "v3")) {
         setVariantId(savedVPick);
@@ -940,10 +971,7 @@ export default function PostBuilderClient({
     if (savedPT && POST_TYPES.some((p) => p.id === savedPT)) {
       setPostType(savedPT);
     }
-    const savedFmt = localStorage.getItem(STORAGE_KEY_FORMAT) as PostFormat | null;
-    if (savedFmt && FORMATS.includes(savedFmt)) {
-      setFormat(savedFmt);
-    }
+    // 2026-07-29: format restore removed (see STORAGE_KEY_FORMAT note).
     const savedV = localStorage.getItem(STORAGE_KEY_VARIANT) as PostVariant | null;
     if (savedV && (savedV === "v1" || savedV === "v2" || savedV === "v3")) {
       setVariantId(savedV);
@@ -953,9 +981,7 @@ export default function PostBuilderClient({
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_POST_TYPE, postType);
   }, [postType]);
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_FORMAT, format);
-  }, [format]);
+  // 2026-07-29: format persist effect removed (see STORAGE_KEY_FORMAT note).
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_VARIANT, variantId);
   }, [variantId]);
@@ -1339,10 +1365,21 @@ export default function PostBuilderClient({
         ct.post_type === postType &&
         ct.format === format,
     );
+    // 2026-07-29: pin the user's intent for the save path (see the
+    // studioContext field docs; a stale schema.category mislabeled a live
+    // post's post_type on 2026-07-28). The DB-template pin is gated on
+    // activeDbTemplateSchema (derived from renderResult, the source of
+    // truth for "what's on screen") because activeDbTemplateId survives a
+    // factory Generate and can't be trusted on its own here.
+    const pinnedDbTemplateId = activeDbTemplateSchema
+      ? activeDbTemplateId
+      : null;
     if (customDefault && !activeDbTemplateSchema) {
       setStudioContext({
         template: studioTemplate,
         listing: payload,
+        pinnedPostType: postType,
+        pinnedDbTemplateId,
         customTemplate: {
           id: customDefault.id,
           name: customDefault.name,
@@ -1361,6 +1398,8 @@ export default function PostBuilderClient({
         template: studioTemplate,
         listing: payload,
         initialFabricJson: editedFabricJson ?? undefined,
+        pinnedPostType: postType,
+        pinnedDbTemplateId,
       });
     }
     setStudioOpen(true);
@@ -1368,6 +1407,7 @@ export default function PostBuilderClient({
     selectedListing,
     studioTemplate,
     activeDbTemplateSchema,
+    activeDbTemplateId,
     availablePhotos,
     customTemplates,
     variantId,
@@ -1444,9 +1484,19 @@ export default function PostBuilderClient({
             isDefault: true,
             fabricJson: customDefault.fabric_json,
           },
+          // 2026-07-29: intent pin (see studioContext field docs). A
+          // factory-variant launch is never a DB-template session.
+          pinnedPostType: postType,
+          pinnedDbTemplateId: null,
         });
       } else {
-        setStudioContext({ template: tpl, listing: payload });
+        setStudioContext({
+          template: tpl,
+          listing: payload,
+          // 2026-07-29: intent pin (see studioContext field docs).
+          pinnedPostType: postType,
+          pinnedDbTemplateId: null,
+        });
       }
       setStudioOpen(true);
     },
@@ -1504,6 +1554,12 @@ export default function PostBuilderClient({
           isDefault: customTpl.isDefault,
           fabricJson: customTpl.fabricJson,
         },
+        // 2026-07-29: intent pin (see studioContext field docs). Custom
+        // templates are duplicated across post types and carry the SOURCE
+        // template's inner category, exactly the metadata that mislabeled
+        // a live post on 2026-07-28. The active tab is the truth.
+        pinnedPostType: postType,
+        pinnedDbTemplateId: null,
       });
       setStudioOpen(true);
     },
@@ -1698,12 +1754,12 @@ export default function PostBuilderClient({
         // for this Studio session, INSERT otherwise. On UPDATE the server
         // also deletes the prior image_path from Storage (Option B cleanup).
         //
-        // Phase 4 note: post_type / variant / format come from result.schema
-        // (not from parent state). When the user swaps templates inside
-        // Studio, parent state DOES track via onTemplateSwitched, but
-        // reading from the schema is defense-in-depth: it guarantees the
-        // saved row's metadata never disagrees with the template_id, even
-        // if some future consumer wires the editor without that callback.
+        // Phase 4 note: variant / format come from result.schema (not from
+        // parent state). 2026-07-29 update: post_type and template_id no
+        // longer do — the schema's inner category/id proved untrustworthy
+        // (duplicated library templates carry stale source metadata, which
+        // mislabeled a live post on 2026-07-28). Both now come from the
+        // intent pinned on studioContext at open time; see below.
         // why (2026-05-24 — post↔listing linkage bugfix #2): pin save
         // identity (mls_number / source_mls / property_id) to the
         // studioContext.listing snapshot, NOT selectedListing.
@@ -1748,7 +1804,14 @@ export default function PostBuilderClient({
           mls_number: saveMlsNumber,
           source_mls: saveSourceMls,
           property_id: savePropertyId,
-          post_type: result.schema.category,
+          // 2026-07-29: post_type comes from the intent pinned at
+          // openStudio time, NOT result.schema.category. Library templates
+          // duplicated from another post type keep the source template's
+          // inner category, and that stale metadata mislabeled a live
+          // post's post_type on 2026-07-28 (an OH-labeled row that was
+          // really a Just Listed). Fallback to the schema only when the
+          // pin is somehow missing (same defensive posture as saveListing).
+          post_type: studioContext?.pinnedPostType ?? result.schema.category,
           // 2026-05-24 — fallback to "v1" when the canvas schema is
           // missing a variant. AI Design rewrites of the template
           // sometimes drop the field; the DB column is NOT NULL so we
@@ -1756,7 +1819,13 @@ export default function PostBuilderClient({
           // canonical value.
           variant: result.schema.variant ?? ("v1" as PostVariant),
           format: result.schema.format,
-          template_id: result.schema.id,
+          // 2026-07-29: same intent pin as post_type above: when the
+          // Studio session started from a DB template, record THAT
+          // template's id rather than whatever id rode in on the canvas
+          // schema (which can be the duplicated source template's).
+          // schema.id remains the fallback for factory/AI/custom sessions
+          // where no DB template was active.
+          template_id: studioContext?.pinnedDbTemplateId ?? result.schema.id,
           image_url: uploadJson.image_url,
           image_path: uploadJson.image_path,
           // why: same studioContext-pin rationale as mls_number above —
@@ -2286,6 +2355,11 @@ export default function PostBuilderClient({
   const runCarouselRerender = useCallback(
     async (gpId: string): Promise<void> => {
       let res: Response;
+      // 2026-07-29: these failure paths used to return SILENTLY, so the
+      // editor's "layout applied" pill stood while the published carousel
+      // quietly kept the old design on every non-hero slide. Surface every
+      // startup failure loudly; the layout delta is already persisted, so
+      // reopening Studio and re-applying retries the render.
       try {
         res = await fetch("/api/post-builder/rerender-carousel", {
           method: "POST",
@@ -2293,12 +2367,15 @@ export default function PostBuilderClient({
           body: JSON.stringify({ generated_post_id: gpId }),
         });
       } catch {
-        // Network blip kicking off the stream — nothing rendered yet, so
-        // there's nothing to undo. The editor already showed the layout was
-        // applied; the user can reopen the post to retry.
+        setError(
+          "Applying your layout to the other slides failed, the published carousel may still have the old design on some slides. Retry from Studio.",
+        );
         return;
       }
       if (!res.ok || !res.body) {
+        setError(
+          "Applying your layout to the other slides failed, the published carousel may still have the old design on some slides. Retry from Studio.",
+        );
         return;
       }
 
@@ -2388,6 +2465,14 @@ export default function PostBuilderClient({
         // instant the last slide lands, then clear.
         setRerenderState({ total, done, failed });
         window.setTimeout(() => setRerenderState(null), 1200);
+        // 2026-07-29: per-slide failures only bumped a counter in the
+        // 1.2s self-clearing overlay above, which nobody catches. Latch a
+        // persistent error so a partial rerender can't publish unnoticed.
+        if (failed > 0) {
+          setError(
+            `${failed} of ${total} slides failed to update with your layout. The published carousel may still show the old design on those slides. Retry from Studio.`,
+          );
+        }
       }
     },
     [carouselSlides.length],
@@ -2738,7 +2823,14 @@ export default function PostBuilderClient({
         agentName: listingForStudio.agent_name ?? null,
         officeName: listingForStudio.listing_office_name ?? null,
       });
-      setStudioContext({ template: tpl, listing: payloadML });
+      setStudioContext({
+        template: tpl,
+        listing: payloadML,
+        // 2026-07-29: intent pin (see studioContext field docs). Magic
+        // Design's recommendation IS the user intent here.
+        pinnedPostType: payload.post_type,
+        pinnedDbTemplateId: null,
+      });
       setStudioOpen(true);
       setRenderResult(null);
       setError(null);
@@ -2753,9 +2845,15 @@ export default function PostBuilderClient({
     setCaptionResult(null);
     setEditedCaption("");
     setError(null);
+    setScheduleNotice(null);
     setSearch("");
     setAvailablePhotos([]);
     setSelectedPhotoIndex(0);
+    // 2026-07-29: a different post type means a different DB-template
+    // bucket entirely. Without this clear, the template-card highlight
+    // (keyed on activeDbTemplateId) could light up a card in the NEW
+    // bucket that happens to share the stale id from the old one.
+    setActiveDbTemplateId(null);
     // why: a different post-type implies a different post entirely — the
     // previous carousel slides don't apply (often a different listing
     // category, different framing).
@@ -2770,12 +2868,14 @@ export default function PostBuilderClient({
     setFormat(next);
     setRenderResult(null);
     setError(null);
+    setScheduleNotice(null);
   }
 
   function changeVariant(next: PostVariant) {
     setVariantId(next);
     setRenderResult(null);
     setError(null);
+    setScheduleNotice(null);
     // Keep the photo offset; the new variant just slices a different
     // window. If we end up beyond the wrap point that's fine — the slice
     // wraps modulo availablePhotos.length.
@@ -2786,6 +2886,10 @@ export default function PostBuilderClient({
     setRenderResult(null);
     setCaptionResult(null);
     setEditedCaption("");
+    // 2026-07-29: same rationale as changePostType: the previous
+    // listing's active DB-template card shouldn't stay highlighted (or be
+    // pinned into the next Studio session) for a listing it never rendered.
+    setActiveDbTemplateId(null);
     // why: a different listing means a different set of supporting photos.
     // Keeping old carousel slides would publish photos of someone else's
     // house — clear instead.
@@ -2795,6 +2899,7 @@ export default function PostBuilderClient({
     setEditingSlideIndex(null);
     setGeneratedPostId(null);
     setError(null);
+    setScheduleNotice(null);
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -3006,22 +3111,17 @@ export default function PostBuilderClient({
         setError(`Schedule failed: ${result.error}`);
         return;
       }
-      // why: surface the earliest scheduled time as a one-shot inline
-      // toast via the existing error-banner channel (no toast lib in
-      // this codebase yet — repurposing the error banner with a clear
-      // "Scheduled for…" prefix keeps scope tight).
+      // 2026-07-29: success now flows through scheduleNotice (green
+      // banner) instead of setError; a successful schedule rendered in the
+      // rose error banner with an AlertTriangle read as a failure. Also
+      // formats the instant in America/New_York with an explicit "ET"
+      // suffix (was browser-local with the UI claiming ET).
       const earliestIso = Object.values(result.scheduled_for)
         .filter((v): v is string => typeof v === "string")
         .sort()[0];
       if (earliestIso) {
-        const localStr = new Date(earliestIso).toLocaleString(undefined, {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        });
-        setError(`Scheduled for ${localStr}`);
+        setError(null);
+        setScheduleNotice(`Scheduled for ${formatHumanScheduleHint(earliestIso)}`);
       }
       closePostNow();
     } catch (e) {
@@ -3142,6 +3242,7 @@ export default function PostBuilderClient({
     if (!selectedListing) return;
     setGenerating(true);
     setError(null);
+    setScheduleNotice(null);
     setRenderResult(null);
     setCaptionResult(null);
     setEditedCaption("");
@@ -3150,9 +3251,35 @@ export default function PostBuilderClient({
     // opens this freshly-generated DB template, not a stale fabric snapshot
     // from a different design.
     setEditedFabricJson(null);
+    // 2026-07-29: mirror generate()'s AI-state clearing. A DB-template
+    // click is just as much a "user wants THIS design" signal as factory
+    // Generate; leaving aiDesign set kept the AI schema winning the
+    // studioTemplate precedence and tagged the save with stale provenance.
+    setAiDesign(null);
+    setAiProgress("");
+    setAiError(null);
 
     try {
       const heroUrls = currentHeroUrls;
+      // 2026-07-29: single-listing Open House renders were publishing with
+      // empty date/time layers because the render route never received the
+      // OH window (properties.oh_start_at is commonly NULL; the window
+      // lives in open_houses). Resolve it here, same source the multi-OH
+      // slide editor uses, and forward it in the render body. Best-effort:
+      // a failed lookup proceeds without the window rather than blocking.
+      let ohStartUtc: string | null = null;
+      let ohEndUtc: string | null = null;
+      if (postType === "open_house" && selectedListing.id) {
+        try {
+          const oh = await resolveOpenHouseWindowAction(selectedListing.id);
+          if (oh.ok && oh.start_at) {
+            ohStartUtc = oh.start_at;
+            ohEndUtc = oh.end_at;
+          }
+        } catch {
+          // non-fatal, render proceeds without the OH window
+        }
+      }
       const [renderRes, captionRes] = await Promise.allSettled([
         fetch("/api/post-builder/render", {
           method: "POST",
@@ -3160,12 +3287,22 @@ export default function PostBuilderClient({
           body: JSON.stringify({
             template_id: template.id,
             listing: selectedListing,
+            // 2026-07-29: always send the user's post-type intent so the
+            // route stops inferring it from the template row's (possibly
+            // stale) metadata. Server half accepts this field.
+            post_type: postType,
             // Hero URL still included as a courtesy — legacy validators in
             // the route may still gate on it; harmless if the DB renderer
             // ignores it (it resolves photos via the schema's bound
             // layers, not from this field).
             hero_image_urls: heroUrls.length > 0 ? heroUrls : undefined,
             format,
+            ...(ohStartUtc
+              ? {
+                  open_house_start_utc: ohStartUtc,
+                  open_house_end_utc: ohEndUtc,
+                }
+              : {}),
           }),
         }),
         fetch("/api/post-builder/caption", {
@@ -3206,6 +3343,7 @@ export default function PostBuilderClient({
     }
     setGenerating(true);
     setError(null);
+    setScheduleNotice(null);
     setRenderResult(null);
     setCaptionResult(null);
     setEditedCaption("");
@@ -3314,6 +3452,7 @@ export default function PostBuilderClient({
     }
     setGenerating(true);
     setError(null);
+    setScheduleNotice(null);
     setAiError(null);
     setAiCaptionHint(null);
     setRenderResult(null);
@@ -3324,10 +3463,38 @@ export default function PostBuilderClient({
     setEditedFabricJson(null);
     setAiProgress("Starting…");
 
+    // 2026-07-29: watchdog abort. The NDJSON consumer below had no
+    // timeout and no cancel: a stalled stream (the route's maxDuration is
+    // 180s, but a proxy can hold the socket open indefinitely) froze the
+    // builder on a spinner with no way out short of a reload. Abort when
+    // no chunk arrives for 60s OR total runtime passes 210s (180s route
+    // budget + margin); the Cancel button beside the progress line aborts
+    // manually. The abort reason string distinguishes the two in the catch.
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    const IDLE_LIMIT_MS = 60_000;
+    const TOTAL_LIMIT_MS = 210_000;
+    let idleTimer = window.setTimeout(
+      () => controller.abort("timeout"),
+      IDLE_LIMIT_MS,
+    );
+    const totalTimer = window.setTimeout(
+      () => controller.abort("timeout"),
+      TOTAL_LIMIT_MS,
+    );
+    const armIdleTimer = (): void => {
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(
+        () => controller.abort("timeout"),
+        IDLE_LIMIT_MS,
+      );
+    };
+
     try {
       const res = await fetch("/api/post-builder/design-and-render", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           post_type: postType,
           variant: variantId,
@@ -3374,6 +3541,8 @@ export default function PostBuilderClient({
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // 2026-07-29: chunk arrived, push the idle watchdog out again.
+        armIdleTimer();
         buffer += decoder.decode(value, { stream: true });
 
         let nlIdx: number;
@@ -3411,6 +3580,12 @@ export default function PostBuilderClient({
           }
         }
       }
+
+      // 2026-07-29: stream fully consumed; stand the watchdogs down so
+      // they can't fire mid-caption-call below and pollute signal.aborted
+      // for an unrelated later throw. finally clears them again (no-op).
+      window.clearTimeout(idleTimer);
+      window.clearTimeout(totalTimer);
 
       if (finalResult && finalResult.ai_schema) {
         const schema = finalResult.ai_schema as CanvasTemplateSchema;
@@ -3488,13 +3663,41 @@ export default function PostBuilderClient({
         setAiProgress("");
       }
     } catch (e) {
-      setAiError(
-        `AI Design threw: ${e instanceof Error ? e.message : String(e)}`,
-      );
-      setAiProgress("");
+      // 2026-07-29: aborts land here as DOMException/AbortError. The
+      // reason string set at abort() time tells user-cancel (quiet reset)
+      // apart from the watchdog (surfaced as a timeout).
+      if (controller.signal.aborted) {
+        setAiError(
+          controller.signal.reason === "cancelled"
+            ? null
+            : "AI design timed out. Try again.",
+        );
+        setAiProgress("");
+      } else {
+        setAiError(
+          `AI Design threw: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        setAiProgress("");
+      }
     } finally {
+      window.clearTimeout(idleTimer);
+      window.clearTimeout(totalTimer);
+      aiAbortRef.current = null;
       setGenerating(false);
     }
+  }
+
+  /**
+   * 2026-07-29: Cancel for an in-flight AI Design run. Aborts the fetch
+   * (the catch above then quiet-resets via the "cancelled" reason) and
+   * resets the visible state immediately so the button feels instant even
+   * if the abort exception takes a tick to propagate.
+   */
+  function cancelAiDesign(): void {
+    aiAbortRef.current?.abort("cancelled");
+    setGenerating(false);
+    setAiProgress("");
+    setAiError(null);
   }
 
   /**
@@ -4364,6 +4567,20 @@ export default function PostBuilderClient({
                 </div>
               ) : null}
 
+              {/* 2026-07-29: schedule SUCCESS banner. Green + Check so a
+                  successful "Scheduled for …" no longer masquerades as an
+                  error (it previously rode the rose banner above). Cleared
+                  wherever error clears on user changes. */}
+              {scheduleNotice ? (
+                <div
+                  role="status"
+                  className="mb-3 inline-flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+                >
+                  <Check size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+                  <span>{scheduleNotice}</span>
+                </div>
+              ) : null}
+
               {/* Phase 2 AI Design — surface the streamed pipeline status
                   in a single line above the preview. Stays visible only
                   while the pipeline is running; clears on success or
@@ -4375,6 +4592,16 @@ export default function PostBuilderClient({
                 >
                   <Sparkles size={14} aria-hidden="true" className="text-gold-600" />
                   <span>{aiProgress}</span>
+                  {/* 2026-07-29: escape hatch for a stuck/slow AI run.
+                      Pairs with the 60s-idle / 210s-total watchdog in
+                      runAiDesign; both reset state through the same path. */}
+                  <button
+                    type="button"
+                    onClick={cancelAiDesign}
+                    className="ml-1 rounded border border-neutral-300 px-2 py-0.5 text-xs font-semibold text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus-ring"
+                  >
+                    Cancel
+                  </button>
                 </div>
               ) : null}
 
@@ -5361,21 +5588,24 @@ function PostNowModal(props: PostNowModalProps) {
     afterOh: boolean;
   }> = [...platforms].map((p) => {
     const localValue = scheduleInputs[p] ?? "";
-    const parsed = localValue ? Date.parse(localValue) : NaN;
-    const iso = !Number.isNaN(parsed) ? new Date(parsed).toISOString() : null;
+    // 2026-07-29: interpret the wall clock as America/New_York (matching
+    // the "Scheduled time (ET)" label) instead of Date.parse's browser-local
+    // reading, which scheduled hours off for any non-Eastern browser.
+    const parsedMs = localValue ? dateTimeLocalToUtcMs(localValue) : null;
+    const iso = parsedMs != null ? new Date(parsedMs).toISOString() : null;
     return {
       platform: p,
       localValue,
       iso,
-      isFuture: iso !== null && parsed - nowMs > 60_000,
+      isFuture: parsedMs != null && parsedMs - nowMs > 60_000,
       // Task 12 — flag a schedule time that lands at/after the open house so
       // the user can catch a promo that would go out after the doors open.
       // Non-blocking: the post can still be scheduled (maybe intentional for a
       // recap), but it's called out clearly.
       afterOh:
-        !Number.isNaN(parsed) &&
+        parsedMs != null &&
         earliestOpenHouseMs != null &&
-        parsed >= earliestOpenHouseMs,
+        parsedMs >= earliestOpenHouseMs,
     };
   });
   const validFutureCount = scheduleEntries.filter((e) => e.isFuture).length;
@@ -6030,19 +6260,142 @@ function PostNowModal(props: PostNowModalProps) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// 2026-07-29: schedule time helpers, pinned to America/New_York.
+//
+// The schedule UI labels its inputs "Scheduled time (ET)", but every helper
+// below used browser-local getHours/setHours/Date.parse. For anyone whose
+// machine isn't in Eastern time (Larissa traveling, a west-coast admin), the
+// entered wall clock silently scheduled hours off. All helpers now interpret
+// AND produce datetime-local wall-clock strings as Eastern time regardless of
+// the browser's zone. Pure functions, no new dependencies, Intl only.
+// ---------------------------------------------------------------------------
+
+const EASTERN_TZ = "America/New_York";
+
+/** Wall-clock fields in Eastern time. month is 1-12, hour is 0-23. */
+interface EasternWallClock {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+}
+
+/** Intl weekday-short → JS getDay() index, for optimal-window matching. */
+const EASTERN_WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+/**
+ * Read the Eastern-time wall clock (plus weekday) for a UTC instant via
+ * Intl.DateTimeFormat.formatToParts, the only browser-native way to project
+ * an instant into an arbitrary IANA zone.
+ */
+function easternWallClock(instant: Date): EasternWallClock & { weekday: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: EASTERN_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+    hour12: false,
+  }).formatToParts(instant);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    // why: some engines render midnight as "24" under hour12:false; % 24
+    // normalizes it back to 0 so Date.UTC math stays on the right day.
+    hour: Number(get("hour")) % 24,
+    minute: Number(get("minute")),
+    weekday: EASTERN_WEEKDAY_INDEX[get("weekday")] ?? 0,
+  };
+}
+
+/**
+ * Convert an Eastern wall-clock reading to its UTC epoch ms.
+ *
+ * Two-pass offset correction: build a first guess by pretending the wall
+ * clock were UTC, format that instant back into Eastern, and measure the
+ * drift between what we asked for and what the zone shows. Subtracting the
+ * drift once lands the correct instant for every real-world case, including
+ * both DST transitions (the second pass re-reads the offset that actually
+ * applies at the corrected instant's side of the boundary).
+ */
+function easternWallClockToUtcMs(wc: EasternWallClock): number {
+  const guess = Date.UTC(wc.year, wc.month - 1, wc.day, wc.hour, wc.minute);
+  const seen = easternWallClock(new Date(guess));
+  const seenAsUtc = Date.UTC(
+    seen.year,
+    seen.month - 1,
+    seen.day,
+    seen.hour,
+    seen.minute,
+  );
+  return guess - (seenAsUtc - guess);
+}
+
+/** Render wall-clock fields as the "YYYY-MM-DDTHH:mm" datetime-local shape. */
+function easternWallClockToInputValue(wc: EasternWallClock): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${wc.year}-${pad(wc.month)}-${pad(wc.day)}` +
+    `T${pad(wc.hour)}:${pad(wc.minute)}`
+  );
+}
+
+/**
+ * Parse a datetime-local "YYYY-MM-DDTHH:mm[:ss]" string into Eastern
+ * wall-clock fields. Returns null on malformed input (defensive, the
+ * native input should only ever emit this shape).
+ */
+function parseDateTimeLocalValue(value: string): EasternWallClock | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!m) return null;
+  return {
+    year: Number(m[1]),
+    month: Number(m[2]),
+    day: Number(m[3]),
+    hour: Number(m[4]),
+    minute: Number(m[5]),
+  };
+}
+
+/**
+ * Datetime-local string (Eastern wall clock) → UTC epoch ms, or null when
+ * the string is empty/malformed. This is the parse-side counterpart of
+ * toDateTimeLocalValue and the ONLY correct way to turn a schedule input
+ * into an instant: Date.parse would interpret it in the browser's zone.
+ */
+function dateTimeLocalToUtcMs(value: string): number | null {
+  const wc = parseDateTimeLocalValue(value);
+  return wc ? easternWallClockToUtcMs(wc) : null;
+}
+
 /**
  * Build the next-available optimal-window datetime-local string for a
- * platform. "datetime-local" inputs expect "YYYY-MM-DDTHH:mm" in the
- * user's LOCAL timezone — we generate exactly that shape so the value
- * round-trips cleanly through the input.
+ * platform, computed on the Eastern-time calendar. "datetime-local" inputs
+ * expect "YYYY-MM-DDTHH:mm"; we emit the ET wall clock in that shape so the
+ * value round-trips cleanly through the input + dateTimeLocalToUtcMs.
  *
  * Algorithm:
- *   1. Pick today + the next 7 days as candidates.
- *   2. For each candidate, check if its weekday is in the platform's
+ *   1. Pick today + the next 7 ET calendar days as candidates.
+ *   2. For each candidate, check if its ET weekday is in the platform's
  *      preferredDays.
  *   3. The first candidate where weekday matches AND the resulting
- *      timestamp (window startHour today) is > now() wins.
- *   4. Fallback: 24 hours from now at startHour (handles edge case where
+ *      instant (window startHour ET that day) is > now() wins.
+ *   4. Fallback: tomorrow (ET) at startHour (handles edge case where
  *      preferredDays is empty for some future config change).
  */
 function computeDefaultScheduleInput(
@@ -6058,20 +6411,35 @@ function computeDefaultScheduleInput(
   const OH_BUFFER_MS = 30 * 60_000; // land ≥30 min before the OH starts
   const ohCeiling =
     earliestOpenHouseMs != null ? earliestOpenHouseMs - OH_BUFFER_MS : Infinity;
+  const etToday = easternWallClock(now);
   for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
-    const candidate = new Date(now);
-    candidate.setDate(now.getDate() + dayOffset);
-    candidate.setHours(window.startHour, 0, 0, 0);
-    if (!window.preferredDays.includes(candidate.getDay())) continue;
+    // why: anchor each candidate day at NOON UTC via Date.UTC (which
+    // handles day/month/year rollover), then read its ET calendar fields.
+    // Noon UTC is 7/8 AM ET, safely inside the same ET calendar date, so
+    // DST transition days (23h/25h long) can't skip or duplicate a day the
+    // way "now + N*24h" arithmetic would.
+    const anchor = new Date(
+      Date.UTC(etToday.year, etToday.month - 1, etToday.day + dayOffset, 12, 0),
+    );
+    const etDay = easternWallClock(anchor);
+    if (!window.preferredDays.includes(etDay.weekday)) continue;
+    const candidate: EasternWallClock = {
+      year: etDay.year,
+      month: etDay.month,
+      day: etDay.day,
+      hour: window.startHour,
+      minute: 0,
+    };
+    const candidateMs = easternWallClockToUtcMs(candidate);
     // why: at least 60s in the future so submitting the pre-fill doesn't
     // race the "must be in the future" validator in schedulePostAction.
-    if (candidate.getTime() - now.getTime() < 60_000) continue;
+    if (candidateMs - now.getTime() < 60_000) continue;
     // Optimal windows are scanned chronologically. Once we pass the OH
     // ceiling, no later window qualifies either — stop and use the OH-lead
     // fallback below (a slot just before the doors open beats an optimal
     // window that lands after them).
-    if (candidate.getTime() >= ohCeiling) break;
-    return toDateTimeLocalValue(candidate);
+    if (candidateMs >= ohCeiling) break;
+    return easternWallClockToInputValue(candidate);
   }
   // OH-lead fallback — no optimal window fits before the open house. Aim a
   // few hours ahead of the doors (same-morning promo), clamped to the future
@@ -6086,28 +6454,31 @@ function computeDefaultScheduleInput(
     // after-OH warning will flag it so the user makes the call.
     return toDateTimeLocalValue(new Date(now.getTime() + 5 * 60_000));
   }
-  // Non-OH fallback — tomorrow at the start hour.
-  const fallback = new Date(now);
-  fallback.setDate(now.getDate() + 1);
-  fallback.setHours(window.startHour, 0, 0, 0);
-  return toDateTimeLocalValue(fallback);
+  // Non-OH fallback: tomorrow (ET calendar) at the start hour.
+  const fallbackAnchor = new Date(
+    Date.UTC(etToday.year, etToday.month - 1, etToday.day + 1, 12, 0),
+  );
+  const fallbackDay = easternWallClock(fallbackAnchor);
+  return easternWallClockToInputValue({
+    year: fallbackDay.year,
+    month: fallbackDay.month,
+    day: fallbackDay.day,
+    hour: window.startHour,
+    minute: 0,
+  });
 }
 
 /**
- * Format a Date as "YYYY-MM-DDTHH:mm" in the user's LOCAL timezone, which
- * is what `<input type="datetime-local">` expects and produces. We
- * deliberately don't use toISOString — that returns UTC.
+ * Format an instant as "YYYY-MM-DDTHH:mm" in EASTERN time, which is what
+ * the "(ET)"-labeled `<input type="datetime-local">` should show. We
+ * deliberately don't use toISOString (UTC) or getHours (browser-local).
  */
 function toDateTimeLocalValue(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
+  return easternWallClockToInputValue(easternWallClock(d));
 }
 
 /**
- * Min value for the datetime-local input — "right now" in local time.
+ * Min value for the datetime-local input: "right now" as an ET wall clock.
  * Native input enforcement is just a hint (Chrome ignores `min` for
  * keyboard entry), so the parent submit handler validates again.
  */
@@ -6117,21 +6488,23 @@ function getDateTimeLocalNow(): string {
 
 /**
  * Format a UTC ISO string as a short human-readable hint for the inline
- * schedule picker. Example output: "Sat May 31 at 9:00 AM". Renders in
- * the user's local timezone — no explicit "ET" suffix because the value
- * is browser-local, not pinned to Eastern (the eyebrow above already
- * labels the input "Scheduled time (ET)" for users in ET).
+ * schedule picker + the schedule success banner. Example output:
+ * "Sat May 31 at 9:00 AM ET". 2026-07-29: now pinned to America/New_York
+ * with an explicit "ET" suffix (was browser-local while the eyebrow above
+ * the input claimed ET).
  */
 function formatHumanScheduleHint(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString(undefined, {
+  const formatted = d.toLocaleString("en-US", {
+    timeZone: EASTERN_TZ,
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
+  return `${formatted} ET`;
 }
 
 

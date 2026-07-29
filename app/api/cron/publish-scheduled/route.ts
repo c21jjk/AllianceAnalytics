@@ -65,7 +65,6 @@ import type {
   Database,
 } from "@/lib/supabase/types";
 import type {
-  LastScheduleError,
   ScheduledFor,
   SchedulablePlatform,
 } from "@/lib/post-builder/types";
@@ -87,6 +86,26 @@ export const maxDuration = 300;
 // next 5-minute tick picks them up. 150s leaves ~150s of headroom — enough
 // for the slowest possible row (IG Reel ~120s poll) to complete and merge.
 const ROW_DEADLINE_MS = 150_000;
+
+// 2026-07-29 — retry cap for a persistently-failing platform. The cron runs
+// every 5 minutes, so 12 attempts is roughly an hour of retries before we
+// give up, clear the schedule key, and leave a "gave up" message in
+// last_schedule_error for the UI. Success resets the counter (the error
+// entry is deleted outright).
+const MAX_PLATFORM_ATTEMPTS = 12;
+
+// 2026-07-29 — local extension of the LastScheduleError entry shape that
+// adds the per-platform retry counter. Backward compatible with rows
+// written before the counter existed: a missing `count` reads as 0 and the
+// pre-existing { error, at } keys are preserved unchanged. Kept local to
+// this route because only the cron increments it; other readers of
+// last_schedule_error simply ignore the extra key.
+interface ScheduleErrorEntry {
+  error: string;
+  at: string;
+  count?: number;
+}
+type ScheduleErrorMap = Partial<Record<SchedulablePlatform, ScheduleErrorEntry>>;
 
 interface CronRowSummary {
   id: string;
@@ -284,15 +303,28 @@ async function processRow(
       : {};
 
   // Build the working set of due platforms for THIS tick.
+  // 2026-07-29 — split "due" into publishable vs already-posted. A platform
+  // can be both due AND present in posted_to (e.g. the user hit Post Now
+  // before the schedule fired). Publishing it again would double post, and
+  // silently skipping it would leave the schedule key in place so the row
+  // re-selected every tick forever. So already-posted platforms are kept
+  // out of the publish fan-out entirely and their schedule keys are treated
+  // as consumed: removed by the claim below and never re-added by the
+  // finalize merge.
+  const postedSet = new Set<string>(row.posted_to ?? []);
   const duePlatforms: SchedulablePlatform[] = [];
+  const dueAlreadyPosted: SchedulablePlatform[] = [];
   for (const p of ["facebook", "instagram", "tiktok"] as const) {
     const iso = schedMap[p];
     if (!iso) continue;
     const t = Date.parse(iso);
     if (Number.isNaN(t)) continue;
-    if (t <= nowMs) duePlatforms.push(p);
+    if (t <= nowMs) {
+      if (postedSet.has(p)) dueAlreadyPosted.push(p);
+      else duePlatforms.push(p);
+    }
   }
-  if (duePlatforms.length === 0) {
+  if (duePlatforms.length === 0 && dueAlreadyPosted.length === 0) {
     // Row matched the SQL filter but no platform is actually due — could
     // happen on clock skew. Skip and move on.
     return summary;
@@ -312,6 +344,9 @@ async function processRow(
   const claimStamp = new Date().toISOString();
   const claimedSched: ScheduledFor = { ...schedMap };
   for (const p of duePlatforms) delete claimedSched[p];
+  // 2026-07-29 — consume already-posted platforms' keys in the same claim
+  // write so they leave the due scan atomically with the publishable ones.
+  for (const p of dueAlreadyPosted) delete claimedSched[p];
   // Guard on the exact current updated_at. Handle legacy rows whose
   // updated_at is null (PostgREST `.eq` never matches null, so use `.is`).
   const claimQuery = supabase
@@ -341,6 +376,34 @@ async function processRow(
     return summary;
   }
 
+  // 2026-07-29 — nothing publishable this tick (every due platform was
+  // already posted). The claim above already consumed their schedule keys,
+  // so the row is out of the due scan; what remains is bookkeeping: drop
+  // any stale schedule error for the consumed platforms (they DID post,
+  // just via Post Now instead of this cron) and, when no schedules are
+  // left at all, file the row under "posted" to match the finalize block's
+  // status rule below.
+  if (duePlatforms.length === 0) {
+    const cleanedErrors: ScheduleErrorMap =
+      row.last_schedule_error &&
+      typeof row.last_schedule_error === "object" &&
+      !Array.isArray(row.last_schedule_error)
+        ? { ...(row.last_schedule_error as ScheduleErrorMap) }
+        : {};
+    for (const p of dueAlreadyPosted) delete cleanedErrors[p];
+    await supabase
+      .from("generated_posts")
+      .update({
+        last_schedule_error: cleanedErrors as unknown as Json,
+        ...(Object.keys(claimedSched).length === 0
+          ? { status: "posted" }
+          : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id);
+    return summary;
+  }
+
   // Resolve caption + image array — same shape the Post Now route builds.
   // Phase D — `caption` is the legacy fallback used for the "no caption at
   // all" guard. Each platform's actual publish call reads its own variant
@@ -348,11 +411,30 @@ async function processRow(
   // below) so the scheduled tick respects the per-platform edits Larissa
   // made in Studio.
   const caption = (row.caption ?? "").trim();
-  if (!caption) {
+  // 2026-07-29 — accept ANY caption source, mirroring the Post Now route's
+  // hasAnyCaption gate: the legacy column OR any non-empty per-platform
+  // variant. Previously only the legacy column was checked, so a row whose
+  // captions lived exclusively in captions_by_platform (saved from a
+  // per-platform edit with an empty legacy column) was failAndCleared as
+  // "missing caption" even though every platform had publishable text.
+  const hasAnyCaption =
+    caption !== "" ||
+    (["facebook", "instagram", "tiktok"] as const).some(
+      (p) =>
+        resolvePerPlatformCaption(row.caption, row.captions_by_platform, p) !==
+        "",
+    );
+  if (!hasAnyCaption) {
     // No caption = nothing useful to post. Mark all due platforms as failed
     // so the UI flags this row for human attention; clear them from
     // scheduled_for so we don't retry endlessly.
-    return await failAndClear(supabase, row, duePlatforms, "missing caption");
+    return await failAndClear(
+      supabase,
+      row,
+      duePlatforms,
+      "missing caption",
+      dueAlreadyPosted,
+    );
   }
 
   // 2026-07-24 — stale open-house guard. A scheduled OH post that fires
@@ -372,6 +454,7 @@ async function processRow(
       row,
       duePlatforms,
       "open houses in this post have already ended — publish blocked (repost manually with a fresh date if intended)",
+      dueAlreadyPosted,
     );
   }
 
@@ -389,6 +472,7 @@ async function processRow(
         row,
         duePlatforms,
         "missing video_url for reel",
+        dueAlreadyPosted,
       );
     }
     // IG Reels require a cover image; if the row is missing one we'd
@@ -402,6 +486,7 @@ async function processRow(
         row,
         duePlatforms,
         "missing image_url",
+        dueAlreadyPosted,
       );
     }
   }
@@ -614,6 +699,11 @@ async function processRow(
   // shapes deterministically from the existing row state + this tick's
   // results, then write them in a single UPDATE.
   const nextSched: ScheduledFor = { ...schedMap };
+  // 2026-07-29 — nextSched starts from the PRE-claim map (that's what lets
+  // failed platforms retry next tick), so the already-posted platforms'
+  // consumed keys must be dropped here too or this write would restore them.
+  for (const p of dueAlreadyPosted) delete nextSched[p];
+  // (their stale schedule errors are cleared below, after nextErrors exists)
   const nextPostedTo = new Set<string>(row.posted_to ?? []);
   const existingIds: Record<string, string> =
     row.platform_post_ids &&
@@ -622,13 +712,18 @@ async function processRow(
       ? (row.platform_post_ids as Record<string, string>)
       : {};
   const nextPlatformPostIds: Record<string, string> = { ...existingIds };
-  const existingErrors: LastScheduleError =
+  const existingErrors: ScheduleErrorMap =
     row.last_schedule_error &&
     typeof row.last_schedule_error === "object" &&
     !Array.isArray(row.last_schedule_error)
-      ? (row.last_schedule_error as LastScheduleError)
+      ? (row.last_schedule_error as ScheduleErrorMap)
       : {};
-  const nextErrors: LastScheduleError = { ...existingErrors };
+  const nextErrors: ScheduleErrorMap = { ...existingErrors };
+  // 2026-07-29 — an already-posted platform's consumed schedule key also
+  // clears its stale error entry: the platform demonstrably published
+  // (via Post Now), so a leftover "failed" message would mislead the
+  // Schedule error indicator on /saved-posts.
+  for (const p of dueAlreadyPosted) delete nextErrors[p];
 
   const successPermalinks: Array<{ platform: SchedulablePlatform; url: string | null }> = [];
 
@@ -648,10 +743,28 @@ async function processRow(
       // The error map lets the UI explain what happened in the meantime.
       // Scope errors are recorded the same way; the user will see "→
       // re-authorize" once the UI reads this field.
-      nextErrors[platform] = {
-        error: r.error,
-        at: new Date().toISOString(),
-      };
+      // 2026-07-29 — retry cap. Before this, a permanently-broken platform
+      // (revoked token, deleted image host) retried every 5 minutes forever.
+      // Each failed attempt bumps last_schedule_error[platform].count; when
+      // it reaches MAX_PLATFORM_ATTEMPTS the schedule key is dropped (same
+      // terminal treatment failAndClear applies) so the row stops
+      // re-triggering, with a "gave up" message for the UI. Success deletes
+      // the entry above, which is what resets the counter.
+      const attempt = (existingErrors[platform]?.count ?? 0) + 1;
+      if (attempt >= MAX_PLATFORM_ATTEMPTS) {
+        delete nextSched[platform];
+        nextErrors[platform] = {
+          error: `gave up after ${MAX_PLATFORM_ATTEMPTS} attempts: ${r.error}`,
+          at: new Date().toISOString(),
+          count: attempt,
+        };
+      } else {
+        nextErrors[platform] = {
+          error: r.error,
+          at: new Date().toISOString(),
+          count: attempt,
+        };
+      }
     }
   }
 
@@ -663,6 +776,13 @@ async function processRow(
   const allDone = Object.keys(nextSched).length === 0;
   let nextStatus: string | undefined;
   if (allDone && summary.succeeded.length > 0) {
+    nextStatus = "posted";
+  } else if (allDone && row.posted_at) {
+    // 2026-07-29 — no schedules remain and the row HAS published before
+    // (posted_at is first-publish-only), so "posted" is the truthful state
+    // even when this tick itself had no successes: e.g. the last remaining
+    // key belonged to an already-posted platform, or a failing platform
+    // just hit the retry cap on a row that published elsewhere earlier.
     nextStatus = "posted";
   }
 
@@ -791,12 +911,19 @@ async function processRow(
  * Mark every due platform as failed with the same error message, clear them
  * from scheduled_for so we don't retry forever, and persist. Used when the
  * row is structurally unpublishable (missing caption / image).
+ *
+ * 2026-07-29 — alsoConsume: schedule keys to drop WITHOUT recording an
+ * error (platforms that were due but already posted). This write rebuilds
+ * scheduled_for from the pre-claim row state, so leaving them out would
+ * resurrect keys the claim step just consumed and the row would re-trigger
+ * every tick.
  */
 async function failAndClear(
   supabase: ReturnType<typeof createAdminClient>,
   row: GeneratedPostRow,
   duePlatforms: SchedulablePlatform[],
   errorMsg: string,
+  alsoConsume: SchedulablePlatform[] = [],
 ): Promise<CronRowSummary> {
   const schedMap: ScheduledFor =
     row.scheduled_for &&
@@ -805,17 +932,20 @@ async function failAndClear(
       ? (row.scheduled_for as ScheduledFor)
       : {};
   const nextSched: ScheduledFor = { ...schedMap };
-  const existingErrors: LastScheduleError =
+  const existingErrors: ScheduleErrorMap =
     row.last_schedule_error &&
     typeof row.last_schedule_error === "object" &&
     !Array.isArray(row.last_schedule_error)
-      ? (row.last_schedule_error as LastScheduleError)
+      ? (row.last_schedule_error as ScheduleErrorMap)
       : {};
-  const nextErrors: LastScheduleError = { ...existingErrors };
+  const nextErrors: ScheduleErrorMap = { ...existingErrors };
   const at = new Date().toISOString();
   for (const p of duePlatforms) {
     delete nextSched[p];
     nextErrors[p] = { error: errorMsg, at };
+  }
+  for (const p of alsoConsume) {
+    delete nextSched[p];
   }
   await supabase
     .from("generated_posts")

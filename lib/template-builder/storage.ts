@@ -13,6 +13,11 @@
 
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  checkHardRules,
+  failsOnly,
+} from "@/lib/post-builder/canvas-editor/ai/hard-rule-checker";
+import type { CanvasTemplateSchema } from "@/lib/post-builder/canvas-editor/types";
 import type {
   TemplateDefinition,
   TemplateInsert,
@@ -434,12 +439,71 @@ function templateSupportsFormatLocal(
 }
 
 /**
+ * 2026-07-29: Save-time template validation.
+ *
+ * Runs the deterministic hard-rule checker (the same executable rules the
+ * AI design pipeline enforces) against a schema about to be persisted,
+ * with the ROW's target post_type as the category. The row's post_type
+ * wins over whatever the inner schema says because stored inner schemas
+ * can carry a stale donor category (root of the 7/28 mislabel) and must
+ * not pick which rule set applies.
+ *
+ * Returns null when the schema passes, or a readable message listing
+ * every fail-severity violation. Warn-severity findings do not block a
+ * save. Called ONLY from saveStudioTemplate, deliberately NOT from
+ * createTemplate/updateTemplate, which also serve cloneTemplate
+ * (duplicating an existing row must never be blocked by validation).
+ */
+function validateTemplateSchemaForSave(
+  schemaJson: unknown,
+  postType: PostType,
+): string | null {
+  if (
+    !schemaJson ||
+    typeof schemaJson !== "object" ||
+    Array.isArray(schemaJson)
+  ) {
+    return "Template schema is not an object; refusing to save.";
+  }
+  const raw = schemaJson as Record<string, unknown>;
+  if (!Array.isArray(raw.layers)) {
+    return "Template schema has no layers array; refusing to save.";
+  }
+  const candidate = {
+    ...(schemaJson as CanvasTemplateSchema),
+    category: postType,
+  } as CanvasTemplateSchema;
+  let failures;
+  try {
+    failures = failsOnly(checkHardRules(candidate));
+  } catch (e) {
+    // A malformed layer must surface as a readable save error, not a 500.
+    return `Template validation crashed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  if (failures.length === 0) return null;
+  const lines = failures.map(
+    (v, i) => `${i + 1}. [${v.rule}] ${v.detail}`,
+  );
+  return `Template failed validation (${failures.length} issue${failures.length === 1 ? "" : "s"}): ${lines.join(" ")}`;
+}
+
+/**
  * Insert or update a Studio-authored template. Returns the row id.
  */
 export async function saveStudioTemplate(
   input: StudioTemplateSaveInput,
   actor_id: string,
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  // 2026-07-29: validate BEFORE any write (including the default-flag
+  // sweep below, so a rejected save can't clear another row's default).
+  const validationError = validateTemplateSchemaForSave(
+    input.schemaJson,
+    input.postType,
+  );
+  if (validationError) {
+    return { ok: false, error: validationError };
+  }
+
   if (input.makeDefault) {
     await clearStudioDefaultForSlot(input.postType, input.format, input.id, actor_id);
   }

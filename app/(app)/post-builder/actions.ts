@@ -1952,18 +1952,41 @@ export async function updatePostCaptionsAction(
     return { ok: false, error: "generated_post_id required" };
   }
   const supabase = createAdminClient();
+  // 2026-07-29 — only write fields that actually carry content. This action
+  // flushes CLIENT caption state, and that state can legitimately be empty:
+  // resume a saved post, hit Generate, the caption API fails and blanks the
+  // tabs, then Post Now / Schedule calls this flush. The old unconditional
+  // write let that empty state WIPE the caption already saved on the row,
+  // after which the publish 412'd with "no caption". Empty fields are now
+  // simply omitted, and an all-empty flush returns success without touching
+  // the row at all so the saved captions survive.
+  const hasLegacyCaption = (input.legacy_caption ?? "").trim() !== "";
+  const hasLegacyHashtags = (input.legacy_hashtags?.length ?? 0) > 0;
+  const hasPlatformCaption = Object.values(
+    input.captions_by_platform ?? {},
+  ).some((v) => typeof v?.caption === "string" && v.caption.trim() !== "");
+  if (!hasLegacyCaption && !hasLegacyHashtags && !hasPlatformCaption) {
+    return { ok: true };
+  }
   const { error } = await supabase
     .from("generated_posts")
     .update({
-      caption: input.legacy_caption,
-      hashtags: input.legacy_hashtags ?? [],
-      captions_by_platform: input.captions_by_platform as unknown as Json,
+      ...(hasLegacyCaption ? { caption: input.legacy_caption } : {}),
+      ...(hasLegacyHashtags ? { hashtags: input.legacy_hashtags ?? [] } : {}),
+      ...(hasPlatformCaption
+        ? {
+            captions_by_platform: input.captions_by_platform as unknown as Json,
+          }
+        : {}),
       updated_at: new Date().toISOString(),
     })
     .eq("id", input.generated_post_id)
     .eq("created_by", profile.id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/post-builder");
+  // 2026-07-29 — /saved-posts renders the row's caption on its cards; keep
+  // it fresh alongside the builder, matching the other post actions here.
+  revalidatePath("/saved-posts");
   return { ok: true };
 }
 

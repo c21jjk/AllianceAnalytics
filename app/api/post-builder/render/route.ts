@@ -25,8 +25,9 @@ import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { renderDbTemplate } from "@/lib/template-builder";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
-import { resolveTemplateForStatus } from "@/lib/data/custom-templates-db";
+import { resolveTemplateRowForStatus } from "@/lib/data/custom-templates-db";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getAgentAttribution,
   type AgentAttribution,
@@ -79,6 +80,77 @@ function looksLikeUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     s,
   );
+}
+
+/**
+ * 2026-07-29: validate a caller-supplied OH window value as a parseable
+ * ISO timestamp string. Anything else (wrong type, empty, unparseable)
+ * collapses to null so a buggy client degrades to the DB fallback below
+ * instead of poisoning the render token with garbage.
+ */
+function normalizeIsoUtc(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return Number.isNaN(Date.parse(trimmed)) ? null : trimmed;
+}
+
+/**
+ * 2026-07-29: resolve the Open House window for a render.
+ *
+ * Precedence:
+ *   1. Body-supplied open_house_start_utc / end_utc (validated ISO strings).
+ *   2. Fallback for older clients that don't send a window: the property's
+ *      NEXT open_houses row (end_at > now, earliest start_at) via the admin
+ *      client. This is what keeps date/time layers rendering on OH posts
+ *      created from clients that predate the window fields.
+ *
+ * Non-OH post types skip the lookup entirely and just echo the validated
+ * body values (normally null). Lookup failures degrade to nulls; a missed
+ * window must never fail the render; hide-if-empty handles blank layers.
+ */
+async function resolveOpenHouseWindow(
+  body: RenderRequestBody,
+): Promise<{ start: string | null; end: string | null }> {
+  const start = normalizeIsoUtc(body.open_house_start_utc);
+  const end = normalizeIsoUtc(body.open_house_end_utc);
+  if (start || end) return { start, end };
+  if (body.post_type !== "open_house") return { start: null, end: null };
+
+  const propertyId = body.listing?.id;
+  if (
+    !propertyId ||
+    typeof propertyId !== "string" ||
+    !looksLikeUuid(propertyId)
+  ) {
+    return { start: null, end: null };
+  }
+
+  try {
+    const supabase = createAdminClient();
+    // end_at is nullable in the schema (see oh-publish-guard.ts); filter
+    // NULLs out so a windowless row can't shadow a real upcoming session.
+    const { data, error } = await supabase
+      .from("open_houses")
+      .select("start_at, end_at")
+      .eq("property_id", propertyId)
+      .not("end_at", "is", null)
+      .gt("end_at", new Date().toISOString())
+      .order("start_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return { start: null, end: null };
+    return {
+      start: typeof data.start_at === "string" ? data.start_at : null,
+      end: typeof data.end_at === "string" ? data.end_at : null,
+    };
+  } catch (e) {
+    console.warn(
+      "[post-builder/render] open_houses window fallback failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+    return { start: null, end: null };
+  }
 }
 
 /**
@@ -154,6 +226,13 @@ export async function POST(request: Request) {
       body.listing,
       body.hosting_agent_name,
     );
+    // 2026-07-29: OH window threading. This branch never forwarded the
+    // session window into renderDbTemplate (unlike multi-oh-generate,
+    // rerender-carousel, and mobile QuickCreate), so single-listing OH
+    // renders through library templates dropped their date/time layers
+    // whenever properties.oh_start_at was NULL. Validated body values win;
+    // older clients fall back to the property's next open_houses row.
+    const ohWindow = await resolveOpenHouseWindow(body);
     const dbResult = await renderDbTemplate({
       template_id: body.template_id,
       listing: body.listing,
@@ -162,6 +241,16 @@ export async function POST(request: Request) {
       hosting_agent_phone: hosting?.phone ?? null,
       hosting_agent_photo_url: hosting?.photo_url ?? null,
       oh_window: body.oh_window ?? null,
+      open_house_start_utc: ohWindow.start,
+      open_house_end_utc: ohWindow.end,
+      // 2026-07-29: photo threading: the Post Builder photo picker's
+      // selection (index 0 = hero) rides the token so DB-template renders
+      // stop ignoring the pick. renderDbTemplate caps + sanitizes.
+      photo_urls: Array.isArray(body.hero_image_urls)
+        ? body.hero_image_urls
+        : body.hero_image_url
+          ? [body.hero_image_url]
+          : null,
     });
     if (!dbResult.ok) {
       return NextResponse.json(dbResult, { status: 500 });
@@ -199,8 +288,17 @@ export async function POST(request: Request) {
   // factory placeholder when no default custom template exists or its
   // schema_json is null. (Variant pinned to "v1" — see the soft-
   // deprecation note above.)
+  // 2026-07-29: resolve the library row WITH its UUID. The response's
+  // template_id must be the template_definitions row id when the schema
+  // came from a DB row: the inner schema.id can be a stale copy of a
+  // different template (e.g. open_house_square_v1 inside a just_listed
+  // row), and echoing it stamped wrong ids onto generated_posts.
+  const resolvedLibrary = await resolveTemplateRowForStatus(
+    body.post_type,
+    body.format,
+  );
   const schema =
-    (await resolveTemplateForStatus(body.post_type, body.format)) ??
+    resolvedLibrary?.schema ??
     findCanvasTemplate(body.post_type, "v1", body.format);
   if (!schema) {
     return NextResponse.json(
@@ -219,6 +317,11 @@ export async function POST(request: Request) {
     body.listing,
     body.hosting_agent_name,
   );
+  // 2026-07-29: same window resolution as the DB-template branch:
+  // validated body values first, open_houses fallback for OH posts from
+  // older clients. properties.oh_start_at is commonly NULL in prod, so
+  // relying on the listing row alone silently dropped date/time layers.
+  const factoryOhWindow = await resolveOpenHouseWindow(body);
   const rendered = await renderCanvasSchema({
     schema,
     listingId: body.listing.id,
@@ -229,11 +332,8 @@ export async function POST(request: Request) {
       factoryHosting?.name ?? body.hosting_agent_name ?? null,
     hostingAgentPhone: factoryHosting?.phone ?? null,
     hostingAgentPhotoUrl: factoryHosting?.photo_url ?? null,
-    // Pass through if the client provides them; today single-listing
-    // OH usually relies on the listing's stored oh_start_at / oh_end_at,
-    // but the contract mirror with the multi-OH route is intentional.
-    openHouseStartUtc: body.open_house_start_utc ?? null,
-    openHouseEndUtc: body.open_house_end_utc ?? null,
+    openHouseStartUtc: factoryOhWindow.start,
+    openHouseEndUtc: factoryOhWindow.end,
   });
 
   if (!rendered.ok) {
@@ -261,7 +361,12 @@ export async function POST(request: Request) {
     ok: true,
     image_url: rendered.image_url,
     image_path: rendered.image_path,
-    template_id: schema.id,
+    // 2026-07-29: when the schema came from a template_definitions row,
+    // echo THAT row's UUID (the id the client stores as
+    // renderResult.template_id and persists on generated_posts). schema.id
+    // only survives for the in-code factory fallback, where no DB row
+    // exists. Field name unchanged for client back-compat.
+    template_id: resolvedLibrary?.template_row_id ?? schema.id,
     width: rendered.width,
     height: rendered.height,
     rendered_at: new Date().toISOString(),
