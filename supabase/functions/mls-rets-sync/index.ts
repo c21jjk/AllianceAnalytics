@@ -24,7 +24,11 @@
  *   - LISTINGS_SUPABASE_URL              (Alliance Listings project)
  *   - LISTINGS_SUPABASE_SERVICE_ROLE_KEY (Alliance Listings service role)
  *
- * Invocation: POST { feed_short_code: "cmc" | "sjsr" }.
+ * Invocation: POST { feed_short_code: "cmc" | "sjsr", mode?: "full" | "open_houses" }.
+ *   - mode omitted / "full"  → the complete listing + photo + OH sync (cron).
+ *   - mode "open_houses"     → OH-only fast path for the in-app Sync Open
+ *                              Houses button (2026-07-31). See
+ *                              syncOpenHousesOnly.
  */
 // @ts-expect-error - Deno runtime
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -1728,6 +1732,148 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
   return result;
 }
 
+/**
+ * Open-House-ONLY fast path (2026-07-31, John/Larissa).
+ *
+ * Larissa needs to refresh open houses on demand, seconds before she builds
+ * a multi-property Open House carousel. Calling the full syncFeed() for that
+ * is the wrong tool: it re-pulls every listing in every class plus hero and
+ * gallery photos, takes 10-15s per feed, and none of that work has anything
+ * to do with open houses. The 4-hourly cron already does it.
+ *
+ * This path skips all of it. Log in, pull the OpenHouse resource per class,
+ * and filter against the Alliance MLS numbers ALREADY in `properties`
+ * (written by the last full sync) instead of re-deriving them from a fresh
+ * Property search. Typically 2-4s per feed.
+ *
+ * Tradeoff worth naming out loud: a listing that hit the MLS since the last
+ * full property sync isn't in `properties` yet, so an open house attached to
+ * it gets skipped here and arrives on the next 4-hourly run. In practice a
+ * listing goes live days before its first open house, so this has no
+ * practical bite — but it's why this is an accelerator, not a replacement.
+ */
+async function syncOpenHousesOnly(shortCode: string): Promise<SyncResult> {
+  const start = Date.now();
+  const result: SyncResult = {
+    ok: false,
+    feed_short_code: shortCode,
+    feed_name: shortCode,
+    duration_ms: 0,
+    classes: [],
+    errors: [],
+    open_houses_synced: 0,
+  };
+  if (shortCode !== "cmc" && shortCode !== "sjsr") {
+    result.errors.push(
+      `mls-rets-sync open_houses mode only supports CMC + SJSR. Got: ${shortCode}`,
+    );
+    result.duration_ms = Date.now() - start;
+    return result;
+  }
+  const sourceMls = shortCode as "cmc" | "sjsr";
+
+  const analytics = createAnalyticsClient();
+  let listings: SupabaseClient;
+  try {
+    listings = createListingsClient();
+  } catch (e) {
+    result.errors.push((e as Error).message);
+    result.duration_ms = Date.now() - start;
+    return result;
+  }
+
+  let feed: FeedRow;
+  try {
+    feed = await loadFeed(analytics, shortCode);
+    result.feed_name = feed.name;
+  } catch (e) {
+    result.errors.push((e as Error).message);
+    result.duration_ms = Date.now() - start;
+    return result;
+  }
+
+  // Alliance MLS numbers from the DB rather than from RETS. Expired rows are
+  // excluded — an expired listing can't hold a future open house, and letting
+  // them through would only widen the filter for no gain.
+  const allianceMlsNumbers = new Set<string>();
+  try {
+    const { data, error } = await analytics
+      .from("properties")
+      .select("mls_number, status")
+      .eq("source_mls", sourceMls)
+      .neq("status", "expired");
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ mls_number: string | null }>) {
+      if (r.mls_number) allianceMlsNumbers.add(r.mls_number);
+    }
+  } catch (e) {
+    result.errors.push(`alliance MLS lookup: ${(e as Error).message}`);
+    result.duration_ms = Date.now() - start;
+    return result;
+  }
+  if (allianceMlsNumbers.size === 0) {
+    // No listings on file for this feed — nothing an open house could attach
+    // to. Not an error; a feed can legitimately be empty.
+    result.ok = true;
+    result.duration_ms = Date.now() - start;
+    return result;
+  }
+
+  let anyClassFailed = false;
+  for (const cls of PROPERTY_CLASSES_BY_FEED[sourceMls]) {
+    const classResult: ClassResult = {
+      class: cls,
+      records_seen: 0,
+      records_upserted: 0,
+    };
+    // Fresh login per class, same as syncFeed — Paragon invalidates the
+    // session aggressively and a stale one fails mid-search.
+    const rets = new RETSClient(feed.username!, feed.password!);
+    try {
+      await rets.login(feed.rets_url!);
+    } catch (e) {
+      anyClassFailed = true;
+      classResult.error = `class-login: ${(e as Error).message}`;
+      result.errors.push(`[${cls}] class-login: ${(e as Error).message}`);
+      result.classes.push(classResult);
+      continue;
+    }
+    try {
+      const ohCount = await syncOpenHousesForClass(
+        rets,
+        listings,
+        analytics,
+        sourceMls,
+        cls,
+        allianceMlsNumbers,
+      );
+      classResult.records_seen = ohCount;
+      classResult.records_upserted = ohCount;
+      result.open_houses_synced = (result.open_houses_synced ?? 0) + ohCount;
+    } catch (e) {
+      anyClassFailed = true;
+      classResult.error = (e as Error).message;
+      result.errors.push(`[${cls}] ${(e as Error).message}`);
+    } finally {
+      await rets.logout();
+    }
+    result.classes.push(classResult);
+  }
+
+  // Link freshly-arrived OHs to properties. syncOpenHousesForClass already
+  // resolves property_id by MLS#, but run_auto_linker is what reconciles the
+  // wider property/listing graph the wizard reads from.
+  try {
+    await analytics.rpc("run_auto_linker");
+  } catch (e) {
+    console.error("run_auto_linker post-OH-sync:", (e as Error).message);
+  }
+
+  result.ok = !anyClassFailed;
+  result.duration_ms = Date.now() - start;
+  return result;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -1735,20 +1881,26 @@ Deno.serve(async (req: Request) => {
       headers: { "Content-Type": "application/json" },
     });
   }
-  let body: { feed_short_code?: string };
+  let body: { feed_short_code?: string; mode?: string };
   try {
     body = await req.json();
   } catch {
     body = {};
   }
   const shortCode = (body.feed_short_code ?? "").trim();
+  // mode="open_houses" runs the OH-only fast path (see syncOpenHousesOnly).
+  // Anything else — including the absent default — runs the full sync, so
+  // every existing caller (cron, Sync All, per-feed Sync Now) is untouched.
+  const mode = (body.mode ?? "full").trim();
   if (!shortCode) {
     return new Response(JSON.stringify({ error: "Missing feed_short_code in body" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
-  const result = await syncFeed(shortCode);
+  const result = mode === "open_houses"
+    ? await syncOpenHousesOnly(shortCode)
+    : await syncFeed(shortCode);
   return new Response(JSON.stringify(result), {
     headers: { "Content-Type": "application/json" },
     status: result.ok ? 200 : 500,

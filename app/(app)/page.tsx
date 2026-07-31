@@ -333,6 +333,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                     windowDays={7}
                     officeShortCode={officeFilter}
                     freshCount={openHousesFreshCount}
+                    canSync={profile.role === "admin"}
                   />
                 </div>
                 <div id="under-contract" className="scroll-mt-32">

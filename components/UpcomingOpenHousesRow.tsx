@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { UpcomingOpenHouse } from "@/lib/data/open-houses";
 import { formatCurrency } from "@/lib/format";
 import OfficeThumbBadge from "./OfficeThumbBadge";
+import SyncOpenHousesButton from "./SyncOpenHousesButton";
 import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 
 interface UpcomingOpenHousesRowProps {
@@ -14,6 +15,13 @@ interface UpcomingOpenHousesRowProps {
   officeShortCode?: string | null;
   /** Count of OHs first seen in the last 24h. Drives the "new" badge. */
   freshCount?: number;
+  /**
+   * Whether to show the on-demand "Sync Open Houses" control. Admin-only,
+   * same gate the other manual sync affordances on the dashboard use — the
+   * underlying server action calls requireAdmin() and would throw for
+   * anyone else, so hiding it beats surfacing a button that errors.
+   */
+  canSync?: boolean;
   className?: string;
 }
 
@@ -37,6 +45,7 @@ export default function UpcomingOpenHousesRow({
   windowDays = 7,
   officeShortCode,
   freshCount = 0,
+  canSync = false,
   className,
 }: UpcomingOpenHousesRowProps) {
   const [collapsed, setCollapsed] = useState<boolean>(true);
@@ -110,6 +119,18 @@ export default function UpcomingOpenHousesRow({
             here on 2026-05-21. Conditional on having 2+ open houses — below
             that threshold a multi-property post is nonsensical, so the CTA
             simply doesn't render (no muted hint on the dashboard). */}
+        {/* 2026-07-31 — on-demand feed refresh. Sibling to the toggle button
+            (not inside it) so clicking sync doesn't collapse the card.
+            Placed BEFORE the multi-property CTA deliberately: the natural
+            order is "get the latest, then build from it", and unlike that
+            CTA this one renders even at zero open houses — an empty card is
+            exactly when you want to pull the feed. */}
+        {canSync ? (
+          <div className="shrink-0">
+            <SyncOpenHousesButton variant="compact" />
+          </div>
+        ) : null}
+
         {openHouses.length >= 2 ? (
           <Link
             href="/post-builder/multi-oh"

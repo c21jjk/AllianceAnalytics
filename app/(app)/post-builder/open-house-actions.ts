@@ -325,3 +325,217 @@ export async function deleteManualOpenHouseAction(
   revalidatePath("/");
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// On-demand feed sync (2026-07-31)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-feed outcome of a manual Open House sync.
+ */
+export interface OhFeedSyncReport {
+  feed: "cmc" | "sjsr";
+  /** Human label for the UI ("Cape May County", "South Jersey Shore"). */
+  label: string;
+  ok: boolean;
+  /** Open House rows upserted this run (not "new" — upserts include updates). */
+  synced: number;
+  duration_ms: number;
+  error?: string;
+}
+
+/**
+ * Bright's slice of the report. Bright is NOT syncable from a server button —
+ * see the note on syncOpenHousesNowAction — so instead of pretending, we
+ * report how fresh the Bright data on file actually is and let Larissa decide
+ * whether it's current enough.
+ */
+export interface OhBrightStatus {
+  /** Bright OHs currently on file whose window hasn't closed yet. */
+  upcoming: number;
+  /** When the Bright portal rows were last refreshed. */
+  last_synced_at: string | null;
+  /** Why it can't run from this button, in one sentence, for the UI. */
+  note: string;
+}
+
+export interface OhSyncReport {
+  ok: boolean;
+  feeds: OhFeedSyncReport[];
+  bright: OhBrightStatus;
+  /** Total OH rows upserted across CMC + SJSR. */
+  total_synced: number;
+  /** Upcoming OH count across ALL sources after the sync — what Larissa cares about. */
+  upcoming_total: number;
+  finished_at: string;
+}
+
+const OH_FEED_LABELS: Record<"cmc" | "sjsr", string> = {
+  cmc: "Cape May County",
+  sjsr: "South Jersey Shore",
+};
+
+/**
+ * Invoke the mls-rets-sync Edge Function in OH-only mode for one feed.
+ *
+ * Same service-role auth as every other Edge Function call in the app
+ * (lib/sync/actions.ts). Never throws — a feed that's down shouldn't take the
+ * other feed's results with it, so failures come back as a report row.
+ */
+async function invokeOpenHouseSync(
+  feed: "cmc" | "sjsr",
+): Promise<OhFeedSyncReport> {
+  const base: OhFeedSyncReport = {
+    feed,
+    label: OH_FEED_LABELS[feed],
+    ok: false,
+    synced: 0,
+    duration_ms: 0,
+  };
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    return {
+      ...base,
+      error: "Supabase URL / service role key not configured on the server.",
+    };
+  }
+  try {
+    const res = await fetch(`${url}/functions/v1/mls-rets-sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      // mode="open_houses" selects the Edge Function's OH-only fast path
+      // (~2-4s). Older deployed versions of the function don't know the key
+      // and simply ignore it, falling through to the full listing+photo sync
+      // — slower (~15s) but it still refreshes open houses, so this button
+      // degrades to "correct but sluggish" rather than breaking if the app
+      // ships ahead of the function.
+      body: JSON.stringify({ feed_short_code: feed, mode: "open_houses" }),
+      cache: "no-store",
+    });
+    const raw = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      open_houses_synced?: number;
+      duration_ms?: number;
+      errors?: unknown[];
+    };
+    if (!res.ok && !raw.errors) {
+      return { ...base, error: `Sync service returned HTTP ${res.status}.` };
+    }
+    const errs = (raw.errors ?? [])
+      .map((e) =>
+        typeof e === "string" ? e : ((e as { message?: string })?.message ?? ""),
+      )
+      .filter(Boolean);
+    return {
+      ...base,
+      ok: Boolean(raw.ok),
+      synced: Number(raw.open_houses_synced) || 0,
+      duration_ms: Number(raw.duration_ms) || 0,
+      error: errs.length > 0 ? errs[0] : undefined,
+    };
+  } catch (e) {
+    return { ...base, error: (e as Error).message };
+  }
+}
+
+/**
+ * "Sync Open Houses" — the on-demand refresh Larissa runs right before she
+ * builds a multi-property Open House post.
+ *
+ * WHAT THIS DOES SYNC
+ *   CMC and SJSR (Paragon RETS). Both run server-side, in parallel, through
+ *   the Edge Function's OH-only fast path. ~2-4s each.
+ *
+ * WHAT THIS CANNOT SYNC, AND WHY
+ *   Bright. Two independent blocks, either one of which is sufficient:
+ *     1. Bright's RETS account 3399514 carries a `Bright Restrict Open House`
+ *        group — the OpenHouse resource answers 20201 (access denied). There
+ *        is no server-side Bright OH feed to call. Removing that group is a
+ *        request open with Bright; the day it clears, this action gains a
+ *        third feed and nothing else changes.
+ *     2. The stopgap we use today — Larissa's Matrix client portal — is a
+ *        browser-session-scoped page that robots.txt disallows, so it can't
+ *        be fetched from a server at all. It's driven by hand through Claude.
+ *   Rather than ship a button that silently covers two of three MLSs, we
+ *   report Bright's actual freshness so the gap is visible at the moment it
+ *   matters. Bright portal rows are stored as feed_short_code='manual' with
+ *   an oh_unique_id prefixed 'portal-', which is what distinguishes them from
+ *   Larissa's hand-typed entries.
+ */
+export async function syncOpenHousesNowAction(): Promise<OhSyncReport> {
+  await requireAdmin();
+  const supabase = createAdminClient();
+
+  const [cmc, sjsr] = await Promise.all([
+    invokeOpenHouseSync("cmc"),
+    invokeOpenHouseSync("sjsr"),
+  ]);
+  const feeds = [cmc, sjsr];
+
+  const nowIso = new Date().toISOString();
+
+  // Bright freshness — read AFTER the sync so the counts below reflect one
+  // consistent view of the table.
+  let brightUpcoming = 0;
+  let brightLastSynced: string | null = null;
+  try {
+    const { data } = await supabase
+      .from("open_houses")
+      .select("end_at, last_synced_at")
+      .eq("feed_short_code", "manual")
+      .like("oh_unique_id", "portal-%")
+      .order("last_synced_at", { ascending: false });
+    const rows = (data ?? []) as Array<{
+      end_at: string | null;
+      last_synced_at: string | null;
+    }>;
+    brightUpcoming = rows.filter(
+      (r) => r.end_at !== null && r.end_at > nowIso,
+    ).length;
+    brightLastSynced = rows[0]?.last_synced_at ?? null;
+  } catch (e) {
+    console.warn(
+      "[open-house-actions] bright freshness read failed:",
+      e instanceof Error ? e.message : e,
+    );
+  }
+
+  // Everything upcoming, all sources — the number that actually tells Larissa
+  // whether she has enough to build with.
+  let upcomingTotal = 0;
+  try {
+    const { count } = await supabase
+      .from("open_houses")
+      .select("id", { count: "exact", head: true })
+      .gt("end_at", nowIso);
+    upcomingTotal = count ?? 0;
+  } catch (e) {
+    console.warn(
+      "[open-house-actions] upcoming count failed:",
+      e instanceof Error ? e.message : e,
+    );
+  }
+
+  revalidatePath("/post-builder");
+  revalidatePath("/post-builder/multi-oh");
+  revalidatePath("/");
+
+  return {
+    ok: feeds.every((f) => f.ok),
+    feeds,
+    bright: {
+      upcoming: brightUpcoming,
+      last_synced_at: brightLastSynced,
+      note:
+        "Bright's Open House feed is still licence-restricted on our RETS account, so it can't be pulled from here. Bright open houses are loaded separately — ask Claude to run the Matrix portal sync, or add one by hand.",
+    },
+    total_synced: feeds.reduce((s, f) => s + f.synced, 0),
+    upcoming_total: upcomingTotal,
+    finished_at: nowIso,
+  };
+}

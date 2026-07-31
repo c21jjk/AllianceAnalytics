@@ -1,0 +1,122 @@
+name: Deploy Supabase Edge Functions
+
+# Auto-deploys changed Supabase Edge Functions whenever supabase/functions/**
+# changes on main.
+#
+# Why this exists (2026-07-31): until now, edge functions only shipped via a
+# `supabase functions deploy` from a laptop. That meant the repo and the
+# running function could silently drift — mls-rets-sync sat at deployed
+# version 26 while main had moved on, and nobody could tell from the code.
+# Same failure mode the Fly worker had before fly-deploy-worker.yml, and the
+# same fix: a push that touches the code ships the code.
+#
+# One-time setup: add a SUPABASE_ACCESS_TOKEN repo secret (GitHub -> Settings
+# -> Secrets and variables -> Actions -> New repository secret). Generate the
+# token at supabase.com -> Account -> Access Tokens -> "Generate new token".
+# It's a personal access token starting with `sbp_`. No terminal required.
+#
+# Deliberately deploys ONLY the functions whose files changed, rather than all
+# of them. Blanket-deploying every function on every push would redeploy code
+# that hasn't been touched in months, turning an unrelated one-line change
+# into a nine-function release.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "supabase/functions/**"
+      - ".github/workflows/supabase-deploy-functions.yml"
+  # Manual runs from the Actions tab — use the `functions` input to force a
+  # redeploy of specific functions (space-separated), or leave it blank to
+  # deploy everything under supabase/functions.
+  workflow_dispatch:
+    inputs:
+      functions:
+        description: "Space-separated function names to deploy (blank = all)"
+        required: false
+        default: ""
+
+# Never run two function deploys at once.
+concurrency:
+  group: deploy-supabase-functions
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy edge functions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # fetch-depth 2 so the "what changed in this push" diff below has a
+        # parent commit to compare against.
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Work out which functions to deploy
+        id: pick
+        env:
+          MANUAL_INPUT: ${{ github.event.inputs.functions }}
+          EVENT_NAME: ${{ github.event_name }}
+          SHA_BEFORE: ${{ github.event.before }}
+          SHA_NOW: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MANUAL_INPUT:-}" ]; then
+            echo "Manual run — deploying: $MANUAL_INPUT"
+            echo "list=$MANUAL_INPUT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # Blank input on a manual run means "everything".
+            LIST=$(ls -1 supabase/functions | grep -v '^_' | tr '\n' ' ')
+          else
+            # Push: only the function directories this push touched.
+            # `_shared` is a library, not a function — a change there means
+            # every function that might import it needs redeploying, so widen
+            # to all of them rather than guessing at the import graph.
+            CHANGED=$(git diff --name-only "$SHA_BEFORE" "$SHA_NOW" -- supabase/functions/ 2>/dev/null \
+                      || git diff --name-only HEAD~1 HEAD -- supabase/functions/)
+            echo "Changed files:"
+            echo "$CHANGED"
+            if echo "$CHANGED" | grep -q '^supabase/functions/_shared/'; then
+              echo "_shared changed — deploying all functions."
+              LIST=$(ls -1 supabase/functions | grep -v '^_' | tr '\n' ' ')
+            else
+              LIST=$(echo "$CHANGED" \
+                | sed -n 's#^supabase/functions/\([^/]*\)/.*#\1#p' \
+                | grep -v '^_' \
+                | sort -u \
+                | tr '\n' ' ')
+            fi
+          fi
+
+          echo "Deploying: ${LIST:-<none>}"
+          echo "list=$LIST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        if: steps.pick.outputs.list != ''
+        # verify_jwt stays at whatever the function already has — the CLI does
+        # not flip it, and every function here is called with the service-role
+        # key, so JWT verification must stay ON.
+        run: |
+          set -euo pipefail
+          for fn in ${{ steps.pick.outputs.list }}; do
+            echo "::group::deploy $fn"
+            supabase functions deploy "$fn" --project-ref "$SUPABASE_PROJECT_REF"
+            echo "::endgroup::"
+          done
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: rhkgowpjfpqbrdmgsccx
+
+      - name: Nothing to do
+        if: steps.pick.outputs.list == ''
+        run: echo "No function directories changed in this push — skipping."

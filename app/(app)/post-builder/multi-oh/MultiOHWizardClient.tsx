@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import AddOpenHouseModal from "@/components/AddOpenHouseModal";
+import SyncOpenHousesButton from "@/components/SyncOpenHousesButton";
 import {
   AlertCircle,
   AlertTriangle,
@@ -1721,8 +1722,15 @@ function Step1Pick({
             No open houses scheduled yet.
           </div>
           <div className="text-sm text-neutral-600 mb-4">
-            When new open houses arrive from the feeds they&apos;ll show up
-            here automatically — or add one yourself right now.
+            The feeds refresh every few hours. If the office just finalised
+            the weekend, pull them in now — or add one yourself.
+          </div>
+          {/* 2026-07-31 — an empty list is the single most likely moment
+              someone wants a fresh pull, so the sync sits above the fold
+              here with its full result panel rather than tucked in a
+              header. */}
+          <div className="mx-auto mb-4 max-w-md text-left">
+            <SyncOpenHousesButton />
           </div>
           <div className="flex items-center justify-center gap-3">
             <button
@@ -1758,8 +1766,12 @@ function Step1Pick({
             Only {listings.length} upcoming open house right now.
           </div>
           <div className="text-sm text-neutral-600 mb-4">
-            Add another open house right here, or use the standard
-            single-listing flow for the one you have.
+            Pull the latest from the MLS feeds, add another open house right
+            here, or use the standard single-listing flow for the one you
+            have.
+          </div>
+          <div className="mx-auto mb-4 max-w-md text-left">
+            <SyncOpenHousesButton />
           </div>
           <div className="flex items-center justify-center gap-3">
             <button
@@ -1788,17 +1800,22 @@ function Step1Pick({
           Pick the open houses for this event
         </h2>
         {/* Task 18 — manual OH entry, right where a missing property is
-            noticed. Opens the shared AddOpenHouseModal. */}
-        <button
-          type="button"
-          onClick={onAddOpenHouse}
-          className="flex-none inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-gold-50/40 px-3 py-1.5 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
-        >
-          + Add Open House
-        </button>
+            noticed. Opens the shared AddOpenHouseModal.
+            2026-07-31 — paired with the on-demand feed sync: "it's missing"
+            has two fixes, and pulling the feed is the one to try first. */}
+        <div className="flex flex-none items-start gap-2">
+          <SyncOpenHousesButton variant="compact" />
+          <button
+            type="button"
+            onClick={onAddOpenHouse}
+            className="flex-none inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-gold-50/40 px-3 py-1.5 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
+          >
+            + Add Open House
+          </button>
+        </div>
       </div>
       <p className="text-sm text-neutral-600 mb-4">
-        Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Add it with the button above.
+        Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Sync the feeds or add it by hand with the buttons above.
       </p>
 
       {/* 2026-07-17 — coverage summary. Larissa's morning post covered 9 of

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AddOpenHouseModal from "@/components/AddOpenHouseModal";
+import SyncOpenHousesButton from "@/components/SyncOpenHousesButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles,
@@ -4066,6 +4067,14 @@ export default function PostBuilderClient({
               </button>
             ) : null}
           </div>
+          {/* 2026-07-31 — on-demand feed refresh, OH tab only. The column is
+              300px wide, so this sits on its own line under the header
+              rather than crowding the + Add Open House button. */}
+          {postType === "open_house" ? (
+            <div className="mb-3">
+              <SyncOpenHousesButton variant="compact" />
+            </div>
+          ) : null}
           <input
             type="search"
             className="input mb-3"
@@ -4080,7 +4089,7 @@ export default function PostBuilderClient({
                 {POST_TYPES.find((p) => p.id === postType)?.label}
               </span>
               {postType === "open_house"
-                ? " in the next 14 days. Use the + Add Open House button above to schedule one, or pick a different post type."
+                ? " in the next 14 days. Sync the feeds or use + Add Open House above to schedule one, or pick a different post type."
                 : ". Try a different post type or trigger a sync."}
             </div>
           ) : (
