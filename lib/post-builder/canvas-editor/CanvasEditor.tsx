@@ -315,6 +315,19 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   const [emptyBoundLayerNames, setEmptyBoundLayerNames] = useState<
     readonly string[]
   >([]);
+  // 2026-08-04 (John): the amber strip shipped without a dismiss affordance
+  // and rendered at the same top-6 slot as the FloatingToolbar (higher
+  // z-index), so selecting a text layer put the warning ON TOP of the text
+  // toolbar with no way to close it — the template editor was effectively
+  // blocked. Dismissal is per-hydration: it resets whenever a hydration pass
+  // publishes a DIFFERENT set of missing fields (listing/template switch),
+  // so new problems still surface.
+  const [emptyBoundWarningDismissed, setEmptyBoundWarningDismissed] =
+    useState<boolean>(false);
+  const emptyBoundNamesKey = emptyBoundLayerNames.join("|");
+  useEffect(() => {
+    setEmptyBoundWarningDismissed(false);
+  }, [emptyBoundNamesKey]);
 
   // 2026-06-10: the matboard-crop-era state/refs (cropMode, currentClipRect,
   // cropOverlayRef + the CropModeState interface) that lived here were dead
@@ -3623,6 +3636,17 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
   // -------------------------------------------------------------------------
   const effectiveSaving = isSaving || isLocalSaving;
 
+  // 2026-08-04 — mirror of the FloatingToolbar's render condition below.
+  // The warning strips must never sit ON TOP of the toolbar (they carry a
+  // higher z-index), so when the toolbar is up and docked at the top the
+  // amber strip shifts down below the toolbar band instead.
+  const floatingToolbarUp = Boolean(
+    ((selectedEntry && !selectedEntry.locked) ||
+      (selection.isMulti && selection.count > 0)) &&
+      fabricRef.current,
+  );
+  const floatingToolbarDockedTop = floatingToolbarUp && toolbarDock === "top";
+
   return (
     <div className="flex h-full w-full flex-col bg-[var(--studio-bg)] text-[var(--studio-text)]">
       {/* ----- Header — Canva-style 48px translucent compact bar -----
@@ -4087,19 +4111,51 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                 shows their design-time fallback text, but the published
                 render drops them, leaving holes the editor never showed.
                 Recomputed on every hydration (listing/template change).
-                Drops below the dimension warning when both are up. */}
-            {emptyBoundLayerNames.length > 0 ? (
+                Drops below the dimension warning when both are up.
+                2026-08-04 (John): three fixes — (1) dismissible via X (it
+                previously had no close affordance and blocked editing);
+                (2) shifts BELOW the FloatingToolbar band when the toolbar
+                is up and docked top, instead of rendering over it; (3) in
+                template-authoring mode the copy is informational: the
+                "listing" there is just a sample for visual context, so
+                "won't appear on the published image" read as a broken
+                template when nothing is wrong. */}
+            {emptyBoundLayerNames.length > 0 && !emptyBoundWarningDismissed ? (
               <div
                 className={[
                   "absolute left-1/2 z-20 flex max-w-[80%] -translate-x-1/2 items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-2 text-sm text-amber-200 shadow-lg shadow-black/40",
-                  dimensionWarning ? "top-20" : "top-6",
+                  floatingToolbarDockedTop && dimensionWarning
+                    ? "top-48"
+                    : floatingToolbarDockedTop
+                      ? "top-36"
+                      : dimensionWarning
+                        ? "top-20"
+                        : "top-6",
                 ].join(" ")}
               >
                 <LAlertTriangle size={16} className="mt-0.5 shrink-0" />
                 <span>
-                  Won&apos;t appear on the published image (no data):{" "}
-                  {emptyBoundLayerNames.join(", ")}
+                  {props.templateAuthoring ? (
+                    <>
+                      No sample data for:{" "}
+                      {emptyBoundLayerNames.join(", ")}. These fill in from
+                      the real listing when a post is created.
+                    </>
+                  ) : (
+                    <>
+                      Won&apos;t appear on the published image (no data):{" "}
+                      {emptyBoundLayerNames.join(", ")}
+                    </>
+                  )}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setEmptyBoundWarningDismissed(true)}
+                  aria-label="Dismiss warning"
+                  className="focus-ring-dark ml-1 mt-0.5 shrink-0 text-amber-300 hover:text-amber-200"
+                >
+                  <LX size={16} />
+                </button>
               </div>
             ) : null}
 
