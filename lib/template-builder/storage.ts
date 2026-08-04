@@ -229,6 +229,18 @@ export async function updateTemplate(
   if (patch.is_default !== undefined) update.is_default = patch.is_default;
   if (patch.source !== undefined) update.source = patch.source;
 
+  // 2026-08-04 stale-thumbnail guard. preview_image_url is a SNAPSHOT taken at
+  // save time; the admin template list renders it verbatim and has no live
+  // render fallback (TemplateListClient.tsx), so any schema edit that does not
+  // ship a fresh preview leaves a picture of the OLD design on screen. That is
+  // how the 7/29 direct-SQL repairs left 9 of 12 thumbnails lying. If the
+  // schema changed and the caller supplied no new preview, null it: the list
+  // then shows an honest "None" until a Studio save regenerates it. The admin
+  // Studio save path DOES supply a preview, so it is unaffected.
+  if (patch.schema !== undefined && patch.preview_image_url === undefined) {
+    update.preview_image_url = null;
+  }
+
   const { data, error } = await supabase
     .from("template_definitions")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -542,8 +554,11 @@ export async function saveStudioTemplate(
     publish_state: "published",
     source: "studio",
   };
-  // Only overwrite the preview when a fresh one was uploaded.
-  if (input.previewImageUrl !== null) {
+  // Only overwrite the preview when a fresh one was actually uploaded. An
+  // empty string is NOT a preview — leaving preview_image_url undefined here
+  // lets updateTemplate's stale-thumbnail guard null it out, since this patch
+  // always carries a schema change.
+  if (input.previewImageUrl) {
     patch.preview_image_url = input.previewImageUrl;
   }
   const updated = await updateTemplate(input.id, patch, actor_id);

@@ -65,7 +65,15 @@ export async function fetchListingsForPostBuilder(
       "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
     )
     .not("hero_image_url", "is", null)
-    .limit(limit);
+    // 2026-08-04 — the caller's limit must NOT truncate the candidate pool for
+    // post types that are post-filtered below. open_house filters the fetched
+    // rows down to those with an upcoming open_houses row, so a small limit
+    // (the template editor passes limit: 1) would fetch one arbitrary active
+    // listing, find no OH for it, and return [] — which made OH template
+    // previews hydrate against a just_listed sample and render literal
+    // {open_house_date} tokens. Fetch a full pool here and apply the caller's
+    // cap at the very end instead (see the slice on the return).
+    .limit(opts.post_type === "open_house" ? Math.max(limit, 200) : limit);
 
   switch (opts.post_type) {
     case "just_listed": {
@@ -93,14 +101,21 @@ export async function fetchListingsForPostBuilder(
       break;
     }
     case "open_house": {
-      q = q.eq("status", "active").order("listing_date", { ascending: false });
+      // nullsFirst: false — a NULL listing_date sorts FIRST under DESC in
+      // Postgres, so rows with no listing date would otherwise crowd out real
+      // candidates in a small-limit query.
+      q = q
+        .eq("status", "active")
+        .order("listing_date", { ascending: false, nullsFirst: false });
       break;
     }
     case "price_reduction": {
       // Path A: show all active listings, ordered by most recent first.
       // We don't yet track price history, so the user picks which listings
       // had reductions. Path B (auto-detect) lands later — see Phase 6 plan.
-      q = q.eq("status", "active").order("listing_date", { ascending: false });
+      q = q
+        .eq("status", "active")
+        .order("listing_date", { ascending: false, nullsFirst: false });
       break;
     }
   }
@@ -160,7 +175,9 @@ export async function fetchListingsForPostBuilder(
       });
   }
 
-  return listings;
+  // Apply the caller's cap here, after any post-filtering, so a small limit
+  // never starves a filtered bucket (see the .limit comment above).
+  return listings.slice(0, limit);
 }
 
 function toListing(r: PropertyRow): PostBuilderListingWithOH {

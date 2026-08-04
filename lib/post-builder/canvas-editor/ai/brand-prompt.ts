@@ -181,8 +181,10 @@ ADDRESS FORMATTING (universal):
 AGENT INFO (post-type gated):
   • For \`just_listed\` posts: ZERO agent fields. Do NOT include
     agent_name, agent_photo, agent_phone, agent_email, agent_title.
-  • For \`just_sold\` posts: ZERO agent fields (default). The closing
-    agent gets attribution elsewhere if the user wants it.
+  • For \`just_sold\` posts: agent NAME and PHOTO are OPTIONAL and allowed
+    (rule change 2026-08-04). Use \`agent_name\` and/or \`agent_photo\`
+    when the layout has room for tasteful attribution. NEVER
+    agent_phone, agent_email, or agent_title on just_sold.
   • For \`open_house\` posts (retail, single-listing AND multi-property
     OH carousel per-property slides): hosting agent attribution is
     ENCOURAGED. Include a hosting-agent block (typically bottom-right):
@@ -227,8 +229,11 @@ BOUND FIELDS for text layers (use these instead of hardcoded text wherever possi
     ⚠ Use \`address_line1\` + \`city\` separately. NEVER \`city_state_zip\`. NEVER \`state\` or \`zip\` alone.
   • beds, baths, beds_baths, property_type, mls_number, tagline, status_label
   • agent_name, agent_phone, agent_email, agent_title, office_name
-    ⚠ Do NOT use any generic \`agent_*\` field on just_listed / just_sold /
+    ⚠ Do NOT use any generic \`agent_*\` field on just_listed /
     open_house / under_contract / price_reduction. See HARD RULES above.
+    ✓ EXCEPTION (2026-08-04): \`agent_name\` and \`agent_photo\` are
+    allowed on just_sold. agent_phone / agent_email / agent_title are
+    still forbidden there.
   • hosting_agent_name, hosting_agent_phone (text — open_house ONLY)
     ✓ ENCOURAGED on open_house posts. Bind to these tokens for the
     hosting-agent attribution block.
@@ -297,7 +302,10 @@ EYEBROW: "SOLD" in DM Serif Display (substitute for The Seasons),
   ~70pt, white, center-aligned, positioned ~70% down the canvas.
 PRICE: \`price\` bound field in Glacial Indifference ~50pt, white,
   center-aligned, immediately below the SOLD text.
-NO AGENT FIELDS.
+AGENT (optional, 2026-08-04): \`agent_name\` and a circular
+  \`agent_photo\` may be included as a small attribution block (e.g.
+  bottom-left, photo ~110px circle + name in Glacial Indifference
+  ~24pt white). NEVER agent_phone / agent_email / agent_title.
 
 ──── RECIPE: open_house ────
 PHOTO: ~50% of canvas, NOT 85%. Photo lives in a rounded-corner
@@ -382,10 +390,13 @@ ALLIANCE BRAND HARD RULES — NUMERIC THRESHOLDS
        or \`"state"\` or \`"zip"\`. Address is street (address_line1) + city only.
        FIX: remove the layer OR rebind to address_line1 / city.
 
-  HR2. AGENT FIELDS on just_listed / just_sold / under_contract / price_reduction —
+  HR2. AGENT FIELDS on just_listed / under_contract / price_reduction —
        no text or image layer may reference agent_name, agent_photo, agent_phone,
        agent_email, agent_title.
        FIX: strip every offending layer entirely.
+       EXCEPTION — just_sold (2026-08-04): \`agent_name\` and
+       \`agent_photo\` are ALLOWED (optional) on just_sold. agent_phone,
+       agent_email and agent_title remain forbidden there.
        EXCEPTION — open_house: hosting agent attribution is ALLOWED (and
        encouraged). On open_house posts, layers bound to
        \`hosting_agent_name\`, \`hosting_agent_phone\`, or

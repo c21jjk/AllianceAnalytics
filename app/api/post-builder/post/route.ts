@@ -643,7 +643,12 @@ export async function POST(request: Request) {
   // post (e.g. retry after partial failure) doesn't stack notifications.
   // Failure here NEVER fails the publish — the posts went up, the agent
   // notification is best-effort scaffolding for the post-publish workflow.
-  if (successResults.length > 0 && gp.property_id) {
+  //
+  // 2026-08-04 — !test_mode gate. A test-mode publish puts the post up hidden
+  // (draft/private on-platform), so telling real agents to go like and reshare
+  // it points them at something they cannot see. Same rationale as the
+  // auto-reel guard below. notifyAdmins (our own push) stays ungated.
+  if (successResults.length > 0 && gp.property_id && !test_mode) {
     try {
       const postUrls = successResults
         .filter((r) => r.permalink)

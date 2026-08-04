@@ -38,6 +38,25 @@ const RESTRICTED_AGENT_CATEGORIES = new Set([
   "price_reduction",
 ]);
 
+// 2026-08-04 rule change (John): "Just Sold & Open Houses can now have Agents
+// photo & name." So just_sold carries a per-category allowlist instead of a
+// blanket agent ban: NAME and PHOTO only. Phone was deliberately not granted,
+// so agent_phone / agent_email / agent_title stay forbidden on just_sold.
+// just_listed remains 100% agent-free. open_house is handled separately below
+// (its hosting_agent_* block is not merely allowed, it is REQUIRED by HR10).
+const ALLOWED_AGENT_FIELDS_BY_CATEGORY: Record<string, Set<string>> = {
+  just_sold: new Set([
+    "agent_name",
+    "agent_photo",
+    "hosting_agent_name",
+    "hosting_agent_photo",
+  ]),
+};
+
+function agentFieldAllowedFor(category: string, boundField: string): boolean {
+  return ALLOWED_AGENT_FIELDS_BY_CATEGORY[category]?.has(boundField) ?? false;
+}
+
 const FORBIDDEN_ADDRESS_BOUND_FIELDS = new Set([
   "city_state_zip",
   "state",
@@ -228,36 +247,47 @@ export function checkHardRules(
   // required, see HR10 below (John's rule 2026-07-29: hosting agent on
   // every OH template). Everywhere else in the restricted set,
   // hosting_agent_* is just as forbidden as agent_*.
+  //
+  // 2026-08-04: just_sold now allows agent_name + agent_photo (and the
+  // hosting_ equivalents) via ALLOWED_AGENT_FIELDS_BY_CATEGORY. Phone, email
+  // and title stay forbidden there. just_listed is unchanged and agent-free.
   // -------------------------------------------------------------------------
   if (RESTRICTED_AGENT_CATEGORIES.has(category)) {
     const hostingForbidden = category !== "open_house";
+    const hasAllowlist = ALLOWED_AGENT_FIELDS_BY_CATEGORY[category] !== undefined;
+    const fixHint = hasAllowlist
+      ? `Category ${category} allows only agent_name and agent_photo. Strip this layer or rebind it to one of those.`
+      : `Strip this layer entirely. Category ${category} posts must contain zero agent_* references.`;
     for (const layer of iterateLayers(schema.layers)) {
       if (isTextLayer(layer)) {
         const bf = layer.boundField;
         if (
           bf &&
           (bf.startsWith("agent_") ||
-            (hostingForbidden && bf.startsWith("hosting_agent_")))
+            (hostingForbidden && bf.startsWith("hosting_agent_"))) &&
+          !agentFieldAllowedFor(category, bf)
         ) {
           violations.push({
             rule: "HR2_agent_on_restricted_category",
             severity: "fail",
             layerId: layer.id,
-            detail: `Text layer "${layer.name}" binds to "${bf}" but category "${category}" forbids agent fields.`,
-            fix_hint: `Strip this layer entirely. Category ${category} posts must contain zero agent_* references.`,
+            detail: `Text layer "${layer.name}" binds to "${bf}" but category "${category}" forbids that agent field.`,
+            fix_hint: fixHint,
           });
         }
       } else if (isImageLayer(layer)) {
+        const bf = layer.boundField;
         if (
-          layer.boundField === "agent_photo" ||
-          (hostingForbidden && layer.boundField === "hosting_agent_photo")
+          (bf === "agent_photo" ||
+            (hostingForbidden && bf === "hosting_agent_photo")) &&
+          !agentFieldAllowedFor(category, bf)
         ) {
           violations.push({
             rule: "HR2_agent_on_restricted_category",
             severity: "fail",
             layerId: layer.id,
-            detail: `Image layer "${layer.name}" binds to "${layer.boundField}" but category "${category}" forbids agent fields.`,
-            fix_hint: `Strip this layer entirely. Category ${category} posts must contain zero agent_* references.`,
+            detail: `Image layer "${layer.name}" binds to "${bf}" but category "${category}" forbids that agent field.`,
+            fix_hint: fixHint,
           });
         }
       }
