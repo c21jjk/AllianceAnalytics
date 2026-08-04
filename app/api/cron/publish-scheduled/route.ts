@@ -53,6 +53,10 @@ import {
 } from "@/lib/post-builder/publish";
 import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
 import { openHousePublishGuard } from "@/lib/post-builder/oh-publish-guard";
+import {
+  ensureSupabaseHostedImages,
+  rewriteAdditionalImages,
+} from "@/lib/post-builder/rehost-images";
 import { notifyAdmins } from "@/lib/push/send";
 import {
   AUTO_REEL_TEMPLATE_ID,
@@ -556,6 +560,34 @@ async function processRow(
         `[cron/publish-scheduled] gp ${row.id} has ${imageUrls.length} slides; trimming to ${IG_MAX_SLIDES}.`,
       );
       imageUrls = imageUrls.slice(0, IG_MAX_SLIDES);
+    }
+    // 2026-08-03 — mirror MLS-CDN slides into our storage before publishing,
+    // same as the Post Now route: Paragon's CDN serves Meta's fetcher an
+    // HTML 403 instead of the image and the IG publish dies with "Only
+    // photo or video can be accepted as media type". Fail-open inside the
+    // helper; rewritten slide URLs persisted best-effort so retries reuse
+    // the mirror.
+    const rehost = await ensureSupabaseHostedImages(imageUrls, row.id);
+    imageUrls = rehost.urls;
+    const rewrittenAdditional = rewriteAdditionalImages(
+      row.additional_images,
+      rehost.replaced,
+    );
+    if (rewrittenAdditional) {
+      // additional_images is Json in the generated types; the rewrite
+      // preserves the stored shape but TS can't see that through unknown[].
+      // Same untyped-client pattern as the route's other new-column writes.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: rwErr } = await (supabase as any)
+        .from("generated_posts")
+        .update({ additional_images: rewrittenAdditional })
+        .eq("id", row.id);
+      if (rwErr) {
+        console.warn(
+          `[cron/publish-scheduled] persisting mirrored slide URLs failed for gp ${row.id} (publishing continues):`,
+          rwErr.message,
+        );
+      }
     }
   }
 

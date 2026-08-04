@@ -30,6 +30,10 @@ import {
 } from "@/lib/post-builder/publish";
 import { notifyListingAgentsForPost } from "@/lib/email/agent-post-notification";
 import { openHousePublishGuard } from "@/lib/post-builder/oh-publish-guard";
+import {
+  ensureSupabaseHostedImages,
+  rewriteAdditionalImages,
+} from "@/lib/post-builder/rehost-images";
 import { notifyAdmins } from "@/lib/push/send";
 import { maybeKickoffAutoReel } from "@/lib/post-builder/auto-reel";
 
@@ -460,6 +464,33 @@ export async function POST(request: Request) {
         `[post] gp ${gp.id} has ${imageUrls.length} slides; trimming to IG's cap of ${IG_MAX_SLIDES} (dropping ${imageUrls.length - IG_MAX_SLIDES}).`,
       );
       imageUrls = imageUrls.slice(0, IG_MAX_SLIDES);
+    }
+
+    // 2026-08-03 — mirror MLS-CDN slides into our storage before publishing.
+    // Paragon's CDN (zimg.paragon.ice.com) serves Meta's fetcher an HTML 403
+    // instead of the image, which killed the IG publish with "Only photo or
+    // video can be accepted as media type" (gp c4d892f9). Fail-open inside
+    // the helper: a mirror hiccup publishes the original URL. The rewritten
+    // slide URLs are persisted best-effort so future retries and the cron
+    // skip the mirror work.
+    const rehost = await ensureSupabaseHostedImages(imageUrls, gp.id);
+    imageUrls = rehost.urls;
+    const rewrittenAdditional = rewriteAdditionalImages(
+      gp.additional_images,
+      rehost.replaced,
+    );
+    if (rewrittenAdditional) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: rwErr } = await (supabase as any)
+        .from("generated_posts")
+        .update({ additional_images: rewrittenAdditional })
+        .eq("id", gp.id);
+      if (rwErr) {
+        console.warn(
+          `[post] persisting mirrored slide URLs failed for gp ${gp.id} (publishing continues):`,
+          rwErr.message,
+        );
+      }
     }
 
     if (platformsToPublish.includes("facebook") && creds) {
