@@ -114,6 +114,7 @@ export default function RecentlySoldRow({
                     listing={listing}
                     eyebrowPrefix="Sold"
                     isFirst={idx === 0}
+                    buildPostType="just_sold"
                   />
                 </li>
               ))}
@@ -137,6 +138,7 @@ export default function RecentlySoldRow({
                     listing={listing}
                     eyebrowPrefix="Sold"
                     isFirst={idx === 0}
+                    buildPostType="just_sold"
                   />
                 </li>
               ))}

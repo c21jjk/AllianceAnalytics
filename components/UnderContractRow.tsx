@@ -115,6 +115,7 @@ export default function UnderContractRow({
                     listing={listing}
                     eyebrowPrefix="Listed"
                     isFirst={idx === 0}
+                    buildPostType="under_contract"
                   />
                 </li>
               ))}
@@ -138,6 +139,7 @@ export default function UnderContractRow({
                     listing={listing}
                     eyebrowPrefix="Listed"
                     isFirst={idx === 0}
+                    buildPostType="under_contract"
                   />
                 </li>
               ))}

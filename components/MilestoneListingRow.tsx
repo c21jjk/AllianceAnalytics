@@ -13,6 +13,17 @@ interface MilestoneListingRowProps {
   eyebrowPrefix: string;
   /** Whether this is the first row (no top border) */
   isFirst: boolean;
+  /**
+   * 2026-08-04 (John): when set, the row deep-links to the Post Builder
+   * with this post type + the row's listing pre-selected
+   * (/post-builder?mls=X&postType=Y) instead of the property detail page.
+   * The dashboard's Recently Sold card promises "Click any listing to make
+   * a Just-Sold post" but the row landed on the Owner Story page; both
+   * milestone cards now route straight into the builder. The builder's
+   * page.tsx validates the pick server-side (status bucket + hero photo)
+   * and falls back to a normal open when the listing doesn't qualify.
+   */
+  buildPostType?: "just_sold" | "under_contract";
 }
 
 /**
@@ -23,22 +34,27 @@ interface MilestoneListingRowProps {
  *   [56×56 thumb]  ADDRESS LINE
  *                  $PRICE · EYEBROW DATE · short_code →
  *
- * Deep-links to /properties/[mls]. No actions on the row itself — the goal
- * is "click through and decide what to post."
+ * With `buildPostType` set (both current callers), deep-links into the
+ * Post Builder pre-picked; otherwise falls back to /properties/[mls].
  */
 export default function MilestoneListingRow({
   listing,
   eyebrowPrefix,
   isFirst,
+  buildPostType,
 }: MilestoneListingRowProps) {
   const dateLabel = formatDateLabel(listing.reference_date);
   // 2026-07-17 (approved mockup v2) — state dropped from all dashboard
   // property chips: every listing is NJ. Name kept; carries just the town.
   const cityState = listing.city ?? "";
+  const mls = encodeURIComponent(listing.mls_number);
+  const href = buildPostType
+    ? `/post-builder?mls=${mls}&postType=${buildPostType}`
+    : `/properties/${mls}`;
 
   return (
     <Link
-      href={`/properties/${encodeURIComponent(listing.mls_number)}`}
+      href={href}
       className="grid items-center hover:opacity-70 transition-opacity"
       style={{
         gridTemplateColumns: "56px 1fr auto",
