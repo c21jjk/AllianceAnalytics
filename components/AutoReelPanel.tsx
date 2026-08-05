@@ -119,10 +119,13 @@ export default function AutoReelLaunchButton({
   variant,
 }: AutoReelLaunchButtonProps) {
   const [open, setOpen] = useState(false);
-  // "Reel waiting to publish" dot — an imported draft that hasn't gone out
-  // yet. Fetched lazily per listing (dashboard rows are few, so the extra
-  // GETs are cheap) and refreshed when the modal closes.
-  const [pendingDraft, setPendingDraft] = useState(false);
+  // "Reel waiting to publish" — an imported draft that hasn't gone out yet.
+  // Drives the gold dot AND makes the button a direct shortcut to the
+  // review page (2026-08-05, John: "clicking the dot should take me right
+  // to the preview, not through the modal again"). Fetched lazily per
+  // listing (dashboard rows are few, so the extra GETs are cheap) and
+  // refreshed when the modal closes.
+  const [pendingGpId, setPendingGpId] = useState<string | null>(null);
   const checkedMls = useRef<string | null>(null);
 
   const refreshDraftState = useCallback(() => {
@@ -136,8 +139,12 @@ export default function AutoReelLaunchButton({
           project?: AutoReelProjectSummary | null;
           draft?: AutoReelDraftSummary | null;
         } | null) => {
-          setPendingDraft(
-            j?.project?.status === "video_imported" && j?.draft?.status === "draft",
+          setPendingGpId(
+            j?.project?.status === "video_imported" &&
+              j?.draft?.status === "draft" &&
+              j.draft.gp_id
+              ? j.draft.gp_id
+              : null,
           );
         },
       )
@@ -150,18 +157,29 @@ export default function AutoReelLaunchButton({
     refreshDraftState();
   }, [listing?.mls_number, refreshDraftState]);
 
+  const pendingDraft = pendingGpId !== null;
   const dot = pendingDraft ? <PendingDot /> : null;
+
+  /** Dot showing → jump straight to the review page; otherwise open the
+   *  prep/import modal as usual. */
+  function handleClick() {
+    if (pendingGpId) {
+      window.location.assign(`/post-builder/autoreel-review?gp=${pendingGpId}`);
+      return;
+    }
+    setOpen(true);
+  }
 
   return (
     <>
       {variant === "row" ? (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={handleClick}
           className="relative inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-600 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition-colors"
           title={
             pendingDraft
-              ? "An imported AutoReel video is waiting to be published"
+              ? "A reel is imported and waiting — click to preview and publish"
               : "Make a reel for this listing with AutoReel"
           }
         >
@@ -172,7 +190,7 @@ export default function AutoReelLaunchButton({
       ) : variant === "card" ? (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={handleClick}
           className="relative inline-flex items-center gap-2 rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 transition-colors focus-ring"
         >
           <ClapperGlyph />
