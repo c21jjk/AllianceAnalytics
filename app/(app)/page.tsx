@@ -297,23 +297,26 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               storyViewsLast24h={storyViewsLast24h ?? 0}
             />
 
+            {/* 2026-08-05 (John) — "The Recently Listed side of the screen vs
+                the Open House, Under Contract, Recently Sold, Price Change are
+                disproportioned. Think we should shift Just Sold & maybe Under
+                Contract to under the Recently Listed section."
+
+                Recently Listed sat alone on the left while four cards stacked
+                on the right, so the two columns never came close to matching
+                height. Under Contract and Recently Sold move under Recently
+                Listed; Open Houses and Price Changes stay on the right. Card
+                order within each column is unchanged, and each card keeps its
+                own collapse memory, so heights still shift with what you have
+                open. */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-              <div id="recently-listed" className="scroll-mt-32">
-                <RecentlyListedRow
-                  listings={listingsNeedingPosts}
-                  statusFilter={listingsFilter}
-                  officeShortCode={officeFilter}
-                  freshCount={listedFreshCount}
-                />
-              </div>
               <div className="grid grid-cols-1 gap-4">
-                <div id="open-houses" className="scroll-mt-32">
-                  <UpcomingOpenHousesRow
-                    openHouses={upcomingOpenHouses}
-                    windowDays={7}
+                <div id="recently-listed" className="scroll-mt-32">
+                  <RecentlyListedRow
+                    listings={listingsNeedingPosts}
+                    statusFilter={listingsFilter}
                     officeShortCode={officeFilter}
-                    freshCount={openHousesFreshCount}
-                    canSync={profile.role === "admin"}
+                    freshCount={listedFreshCount}
                   />
                 </div>
                 <div id="under-contract" className="scroll-mt-32">
@@ -328,6 +331,17 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                     listings={recentlySoldListings}
                     officeShortCode={officeFilter}
                     freshCount={recentlySoldFreshCount}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4">
+                <div id="open-houses" className="scroll-mt-32">
+                  <UpcomingOpenHousesRow
+                    openHouses={upcomingOpenHouses}
+                    windowDays={7}
+                    officeShortCode={officeFilter}
+                    freshCount={openHousesFreshCount}
+                    canSync={profile.role === "admin"}
                   />
                 </div>
                 <div id="price-changes" className="scroll-mt-32">
