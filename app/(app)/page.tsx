@@ -24,7 +24,6 @@ import {
 import type { Platform, Post } from "@/lib/types/post";
 import CompanyAnalyticsStrip from "@/components/CompanyAnalyticsStrip";
 import DashboardViewToggle from "@/components/DashboardViewToggle";
-import GlobalSearch from "@/components/GlobalSearch";
 import PostStreamDnd from "@/components/PostStreamDnd";
 import RecentlyListedRow from "@/components/RecentlyListedRow";
 import UnderContractRow from "@/components/UnderContractRow";
@@ -33,7 +32,6 @@ import PriceChangeRow from "@/components/PriceChangeRow";
 import UpcomingOpenHousesRow from "@/components/UpcomingOpenHousesRow";
 import MorningBriefingCard from "@/components/MorningBriefingCard";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
-import PageHeader from "@/components/PageHeader";
 import PostStream from "@/components/PostStream";
 import SocialSyncCluster from "@/components/SocialSyncCluster";
 import MlsSyncCluster from "@/components/MlsSyncCluster";
@@ -205,40 +203,48 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     getFollowerSummary(days),
   ]);
 
-  const description =
-    currentView === "grouped"
-      ? describeGroupedWindow(groups.length, days, officeFilter, offices)
-      : searchMode
-        ? describeSearchWindow(posts.length, q, platformValues, dateFrom, dateTo)
-        : describeListWindow(posts.length, days, officeFilter, offices);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        description={description}
-        actions={
-          <div className="flex items-center gap-2">
-            <DashboardViewToggle value={currentView} />
-            <TimeRangeToggle value={days} />
-          </div>
-        }
-      />
+    <div className="space-y-4">
+      {/* 2026-08-05 (John) — "I really want to tighten up the top section of
+          the site. Too much wasted vertical space."
 
-      {/* Global post search — moved from top nav to here so it lives with
-          the dashboard data it surfaces. Cmd+K shortcut still works. */}
-      <div className="w-full max-w-2xl">
-        <GlobalSearch />
+          Removed: the "N campaigns in the last N days" sentence (it restated
+          the feed below it) and the whole PageHeader band it sat in. The
+          search box moved into the top nav bar, where it costs no vertical
+          space at all.
+
+          What is left is ONE control row: office chips on the left, then
+          Grouped/List, the date range and MLS sync on the right. Six stacked
+          bands became four. The post-tracking section further down is
+          deliberately untouched. */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {offices.length > 0 ? (
+          <OfficeFilterChips
+            options={offices.map((o) => ({
+              short_code: o.short_code,
+              name: o.name,
+            }))}
+            value={officeFilter}
+          />
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          <DashboardViewToggle value={currentView} />
+          <TimeRangeToggle value={days} />
+          <MlsSyncCluster
+            mlsHealth={mlsHealth}
+            canSync={profile.role === "admin"}
+          />
+          <span
+            className="text-[11px] text-neutral-400"
+            title="Auto-sync runs every 4 hours via pg_cron — IG :05, FB :15, TT :25, MLS-CMC :35, MLS-SJSR :45 (UTC). Hover a pill to see when each feed last completed."
+          >
+            auto 4h
+          </span>
+        </div>
       </div>
-
-      {offices.length > 0 ? (
-        <OfficeFilterChips
-          options={offices.map((o) => ({
-            short_code: o.short_code,
-            name: o.name,
-          }))}
-          value={officeFilter}
-        />
-      ) : null}
 
       <CompanyAnalyticsStrip
         data={companyAnalytics}
@@ -246,31 +252,6 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         days={days}
         officeShortCode={officeFilter}
       />
-
-      {/* why (Phase 2M, 2026-05-23): top bar carries MLS feeds only (CMC /
-          SJSR / Bright). The social platform pills (FB / IG / TT) moved
-          down to the post-stream header on 2026-05-15 — they're the
-          freshness signal that matters when scanning posts.
-
-          MlsSyncCluster bundles the "Sync MLS" trigger button INLINE with
-          the feed pills, replacing the separate stacked SyncNowButton
-          block that used to live on the right. The button is admin-gated
-          via `canSync`; pills still render for everyone. */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-medium text-neutral-500 uppercase tracking-wide">
-          Sync
-        </span>
-        <MlsSyncCluster
-          mlsHealth={mlsHealth}
-          canSync={profile.role === "admin"}
-        />
-        <span
-          className="text-[11px] text-neutral-400 ml-1"
-          title="Auto-sync runs every 4 hours via pg_cron — IG :05, FB :15, TT :25, MLS-CMC :35, MLS-SJSR :45 (UTC). Hover a pill to see when each feed last completed."
-        >
-          · auto every 4h
-        </span>
-      </div>
 
       {/* Milestones grid — four collapsible cards.
           Layout: 2-column grid on desktop, single column on mobile.
@@ -456,19 +437,6 @@ function audienceScopeLabel(
     : ` scoped to ${office.name} + brand-wide`;
 }
 
-function describeGroupedWindow(
-  count: number,
-  days: number,
-  officeShortCode: string | null,
-  offices: { short_code: string; name: string; division: string | null }[],
-): string {
-  const scope = audienceScopeLabel(officeShortCode, offices);
-  if (count === 0) {
-    return `Looking back ${days} days${scope}. No campaigns to show yet.`;
-  }
-  const noun = count === 1 ? "campaign" : "campaigns";
-  return `${count} ${noun} in the last ${days} days${scope}. Same-day posts across platforms are merged into a single card.`;
-}
 
 function normalizePlatformParam(raw: string | string[] | undefined): Platform[] {
   if (!raw) return [];
@@ -527,46 +495,7 @@ function searchResultToPost(r: SearchPostResult): Post {
   };
 }
 
-function describeSearchWindow(
-  count: number,
-  q: string,
-  platforms: Platform[],
-  dateFrom: string | undefined,
-  dateTo: string | undefined,
-): string {
-  const noun = count === 1 ? "post" : "posts";
-  const parts: string[] = [];
-  if (q.length > 0) parts.push(`matching "${q}"`);
-  if (platforms.length > 0) parts.push(`on ${platforms.join(", ")}`);
-  if (dateFrom || dateTo) {
-    const range =
-      dateFrom && dateTo
-        ? `between ${dateFrom.slice(0, 10)} and ${dateTo.slice(0, 10)}`
-        : dateFrom
-          ? `since ${dateFrom.slice(0, 10)}`
-          : `through ${dateTo!.slice(0, 10)}`;
-    parts.push(range);
-  }
-  const filterText = parts.length > 0 ? ` ${parts.join(", ")}` : "";
-  if (count === 0) {
-    return `No posts${filterText}. Try widening the filters.`;
-  }
-  return `${count} ${noun}${filterText}.`;
-}
 
-function describeListWindow(
-  count: number,
-  days: number,
-  officeShortCode: string | null,
-  offices: { short_code: string; name: string; division: string | null }[],
-): string {
-  const scope = audienceScopeLabel(officeShortCode, offices);
-  if (count === 0) {
-    return `Looking back ${days} days${scope}. No posts in this window.`;
-  }
-  const noun = count === 1 ? "post" : "posts";
-  return `${count} ${noun} in the last ${days} days${scope}. Click any row to open the post detail.`;
-}
 
 function EmptyGroupedState({ days }: { days: number }) {
   return (
