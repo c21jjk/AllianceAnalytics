@@ -15,6 +15,7 @@ import { loadSystemConfig } from "@/lib/data/system-config";
 import Link from "next/link";
 import { FileText } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
+import AutoReelLaunchButton from "@/components/AutoReelPanel";
 import PostBuilderClient from "./PostBuilderClient";
 import type {
   PostBuilderListing,
@@ -251,6 +252,10 @@ export default async function PostBuilderPage({
                   header into the Post Builder's "Pick a listing" column,
                   where it only surfaces when the active post type is
                   Open House. See PostBuilderClient.tsx. */}
+              {/* AutoReel — launch a photo-to-video project or import a
+                  finished render as a draft reel. Opens with a listing
+                  search since the header has no listing context. 2026-08-05. */}
+              <AutoReelLaunchButton variant="header" />
               <Link
                 href="/saved-posts"
                 className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition focus-ring"

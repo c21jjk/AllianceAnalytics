@@ -28,6 +28,8 @@ import {
   type UpcomingOpenHouse,
 } from "@/lib/data/open-houses";
 import { fetchCreatedPostsByMls } from "@/lib/data/created-posts-db";
+import { getAutoReelProject } from "@/lib/data/autoreel-db";
+import AutoReelLaunchButton from "@/components/AutoReelPanel";
 
 interface LivePropertyDetailProps {
   property: PropertyDetail;
@@ -79,6 +81,8 @@ export default async function LivePropertyDetail({
     ? await fetchOwnerStoryViewStats(existingReport.report_id)
     : null;
   const openHouses = await getOpenHousesForProperty(property.id);
+  // AutoReel project tracking — drives the reel-maker card below the hero.
+  const autoReelProject = await getAutoReelProject(property.mls_number);
   // why: per-listing Created Posts strip — pulls every generated_posts row
   // saved for this MLS, drafts + posted alike, so Larissa can resume editing
   // anything she started without leaving the property detail page.
@@ -213,6 +217,51 @@ export default async function LivePropertyDetail({
             ) : null}
           </div>
         </div>
+      </section>
+
+      {/* AutoReel — reel maker for listings that don't get a live video.
+          Prep sheet (copy chips + popup launcher) and finished-video import.
+          2026-08-05. */}
+      <section className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-card flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+            AutoReel
+          </div>
+          <p className="mt-0.5 text-sm text-neutral-600">
+            {autoReelProject?.status === "video_imported"
+              ? "A video from AutoReel has been imported for this listing — check Saved Posts."
+              : autoReelProject?.project_url
+                ? "An AutoReel project exists for this listing. Open it, or import the finished video."
+                : "Turn this listing's photos into a video reel with AutoReel — no live video needed."}
+          </p>
+        </div>
+        <AutoReelLaunchButton
+          variant="card"
+          listing={{
+            mls_number: property.mls_number,
+            source_mls: property.source_mls,
+            address: property.address,
+            city: property.city,
+            state: property.state,
+            zip: property.zip,
+            status: property.status,
+            list_price: property.list_price,
+            bedrooms: property.bedrooms,
+            bathrooms_full: property.bathrooms_full,
+            bathrooms_half: property.bathrooms_half,
+            hero_image_url: property.hero_image_url,
+            public_remarks: property.public_remarks,
+            oh_line: buildNextOhLine(openHouses),
+          }}
+          project={
+            autoReelProject
+              ? {
+                  project_url: autoReelProject.project_url,
+                  status: autoReelProject.status,
+                }
+              : null
+          }
+        />
       </section>
 
       {/* Owner Story page — PRIMARY owner-facing surface (Phase 4 promotion).
@@ -523,6 +572,40 @@ function StatTile({ label, value }: { label: string; value: string }) {
 function countPlatforms(property: PropertyDetail): number {
   const set = new Set(property.posts.map((p) => p.platform));
   return set.size;
+}
+
+/**
+ * "OPEN HOUSE Saturday, August 9, 11 AM – 1 PM" for the soonest upcoming OH,
+ * or null when none is scheduled. Feeds AutoReel's caption-context copy chip.
+ * Pinned to America/New_York per the standing render-path timezone rule.
+ */
+function buildNextOhLine(openHouses: UpcomingOpenHouse[]): string | null {
+  const oh = openHouses[0];
+  if (!oh) return null;
+  const start = new Date(oh.start_at);
+  if (Number.isNaN(start.getTime())) return null;
+  const ALLIANCE_TZ = "America/New_York";
+  const day = start.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    timeZone: ALLIANCE_TZ,
+  });
+  const fmtTime = (d: Date) =>
+    d
+      .toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: ALLIANCE_TZ,
+      })
+      .replace(/:00 /, " ");
+  const end = oh.end_at ? new Date(oh.end_at) : null;
+  const timePart =
+    end && !Number.isNaN(end.getTime())
+      ? `${fmtTime(start)} – ${fmtTime(end)}`
+      : fmtTime(start);
+  return `OPEN HOUSE ${day}, ${timePart}.`;
 }
 
 /**

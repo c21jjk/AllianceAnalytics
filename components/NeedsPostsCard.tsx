@@ -8,6 +8,7 @@ import {
 } from "@/app/(app)/listings/actions";
 import MilestoneListingRow from "@/components/MilestoneListingRow";
 import ListingStatusRibbon from "@/components/ListingStatusRibbon";
+import AutoReelLaunchButton from "@/components/AutoReelPanel";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
 
@@ -165,6 +166,22 @@ export default function NeedsPostsCard({
           </div>
         }
         trailingAction={
+          <div className="flex flex-col items-end gap-1">
+            {/* AutoReel — the reel path for listings that don't get a live
+                video. Opens the prep sheet (copy chips + popup launcher +
+                finished-video import). 2026-08-05. */}
+            <AutoReelLaunchButton
+              variant="row"
+              listing={{
+                mls_number: listing.mls_number,
+                source_mls: listing.source_mls,
+                address: listing.address,
+                city: listing.city,
+                state: listing.state,
+                list_price: listing.list_price,
+                hero_image_url: listing.hero_image_url,
+              }}
+            />
           <div className="relative">
             <button
               type="button"
@@ -260,6 +277,7 @@ export default function NeedsPostsCard({
                 ) : null}
               </div>
             ) : null}
+          </div>
           </div>
         }
       />

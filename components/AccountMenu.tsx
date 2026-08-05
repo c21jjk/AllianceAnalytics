@@ -123,6 +123,18 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
             sub="Change password"
           />
 
+          {/* AutoReel embedded panel (experiment, 2026-08-05) — available to
+              every user (Larissa + Cheryl drive it), not just admins. The
+              per-listing AutoReel buttons are the primary entry points; this
+              is the "just open AutoReel" surface. */}
+          <MenuItem
+            href="/autoreel"
+            onSelect={() => setOpen(false)}
+            icon={<ClapperIcon />}
+            label="AutoReel"
+            sub="Photo-to-video reel maker"
+          />
+
           {isAdmin ? (
             <>
               <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-neutral-400">
@@ -338,6 +350,24 @@ function SignOutIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function ClapperIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-4 h-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="8" width="18" height="12" rx="1.5" />
+      <path d="M3 8l2-4 4 1-2 4M9 5l4 1-2 4M13 6l4 1-2 4M17 7l4 1" />
     </svg>
   );
 }

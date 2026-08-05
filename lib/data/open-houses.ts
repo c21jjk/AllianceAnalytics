@@ -282,9 +282,24 @@ export async function getUpcomingOpenHouses(
   // Source 2 (tracker): the synced social feed. `post_listings` auto-links each
   // live FB/IG post to the listings it features (by address/MLS), so a post
   // made from a phone or Meta Business Suite still counts here even though it
-  // never touched the builder. Agreed defaults (2026-07-17): count ANY post
-  // linking the listing in the last 7 days — partial-address links and any
-  // category both qualify, since the badge means "this listing got airtime."
+  // never touched the builder.
+  //
+  // 2026-08-05 (John): "This listing under Open Houses is showing that a post
+  // was created for it on Monday, but that was a 'new listing' post, not an
+  // Open House post. It shouldn't show a 'posted' tag unless it was actually
+  // an Open House post that was created."
+  //
+  // The 2026-07-17 rule here was ANY post in the last 7 days, on the theory
+  // that the badge meant "this listing got airtime". That is the wrong signal
+  // on this card: 508 E 7th Avenue lit up because three lifestyle posts about
+  // its ocean views went out Monday, classified `other`. The badge now
+  // requires `listing_intent = 'open_house'`, matching Source 1, which has
+  // always filtered on post_type = 'open_house'.
+  //
+  // Trade-off accepted deliberately: a genuine OH post the classifier tags as
+  // something else will no longer light the badge. A missing badge is a far
+  // cheaper mistake than a badge that says the open house is promoted when it
+  // is not — Larissa would skip building the post.
   const candidatePropertyIds = Array.from(
     new Set(
       [...propertyById.values(), ...propertyByMls.values()]
@@ -297,9 +312,10 @@ export async function getUpcomingOpenHouses(
       const sinceIso = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
       const { data: trackerRows } = await untypedSupabase
         .from("post_listings")
-        .select("property_id, posts!inner(posted_at)")
+        .select("property_id, posts!inner(posted_at, listing_intent)")
         .in("property_id", candidatePropertyIds)
         .not("posts.posted_at", "is", null)
+        .eq("posts.listing_intent", "open_house")
         .gte("posts.posted_at", sinceIso);
       for (const r of (trackerRows ?? []) as Array<{
         property_id: string | null;
