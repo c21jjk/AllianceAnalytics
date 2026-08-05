@@ -6,9 +6,11 @@ import {
   getCompanyReportRollup,
   getRecentDeliveries,
 } from "@/lib/data/reports-overview";
+import { fetchOwnerStoryIndex } from "@/lib/data/owner-story-index";
 import PageHeader from "@/components/PageHeader";
 import CompanyAnalyticsHero from "@/components/CompanyAnalyticsHero";
 import RecentDeliveriesTable from "@/components/RecentDeliveriesTable";
+import OwnerStoryIndexTable from "@/components/OwnerStoryIndexTable";
 
 export const metadata = { title: "Reports — Alliance Social" };
 export const dynamic = "force-dynamic";
@@ -24,8 +26,23 @@ export const dynamic = "force-dynamic";
  * a CTA pointing the admin at the per-listing "Generate Seller Report" flow.
  * The deliveries table renders its own empty state.
  */
-export default async function ReportsPage() {
+interface ReportsPageProps {
+  searchParams?: Promise<{ view?: string | string[] }>;
+}
+
+/**
+ * 2026-08-05 (John) — the Stories tab was folded in here. Both pages answered
+ * the same question ("what did the seller get"), so they were two halves of
+ * one idea competing for a slot in a 7-tab nav. `?view=stories` renders the
+ * Owner Story index that used to live at /stories, which now redirects here
+ * so old links and bookmarks keep working.
+ */
+export default async function ReportsPage({ searchParams }: ReportsPageProps) {
   await requireUser();
+
+  const sp = (await searchParams) ?? {};
+  const rawView = Array.isArray(sp.view) ? sp.view[0] : sp.view;
+  const view: "overview" | "stories" = rawView === "stories" ? "stories" : "overview";
 
   const [
     rollup30,
@@ -42,6 +59,7 @@ export default async function ReportsPage() {
   ]);
 
   const hasAnyReports = totalReports > 0;
+  const storyRows = view === "stories" ? await fetchOwnerStoryIndex() : [];
 
   // Build addressByMls from deliveries (live data already carries address,
   // but the table component accepts the lookup shape from the fixture era).
@@ -56,9 +74,19 @@ export default async function ReportsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Reports"
-        description="Company-wide picture of every Seller Report Alliance has generated. The hero block is built to be screenshot-able for listing presentations and recruiting decks."
+        description={
+          view === "stories"
+            ? "One link per listing — the seller-facing story page. Copy, preview, or open any campaign in a single click. Views are tracked automatically."
+            : "Company-wide picture of every Seller Report Alliance has generated. The hero block is built to be screenshot-able for listing presentations and recruiting decks."
+        }
       />
 
+      <ReportsViewTabs current={view} />
+
+      {view === "stories" ? (
+        <OwnerStoryIndexTable rows={storyRows} />
+      ) : (
+      <>
       {hasAnyReports ? (
         <CompanyAnalyticsHero rollup={rollup30} />
       ) : (
@@ -84,9 +112,6 @@ export default async function ReportsPage() {
         </div>
       ) : null}
 
-      {/* Owner Story pages — Phase 4 moved this section to its own /stories
-          top-nav surface. /reports stays focused on aggregate analytics. */}
-
       <section className="space-y-3">
         <div>
           <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
@@ -109,6 +134,47 @@ export default async function ReportsPage() {
         {totalDeliveries}{" "}
         {totalDeliveries === 1 ? "delivery" : "deliveries"} tracked.
       </div>
+      </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Segmented control that swaps the page between the aggregate report numbers
+ * and the per-listing Owner Story index. Plain links rather than client state
+ * so each view is a real, shareable URL and stays server-rendered.
+ */
+function ReportsViewTabs({ current }: { current: "overview" | "stories" }) {
+  const tabs: Array<{ key: "overview" | "stories"; label: string; href: string }> =
+    [
+      { key: "overview", label: "Report activity", href: "/reports" },
+      { key: "stories", label: "Owner Stories", href: "/reports?view=stories" },
+    ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Reports view"
+      className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1"
+    >
+      {tabs.map((tab) => {
+        const active = tab.key === current;
+        return (
+          <Link
+            key={tab.key}
+            href={tab.href}
+            role="tab"
+            aria-selected={active}
+            className={
+              active
+                ? "rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-neutral-900 shadow-sm"
+                : "rounded-md px-3 py-1.5 text-xs font-medium text-neutral-600 hover:text-neutral-900"
+            }
+          >
+            {tab.label}
+          </Link>
+        );
+      })}
     </div>
   );
 }

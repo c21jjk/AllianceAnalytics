@@ -124,6 +124,16 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
               <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-neutral-400">
                 Admin
               </div>
+              {/* 2026-08-05 (John) — Outbox moved out of the top nav. It is
+                  admin-only, low frequency, and still a manual mailto queue
+                  until auto-send ships, so it does not earn a hero slot. */}
+              <MenuItem
+                href="/outbox"
+                onSelect={() => setOpen(false)}
+                icon={<OutboxIcon />}
+                label="Agent Outbox"
+                sub="Nudge listing agents to reshare"
+              />
               <MenuItem
                 href="/users"
                 onSelect={() => setOpen(false)}
@@ -338,6 +348,23 @@ function SignOutIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function OutboxIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-4 h-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 13l3-9h12l3 9M3 13v6a1 1 0 001 1h16a1 1 0 001-1v-6M3 13h5l1 2h6l1-2h5" />
     </svg>
   );
 }

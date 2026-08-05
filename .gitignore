@@ -53,3 +53,9 @@ supabase/.temp/
 tsconfig.tsbuildinfo
 .fuse_hidden*
 _to_delete_*
+
+# 2026-08-05 — scratch/quarantine folder for files pending deletion. Files
+# moved here must never be compiled: a stray .ts/.tsx in the tree is inside
+# tsconfig "include" and WILL fail the Vercel build even though nothing
+# imports it. Ignore the whole folder as well.
+_to_delete/

@@ -51,16 +51,27 @@ const ICON: Record<string, ReactNode> = {
     ]),
 };
 export function getNavItems(role: "admin" | "user"): NavItem[] {
-    // Users management lives under Settings → Users (via the AccountMenu).
-    // Removed from the top nav to keep the bar focused on operational tabs.
+    // 2026-08-05 (John) — nav trimmed from 7 tabs to 6, ordered by the actual
+    // daily workflow: see what needs doing, look up a listing, make the post,
+    // check what we made, report on it, get advice.
+    //
+    //   Stories  → folded into Reports as a tab (?view=stories). Both answered
+    //              "what did the seller get", so they were two halves of one
+    //              idea competing for a slot.
+    //   Posts    → NEW. /saved-posts was a real page with every post ever
+    //              built, including unpublished drafts, and it was orphaned:
+    //              reachable only from a small link inside the Post Builder.
+    //   Outbox   → moved to the AccountMenu. Admin-only, low frequency, and
+    //              still a manual mailto queue until auto-send ships.
+    //
+    // Users management also lives under the AccountMenu.
     const base: NavItem[] = [
         { href: "/", label: "Dashboard", icon: ICON.dashboard },
         { href: "/properties", label: "Listings", icon: ICON.listings },
-        { href: "/stories", label: "Stories", icon: ICON.stories },
         { href: "/post-builder", label: "Post Builder", icon: ICON.postBuilder },
-        { href: "/coach", label: "Coach", icon: ICON.coach },
-        { href: "/outbox", label: "Outbox", icon: ICON.outbox, adminOnly: true },
+        { href: "/saved-posts", label: "Posts", icon: ICON.posts },
         { href: "/reports", label: "Reports", icon: ICON.reports },
+        { href: "/coach", label: "Coach", icon: ICON.coach },
         ];
     return base.filter(function (i) { return !i.adminOnly || role === "admin"; });
 }
