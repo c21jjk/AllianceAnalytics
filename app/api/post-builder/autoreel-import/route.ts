@@ -50,8 +50,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 export const runtime = "nodejs";
 
-/** template_id stamped on every imported AutoReel reel row. */
-export const AUTOREEL_IMPORT_TEMPLATE_ID = "autoreel_import_v1";
+/** template_id stamped on every imported AutoReel reel row. NOT exported —
+ *  Next.js route files may only export handlers/config fields (this exact
+ *  export failed the 8/05 Vercel build). Duplicate the literal if another
+ *  module ever needs it. */
+const AUTOREEL_IMPORT_TEMPLATE_ID = "autoreel_import_v1";
 
 /** Bucket for mirrored renders — public, 100MB per-file limit (checked
  *  2026-08-05), which fits observed AutoReel renders (~78MB @ 45s). */
