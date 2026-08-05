@@ -1130,6 +1130,23 @@ export default function PostBuilderClient({
     [listings, selectedMls],
   );
 
+  // 2026-08-05 (John): "Why is this 'Listing' Section even here? I don't see
+  // where it would ever be used. We already chose what listing we are looking
+  // to make the post for by the time we get to this screen. It's confusing."
+  //
+  // He is right for the path he uses: every "Build post" button on the
+  // dashboard deep-links here with ?mls= already set, so the full scrolling
+  // picker reads as an unmade decision when the decision is made. But the
+  // column is still the ONLY way to choose a listing when you enter cold from
+  // the nav tab, Saved posts, or the multi-OH wizard.
+  //
+  // So the picker is now state-aware: collapsed to the chosen listing when one
+  // is selected, full list when none is. `pickerOpen` is the manual override
+  // behind "Change listing"; it resets whenever the selection changes (post
+  // type switches clear selectedMls, which re-expands the list on its own).
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const showListingList = !selectedListing || pickerOpen;
+
   // why: MultiOhFinalStage needs to resolve `slide_metadata[i].listing_mls`
   // → its full listing row so it can show the property address under each
   // carousel slide. We pull from EVERY post-type bucket (not just the
@@ -4075,6 +4092,62 @@ export default function PostBuilderClient({
               <SyncOpenHousesButton variant="compact" />
             </div>
           ) : null}
+          {!showListingList && selectedListing ? (
+            /* Collapsed state — the decision is already made, so show what
+               was chosen and get out of the way. */
+            <div>
+              <div className="rounded-lg border-2 border-gold-500 bg-gold-50/50 p-2.5 flex gap-3 items-start">
+                {selectedListing.hero_image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={selectedListing.hero_image_url}
+                    alt=""
+                    className="w-14 h-14 rounded-md object-cover flex-shrink-0 bg-neutral-100"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-md bg-neutral-100 flex-shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-neutral-900 truncate">
+                    {selectedListing.address ?? selectedListing.mls_number}
+                  </div>
+                  <div className="text-xs text-neutral-600 truncate">
+                    {[selectedListing.city, selectedListing.state]
+                      .filter(Boolean)
+                      .join(", ")}
+                    {selectedListing.zip ? ` ${selectedListing.zip}` : ""}
+                  </div>
+                  <div className="text-xs text-neutral-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                    <span className="font-mono uppercase tracking-wide">
+                      {selectedListing.mls_number}
+                    </span>
+                    {typeof (postType === "just_sold" &&
+                    typeof selectedListing.close_price === "number"
+                      ? selectedListing.close_price
+                      : selectedListing.list_price) === "number" ? (
+                      <span className="text-gold-700 font-medium">
+                        $
+                        {(postType === "just_sold" &&
+                        typeof selectedListing.close_price === "number"
+                          ? selectedListing.close_price
+                          : selectedListing.list_price
+                        )!.toLocaleString()}
+                        {postType === "just_sold" ? " sold" : ""}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="mt-2 text-[11px] font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
+              >
+                Change listing
+              </button>
+            </div>
+          ) : (
+          <>
           <input
             type="search"
             className="input mb-3"
@@ -4111,11 +4184,15 @@ export default function PostBuilderClient({
                     key={l.mls_number}
                     role="button"
                     tabIndex={0}
-                    onClick={() => pickListing(l.mls_number)}
+                    onClick={() => {
+                      pickListing(l.mls_number);
+                      setPickerOpen(false);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         pickListing(l.mls_number);
+                        setPickerOpen(false);
                       }
                     }}
                     className={[
@@ -4192,6 +4269,8 @@ export default function PostBuilderClient({
                 </div>
               ) : null}
             </div>
+          )}
+          </>
           )}
         </section>
         ) : null}
