@@ -26,6 +26,16 @@ interface MilestoneListingRowProps {
   postType: MilestonePostType;
   /** Optional extra meta line, e.g. the price-drop detail on Price Changes. */
   metaSuffix?: ReactNode;
+  /**
+   * Optional third control under the Posted checkbox. Recently Listed uses it
+   * for its dismiss/reset kebab; the other sections pass nothing, so their
+   * right column stays exactly two controls tall.
+   */
+  trailingAction?: ReactNode;
+  /** Optional status ribbon overlaid on the thumbnail (Recently Listed). */
+  ribbon?: ReactNode;
+  /** Renders the row muted — used for dismissed listings. */
+  dimmed?: boolean;
 }
 
 /**
@@ -52,6 +62,9 @@ export default function MilestoneListingRow({
   isFirst,
   postType,
   metaSuffix,
+  trailingAction,
+  ribbon,
+  dimmed = false,
 }: MilestoneListingRowProps) {
   const dateLabel = formatDateLabel(listing.reference_date);
   // 2026-07-17 (approved mockup v2) — state dropped from all dashboard
@@ -61,7 +74,7 @@ export default function MilestoneListingRow({
 
   return (
     <div
-      className="grid items-center"
+      className={dimmed ? "grid items-center opacity-60" : "grid items-center"}
       style={{
         gridTemplateColumns: "56px 1fr auto",
         gap: 14,
@@ -99,6 +112,7 @@ export default function MilestoneListingRow({
           />
         ) : null}
         <OfficeThumbBadge code={listing.office_short_code} />
+        {ribbon}
       </Link>
 
       {/* Body — address line + meta line + agent line. Truncates aggressively
@@ -195,6 +209,7 @@ export default function MilestoneListingRow({
           checked={listing.post_made}
           autoDetected={listing.post_auto_detected}
         />
+        {trailingAction}
       </div>
     </div>
   );

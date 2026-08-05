@@ -149,10 +149,10 @@ export default function RecentlyListedRow({
               {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
-            <ul className="space-y-1.5">
-              {listings.map((listing) => (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {listings.map((listing, idx) => (
                 <li key={listing.id}>
-                  <NeedsPostsCard listing={listing} />
+                  <NeedsPostsCard listing={listing} isFirst={idx === 0} />
                 </li>
               ))}
             </ul>
@@ -169,10 +169,10 @@ export default function RecentlyListedRow({
               {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
-            <ul className="space-y-1.5">
-              {listings.map((listing) => (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {listings.map((listing, idx) => (
                 <li key={listing.id}>
-                  <NeedsPostsCard listing={listing} />
+                  <NeedsPostsCard listing={listing} isFirst={idx === 0} />
                 </li>
               ))}
             </ul>
