@@ -4,19 +4,14 @@ import clsx from "clsx";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
-  confirmListingPostsAction,
   dismissListingPromotionAction,
-  setListingPlatformConfirmedAction,
   unconfirmListingPostsAction,
   undismissListingPromotionAction,
 } from "@/app/(app)/listings/actions";
 import { formatCurrency } from "@/lib/format";
-import PlatformBadge, { platformLabel } from "@/components/PlatformBadge";
+import PostedCheckbox from "@/components/PostedCheckbox";
 import ListingStatusRibbon from "@/components/ListingStatusRibbon";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
-import type { Database } from "@/lib/supabase/types";
-
-type PostPlatform = Database["public"]["Enums"]["post_platform"];
 
 const REASON_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "low_price", label: "Low price point" },
@@ -79,36 +74,6 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
       );
       if (!result.ok) {
         setError(result.error ?? "Unable to dismiss.");
-      }
-    });
-  }
-
-  function handleConfirmPosted() {
-    setError(null);
-    setMenuOpen(false);
-    startTransition(async () => {
-      const result = await confirmListingPostsAction(listing.mls_number);
-      if (!result.ok) {
-        setError(result.error ?? "Unable to mark posted.");
-      }
-    });
-  }
-
-  function handlePlatformToggle(platform: PostPlatform) {
-    setError(null);
-    // Auto-covered platforms aren't toggleable here — the click target is
-    // disabled in the JSX. Only "missing" or "manual ✓" badges call this.
-    const isCurrentlyManual =
-      listing.manual_confirmed_platforms.includes(platform);
-    const nextConfirmed = !isCurrentlyManual;
-    startTransition(async () => {
-      const result = await setListingPlatformConfirmedAction(
-        listing.mls_number,
-        platform,
-        nextConfirmed,
-      );
-      if (!result.ok) {
-        setError(result.error ?? "Unable to update.");
       }
     });
   }
@@ -218,10 +183,16 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
         </div>
 
         <div className="mt-1 flex items-center gap-2">
-        <PlatformCoverageBadges
-          listing={listing}
-          isPending={isPending}
-          onToggle={handlePlatformToggle}
+        {/* 2026-08-05 (John) — the three per-platform chips are gone. Every
+            milestone section now asks one question: has a post been made for
+            this property? The checkbox writes listing_post_marks scoped to
+            just_listed, so Under Contract / Just Sold / Price Change track
+            separately instead of sharing one property-level flag. */}
+        <PostedCheckbox
+          mlsNumber={listing.mls_number}
+          postType="just_listed"
+          checked={listing.post_made}
+          autoDetected={listing.post_auto_detected}
         />
 
 
@@ -247,8 +218,11 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
             • Open           → property page (review the listing)
             • + Build post   → primary CTA, deep-links into Post Builder with
                                this listing + just_listed pre-selected
-            • ⋯ kebab        → secondary menu: Mark as posted (from phone),
-                               Dismiss…, Reset.
+            • ⋯ kebab        → secondary menu: Dismiss…, Reset.
+              2026-08-05 (John) — "Mark as posted (from phone)" was removed:
+              the Posted checkbox on the row does that job now, and having two
+              controls for one outcome is exactly the confusion this pass set
+              out to remove.
           why this layout: the highest-volume job is "build a post for this"
           — making it the gold primary keeps the click path one-tap. The
           housekeeping actions stay one menu away.
@@ -295,17 +269,6 @@ export default function NeedsPostsCard({ listing, className }: NeedsPostsCardPro
               role="menu"
               className="absolute top-full right-0 mt-1 w-60 rounded-lg border border-neutral-200 bg-white shadow-lg z-10 p-1"
             >
-              {/* Mark as posted — shown unless already in that state */}
-              {!isPosted ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={handleConfirmPosted}
-                  className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-emerald-700 hover:bg-emerald-50 font-medium"
-                >
-                  ✓ Mark as posted (from phone)
-                </button>
-              ) : null}
 
               {/* Dismiss reasons — shown unless already dismissed */}
               {!isDismissed ? (
@@ -442,92 +405,3 @@ function KebabGlyph() {
     </svg>
   );
 }
-
-const ALL_PLATFORMS: PostPlatform[] = ["facebook", "instagram", "tiktok"];
-
-interface PlatformCoverageBadgesProps {
-  listing: ListingNeedingPosts;
-  isPending: boolean;
-  onToggle: (platform: PostPlatform) => void;
-}
-
-/**
- * Three-button row showing per-platform coverage state. Always renders all
- * three platforms so the user can see the full picture at a glance:
- *
- *   Auto-covered (linked post exists)        → solid green ✓ FB, NOT clickable
- *   Manual ✓ (in posts_confirmed_platforms)  → green ✓ FB with dotted gold ring, click to un-mark
- *   Missing                                  → dimmed grey FB, click to mark posted manually
- *
- * One click = one server roundtrip = visual state flips. ADHD-friendly: no
- * menu, no confirmation, easy to undo.
- */
-function PlatformCoverageBadges({
-  listing,
-  isPending,
-  onToggle,
-}: PlatformCoverageBadgesProps) {
-  const allMarkedDone = !!listing.posts_confirmed_at;
-
-  return (
-    <div className="inline-flex items-center gap-1 shrink-0">
-      {ALL_PLATFORMS.map((platform) => {
-        const autoCovered = (listing.post_counts[platform] ?? 0) > 0;
-        const manualCovered = listing.manual_confirmed_platforms.includes(platform);
-        // The "Mark all as posted" shortcut covers everything but isn't
-        // toggleable per-platform from here. Surface it as a full ring so
-        // user knows it came from the global toggle.
-        const fromGlobalShortcut = !autoCovered && !manualCovered && allMarkedDone;
-        const covered = autoCovered || manualCovered || fromGlobalShortcut;
-
-        const clickable = !autoCovered && !fromGlobalShortcut;
-        const title = autoCovered
-          ? `${platformLabel(platform)}: covered by an auto-linked post`
-          : fromGlobalShortcut
-            ? `${platformLabel(platform)}: covered by "Mark all as posted" — use Status ▾ → Reset to undo`
-            : manualCovered
-              ? `${platformLabel(platform)}: marked as posted (click to undo)`
-              : `${platformLabel(platform)}: missing — click to mark as posted`;
-
-        const visualClass = covered
-          ? manualCovered
-            ? "ring-2 ring-gold-400 ring-offset-1 ring-offset-white opacity-100"
-            : "opacity-100"
-          : "opacity-30 grayscale";
-
-        return (
-          <button
-            key={platform}
-            type="button"
-            onClick={clickable ? () => onToggle(platform) : undefined}
-            disabled={!clickable || isPending}
-            title={title}
-            aria-pressed={covered}
-            className={clsx(
-              "relative inline-flex items-center justify-center rounded-md transition",
-              clickable
-                ? "cursor-pointer hover:scale-110"
-                : "cursor-default",
-              isPending && clickable && "opacity-60",
-              visualClass,
-            )}
-          >
-            <PlatformBadge platform={platform} size="sm" />
-            {covered ? (
-              <span
-                aria-hidden="true"
-                className={clsx(
-                  "absolute -top-1 -right-1 w-3 h-3 rounded-full text-white text-[8px] font-bold leading-none flex items-center justify-center shadow-sm",
-                  manualCovered ? "bg-gold-500" : "bg-emerald-500",
-                )}
-              >
-                ✓
-              </span>
-            ) : null}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-

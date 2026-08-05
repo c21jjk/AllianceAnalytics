@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
 import MilestoneListingRow from "./MilestoneListingRow";
+import {
+  MILESTONE_FLOOR_EMPTY_COPY,
+  MILESTONE_FLOOR_LABEL,
+} from "@/lib/dashboard-window";
 
 interface UnderContractRowProps {
   listings: ListingMilestone[];
@@ -81,7 +85,7 @@ export default function UnderContractRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Under Contract
               <span className="text-neutral-400 font-normal">
-                · {listings.length} {noun}{scope}
+                · since {MILESTONE_FLOOR_LABEL} · {listings.length} {noun}{scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
               {collapsed && freshCount === 0 ? (
@@ -93,8 +97,8 @@ export default function UnderContractRow({
             {!collapsed ? (
               <p className="mt-0.5 text-xs text-neutral-600">
                 {listings.length === 0
-                  ? "Nothing currently under contract."
-                  : "Status reflects Paragon RETS. Click a listing to make an Under-Contract post."}
+                  ? MILESTONE_FLOOR_EMPTY_COPY
+                  : "Status reflects Paragon RETS. Build a post or tick it off once one is made."}
               </p>
             ) : null}
           </div>
@@ -105,7 +109,7 @@ export default function UnderContractRow({
         <div id="under-contract-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              Nothing under contract right now.
+              {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -113,9 +117,9 @@ export default function UnderContractRow({
                 <li key={listing.id}>
                   <MilestoneListingRow
                     listing={listing}
-                    eyebrowPrefix="Listed"
+                    eyebrowPrefix="Under contract"
                     isFirst={idx === 0}
-                    buildPostType="under_contract"
+                    postType="under_contract"
                   />
                 </li>
               ))}
@@ -129,7 +133,7 @@ export default function UnderContractRow({
         <div id="under-contract-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              Nothing under contract right now.
+              {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -137,9 +141,9 @@ export default function UnderContractRow({
                 <li key={listing.id}>
                   <MilestoneListingRow
                     listing={listing}
-                    eyebrowPrefix="Listed"
+                    eyebrowPrefix="Under contract"
                     isFirst={idx === 0}
-                    buildPostType="under_contract"
+                    postType="under_contract"
                   />
                 </li>
               ))}

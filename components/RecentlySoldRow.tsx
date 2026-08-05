@@ -3,11 +3,14 @@
 import { useEffect, useState } from "react";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
 import MilestoneListingRow from "./MilestoneListingRow";
+import {
+  MILESTONE_FLOOR_EMPTY_COPY,
+  MILESTONE_FLOOR_LABEL,
+} from "@/lib/dashboard-window";
 
 interface RecentlySoldRowProps {
   listings: ListingMilestone[];
   /** Window in days the parent fetched against. Surfaced in the header copy. */
-  windowDays?: number;
   officeShortCode?: string | null;
   /** Count of listings that transitioned to sold in the last 24h. */
   freshCount?: number;
@@ -31,7 +34,6 @@ const COLLAPSED_KEY = "recently-sold-collapsed";
  */
 export default function RecentlySoldRow({
   listings,
-  windowDays = 30,
   officeShortCode,
   freshCount = 0,
   className,
@@ -80,7 +82,7 @@ export default function RecentlySoldRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Sold
               <span className="text-neutral-400 font-normal">
-                · last {windowDays} days · {listings.length} {noun}{scope}
+                · since {MILESTONE_FLOOR_LABEL} · {listings.length} {noun}{scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
               {collapsed && freshCount === 0 ? (
@@ -92,7 +94,7 @@ export default function RecentlySoldRow({
             {!collapsed ? (
               <p className="mt-0.5 text-xs text-neutral-600">
                 {listings.length === 0
-                  ? "Nothing settled in the last " + windowDays + " days."
+                  ? MILESTONE_FLOOR_EMPTY_COPY
                   : "Click any listing to make a Just-Sold post. Price shown is the settled price."}
               </p>
             ) : null}
@@ -104,7 +106,7 @@ export default function RecentlySoldRow({
         <div id="recently-sold-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              No settlements in the last {windowDays} days.
+              {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -114,7 +116,7 @@ export default function RecentlySoldRow({
                     listing={listing}
                     eyebrowPrefix="Sold"
                     isFirst={idx === 0}
-                    buildPostType="just_sold"
+                    postType="just_sold"
                   />
                 </li>
               ))}
@@ -128,7 +130,7 @@ export default function RecentlySoldRow({
         <div id="recently-sold-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              No settlements in the last {windowDays} days.
+              {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -138,7 +140,7 @@ export default function RecentlySoldRow({
                     listing={listing}
                     eyebrowPrefix="Sold"
                     isFirst={idx === 0}
-                    buildPostType="just_sold"
+                    postType="just_sold"
                   />
                 </li>
               ))}

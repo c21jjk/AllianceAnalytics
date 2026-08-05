@@ -289,7 +289,9 @@ export async function backfillStatusFlipOutbox(opts: {
   const cutoffIso = new Date(Date.now() - daysBack * 86_400_000).toISOString();
   const supabase = createAdminClient();
 
-  // Pull recent flips. Same query shape as recent-status-flips.ts; we
+  // Pull recent flips. Self-contained query (the old
+  // lib/data/recent-status-flips.ts module was retired 2026-08-05 with the
+  // Wins to Celebrate card); we
   // re-query here to keep the helper self-contained (this function will
   // also be the entry point for an eventual Vercel cron).
   const { data: flips, error: flipErr } = await supabase

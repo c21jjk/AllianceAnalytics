@@ -596,74 +596,6 @@ export async function confirmListingPostsAction(
 }
 
 /**
- * Per-platform manual confirmation toggle. Adds/removes a single platform
- * from properties.posts_confirmed_platforms[]. Idempotent: setting confirmed
- * to true when already in the array is a no-op, same for false when not in
- * the array. Used by the click-to-mark platform badges on the dashboard
- * "Recent listings" rows.
- */
-export async function setListingPlatformConfirmedAction(
-  mlsNumber: string,
-  platform: "facebook" | "instagram" | "tiktok",
-  confirmed: boolean,
-): Promise<DismissPromotionResult> {
-  await requireAdmin();
-  if (!mlsNumber || typeof mlsNumber !== "string") {
-    return { ok: false, error: "Missing MLS number." };
-  }
-  if (!["facebook", "instagram", "tiktok"].includes(platform)) {
-    return { ok: false, error: "Invalid platform." };
-  }
-
-  const supabase = createAdminClient();
-
-  // Read current array, then write the desired state. Using a read-modify-
-  // write loop instead of array_append/array_remove keeps the path simple
-  // and avoids concurrent-toggle weirdness — this surface is admin-only and
-  // single-user in practice.
-  const { data: current, error: readErr } = await supabase
-    .from("properties")
-    .select("posts_confirmed_platforms")
-    .eq("mls_number", mlsNumber)
-    .maybeSingle();
-  if (readErr || !current) {
-    return {
-      ok: false,
-      error: readErr?.message ?? "Property not found.",
-    };
-  }
-
-  const existing = (current.posts_confirmed_platforms ?? []) as string[];
-  let next = existing;
-  if (confirmed && !existing.includes(platform)) {
-    next = [...existing, platform];
-  } else if (!confirmed && existing.includes(platform)) {
-    next = existing.filter((p) => p !== platform);
-  } else {
-    // No-op — already in desired state.
-    return { ok: true };
-  }
-
-  const { data: updated, error: updateErr } = await supabase
-    .from("properties")
-    .update({
-      posts_confirmed_platforms: next,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("mls_number", mlsNumber)
-    .select("mls_number");
-  if (updateErr) return { ok: false, error: updateErr.message };
-  if (!updated || updated.length === 0) {
-    return { ok: false, error: "Listing not found." };
-  }
-
-  revalidatePath("/");
-  revalidatePath("/properties");
-  revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
-  return { ok: true };
-}
-
-/**
  * Clear the manual "posted" confirmation. The listing returns to whatever
  * state it would be in based on auto-detected posts + dismissal flags.
  */
@@ -731,5 +663,95 @@ export async function undismissListingPromotionAction(
   revalidatePath("/properties");
   revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
   revalidatePath("/settings/promotions");
+  return { ok: true };
+}
+
+/**
+ * 2026-08-05 (John) — per-milestone "we made this post" checkbox.
+ *
+ * Replaces the three per-platform chips that only ever existed on the Just
+ * Listed card. Writes `listing_post_marks`, keyed on (mls_number, post_type),
+ * so Just Listed / Under Contract / Just Sold / Price Change each track
+ * independently instead of sharing one property-level flag.
+ *
+ * Ticking is an UPSERT (idempotent, refreshes marked_at + marked_by);
+ * unticking deletes the row. A listing whose post was auto-detected from a
+ * published generated_post renders the checkbox locked in the UI, so this
+ * action only ever handles the manual case.
+ */
+export async function setListingPostMarkAction(
+  mlsNumber: string,
+  postType:
+    | "just_listed"
+    | "under_contract"
+    | "just_sold"
+    | "price_reduction"
+    | "open_house",
+  marked: boolean,
+): Promise<DismissPromotionResult> {
+  const profile = await requireAdmin();
+  if (!mlsNumber || typeof mlsNumber !== "string") {
+    return { ok: false, error: "Missing MLS number." };
+  }
+  const VALID_POST_TYPES = [
+    "just_listed",
+    "under_contract",
+    "just_sold",
+    "price_reduction",
+    "open_house",
+  ];
+  if (!VALID_POST_TYPES.includes(postType)) {
+    return { ok: false, error: "Invalid post type." };
+  }
+
+  const supabase = createAdminClient();
+  // listing_post_marks isn't in the generated Database type yet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const untyped = supabase as any;
+
+  if (marked) {
+    const { error } = await untyped
+      .from("listing_post_marks")
+      .upsert(
+        {
+          mls_number: mlsNumber,
+          post_type: postType,
+          marked_at: new Date().toISOString(),
+          marked_by: profile.id,
+        },
+        { onConflict: "mls_number,post_type" },
+      );
+    if (error) return { ok: false, error: error.message };
+  } else {
+    const { error } = await untyped
+      .from("listing_post_marks")
+      .delete()
+      .eq("mls_number", mlsNumber)
+      .eq("post_type", postType);
+    if (error) return { ok: false, error: error.message };
+
+    // 2026-08-05 — the checkbox is now the single source of truth for the
+    // just_listed milestone, so unticking must also clear the legacy
+    // per-property flags. Without this, a listing whose "posted" state came
+    // from the old "Mark all as posted" shortcut or from
+    // posts_confirmed_platforms[] would stay ticked after being unticked and
+    // the click would look like it did nothing.
+    if (postType === "just_listed") {
+      const { error: legacyErr } = await supabase
+        .from("properties")
+        .update({
+          posts_confirmed_at: null,
+          posts_confirmed_by: null,
+          posts_confirmed_platforms: [],
+          updated_at: new Date().toISOString(),
+        })
+        .eq("mls_number", mlsNumber);
+      if (legacyErr) return { ok: false, error: legacyErr.message };
+    }
+  }
+
+  revalidatePath("/");
+  revalidatePath("/properties");
+  revalidatePath(`/properties/${encodeURIComponent(mlsNumber)}`);
   return { ok: true };
 }

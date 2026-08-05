@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  * Admin audit view for listings that were manually dismissed from the
  * dashboard "needs Larissa's attention" strip. Shows who dismissed each
  * listing, when, and why — with a one-click Restore action that puts the
- * listing back in the strip if it still has missing-platform coverage.
+ * listing back in the strip if it still has no Just Listed post.
  */
 export default async function PromotionsPage() {
   await requireAdmin();
@@ -95,7 +95,7 @@ export default async function PromotionsPage() {
 
       <PageHeader
         title="Dismissed listings"
-        description="Listings staff have removed from the dashboard 'needs Larissa' strip. Restore brings the listing back if it still has missing platform coverage."
+        description="Listings staff have removed from the dashboard 'needs Larissa' strip. Restore brings the listing back if it still has no Just Listed post."
       />
 
       <section>

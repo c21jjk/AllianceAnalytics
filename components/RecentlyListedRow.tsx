@@ -5,6 +5,10 @@ import Link from "next/link";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import ListingsFilterChips from "./ListingsFilterChips";
 import NeedsPostsCard from "./NeedsPostsCard";
+import {
+  MILESTONE_FLOOR_EMPTY_COPY,
+  MILESTONE_FLOOR_LABEL,
+} from "@/lib/dashboard-window";
 
 interface RecentlyListedRowProps {
   listings: ListingNeedingPosts[];
@@ -104,7 +108,7 @@ export default function RecentlyListedRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Listed
               <span className="text-neutral-400 font-normal">
-                · last 14 days · needs coverage{scope}
+                · since {MILESTONE_FLOOR_LABEL} · needs a post{scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
               {collapsed && freshCount === 0 ? (
@@ -116,7 +120,7 @@ export default function RecentlyListedRow({
             {!collapsed ? (
               <p className="mt-0.5 text-xs text-neutral-600">
                 {statusFilter === "needs_only"
-                  ? `${listings.length} ${noun} still need at least one platform's coverage. Cards drop off automatically when a hashtagged post auto-links.`
+                  ? `${listings.length} ${noun} still need a Just Listed post. Tick the checkbox once one is made, or leave it — cards also drop off automatically when a hashtagged post auto-links.`
                   : `${listings.length} recent ${noun}. Banners across the thumbnail show whether each one has been posted, dismissed, or still needs attention.`}
               </p>
             ) : null}
@@ -142,7 +146,7 @@ export default function RecentlyListedRow({
         <div id="recent-listings-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              No recent listings to show.
+              {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
             <ul className="space-y-1.5">
@@ -162,7 +166,7 @@ export default function RecentlyListedRow({
         <div id="recent-listings-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              No recent listings to show.
+              {MILESTONE_FLOOR_EMPTY_COPY}
             </div>
           ) : (
             <ul className="space-y-1.5">

@@ -1,5 +1,11 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { MILESTONE_FLOOR_ISO, floorDate, floorIso } from "@/lib/dashboard-window";
+import {
+  getAutoPostedPropertyIds,
+  getListingPostMarks,
+  type MilestonePostType,
+} from "@/lib/data/listing-post-marks";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -54,6 +60,17 @@ export interface ListingMilestone {
   /** When the row's STATUS last transitioned (active→pending→sold). Drives
    *  the "fresh in last 24h" dashboard badge. */
   first_seen_at: string;
+  /**
+   * 2026-08-05 (John) — has a post of THIS milestone's type been made for
+   * this listing? True from either a published generated_post of that type or
+   * a manual tick in listing_post_marks. Drives the checkbox that now sits on
+   * every milestone row.
+   */
+  post_made: boolean;
+  /** True when post_made came from a published post, so the box is locked. */
+  post_auto_detected: boolean;
+  /** When the manual checkbox was ticked, else null. */
+  post_marked_at: string | null;
 }
 
 export interface GetUnderContractOptions {
@@ -148,6 +165,7 @@ async function attachOfficeLabels(
 function rowToSold(
   p: DbPropertyRow,
   officeShortByID: Map<string, string>,
+  marks?: PostMarkLookup,
 ): ListingMilestone {
   return {
     id: p.id,
@@ -174,6 +192,7 @@ function rowToSold(
     buyer_agent_name: p.buyer_agent_name,
     alliance_role: coerceAllianceRole(p.alliance_role),
     first_seen_at: p.status_changed_at,
+    ...resolvePostMark(p, marks),
   };
 }
 
@@ -184,6 +203,7 @@ function rowToSold(
 function rowToPending(
   p: DbPropertyRow,
   officeShortByID: Map<string, string>,
+  marks?: PostMarkLookup,
 ): ListingMilestone {
   return {
     id: p.id,
@@ -205,13 +225,20 @@ function rowToPending(
     buyer_agent_name: p.buyer_agent_name,
     alliance_role: coerceAllianceRole(p.alliance_role),
     first_seen_at: p.status_changed_at,
+    ...resolvePostMark(p, marks),
   };
 }
 
 /**
- * Currently-pending (under contract) listings, newest-first by listing_date.
- * Pending is a state, not a windowed event — we show ALL pending listings
- * regardless of when they were listed.
+ * Currently-pending (under contract) listings.
+ *
+ * 2026-08-05 (John) — this used to have NO date predicate at all: it returned
+ * the N newest-listed of every pending row in the book, which is why the card
+ * showed listings that went pending months ago. It is now gated on
+ * `status_changed_at` (when the listing actually flipped to pending) against
+ * the shared milestone floor, and sorted by that same date so the newest
+ * transition sits on top. Gating on listing_date instead would be wrong — a
+ * listing from March can go under contract today.
  */
 export async function getUnderContractListings(
   opts: GetUnderContractOptions = {},
@@ -228,7 +255,8 @@ export async function getUnderContractListings(
       "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "pending")
-    .order("listing_date", { ascending: false, nullsFirst: false })
+    .gte("status_changed_at", MILESTONE_FLOOR_ISO)
+    .order("status_changed_at", { ascending: false })
     .order("updated_at", { ascending: false })
     .limit(limit);
 
@@ -243,7 +271,8 @@ export async function getUnderContractListings(
   if (properties.length === 0) return [];
 
   const officeShortByID = await attachOfficeLabels(supabase, properties);
-  return properties.map((p) => rowToPending(p, officeShortByID));
+  const marks = await attachPostMarks(properties, "under_contract");
+  return properties.map((p) => rowToPending(p, officeShortByID, marks));
 }
 
 /**
@@ -261,8 +290,14 @@ export async function getRecentlySoldListings(
   const officeFilter = await resolveOfficeFilter(supabase, opts.office_short_code);
   if (!officeFilter.ok) return [];
 
-  const cutoffIso = new Date(Date.now() - windowDays * 86400_000).toISOString();
-  const cutoffDate = cutoffIso.slice(0, 10);
+  // 2026-08-05 — rolling window floored at the shared milestone slate date.
+  // Both branches of the OR get the floored value so a sold row with no
+  // close_date can't slip through on updated_at alone.
+  const rawCutoffIso = new Date(
+    Date.now() - windowDays * 86400_000,
+  ).toISOString();
+  const cutoffIso = floorIso(rawCutoffIso);
+  const cutoffDate = floorDate(rawCutoffIso.slice(0, 10));
 
   // Either close_date is set and within the window, OR close_date is missing
   // and the row was updated within the window (covers listings that just
@@ -291,5 +326,52 @@ export async function getRecentlySoldListings(
   if (properties.length === 0) return [];
 
   const officeShortByID = await attachOfficeLabels(supabase, properties);
-  return properties.map((p) => rowToSold(p, officeShortByID));
+  const marks = await attachPostMarks(properties, "just_sold");
+  return properties.map((p) => rowToSold(p, officeShortByID, marks));
+}
+
+/**
+ * Shared post-mark lookup for the milestone fetchers. One round trip each for
+ * the manual ticks and the published-post auto-detection, then handed to the
+ * row mappers.
+ */
+async function attachPostMarks(
+  properties: DbPropertyRow[],
+  postType: MilestonePostType,
+): Promise<PostMarkLookup> {
+  const [manual, auto] = await Promise.all([
+    getListingPostMarks(
+      properties.map((p) => p.mls_number),
+      postType,
+    ),
+    getAutoPostedPropertyIds(
+      properties.map((p) => p.id),
+      postType,
+    ),
+  ]);
+  return { manual, auto };
+}
+
+export interface PostMarkLookup {
+  /** mls_number → marked_at */
+  manual: Map<string, string>;
+  /** property ids with a published post of this type */
+  auto: Set<string>;
+}
+
+/** Resolve the three post-mark fields for one row. */
+function resolvePostMark(
+  row: DbPropertyRow,
+  marks: PostMarkLookup | undefined,
+): Pick<
+  ListingMilestone,
+  "post_made" | "post_auto_detected" | "post_marked_at"
+> {
+  const autoDetected = marks?.auto.has(row.id) ?? false;
+  const markedAt = marks?.manual.get(row.mls_number) ?? null;
+  return {
+    post_made: autoDetected || markedAt !== null,
+    post_auto_detected: autoDetected,
+    post_marked_at: markedAt,
+  };
 }

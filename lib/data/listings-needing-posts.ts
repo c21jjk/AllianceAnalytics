@@ -1,5 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { floorDate, floorIso } from "@/lib/dashboard-window";
+import { getListingPostMarks } from "@/lib/data/listing-post-marks";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -50,20 +52,23 @@ export interface ListingNeedingPosts {
   agent_name: string | null;
   /** Office short code (e.g. "WWC", "OCN") or null when unmapped. */
   office_short_code: string | null;
-  /** Per-platform DEDICATED-post counts (single-listing spotlights for this
-   *  listing, excluding Open House + Just Sold). Zero ⇒ no dedicated post on
-   *  that platform yet. */
-  post_counts: Record<PostPlatform, number>;
   /**
-   * Per-platform manual confirmations from properties.posts_confirmed_platforms[].
-   * Layered on top of post_counts to derive missing_platforms below.
+   * 2026-08-05 (John) — single "has a Just Listed post been made?" flag,
+   * replacing the old three per-platform chips. True when EITHER a dedicated
+   * single-listing post for this property is live on any platform (auto-
+   * detected from the synced feed) OR someone ticked the checkbox on the
+   * dashboard (a listing_post_marks row) OR the legacy properties
+   * .posts_confirmed_at "all done" shortcut is set.
    */
-  manual_confirmed_platforms: PostPlatform[];
+  post_made: boolean;
   /**
-   * Convenience: platforms with neither an auto-linked post NOR a manual
-   * confirmation. Drives the "click to mark" badge UI.
+   * True when {@link post_made} came from an auto-detected live post rather
+   * than a manual tick. The checkbox renders locked in that case — you can't
+   * untick a post that demonstrably exists.
    */
-  missing_platforms: PostPlatform[];
+  post_auto_detected: boolean;
+  /** When the manual checkbox was ticked, else null. */
+  post_marked_at: string | null;
   /** Three-state rollup — drives the ribbon overlay on the listing card. */
   promotion_status: ListingPromotionStatus;
   /** When set, the admin marked this listing as "posted, stop reminding me". */
@@ -170,8 +175,15 @@ export async function getListingsNeedingPosts(
     officeFilterId = officeRow.id;
   }
 
-  const cutoffIso = new Date(Date.now() - windowDays * 86400_000).toISOString();
-  const cutoffDate = cutoffIso.slice(0, 10);
+  // 2026-08-05 — the rolling window is now floored at the shared milestone
+  // slate date (see lib/dashboard-window.ts). Whichever is more recent wins,
+  // so today the Aug 1 floor is binding and after ~Aug 15 the 14-day window
+  // takes over again.
+  const rawCutoffIso = new Date(
+    Date.now() - windowDays * 86400_000,
+  ).toISOString();
+  const cutoffIso = floorIso(rawCutoffIso);
+  const cutoffDate = floorDate(rawCutoffIso.slice(0, 10));
 
   // Recency rule:
   //   - When listing_date IS set, that's the source of truth (matches MLS).
@@ -308,6 +320,13 @@ export async function getListingsNeedingPosts(
     }
   }
 
+  // 2026-08-05 — manual "posted" ticks for the just_listed milestone. One
+  // round trip for the whole page rather than one per row.
+  const marks = await getListingPostMarks(
+    properties.map((p) => p.mls_number),
+    "just_listed",
+  );
+
   // Compute three-state status + shape the result.
   const out: ListingNeedingPosts[] = [];
   for (const p of properties) {
@@ -317,32 +336,31 @@ export async function getListingsNeedingPosts(
       tiktok: 0,
     };
 
-    // Manual per-platform confirmations from posts_confirmed_platforms[].
-    // Filter to known platforms in case the column ever has stale data.
-    const manualConfirmed: PostPlatform[] = (
+    // 2026-08-05 — collapsed from per-platform coverage to one question:
+    // has a Just Listed post been made for this listing at all? A dedicated
+    // single-listing post on ANY platform answers yes. The old per-platform
+    // array (properties.posts_confirmed_platforms) is still honoured so
+    // anything Larissa already ticked keeps counting, and posts_confirmed_at
+    // remains the legacy "all done" shortcut.
+    const legacyManualPlatforms = (
       (p.posts_confirmed_platforms ?? []) as string[]
-    ).filter((plat): plat is PostPlatform =>
-      plat === "facebook" || plat === "instagram" || plat === "tiktok",
+    ).filter(
+      (plat) =>
+        plat === "facebook" || plat === "instagram" || plat === "tiktok",
     );
-
-    // A platform is covered when it has an auto-linked post OR is in the
-    // manual confirmation array OR posts_confirmed_at is set (the global
-    // "all done" shortcut).
-    const allMarkedDone = !!p.posts_confirmed_at;
-    const isCovered = (plat: PostPlatform): boolean =>
-      allMarkedDone ||
-      (c[plat] ?? 0) > 0 ||
-      manualConfirmed.includes(plat);
-
-    const missing: PostPlatform[] = (
-      ["facebook", "instagram", "tiktok"] as PostPlatform[]
-    ).filter((plat) => !isCovered(plat));
+    const autoDetected =
+      (c.facebook ?? 0) > 0 || (c.instagram ?? 0) > 0 || (c.tiktok ?? 0) > 0;
+    const markedAt = marks.get(p.mls_number) ?? null;
+    const postMade =
+      autoDetected ||
+      markedAt !== null ||
+      !!p.posts_confirmed_at ||
+      legacyManualPlatforms.length > 0;
 
     let promotionStatus: ListingPromotionStatus;
     if (p.promotion_dismissed_at) {
       promotionStatus = "dismissed";
-    } else if (missing.length === 0) {
-      // All three platforms covered — by auto-link, manual mark, or "all done"
+    } else if (postMade) {
       promotionStatus = "posted";
     } else {
       promotionStatus = "needs_post";
@@ -370,9 +388,9 @@ export async function getListingsNeedingPosts(
       office_short_code: p.office_id
         ? officeShortByID.get(p.office_id) ?? null
         : null,
-      post_counts: c,
-      manual_confirmed_platforms: manualConfirmed,
-      missing_platforms: missing,
+      post_made: postMade,
+      post_auto_detected: autoDetected,
+      post_marked_at: markedAt,
       promotion_status: promotionStatus,
       posts_confirmed_at: p.posts_confirmed_at,
       promotion_dismissed_at: p.promotion_dismissed_at,

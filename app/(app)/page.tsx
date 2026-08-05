@@ -12,10 +12,10 @@ import {
   getRecentlySoldListings,
   getUnderContractListings,
 } from "@/lib/data/recently-sold";
-import { getRecentStatusFlips } from "@/lib/data/recent-status-flips";
 import { backfillStatusFlipOutbox } from "@/lib/data/agent-outbox-db";
 import { countOwnerStoryViewsInWindow } from "@/lib/data/owner-story-db";
 import { getUpcomingOpenHouses } from "@/lib/data/open-houses";
+import { getPriceChanges } from "@/lib/data/price-changes";
 import { listOffices } from "@/lib/data/offices";
 import {
   searchPosts,
@@ -29,8 +29,8 @@ import PostStreamDnd from "@/components/PostStreamDnd";
 import RecentlyListedRow from "@/components/RecentlyListedRow";
 import UnderContractRow from "@/components/UnderContractRow";
 import RecentlySoldRow from "@/components/RecentlySoldRow";
+import PriceChangeRow from "@/components/PriceChangeRow";
 import UpcomingOpenHousesRow from "@/components/UpcomingOpenHousesRow";
-import WinsToCelebrateCard from "@/components/WinsToCelebrateCard";
 import MorningBriefingCard from "@/components/MorningBriefingCard";
 import OfficeFilterChips from "@/components/OfficeFilterChips";
 import PageHeader from "@/components/PageHeader";
@@ -142,7 +142,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     underContractListings,
     recentlySoldListings,
     upcomingOpenHouses,
-    recentStatusFlips,
+    priceChanges,
     _outboxBackfilled,
     storyViewsLast24h,
     companyAnalytics,
@@ -189,10 +189,9 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       windowDays: 7,
       limit: 12,
     }),
-    getRecentStatusFlips({
+    getPriceChanges({
       office_short_code: officeFilter,
-      daysBack: 3,
-      limit: 20,
+      limit: 8,
     }),
     // Phase 6 — best-effort backfill of status_flip outbox rows on every
     // dashboard load. Idempotent via the unique index on
@@ -273,10 +272,6 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         </span>
       </div>
 
-      {/* Wins to celebrate — Phase 6. Renders only when there's actually
-          something flipped recently AND uncelebrated; quiet on slow weeks. */}
-      <WinsToCelebrateCard flips={recentStatusFlips} />
-
       {/* Milestones grid — four collapsible cards.
           Layout: 2-column grid on desktop, single column on mobile.
             Left  (50%): Recently Listed — needs coverage (full height)
@@ -304,6 +299,9 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         const recentlySoldFreshCount = recentlySoldListings.filter((x) =>
           isFresh(x.first_seen_at),
         ).length;
+        const priceChangesFreshCount = priceChanges.filter((x) =>
+          isFresh(x.first_seen_at),
+        ).length;
 
         return (
           <>
@@ -313,6 +311,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               newListingsFresh={listedFreshCount}
               underContractFresh={underContractFreshCount}
               recentlySoldFresh={recentlySoldFreshCount}
+              priceChangesFresh={priceChangesFreshCount}
               openHousesThisWeek={upcomingOpenHouses.length}
               storyViewsLast24h={storyViewsLast24h ?? 0}
             />
@@ -346,9 +345,15 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                 <div id="recently-sold" className="scroll-mt-32">
                   <RecentlySoldRow
                     listings={recentlySoldListings}
-                    windowDays={30}
                     officeShortCode={officeFilter}
                     freshCount={recentlySoldFreshCount}
+                  />
+                </div>
+                <div id="price-changes" className="scroll-mt-32">
+                  <PriceChangeRow
+                    listings={priceChanges}
+                    officeShortCode={officeFilter}
+                    freshCount={priceChangesFreshCount}
                   />
                 </div>
               </div>

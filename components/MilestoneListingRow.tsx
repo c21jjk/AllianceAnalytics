@@ -1,7 +1,9 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import type { AllianceRole, ListingMilestone } from "@/lib/data/recently-sold";
 import { formatCurrency } from "@/lib/format";
 import OfficeThumbBadge from "./OfficeThumbBadge";
+import PostedCheckbox, { type MilestonePostType } from "./PostedCheckbox";
 
 interface MilestoneListingRowProps {
   listing: ListingMilestone;
@@ -14,48 +16,52 @@ interface MilestoneListingRowProps {
   /** Whether this is the first row (no top border) */
   isFirst: boolean;
   /**
-   * 2026-08-04 (John): when set, the row deep-links to the Post Builder
-   * with this post type + the row's listing pre-selected
-   * (/post-builder?mls=X&postType=Y) instead of the property detail page.
-   * The dashboard's Recently Sold card promises "Click any listing to make
-   * a Just-Sold post" but the row landed on the Owner Story page; both
-   * milestone cards now route straight into the builder. The builder's
-   * page.tsx validates the pick server-side (status bucket + hero photo)
-   * and falls back to a normal open when the listing doesn't qualify.
+   * 2026-08-04 (John): the row deep-links to the Post Builder with this post
+   * type + the row's listing pre-selected (/post-builder?mls=X&postType=Y).
+   *
+   * 2026-08-05 (John): this prop now ALSO drives the per-milestone "Posted"
+   * checkbox, so Just Listed / Under Contract / Just Sold / Price Change each
+   * track independently. Every milestone section passes it.
    */
-  buildPostType?: "just_sold" | "under_contract";
+  postType: MilestonePostType;
+  /** Optional extra meta line, e.g. the price-drop detail on Price Changes. */
+  metaSuffix?: ReactNode;
 }
 
 /**
- * Shared compact editorial row used inside both UnderContractRow and
- * RecentlySoldRow. Mirrors the Direction-A row shape used elsewhere in the
- * dashboard but trimmed for the smaller right-column cards:
+ * Shared compact editorial row used inside UnderContractRow, RecentlySoldRow
+ * and PriceChangeRow:
  *
- *   [56×56 thumb]  ADDRESS LINE
- *                  $PRICE · EYEBROW DATE · short_code →
+ *   [56×56 thumb]  ADDRESS LINE                    [+ Build post]
+ *                  $PRICE · EYEBROW DATE · code    [☑ Posted    ]
  *
- * With `buildPostType` set (both current callers), deep-links into the
- * Post Builder pre-picked; otherwise falls back to /properties/[mls].
+ * 2026-08-05 (John) — "each should have a Build Post tab and a simple checkbox
+ * if a post for that property has been created". Previously the entire row was
+ * one big link into the Post Builder and these sections had no controls at
+ * all, while Just Listed had three per-platform chips. All milestone sections
+ * now share the same two controls.
+ *
+ * The row is no longer a single <Link>: the address links to the property
+ * detail page, "+ Build post" is the primary CTA into the builder, and the
+ * checkbox is a button. Nesting those inside an outer anchor would be invalid
+ * HTML and would swallow the clicks.
  */
 export default function MilestoneListingRow({
   listing,
   eyebrowPrefix,
   isFirst,
-  buildPostType,
+  postType,
+  metaSuffix,
 }: MilestoneListingRowProps) {
   const dateLabel = formatDateLabel(listing.reference_date);
   // 2026-07-17 (approved mockup v2) — state dropped from all dashboard
   // property chips: every listing is NJ. Name kept; carries just the town.
   const cityState = listing.city ?? "";
   const mls = encodeURIComponent(listing.mls_number);
-  const href = buildPostType
-    ? `/post-builder?mls=${mls}&postType=${buildPostType}`
-    : `/properties/${mls}`;
 
   return (
-    <Link
-      href={href}
-      className="grid items-center hover:opacity-70 transition-opacity"
+    <div
+      className="grid items-center"
       style={{
         gridTemplateColumns: "56px 1fr auto",
         gap: 14,
@@ -65,7 +71,9 @@ export default function MilestoneListingRow({
     >
       {/* Hero — office short_code strip pinned to the bottom edge so every
           section reads office attribution the same way Recently Listed does. */}
-      <div
+      <Link
+        href={`/properties/${mls}`}
+        className="hover:opacity-70 transition-opacity"
         style={{
           width: 56,
           height: 56,
@@ -73,6 +81,7 @@ export default function MilestoneListingRow({
           borderRadius: 2,
           overflow: "hidden",
           position: "relative",
+          display: "block",
         }}
       >
         {listing.hero_image_url ? (
@@ -90,13 +99,16 @@ export default function MilestoneListingRow({
           />
         ) : null}
         <OfficeThumbBadge code={listing.office_short_code} />
-      </div>
+      </Link>
 
       {/* Body — address line + meta line + agent line. Truncates aggressively
           so it fits in the narrow card width. */}
       <div style={{ minWidth: 0 }}>
-        <div
+        <Link
+          href={`/properties/${mls}`}
+          className="hover:opacity-70 transition-opacity"
           style={{
+            display: "block",
             fontSize: 13,
             lineHeight: 1.3,
             color: "#171717",
@@ -114,7 +126,7 @@ export default function MilestoneListingRow({
               , {cityState}
             </span>
           ) : null}
-        </div>
+        </Link>
         <div
           style={{
             marginTop: 3,
@@ -153,6 +165,8 @@ export default function MilestoneListingRow({
           ) : null}
         </div>
 
+        {metaSuffix}
+
         {/* Alliance role + agent line — shows which side(s) Alliance had
             and who the Alliance agent(s) are. Suppressed when no agent
             info is on file at all. */}
@@ -163,28 +177,42 @@ export default function MilestoneListingRow({
         />
       </div>
 
-      {/* Right column — arrow chevron */}
-      <div style={{ color: "#a3a3a3", fontSize: 14 }}>
-        <ArrowIcon />
+      {/* Right column — the two controls every milestone section now shares:
+          the primary "+ Build post" CTA and the "Posted" checkbox. Stacked
+          vertically to mirror the Recently Listed and Open Houses chips. */}
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        <Link
+          href={`/post-builder?mls=${mls}&postType=${postType}`}
+          className="inline-flex items-center gap-1 rounded-md bg-gold-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gold-600 transition-colors"
+          title="Open the Post Builder with this listing pre-selected"
+        >
+          <PlusGlyph />
+          Build post
+        </Link>
+        <PostedCheckbox
+          mlsNumber={listing.mls_number}
+          postType={postType}
+          checked={listing.post_made}
+          autoDetected={listing.post_auto_detected}
+        />
       </div>
-    </Link>
+    </div>
   );
 }
 
-function ArrowIcon() {
+function PlusGlyph() {
   return (
     <svg
       viewBox="0 0 24 24"
-      width={14}
-      height={14}
+      width={11}
+      height={11}
       fill="none"
       stroke="currentColor"
-      strokeWidth={2}
+      strokeWidth={3}
       strokeLinecap="round"
-      strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M9 6l6 6-6 6" />
+      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }

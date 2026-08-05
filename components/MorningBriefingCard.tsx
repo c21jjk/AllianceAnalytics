@@ -12,6 +12,8 @@ interface Props {
   newListingsFresh: number;
   underContractFresh: number;
   recentlySoldFresh: number;
+  /** 2026-08-05 — price reductions recorded in the last 24h. */
+  priceChangesFresh?: number;
   openHousesThisWeek: number;
   storyViewsLast24h: number;
 }
@@ -20,6 +22,7 @@ export default function MorningBriefingCard({
   newListingsFresh,
   underContractFresh,
   recentlySoldFresh,
+  priceChangesFresh = 0,
   openHousesThisWeek,
   storyViewsLast24h,
 }: Props) {
@@ -49,6 +52,14 @@ export default function MorningBriefingCard({
       count: recentlySoldFresh,
       label: recentlySoldFresh === 1 ? "closed" : "closed",
       anchor: "recently-sold",
+    });
+  }
+  if (priceChangesFresh > 0) {
+    parts.push({
+      count: priceChangesFresh,
+      label:
+        priceChangesFresh === 1 ? "price reduction" : "price reductions",
+      anchor: "price-changes",
     });
   }
   if (openHousesThisWeek > 0) {
