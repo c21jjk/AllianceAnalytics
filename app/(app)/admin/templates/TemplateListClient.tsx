@@ -29,12 +29,30 @@ type StateFilter =
   | "archived"
   | "unused";
 
+/**
+ * 2026-08-05 (John): "Can the two Template sections be merged, or do they
+ * handle two totally different things?"
+ *
+ * They were the same table sliced two ways. The retired /templates page
+ * ("Custom Templates") queried template_definitions WHERE source='studio' and
+ * offered rename / default / archive; this page already listed EVERY row with
+ * far more power. It now carries a Source filter so the Studio-saved view is
+ * one click here instead of a second page in the Admin menu.
+ */
+type SourceFilter = "all" | "studio" | "builder";
+
 interface Props {
   templates: readonly TemplateMeta[];
+  /** Seeded from ?source= so /templates can deep-link into the Studio view. */
+  initialSource?: SourceFilter;
 }
 
-export default function TemplateListClient({ templates }: Props) {
+export default function TemplateListClient({
+  templates,
+  initialSource = "all",
+}: Props) {
   const [filter, setFilter] = useState<StateFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>(initialSource);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   // Lightbox preview — click a row thumbnail to see the full template image
@@ -60,20 +78,46 @@ export default function TemplateListClient({ templates }: Props) {
     return c;
   }, [templates]);
 
+  // Source counts mirror the "All" rule above: archived rows are excluded so
+  // the two pill groups agree on what "everything" means.
+  const sourceCounts = useMemo(() => {
+    const c = { all: 0, studio: 0, builder: 0 };
+    for (const t of templates) {
+      if (t.publish_state === "archived") continue;
+      c.all += 1;
+      if (t.source === "studio") c.studio += 1;
+      else c.builder += 1;
+    }
+    return c;
+  }, [templates]);
+
   const visible = useMemo(() => {
+    // Source narrows whatever the state filter returns. Kept as a separate
+    // pass so the two pill groups stay orthogonal.
+    const bySource = (t: TemplateMeta): boolean =>
+      sourceFilter === "all"
+        ? true
+        : sourceFilter === "studio"
+          ? t.source === "studio"
+          : t.source !== "studio";
+
     // Default "All" hides archived — they only appear under the Archived pill.
     if (filter === "all")
-      return templates.filter((t) => t.publish_state !== "archived");
+      return templates.filter(
+        (t) => t.publish_state !== "archived" && bySource(t),
+      );
     if (filter === "unused") {
       // why: orthogonal to publish_state — "unused" surfaces every
       // template that hasn't generated a post, regardless of whether it's
       // a draft, published, or archived row. Catches both "shelfware
       // shipped but nobody picks it" and "draft never published" in one
       // view.
-      return templates.filter((t) => (t.use_count ?? 0) === 0);
+      return templates.filter((t) => (t.use_count ?? 0) === 0 && bySource(t));
     }
-    return templates.filter((t) => t.publish_state === filter);
-  }, [templates, filter]);
+    return templates.filter(
+      (t) => t.publish_state === filter && bySource(t),
+    );
+  }, [templates, filter, sourceFilter]);
 
   function onMove(template: TemplateMeta, direction: "up" | "down"): void {
     // why: nudge by 10 so admins have headroom to insert in between two
@@ -92,7 +136,14 @@ export default function TemplateListClient({ templates }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <FilterPills filter={filter} counts={counts} onChange={setFilter} />
+        <div className="flex items-center gap-2 flex-wrap">
+          <FilterPills filter={filter} counts={counts} onChange={setFilter} />
+          <SourcePills
+            filter={sourceFilter}
+            counts={sourceCounts}
+            onChange={setSourceFilter}
+          />
+        </div>
         <Link
           href="/admin/templates/new"
           className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-gold-600 transition-colors"
@@ -262,6 +313,52 @@ function FilterPills({
     // Phase 2K — orthogonal "never used" filter. Sits at the end of the
     // group so the publish-state pills cluster naturally to the left.
     { id: "unused", label: "Never used", count: counts.unused },
+  ];
+  return (
+    <div className="inline-flex flex-wrap gap-1 rounded-lg bg-neutral-100 p-1">
+      {options.map((opt) => {
+        const active = filter === opt.id;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            className={[
+              "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+              active
+                ? "bg-white text-neutral-900 shadow-sm"
+                : "text-neutral-600 hover:text-neutral-900",
+            ].join(" ")}
+          >
+            {opt.label}
+            <span className="ml-1.5 text-neutral-400 tabular-nums">
+              {opt.count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Source pills — "Saved from Studio" is the view the retired Custom Templates
+ * page used to be. Same visual language as the state pills, deliberately a
+ * separate group so it reads as a second, orthogonal axis.
+ */
+function SourcePills({
+  filter,
+  counts,
+  onChange,
+}: {
+  filter: SourceFilter;
+  counts: { all: number; studio: number; builder: number };
+  onChange: (f: SourceFilter) => void;
+}) {
+  const options: Array<{ id: SourceFilter; label: string; count: number }> = [
+    { id: "all", label: "Any source", count: counts.all },
+    { id: "studio", label: "Saved from Studio", count: counts.studio },
+    { id: "builder", label: "Built-in", count: counts.builder },
   ];
   return (
     <div className="inline-flex flex-wrap gap-1 rounded-lg bg-neutral-100 p-1">

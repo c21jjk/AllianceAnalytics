@@ -16,7 +16,13 @@ export const dynamic = "force-dynamic";
  *
  * See docs/adr/0001-template-builder.md.
  */
-export default async function AdminTemplatesPage() {
+interface AdminTemplatesPageProps {
+  searchParams?: Promise<{ source?: string | string[] }>;
+}
+
+export default async function AdminTemplatesPage({
+  searchParams,
+}: AdminTemplatesPageProps) {
   // why: layouts and pages render in parallel in the App Router, so the
   // admin layout's gate alone does not stop this page's data fetch. The
   // page must gate itself too.
@@ -24,15 +30,23 @@ export default async function AdminTemplatesPage() {
 
   const templates = await listAllTemplates();
 
+  // 2026-08-05 — /templates ("Custom Templates") was retired and now redirects
+  // here with ?source=studio, which seeds the Source pill so the old view
+  // lands exactly where it used to.
+  const sp = (await searchParams) ?? {};
+  const rawSource = Array.isArray(sp.source) ? sp.source[0] : sp.source;
+  const initialSource =
+    rawSource === "studio" || rawSource === "builder" ? rawSource : "all";
+
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Admin"
         title="Template Builder"
-        description="Browse, edit, and create visual templates for every post type. Each template can be tagged for one or more post types and reordered to control how it appears in the Post Builder picker."
+        description="Browse, edit, and create visual templates for every post type. Each template can be tagged for one or more post types and reordered to control how it appears in the Post Builder picker. Designs saved from the Post Builder Studio live here too — filter by Saved from Studio."
       />
 
-      <TemplateListClient templates={templates} />
+      <TemplateListClient templates={templates} initialSource={initialSource} />
     </div>
   );
 }

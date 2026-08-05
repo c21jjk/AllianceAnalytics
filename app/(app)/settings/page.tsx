@@ -24,12 +24,21 @@ import {
 } from "@/lib/post-builder/publish";
 import { PLATFORMS } from "./credentialSchemas";
 import { setPublishTestModeAction } from "./actions";
+import ThumbnailCacheBackfillCard from "@/app/(app)/maintenance/ThumbnailCacheBackfillCard";
+import { getUncachedThumbnailCount } from "@/app/(app)/maintenance/thumbnail-cache-actions";
 
 export const metadata = { title: "Settings — Alliance Social" };
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   await requireAdmin();
+
+  // 2026-08-05 (John) — Maintenance folded in here. It was a whole top-level
+  // route, nav entry and grid layout holding exactly ONE card. Its own comment
+  // said it was split out "so admins can find them without scrolling past
+  // credentials and feeds", which stopped being a good trade once the Admin
+  // menu had seven entries.
+  const uncachedThumbnails = await getUncachedThumbnailCount();
 
   const admin = createAdminClient();
 
@@ -396,6 +405,16 @@ export default async function SettingsPage() {
               listing&apos;s agent until the listing leaves &ldquo;active.&rdquo;
             </p>
           </div>
+        </div>
+      </section>
+
+      <section>
+        <SectionHeading
+          title="Maintenance"
+          subtitle="One-off data cleanup tools. Moved here 2026-08-05 from its own top-level page."
+        />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <ThumbnailCacheBackfillCard initialRemaining={uncachedThumbnails} />
         </div>
       </section>
     </div>

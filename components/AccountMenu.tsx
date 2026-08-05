@@ -17,7 +17,11 @@ interface AccountMenuProps {
  *
  * Items:
  *   - My account → /settings/security (any signed-in user)
- *   - Admin section (admin-only): Users, Templates, Maintenance, Settings —
+ *   - Admin section (admin-only): Agent Outbox, Users, Templates, Audio
+ *     Library, Settings. 2026-08-05 (John) trimmed this from seven entries:
+ *     "Custom Templates" was the same table as Template Builder filtered to
+ *     source='studio' (now a pill there), and "Maintenance" was one card
+ *     (now a section in Settings). Both routes redirect.
  *     surfaced as direct shortcuts so the most-touched admin pages are one
  *     click from anywhere instead of two clicks under /settings.
  *   - Sign out
@@ -145,8 +149,8 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
                 href="/admin/templates"
                 onSelect={() => setOpen(false)}
                 icon={<LayersIcon />}
-                label="Template Builder"
-                sub="Design + manage the global template library"
+                label="Templates"
+                sub="Every template, including designs saved from Studio"
               />
               <MenuItem
                 href="/admin/audio-library"
@@ -154,20 +158,6 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
                 icon={<MusicIcon />}
                 label="Audio Library"
                 sub="Reel music tracks + post-type tags"
-              />
-              <MenuItem
-                href="/templates"
-                onSelect={() => setOpen(false)}
-                icon={<LayersIcon />}
-                label="Custom Templates"
-                sub="User-saved Studio designs"
-              />
-              <MenuItem
-                href="/maintenance"
-                onSelect={() => setOpen(false)}
-                icon={<WrenchIcon />}
-                label="Maintenance"
-                sub="Cache, cleanup tools"
               />
               <MenuItem
                 href="/settings"
