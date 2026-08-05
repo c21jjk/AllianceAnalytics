@@ -16,7 +16,10 @@
 
 import { useState } from "react";
 
-const AUTOREEL_HOME = "https://www.autoreelapp.com/";
+// why /listings: the bare domain shows the marketing page even when signed
+// in; /listings redirects into the app (and, logged out, straight to the
+// sign-in screen instead of a promo popup).
+const AUTOREEL_HOME = "https://www.autoreelapp.com/listings";
 
 export default function AutoReelEmbed() {
   const [loaded, setLoaded] = useState(false);

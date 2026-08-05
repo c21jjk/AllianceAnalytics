@@ -17,13 +17,20 @@
  *                   → downloads the render, mirrors it into the
  *                     post-builder-reels bucket, generates captions from the
  *                     listing, and inserts a DRAFT generated_posts reel row.
- *                     Larissa reviews + publishes it from Saved Posts through
- *                     the existing reel pipeline (FB + IG, outbox, agent
- *                     emails — nothing new to learn).
+ * POST { action: "publish", gp_id, when? }
+ *                   → queues an imported reel: sets scheduled_for (FB + IG)
+ *                     to `when` (default: now) and status='scheduled'. The
+ *                     existing publish-scheduled cron (every 5 min) then
+ *                     publishes it with the full battle-tested path — claim
+ *                     guard, retries, outbox rows, agent emails. why not a
+ *                     direct Graph call here: that logic lives in the cron
+ *                     and re-implementing it would fork the publish path.
+ * POST { action: "save_captions", gp_id, instagram_caption?, facebook_caption? }
+ *                   → updates the draft's captions from the review screen.
  *
- * why draft, not scheduled: unlike the automatic post-publish reels, an
- * imported AutoReel video hasn't been seen next to its caption yet. Larissa
- * gets one review stop; publishing stays the standard flow.
+ * why draft, not scheduled, on import: unlike the automatic post-publish
+ * reels, an imported AutoReel video hasn't been seen next to its caption
+ * yet. Larissa gets one review stop; publishing stays the standard flow.
  */
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
@@ -162,7 +169,29 @@ export async function GET(request: Request) {
       );
     }
     const project = await getAutoReelProject(property.mls_number);
-    return NextResponse.json({ ok: true, listing: summarize(property), project });
+    // Imported-draft state — drives the "reel waiting to publish" dot on the
+    // launch buttons and the panel's status line.
+    let draft: { gp_id: string; status: string } | null = null;
+    if (project?.generated_post_id) {
+      const supabase = createAdminClient();
+      const { data: gp } = await supabase
+        .from("generated_posts")
+        .select("id, status")
+        .eq("id", project.generated_post_id)
+        .maybeSingle();
+      if (gp) {
+        draft = {
+          gp_id: (gp as { id: string }).id,
+          status: (gp as { status: string }).status,
+        };
+      }
+    }
+    return NextResponse.json({
+      ok: true,
+      listing: summarize(property),
+      project,
+      draft,
+    });
   }
 
   if (q.length >= 2) {
@@ -212,6 +241,11 @@ interface PostBody {
   mls_number?: string;
   project_url?: string;
   video_url?: string;
+  gp_id?: string;
+  /** ISO timestamp for action=publish scheduling; omit for "now". */
+  when?: string;
+  instagram_caption?: string;
+  facebook_caption?: string;
 }
 
 export async function POST(request: Request) {
@@ -225,6 +259,21 @@ export async function POST(request: Request) {
     body = (await request.json()) as PostBody;
   } catch {
     return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
+  }
+
+  // gp-scoped actions (review screen) don't carry an MLS number.
+  if (body.action === "publish") {
+    return publishImportedReel({
+      gpId: (body.gp_id ?? "").trim(),
+      when: (body.when ?? "").trim() || null,
+    });
+  }
+  if (body.action === "save_captions") {
+    return saveImportedReelCaptions({
+      gpId: (body.gp_id ?? "").trim(),
+      instagram: body.instagram_caption,
+      facebook: body.facebook_caption,
+    });
   }
 
   const mls = (body.mls_number ?? "").trim();
@@ -459,5 +508,170 @@ async function importRender(args: {
     created_by: userId,
   });
 
-  return NextResponse.json({ ok: true, gp_id: gpId });
+  return NextResponse.json({ ok: true, gp_id: gpId, caption: generated.caption });
+}
+
+// ---------------------------------------------------------------------------
+// Publish / caption actions for imported reels (review screen + import box)
+// ---------------------------------------------------------------------------
+
+/** Fetch an imported-reel row, verifying it IS one (template_id gate). */
+async function fetchImportedReel(gpId: string): Promise<
+  | {
+      ok: true;
+      row: {
+        id: string;
+        status: string;
+        video_url: string | null;
+        caption: string | null;
+        captions_by_platform: Record<
+          string,
+          { caption?: string; hashtags?: string[] }
+        > | null;
+      };
+    }
+  | { ok: false; res: NextResponse }
+> {
+  if (!gpId) {
+    return {
+      ok: false,
+      res: NextResponse.json({ ok: false, error: "gp_id required" }, { status: 400 }),
+    };
+  }
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("generated_posts")
+    .select("id, status, template_id, media_type, video_url, caption, captions_by_platform")
+    .eq("id", gpId)
+    .maybeSingle();
+  if (error || !data) {
+    return {
+      ok: false,
+      res: NextResponse.json({ ok: false, error: "reel not found" }, { status: 404 }),
+    };
+  }
+  const row = data as {
+    id: string;
+    status: string;
+    template_id: string;
+    media_type: string;
+    video_url: string | null;
+    caption: string | null;
+    captions_by_platform: Record<string, { caption?: string; hashtags?: string[] }> | null;
+  };
+  if (row.template_id !== AUTOREEL_IMPORT_TEMPLATE_ID || row.media_type !== "reel") {
+    return {
+      ok: false,
+      res: NextResponse.json(
+        { ok: false, error: "not an imported AutoReel reel" },
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true, row };
+}
+
+async function publishImportedReel(args: {
+  gpId: string;
+  when: string | null;
+}): Promise<NextResponse> {
+  const fetched = await fetchImportedReel(args.gpId);
+  if (!fetched.ok) return fetched.res;
+  const row = fetched.row;
+
+  if (row.status === "posted") {
+    return NextResponse.json(
+      { ok: false, error: "This reel has already been posted." },
+      { status: 400 },
+    );
+  }
+  if (!row.video_url) {
+    return NextResponse.json(
+      { ok: false, error: "This reel has no video attached." },
+      { status: 400 },
+    );
+  }
+
+  // Default = now → the publish-scheduled cron (every 5 min) picks it up on
+  // its next tick. A future `when` becomes a normal scheduled publish.
+  let publishAtMs = Date.now();
+  if (args.when) {
+    const t = Date.parse(args.when);
+    if (Number.isNaN(t)) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid schedule time." },
+        { status: 400 },
+      );
+    }
+    publishAtMs = Math.max(t, Date.now());
+  }
+  const publishIso = new Date(publishAtMs).toISOString();
+
+  const supabase = createAdminClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sbAny = supabase as any;
+  const { error } = await sbAny
+    .from("generated_posts")
+    .update({
+      scheduled_for: { facebook: publishIso, instagram: publishIso } as Json,
+      status: "scheduled",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id);
+  if (error) {
+    return NextResponse.json(
+      { ok: false, error: `Could not queue the reel: ${error.message}` },
+      { status: 500 },
+    );
+  }
+  return NextResponse.json({ ok: true, publish_at: publishIso });
+}
+
+async function saveImportedReelCaptions(args: {
+  gpId: string;
+  instagram?: string;
+  facebook?: string;
+}): Promise<NextResponse> {
+  const fetched = await fetchImportedReel(args.gpId);
+  if (!fetched.ok) return fetched.res;
+  const row = fetched.row;
+
+  if (args.instagram === undefined && args.facebook === undefined) {
+    return NextResponse.json(
+      { ok: false, error: "nothing to save" },
+      { status: 400 },
+    );
+  }
+
+  // Merge into captions_by_platform, preserving each platform's hashtags.
+  const byPlatform: Record<string, { caption?: string; hashtags?: string[] }> = {
+    ...(row.captions_by_platform ?? {}),
+  };
+  if (args.instagram !== undefined) {
+    byPlatform.instagram = { ...(byPlatform.instagram ?? {}), caption: args.instagram };
+  }
+  if (args.facebook !== undefined) {
+    byPlatform.facebook = { ...(byPlatform.facebook ?? {}), caption: args.facebook };
+  }
+
+  const supabase = createAdminClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sbAny = supabase as any;
+  const { error } = await sbAny
+    .from("generated_posts")
+    .update({
+      // Legacy single caption mirrors the IG variant, same convention as
+      // generateCaption's return shape.
+      caption: args.instagram !== undefined ? args.instagram : row.caption,
+      captions_by_platform: byPlatform as Json,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id);
+  if (error) {
+    return NextResponse.json(
+      { ok: false, error: `Could not save captions: ${error.message}` },
+      { status: 500 },
+    );
+  }
+  return NextResponse.json({ ok: true });
 }

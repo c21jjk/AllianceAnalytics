@@ -496,9 +496,14 @@ function LibraryCard({
   // why: Reels resume into Reel Studio (timeline + motion + music). Images
   // resume into the canvas-editor via /post-builder?gp=. Same media_type
   // routing pattern as the per-listing strip.
+  // 2026-08-05 — imported AutoReel reels carry a finished video, not a
+  // composition, so they open the review + publish surface instead of
+  // Reel Studio (which could overwrite the imported video).
   const editHref =
     post.media_type === "reel"
-      ? `/post-builder/reel?gp=${post.id}`
+      ? post.template_id === "autoreel_import_v1"
+        ? `/post-builder/autoreel-review?gp=${post.id}`
+        : `/post-builder/reel?gp=${post.id}`
       : `/post-builder?gp=${post.id}`;
   return (
     <div

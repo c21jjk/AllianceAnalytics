@@ -190,9 +190,14 @@ function CreatedPostThumb({ post, pending, onDelete }: CreatedPostThumbProps) {
   // Studio (timeline + motion + music) instead of the image canvas-editor.
   // Image posts (single + carousel) continue to the standard /post-builder
   // resume path which knows how to hydrate layer_tree.
+  // 2026-08-05 — imported AutoReel reels carry a finished video, not a
+  // composition, so they open the review + publish surface instead of
+  // Reel Studio (which could overwrite the imported video).
   const editHref =
     post.media_type === "reel"
-      ? `/post-builder/reel?gp=${post.id}`
+      ? post.template_id === "autoreel_import_v1"
+        ? `/post-builder/autoreel-review?gp=${post.id}`
+        : `/post-builder/reel?gp=${post.id}`
       : `/post-builder?gp=${post.id}`;
   return (
     <div className="relative shrink-0 w-[160px]">

@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
 import { fetchReelResume } from "@/lib/data/created-posts-db";
 import PageHeader from "@/components/PageHeader";
@@ -53,6 +55,26 @@ export default async function ReelStudioPage({
     typeof params.gp === "string" && params.gp.trim().length > 0
       ? params.gp.trim()
       : null;
+
+  // 2026-08-05 — imported AutoReel reels must NEVER open in Reel Studio.
+  // They carry a finished video, not a composition; the Studio would build a
+  // fresh native composition from listing photos and its Re-generate could
+  // overwrite the imported video (observed in the live test). Hard-redirect
+  // to the dedicated review + publish surface instead.
+  if (gpId) {
+    const { data: gpRow } = await createAdminClient()
+      .from("generated_posts")
+      .select("template_id")
+      .eq("id", gpId)
+      .maybeSingle();
+    if (
+      gpRow &&
+      (gpRow as { template_id: string | null }).template_id ===
+        "autoreel_import_v1"
+    ) {
+      redirect(`/post-builder/autoreel-review?gp=${gpId}`);
+    }
+  }
 
   // why: when `?gp=<id>` is present, fetch the Reel row server-side so the
   // client lands on a fully-hydrated workspace. Returns null when the row
