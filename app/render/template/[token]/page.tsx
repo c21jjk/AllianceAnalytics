@@ -27,6 +27,7 @@ import {
   resolveAgentHeadshotUrl,
   resolveBrandLogoUrl,
 } from "@/lib/data/brand-asset-resolver";
+import { fetchAgentPhone } from "@/lib/data/alliance-dash-agents";
 import { EXCELLENCE_PRICE_THRESHOLD } from "@/lib/post-builder/excellence-collection";
 import {
   applyOverridesToSchema,
@@ -64,6 +65,27 @@ function schemaBindsAgentPhoto(
   return schema.layers.some(
     (layer) =>
       layer.kind === "image" && layer.boundField === "agent_photo",
+  );
+}
+
+/**
+ * True when the schema has any TEXT layer bound to `agent_phone`.
+ *
+ * 2026-08-06 (John) — "the agent phone # (which we def have access to) [is]
+ * not populating the slide." `agent_phone` resolves from
+ * MLSListingPayload.agentPhone, which is only ever as good as what the caller
+ * put there, and `properties.agent_phone` is null across the whole table (the
+ * MLS feeds don't carry it). Its sibling `agent_photo` has had a server-side
+ * brand_assets lookup since 2026-05-30; the phone never got the equivalent,
+ * so any template binding it rendered nothing. This predicate gates the
+ * matching roster lookup below.
+ */
+function schemaBindsAgentPhone(
+  schema: CanvasTemplateSchema | null | undefined,
+): boolean {
+  if (!schema || !Array.isArray(schema.layers)) return false;
+  return schema.layers.some(
+    (layer) => layer.kind === "text" && layer.boundField === "agent_phone",
   );
 }
 
@@ -188,6 +210,30 @@ export default async function HeadlessRenderPage({ params }: PageProps) {
           `[render][FLAG-FOR-REVIEW] agent_photo placeholder is unfilled — no active brand_assets headshot matched agent "${
             mlsPayload.agentName ?? "(unknown)"
           }" for listing ${payload.listing_id}. Add the agent's photo to the Agents library.`,
+        );
+      }
+    }
+  }
+
+  // 2026-08-06 (John) — the phone half of the same block. `agent_photo` has
+  // had this treatment since 2026-05-30; `agent_phone` never did, so a
+  // template that bound it rendered an empty layer no matter what. Same gate
+  // (skipped when a hosting agent is driving the card, since the
+  // `hosting_agent_*` fields carry their own pre-resolved phone) and same
+  // flag-for-review shape.
+  //
+  // Coverage caveat worth knowing when a warning shows up in the logs: the
+  // roster lookup reads mls_agents.phone_override first, then the Alliance
+  // Dash CMC and SJSR agent tables. There is no Bright roster, so a
+  // Bright-listed agent resolves only via an explicit phone_override row.
+  if (!payload.hosting_agent_name && schemaBindsAgentPhone(schema)) {
+    if (!mlsPayload.agentPhone && mlsPayload.agentName) {
+      const phone = await fetchAgentPhone(mlsPayload.agentName);
+      if (phone) {
+        mlsPayload.agentPhone = phone;
+      } else {
+        console.warn(
+          `[render][FLAG-FOR-REVIEW] agent_phone placeholder is unfilled — no phone on file for agent "${mlsPayload.agentName}" for listing ${payload.listing_id}. Add an mls_agents.phone_override row.`,
         );
       }
     }

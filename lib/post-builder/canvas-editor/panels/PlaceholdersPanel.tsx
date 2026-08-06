@@ -21,7 +21,7 @@
 import { type JSX } from "react";
 
 import {
-  PLACEHOLDER_GROUPS,
+  placeholderGroupsFor,
   type PlaceholderField,
   type SeparatorChar,
 } from "../placeholder-insert";
@@ -40,6 +40,14 @@ export interface PlaceholdersPanelProps {
   onBindSelected: (field: PlaceholderField) => void;
   /** Insert a literal separator ("—" or "|") text layer to divide inline stats. */
   onInsertSeparator: (char: SeparatorChar) => void;
+  /**
+   * 2026-08-06 — the template's post-type category, used to narrow the agent
+   * placeholders to the ones that actually resolve for this kind of post.
+   * An Open House card attributes its HOST, so it gets the `hosting_agent_*`
+   * fields; offering the generic `agent_photo` / `agent_phone` alongside them
+   * let two OH templates ship with layers the renderer could never fill.
+   */
+  category: string | null;
 }
 
 export default function PlaceholdersPanel({
@@ -47,7 +55,9 @@ export default function PlaceholdersPanel({
   selectedKind,
   onBindSelected,
   onInsertSeparator,
+  category,
 }: PlaceholdersPanelProps): JSX.Element {
+  const groups = placeholderGroupsFor(category);
   return (
     <div className="flex h-full flex-col overflow-y-auto px-3 py-3">
       <p className="mb-3 text-xs leading-relaxed text-[var(--studio-text-muted)]">
@@ -92,7 +102,7 @@ export default function PlaceholdersPanel({
         </div>
       </div>
 
-      {PLACEHOLDER_GROUPS.map((group) => (
+      {groups.map((group) => (
         <div key={group.group} className="mb-4">
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--studio-text-muted)]">
             {group.group}

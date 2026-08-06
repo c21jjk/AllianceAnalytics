@@ -104,6 +104,64 @@ export const PLACEHOLDER_GROUPS: readonly PlaceholderGroup[] = [
   },
 ];
 
+/**
+ * Which agent-family bound fields a template of each category may legitimately
+ * use. Mirrors ALLOWED_AGENT_FIELDS_BY_CATEGORY in ai/hard-rule-checker.ts —
+ * the AI-design validator has enforced this since the 2026-08-04 rule change,
+ * but the human authoring panel offered every field to every template, so a
+ * hand-built template could pick a field the renderer would never fill.
+ *
+ * 2026-08-06 (John) — that is exactly what happened. Open House Templates 2
+ * and 3 got `agent_photo` / `agent_phone` placeholders dropped on them from
+ * this panel. On an OH card the person being attributed is the HOST, which the
+ * render pipeline resolves into the `hosting_agent_*` fields; the generic
+ * fields had no data behind them, so both layers rendered blank on the
+ * published image. Filtering the menu removes the choice rather than relying
+ * on the author remembering which of two similarly-named fields is live.
+ *
+ *   open_house    → hosting_agent_* only (the host is the subject)
+ *   just_sold     → agent_name + agent_photo (per the 8/04 rule; phone,
+ *                   email and title were deliberately not granted)
+ *   everything else → no agent fields at all
+ */
+const AGENT_FIELDS_BY_CATEGORY: Record<string, ReadonlySet<BoundField>> = {
+  open_house: new Set<BoundField>([
+    "hosting_agent_photo",
+    "hosting_agent_name",
+    "hosting_agent_phone",
+  ]),
+  just_sold: new Set<BoundField>(["agent_photo", "agent_name"]),
+};
+
+/** True for any bound field in the agent family (generic or hosting). */
+function isAgentField(field: BoundField): boolean {
+  return field.startsWith("agent_") || field.startsWith("hosting_agent_");
+}
+
+/**
+ * The placeholder catalog narrowed to what `category` is allowed to bind.
+ *
+ * Non-agent fields (Listing, Photos, Office & Brand, the open-house date/time
+ * pair) pass through untouched — the restriction is specifically about agent
+ * attribution, which is the only family with two near-identical spellings and
+ * a category-dependent answer. Groups left empty by the filter are dropped so
+ * the panel doesn't show a bare heading.
+ *
+ * An unknown category falls back to "no agent fields", matching the
+ * hard-rule-checker's default-deny posture.
+ */
+export function placeholderGroupsFor(
+  category: string | null | undefined,
+): readonly PlaceholderGroup[] {
+  const allowed = category ? AGENT_FIELDS_BY_CATEGORY[category] : undefined;
+  return PLACEHOLDER_GROUPS.map((group) => ({
+    ...group,
+    fields: group.fields.filter(
+      (f) => !isAgentField(f.field) || (allowed?.has(f.field) ?? false),
+    ),
+  })).filter((group) => group.fields.length > 0);
+}
+
 /** Separator glyphs offered in the Placeholders panel. */
 export type SeparatorChar = "—" | "|";
 

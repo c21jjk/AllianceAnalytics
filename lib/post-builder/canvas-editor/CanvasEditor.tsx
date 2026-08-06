@@ -3944,6 +3944,10 @@ export default function CanvasEditor(props: CanvasEditorProps): JSX.Element {
                     selectedKind={selectedBindableKind}
                     onBindSelected={handleBindSelectedToField}
                     onInsertSeparator={handleSeparatorInserted}
+                    // 2026-08-06 — narrows the agent placeholders to the ones
+                    // this post type can actually resolve. See
+                    // placeholderGroupsFor in placeholder-insert.ts.
+                    category={currentTemplate.category}
                   />
                 ) : (
                   <ToolsPanel

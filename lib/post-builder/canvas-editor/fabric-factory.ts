@@ -264,8 +264,31 @@ export function resolveTextBoundField(
       return STATUS_LABEL_MAP[listing.status] ?? "";
     case "agent_name":
       return listing.agentName ?? "";
-    case "agent_phone":
-      return listing.agentPhone ?? "";
+    case "agent_phone": {
+      // 2026-08-06 (John) — "the actual photo and agent phone # (which we def
+      // have access to) are not populating the slide."
+      //
+      // `agentPhone` comes off MLSListingPayload, which mapListingToPayload
+      // fills from an optional context bag. Before today NO call site passed
+      // it, so this resolver returned "" on every render and any layer bound
+      // to `agent_phone` silently vanished from the published PNG. OH
+      // Templates 2 and 3 both shipped that way.
+      //
+      // The bindings are fixed at the template level and the editor now
+      // hydrates agentPhone for real (see the attribution route), but this
+      // reverse fallback is the belt-and-braces half: when the generic field
+      // is empty and a hosting agent IS resolved, use the host's number
+      // rather than rendering nothing. A designer who picks the generic
+      // placeholder on an OH template now gets a working layer instead of an
+      // invisible one.
+      //
+      // Deliberately WITHOUT the " (cell)" suffix — that suffix belongs to
+      // the hosting-attribution block's brand treatment, not to a generic
+      // agent-phone slot.
+      const own = formatPhone(listing.agentPhone);
+      if (own) return own;
+      return listing.hosting_agent?.phone?.trim() || "";
+    }
     case "agent_email":
       return listing.agentEmail ?? "";
     case "agent_title":
@@ -330,8 +353,19 @@ export function resolveImageBoundField(
       return listing.photos[3] ?? null;
     case "photo_5":
       return listing.photos[4] ?? null;
-    case "agent_photo":
-      return listing.agentPhotoUrl;
+    case "agent_photo": {
+      // 2026-08-06 (John) — same dead-field story as `agent_phone` above.
+      // `agentPhotoUrl` was never populated by any caller, so every layer
+      // bound to `agent_photo` resolved null and was dropped at render.
+      // That hit OH Templates 2 and 3 AND all three Just Sold templates,
+      // whose headshot block has never once appeared on a published image.
+      //
+      // Falls through to the hosting agent's headshot when the generic slot
+      // is empty. On an OH carousel the host IS the person the block is
+      // attributing, so this is the right photo rather than a near-miss.
+      if (listing.agentPhotoUrl) return listing.agentPhotoUrl;
+      return listing.hosting_agent?.photo_url ?? null;
+    }
     case "hosting_agent_photo": {
       // why: hosting host's headshot wins on a multi-OH slide; fall back to
       // the listing agent's headshot when the wizard didn't override (single-

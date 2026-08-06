@@ -261,6 +261,28 @@ interface PhotosResponse {
   error?: string;
 }
 
+/**
+ * 2026-08-06 (John) — headshot + phone for the selected listing's agent,
+ * fetched from /api/agents/attribution.
+ *
+ * Both values are server-only lookups (brand_assets for the photo, the
+ * Alliance Dash roster for the phone), so the browser cannot resolve them.
+ * Without this the Studio canvas rendered empty frames for `agent_photo` /
+ * `agent_phone` while the published PNG filled them server-side — the
+ * preview disagreed with the output, which is exactly the confusion that
+ * surfaced on the Open House carousel.
+ *
+ * `name` is echoed back so we can confirm the response still matches the
+ * listing on screen before using it (see agentCtxFor).
+ */
+interface AgentAttributionResponse {
+  ok: boolean;
+  name?: string;
+  phone?: string | null;
+  photo_url?: string | null;
+  error?: string;
+}
+
 const POST_TYPES: { id: PostType; label: string; helper: string }[] = [
   { id: "just_listed", label: "Just Listed", helper: "Active · recent" },
   { id: "just_sold", label: "Just Sold", helper: "Sold · recent" },
@@ -372,6 +394,11 @@ export default function PostBuilderClient({
   const [availablePhotos, setAvailablePhotos] = useState<PhotoOption[]>([]);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(0);
   const [photosLoading, setPhotosLoading] = useState(false);
+  // 2026-08-06 — resolved headshot + phone for the selected listing's agent.
+  // Null until the lookup returns (or when it misses); every consumer treats
+  // null as "no data", which is the pre-2026-08-06 behavior.
+  const [agentAttribution, setAgentAttribution] =
+    useState<AgentAttributionResponse | null>(null);
   // === Canvas Editor (Path C) — overlay open + cached hydrated context ===
   // why: studioContext is set at open-time so the overlay receives stable
   // template + listing references rather than re-deriving them on every render
@@ -1358,6 +1385,36 @@ export default function PostBuilderClient({
     selectedListing,
   ]);
 
+  /**
+   * 2026-08-06 — the agent half of the Studio hydration context.
+   *
+   * Returns `{ agentPhone, agentPhotoUrl }` for a listing, but ONLY when the
+   * resolved attribution actually belongs to that listing's agent. The lookup
+   * is keyed to `selectedListing`, and a couple of Studio entry points open on
+   * a DIFFERENT listing (Magic Design's ✨ button, multi-OH slides). Without
+   * the name guard, one listing's headshot could ride onto another listing's
+   * card, which is a far worse failure than an empty frame.
+   *
+   * Both fields fall back to null, which is exactly how every call site
+   * behaved before this existed.
+   */
+  const agentCtxFor = useCallback(
+    (
+      listing: PostBuilderListing,
+    ): { agentPhone: string | null; agentPhotoUrl: string | null } => {
+      const listingAgent = listing.agent_name?.trim().toLowerCase();
+      const resolvedFor = agentAttribution?.name?.trim().toLowerCase();
+      if (!listingAgent || !resolvedFor || listingAgent !== resolvedFor) {
+        return { agentPhone: null, agentPhotoUrl: null };
+      }
+      return {
+        agentPhone: agentAttribution?.phone ?? null,
+        agentPhotoUrl: agentAttribution?.photo_url ?? null,
+      };
+    },
+    [agentAttribution],
+  );
+
   const openStudio = useCallback((): void => {
     // why: bail if either listing or template is missing — the button SHOULD
     // already be disabled in that case, but defending against a race where the
@@ -1370,6 +1427,8 @@ export default function PostBuilderClient({
       // fields are sparse. Pass what we have; the editor renders empty for
       // missing agent fields rather than erroring.
       agentName: selectedListing.agent_name ?? null,
+      // 2026-08-06 — headshot + phone resolved server-side (see agentCtxFor).
+      ...agentCtxFor(selectedListing),
       officeName: selectedListing.listing_office_name ?? null,
     });
     // why: when a custom default exists for the active variant slot, hydrate
@@ -1432,6 +1491,7 @@ export default function PostBuilderClient({
     postType,
     format,
     editedFabricJson,
+    agentCtxFor,
   ]);
 
   /**
@@ -1478,6 +1538,8 @@ export default function PostBuilderClient({
       const payload = mapListingToPayload(selectedListing, {
         photos: availablePhotos.map((p) => p.url),
         agentName: selectedListing.agent_name ?? null,
+        // 2026-08-06 — headshot + phone resolved server-side (see agentCtxFor).
+        ...agentCtxFor(selectedListing),
         officeName: selectedListing.listing_office_name ?? null,
       });
       // why: if a user marked a custom template as the default for this
@@ -1518,7 +1580,7 @@ export default function PostBuilderClient({
       }
       setStudioOpen(true);
     },
-    [selectedListing, postType, format, availablePhotos, customTemplates],
+    [selectedListing, postType, format, availablePhotos, customTemplates, agentCtxFor],
   );
 
   /**
@@ -1561,6 +1623,8 @@ export default function PostBuilderClient({
       const payload = mapListingToPayload(selectedListing, {
         photos: availablePhotos.map((p) => p.url),
         agentName: selectedListing.agent_name ?? null,
+        // 2026-08-06 — headshot + phone resolved server-side (see agentCtxFor).
+        ...agentCtxFor(selectedListing),
         officeName: selectedListing.listing_office_name ?? null,
       });
       setStudioContext({
@@ -1581,7 +1645,7 @@ export default function PostBuilderClient({
       });
       setStudioOpen(true);
     },
-    [selectedListing, postType, format, availablePhotos],
+    [selectedListing, postType, format, availablePhotos, agentCtxFor],
   );
 
   const handleStudioSave = useCallback(
@@ -2595,6 +2659,8 @@ export default function PostBuilderClient({
     const payload = mapListingToPayload(selectedListing, {
       photos: availablePhotos.map((p) => p.url),
       agentName: selectedListing.agent_name ?? null,
+      // 2026-08-06 — headshot + phone resolved server-side (see agentCtxFor).
+      ...agentCtxFor(selectedListing),
       officeName: selectedListing.listing_office_name ?? null,
     });
     // 2026-05-25 — Studio edit round-trip. `editedFabricJson` is the
@@ -2622,6 +2688,7 @@ export default function PostBuilderClient({
     carouselSlides,
     slideMetadata,
     handleSlideEditClick,
+    agentCtxFor,
   ]);
 
   // Fetch photos when the selected listing changes.
@@ -2665,6 +2732,42 @@ export default function PostBuilderClient({
       })
       .finally(() => {
         if (!cancelled) setPhotosLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedListing]);
+
+  // === Agent attribution hydration for the selected listing ===
+  // 2026-08-06 (John) — "the actual photo and agent phone # (which we def
+  // have access to) are not populating the slide."
+  //
+  // We DO have access, just not from the browser: the headshot lives in
+  // `brand_assets` behind an admin client and the phone lives in a second
+  // Supabase project (Alliance Dash) whose credentials are server-env only.
+  // So the canvas had no way to fill `agent_photo` / `agent_phone` and drew
+  // empty frames, while the headless render — which runs server-side — could
+  // fill them. Fetching here makes the preview tell the truth.
+  //
+  // Fire-and-forget: a miss or a network failure leaves the fields null and
+  // the canvas behaves exactly as it did before. Never blocks opening Studio.
+  useEffect(() => {
+    const agentName = selectedListing?.agent_name?.trim();
+    if (!agentName) {
+      setAgentAttribution(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/agents/attribution?name=${encodeURIComponent(agentName)}`)
+      .then((r) => r.json())
+      .then((json: AgentAttributionResponse) => {
+        if (cancelled) return;
+        setAgentAttribution(json.ok ? json : null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error("[agent-attribution] lookup failed:", e);
+        setAgentAttribution(null);
       });
     return () => {
       cancelled = true;
@@ -2839,6 +2942,8 @@ export default function PostBuilderClient({
       const payloadML = mapListingToPayload(listingForStudio, {
         photos: studioPhotos,
         agentName: listingForStudio.agent_name ?? null,
+        // 2026-08-06 — no-ops unless the ✨ listing IS the selected listing.
+        ...agentCtxFor(listingForStudio),
         officeName: listingForStudio.listing_office_name ?? null,
       });
       setStudioContext({
@@ -2853,7 +2958,7 @@ export default function PostBuilderClient({
       setRenderResult(null);
       setError(null);
     },
-    [magicDesignListing, magicDesignPhotos],
+    [magicDesignListing, magicDesignPhotos, agentCtxFor],
   );
 
   function changePostType(next: PostType) {
