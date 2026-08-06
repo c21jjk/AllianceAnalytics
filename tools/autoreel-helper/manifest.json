@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Alliance Social · AutoReel Helper",
+  "version": "1.0.0",
+  "description": "Auto-fills AutoReel's create wizard from Alliance Social and adds a 'Send to Alliance Social' button on finished videos.",
+  "permissions": [],
+  "host_permissions": ["https://www.alliancesocialanalytics.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.autoreelapp.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

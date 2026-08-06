@@ -514,9 +514,17 @@ function PrepSection({
    * string AutoReel's create flow needs (it doubles as the project name AND
    * the photo-import query), so pre-loading the clipboard turns the whole
    * dance into open → Create → paste → Next → Address tab → paste.
+   *
+   * 2026-08-05 — the URL additionally carries a `#asa=` fragment with the
+   * listing payload for the Alliance Social helper Chrome extension
+   * (tools/autoreel-helper). When installed, the extension reads the
+   * fragment and drives AutoReel's create wizard itself: Create → name →
+   * address → pick listing, stopping at photo selection. Fragments never
+   * reach AutoReel's server and their router ignores them, so without the
+   * extension this is inert and the clipboard flow above is the fallback.
    */
   function handleOpen() {
-    const target = project?.project_url ?? AUTOREEL_HOME;
+    let target = project?.project_url ?? AUTOREEL_HOME;
     if (!project?.project_url && addressLine) {
       void navigator.clipboard
         ?.writeText(addressLine)
@@ -525,6 +533,14 @@ function PrepSection({
           setTimeout(() => setAddressCopied(false), 6000);
         })
         .catch(() => undefined);
+      const payload = {
+        v: 1,
+        mls: listing.mls_number,
+        name: addressLine,
+        address: addressLine,
+        ts: Date.now(),
+      };
+      target = `${AUTOREEL_HOME}#asa=${encodeURIComponent(JSON.stringify(payload))}`;
     }
     openAutoReelWindow(target);
   }

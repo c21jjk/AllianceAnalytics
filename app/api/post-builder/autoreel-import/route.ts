@@ -157,8 +157,28 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   const { searchParams } = new URL(request.url);
-  const mls = (searchParams.get("mls") ?? "").trim();
+  let mls = (searchParams.get("mls") ?? "").trim();
   const q = (searchParams.get("q") ?? "").trim();
+
+  // ?project_url= — reverse lookup for the helper-extension handoff: which
+  // listing does this AutoReel project belong to? Falls through to the mls
+  // branch when a tracked project matches.
+  const projectUrl = (searchParams.get("project_url") ?? "").trim();
+  if (!mls && projectUrl) {
+    const supabase = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sbAny = supabase as any;
+    const { data: proj } = await sbAny
+      .from("autoreel_projects")
+      .select("mls_number")
+      .eq("project_url", projectUrl)
+      .maybeSingle();
+    if (proj?.mls_number) {
+      mls = proj.mls_number as string;
+    } else {
+      return NextResponse.json({ ok: true, listing: null, project: null, draft: null });
+    }
+  }
 
   if (mls) {
     const property = await fetchProperty(mls);
