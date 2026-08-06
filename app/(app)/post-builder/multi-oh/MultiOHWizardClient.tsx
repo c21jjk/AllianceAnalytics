@@ -96,10 +96,6 @@ type PerPropertyVariant = "v2" | "v3" | "v6" | "v8";
 interface Props {
   /** All upcoming-OH eligible listings, pre-fetched server-side. */
   listings: PostBuilderListing[];
-  /** 2026-07-17 — listing.id → latest posted_at ISO for properties already
-   *  covered by a PUBLISHED open_house post in the last 7 days. Drives the
-   *  "✓ Posted" badges + the coverage summary in Step 1. */
-  postedCoverage?: Record<string, string>;
   /** 2026-07-17 — company agent roster (sorted display names). The hosting
    *  agent combobox restricts entry to these so attribution (phone/photo by
    *  exact-name match) always resolves. */
@@ -365,7 +361,6 @@ function formatRelativeAgeShort(iso: string): string {
  */
 export default function MultiOHWizardClient({
   listings,
-  postedCoverage = {},
   agentRoster = [],
   defaultOfficeName,
   dbTemplatesByFormat,
@@ -1307,30 +1302,17 @@ export default function MultiOHWizardClient({
     setError(null);
   }, []);
 
-  // ---- duplicate-promotion confirm (2026-07-24) -------------------------
-  // Step 1 badges properties that were already featured in a published OH
-  // post this week (postedCoverage, derived server-side from the last 7
-  // days), but nothing stopped Generate from double-promoting them. This
-  // is a soft gate, not a block: re-promoting is sometimes intentional
-  // (new weekend, second push), so the dialog asks instead of refusing.
-  const [dupConfirm, setDupConfirm] = useState<{
-    addresses: string[];
-  } | null>(null);
+  /* 2026-08-06 (John) — "we need to remove the notification prompting us that
+     a property has previously had an Open House post created for it. There
+     are several properties that will have Open Houses every weekend, so it
+     will be common to have multiple OH posts for the same Property."
 
-  const requestGenerate = useCallback((): void => {
-    const already: string[] = [];
-    for (const l of selectedListings) {
-      if (l.id && postedCoverage[l.id]) {
-        const label = (l.address ?? "").trim() || l.mls_number;
-        if (!already.includes(label)) already.push(label);
-      }
-    }
-    if (already.length > 0) {
-      setDupConfirm({ addresses: already });
-      return;
-    }
-    void generate();
-  }, [selectedListings, postedCoverage, generate]);
+     The 2026-07-17 coverage feature is gone from this wizard: the Props
+     `postedCoverage` bag, the Step 1 summary banner, the per-row "✓ Posted"
+     chips, and the 2026-07-24 duplicate-promotion confirm dialog. Generate now
+     runs straight through. Any future "still outstanding" signal has to key on
+     the open-house occurrence, not the property. */
+
 
   // ---- render -----------------------------------------------------------
 
@@ -1385,7 +1367,6 @@ export default function MultiOHWizardClient({
         {step === 1 ? (
           <Step1Pick
             listings={listings}
-            postedCoverage={postedCoverage}
             agentRoster={agentRoster}
             selectedMls={selectedMls}
             onToggle={toggleSelect}
@@ -1485,7 +1466,7 @@ export default function MultiOHWizardClient({
             setStep(skipStep2 ? 3 : 2);
           } else if (step === 2) setStep(3);
         }}
-        onGenerate={requestGenerate}
+        onGenerate={() => void generate()}
         generating={generating}
       />
 
@@ -1499,63 +1480,6 @@ export default function MultiOHWizardClient({
           onRetryFailed={retryFailedSlides}
           onContinuePartial={continueWithPartial}
         />
-      ) : null}
-
-      {/* 2026-07-24 — duplicate-promotion confirm dialog. */}
-      {dupConfirm ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="dup-confirm-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/60 backdrop-blur-sm"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setDupConfirm(null);
-          }}
-        >
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-5">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
-              <div className="min-w-0">
-                <h3 id="dup-confirm-title" className="text-base font-semibold text-neutral-900">
-                  Already promoted this week
-                </h3>
-                <p className="mt-1 text-sm text-neutral-600">
-                  {dupConfirm.addresses.length === 1
-                    ? "This property was already featured in a published open-house post within the last 7 days:"
-                    : `${dupConfirm.addresses.length} of these properties were already featured in a published open-house post within the last 7 days:`}
-                </p>
-                <ul className="mt-2 space-y-0.5 text-sm text-neutral-800 font-medium">
-                  {dupConfirm.addresses.map((a) => (
-                    <li key={a}>• {a}</li>
-                  ))}
-                </ul>
-                <p className="mt-2 text-xs text-neutral-500">
-                  Posting again is fine for a new weekend — this is just a
-                  heads-up so it isn&apos;t an accident.
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDupConfirm(null)}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 transition"
-              >
-                Go back
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDupConfirm(null);
-                  void generate();
-                }}
-                className="rounded-md bg-gold-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-gold-600 transition shadow-sm"
-              >
-                Post anyway
-              </button>
-            </div>
-          </div>
-        </div>
       ) : null}
 
       {/* Task 18 — manual "Add Open House" entry. router.refresh() re-runs
@@ -1661,7 +1585,6 @@ function Stepper({ currentStep, onJump, skipStep2 }: StepperProps) {
 interface Step1Props {
   listings: readonly PostBuilderListing[];
   /** listing.id → latest published-OH-post ISO within 7 days (see Props). */
-  postedCoverage: Record<string, string>;
   /** Company agent roster for the hosting-agent combobox. */
   agentRoster: readonly string[];
   selectedMls: readonly string[];
@@ -1688,16 +1611,8 @@ interface Step1Props {
   onAddOpenHouse: () => void;
 }
 
-/** "2026-07-17T12:23:00Z" → "Posted Fri" — compact coverage badge label. */
-function formatPostedBadge(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "Posted";
-  return `Posted ${d.toLocaleDateString(undefined, { weekday: "short" })}`;
-}
-
 function Step1Pick({
   listings,
-  postedCoverage,
   agentRoster,
   selectedMls,
   onToggle,
@@ -1818,29 +1733,6 @@ function Step1Pick({
         Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Sync the feeds or add it by hand with the buttons above.
       </p>
 
-      {/* 2026-07-17 — coverage summary. Larissa's morning post covered 9 of
-          what later became 11 OHs; this line + the per-row badges make the
-          outstanding ones obvious at a glance. Auto-derived from published
-          OH posts (last 7 days) — nothing to mark off by hand. */}
-      {(() => {
-        const covered = listings.filter(
-          (l) => l.id && postedCoverage[l.id],
-        ).length;
-        if (covered === 0) return null;
-        const outstanding = listings.length - covered;
-        return (
-          <div className="mb-3 flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
-            <span aria-hidden="true">✓</span>
-            <span>
-              {covered} of {listings.length} open houses already promoted this
-              week
-              {outstanding > 0
-                ? ` — ${outstanding} still outstanding (no badge).`
-                : " — all covered."}
-            </span>
-          </div>
-        );
-      })()}
 
       {/* Consolidation hint — only when picks > unique-MLS. Mirrors the
           server-side consolidatePropertiesByMls behavior so the user sees
@@ -1916,18 +1808,6 @@ function Step1Pick({
                       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-1.5 py-0.5 font-medium text-emerald-800">
                         <span aria-hidden="true">🗓</span>
                         <span>{formatOhBadge(l.oh_start_at, l.oh_end_at ?? null)}</span>
-                      </span>
-                    ) : null}
-                    {l.id && postedCoverage[l.id] ? (
-                      // Already covered by a published OH post this week —
-                      // pickable again (a second promo is legit), but Larissa
-                      // sees at a glance it's not outstanding.
-                      <span
-                        className="inline-flex items-center gap-1 rounded-md bg-sky-50 ring-1 ring-sky-200 px-1.5 py-0.5 font-medium text-sky-800"
-                        title="This property already appeared in a published Open House post within the last 7 days."
-                      >
-                        <span aria-hidden="true">✓</span>
-                        <span>{formatPostedBadge(postedCoverage[l.id])}</span>
                       </span>
                     ) : null}
                     {typeof l.list_price === "number" ? (

@@ -184,7 +184,21 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     }),
     getUpcomingOpenHouses({
       office_short_code: officeFilter,
-      windowDays: 7,
+      // 2026-08-06 (John) — "Barb Hunt's 200 W Pittsburgh Avenue open house is
+      // showing in the main selection list, but not on the home screen list."
+      //
+      // It was not a data problem: her open house is 9 days out, this card
+      // used a 7-day window, and the Multi-OH wizard's listing fetcher
+      // (lib/post-builder/listings.ts) uses 14. Every other open house fell
+      // inside both windows, so hers was the only one that disagreed. The
+      // mismatch also made the "Build Multi-Property Open House" count read 5
+      // while the wizard offered 6 to choose from.
+      //
+      // Matched to the wizard's 14 rather than narrowing the wizard to 7:
+      // everything gets built FROM the wizard, so its horizon should govern,
+      // and hiding a real upcoming open house from the dashboard is the worse
+      // failure. Keep this in step with the 14-day cap in listings.ts.
+      windowDays: 14,
       limit: 12,
     }),
     getPriceChanges({
@@ -338,7 +352,9 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                 <div id="open-houses" className="scroll-mt-32">
                   <UpcomingOpenHousesRow
                     openHouses={upcomingOpenHouses}
-                    windowDays={7}
+                    // Drives the "next N days" header label — must match the
+                    // windowDays passed to getUpcomingOpenHouses above.
+                    windowDays={14}
                     officeShortCode={officeFilter}
                     freshCount={openHousesFreshCount}
                     canSync={profile.role === "admin"}

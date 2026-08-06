@@ -53,45 +53,11 @@ export default async function MultiOHPage() {
     story_9x16: storyTemplates,
   };
 
-  // 2026-07-17 — "already promoted" coverage. Larissa posted the morning's
-  // multi-OH with 9 properties; 2 more OHs arrived; she couldn't tell which
-  // were outstanding. Derive coverage from PUBLISHED open_house posts in the
-  // last 7 days (linked_property_ids carries every property in a multi-OH
-  // carousel; property_id covers single-listing OH posts) and badge those
-  // rows in Step 1. Auto-derived — nothing for her to mark off.
-  const postedCoverage: Record<string, string> = {};
-  try {
-    const supabase = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: covRows } = await (supabase as any)
-      .from("generated_posts")
-      .select("posted_at, property_id, linked_property_ids")
-      .eq("post_type", "open_house")
-      .not("posted_at", "is", null)
-      .gte(
-        "posted_at",
-        new Date(Date.now() - 7 * 24 * 3600_000).toISOString(),
-      );
-    for (const r of covRows ?? []) {
-      const at = r.posted_at as string;
-      const ids: string[] = [];
-      if (typeof r.property_id === "string") ids.push(r.property_id);
-      if (Array.isArray(r.linked_property_ids)) {
-        for (const id of r.linked_property_ids) {
-          if (typeof id === "string") ids.push(id);
-        }
-      }
-      for (const id of ids) {
-        // Keep the LATEST posted_at per property.
-        if (!postedCoverage[id] || postedCoverage[id] < at) {
-          postedCoverage[id] = at;
-        }
-      }
-    }
-  } catch (e) {
-    // Coverage is decoration — never block the wizard on it.
-    console.warn("[multi-oh] posted-coverage fetch failed:", e);
-  }
+  // 2026-08-06 (John) — the "already promoted" coverage query that lived here
+  // is gone, along with the Step 1 badges and the duplicate-promotion confirm
+  // it fed. It scoped coverage to the PROPERTY over a rolling 7 days, which
+  // mislabels every property that holds an open house each weekend as already
+  // handled. See the tombstone in MultiOHWizardClient.tsx.
 
   // 2026-07-17 — hosting-agent roster for the Step 1 combobox. Free-hand
   // host names broke attribution (phone/photo lookups match by EXACT name),
@@ -128,7 +94,6 @@ export default async function MultiOHPage() {
     <div>
       <MultiOHWizardClient
         listings={listings}
-        postedCoverage={postedCoverage}
         agentRoster={agentRoster}
         defaultOfficeName="Century 21 Alliance"
         dbTemplatesByFormat={dbTemplatesByFormat}

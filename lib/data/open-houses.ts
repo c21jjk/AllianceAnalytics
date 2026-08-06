@@ -9,6 +9,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * Window default: 7 days forward + just-ended (last 6 hours), so an OH that
  * wrapped up an hour ago still surfaces on Larissa's afternoon review. Past
  * OHs older than 6 hours drop out of upcoming-listings views.
+ *
+ * 2026-08-06 — the dashboard card now passes windowDays: 14 explicitly to
+ * match the Multi-OH wizard's listing fetcher (lib/post-builder/listings.ts).
+ * The two disagreed at 7 vs 14, so an open house 9 days out appeared in the
+ * wizard but not on the dashboard. The default here stays 7 for the
+ * per-listing callers; move both call sites together if that horizon changes.
  */
 
 export interface UpcomingOpenHouse {
@@ -38,11 +44,6 @@ export interface UpcomingOpenHouse {
   /** When this OH was first inserted into our DB. Drives the dashboard's
    *  "fresh in last 24h" badge. */
   first_seen_at: string;
-  /** 2026-07-17 — set when this property already appeared in a PUBLISHED
-   *  open_house post within the last 7 days (latest posted_at ISO). Drives
-   *  the "✓ Posted" badge so Larissa sees which OHs are already covered
-   *  and which still need a post. Null/undefined = not yet promoted. */
-  promoted_at?: string | null;
   /** Building consolidation: set when this entry represents a multi-unit
    *  building (collapsed from several units' open houses). Undefined for a
    *  standalone single-unit listing. */
@@ -239,108 +240,26 @@ export async function getUpcomingOpenHouses(
     }
   }
 
-  // Posted coverage — which of these properties already got airtime this week.
-  // Two sources are UNIONED into coverageByPropertyId (latest posted_at wins):
-  //   1. the Post Builder (generated_posts) — posts published through the tool.
-  //   2. the post TRACKER (posts + post_listings) — what actually went live on
-  //      FB/IG per the platform sync, incl. posts made OUTSIDE this system.
-  // Source 1 alone misses externally-posted open houses (the common case), so
-  // the tracker is the authoritative "did this go live" signal. See below.
+  // 2026-08-06 (John) — the "posted coverage" lookups that lived here are
+  // gone, along with the "✓ Posted <day>" badge they fed.
   //
-  // Source 1 (builder): mirrors the Multi-OH wizard's Step 1 coverage badges
-  // (generated_posts.linked_property_ids for carousels + property_id for
-  // single-listing OH posts).
-  const coverageByPropertyId = new Map<string, string>();
-  try {
-    const { data: covRows } = await untypedSupabase
-      .from("generated_posts")
-      .select("posted_at, property_id, linked_property_ids")
-      .eq("post_type", "open_house")
-      .not("posted_at", "is", null)
-      .gte(
-        "posted_at",
-        new Date(Date.now() - 7 * 24 * 3600_000).toISOString(),
-      );
-    for (const r of (covRows ?? []) as Array<{
-      posted_at: string;
-      property_id: string | null;
-      linked_property_ids: string[] | null;
-    }>) {
-      const ids: string[] = [];
-      if (r.property_id) ids.push(r.property_id);
-      if (Array.isArray(r.linked_property_ids)) ids.push(...r.linked_property_ids);
-      for (const id of ids) {
-        const prev = coverageByPropertyId.get(id);
-        if (!prev || prev < r.posted_at) coverageByPropertyId.set(id, r.posted_at);
-      }
-    }
-  } catch (e) {
-    // Coverage is decoration — never block the OH list on it.
-    console.warn("getUpcomingOpenHouses: coverage fetch failed", e);
-  }
-
-  // Source 2 (tracker): the synced social feed. `post_listings` auto-links each
-  // live FB/IG post to the listings it features (by address/MLS), so a post
-  // made from a phone or Meta Business Suite still counts here even though it
-  // never touched the builder.
+  // They were added 2026-07-17 to answer "which of this morning's open houses
+  // still need a post", which quietly assumed a property gets promoted once.
+  // John: "There are several properties that will have Open Houses every
+  // weekend, so it will be common to have multiple OH posts for the same
+  // Property." A post from last weekend says nothing about whether THIS
+  // weekend's open house has been promoted, so the badge was at best noise and
+  // at worst a reason to skip building a post that was genuinely needed.
   //
-  // 2026-08-05 (John): "This listing under Open Houses is showing that a post
-  // was created for it on Monday, but that was a 'new listing' post, not an
-  // Open House post. It shouldn't show a 'posted' tag unless it was actually
-  // an Open House post that was created."
+  // Removing them drops two round trips per dashboard load: one against
+  // generated_posts (builder-published OH posts) and one against post_listings
+  // joined to posts (the synced social feed). The 2026-08-05 narrowing that
+  // made the tracker query require listing_intent = 'open_house' went with
+  // them — it was fixing the accuracy of a signal that should not exist.
   //
-  // The 2026-07-17 rule here was ANY post in the last 7 days, on the theory
-  // that the badge meant "this listing got airtime". That is the wrong signal
-  // on this card: 508 E 7th Avenue lit up because three lifestyle posts about
-  // its ocean views went out Monday, classified `other`. The badge now
-  // requires `listing_intent = 'open_house'`, matching Source 1, which has
-  // always filtered on post_type = 'open_house'.
-  //
-  // Trade-off accepted deliberately: a genuine OH post the classifier tags as
-  // something else will no longer light the badge. A missing badge is a far
-  // cheaper mistake than a badge that says the open house is promoted when it
-  // is not — Larissa would skip building the post.
-  const candidatePropertyIds = Array.from(
-    new Set(
-      [...propertyById.values(), ...propertyByMls.values()]
-        .map((p) => p.id)
-        .filter((x): x is string => !!x),
-    ),
-  );
-  if (candidatePropertyIds.length > 0) {
-    try {
-      const sinceIso = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
-      const { data: trackerRows } = await untypedSupabase
-        .from("post_listings")
-        .select("property_id, posts!inner(posted_at, listing_intent)")
-        .in("property_id", candidatePropertyIds)
-        .not("posts.posted_at", "is", null)
-        .eq("posts.listing_intent", "open_house")
-        .gte("posts.posted_at", sinceIso);
-      for (const r of (trackerRows ?? []) as Array<{
-        property_id: string | null;
-        // PostgREST returns the embedded parent as an object for a many-to-one
-        // FK; tolerate an array shape defensively.
-        posts:
-          | { posted_at: string | null }
-          | { posted_at: string | null }[]
-          | null;
-      }>) {
-        if (!r.property_id) continue;
-        const postedAt = Array.isArray(r.posts)
-          ? r.posts[0]?.posted_at ?? null
-          : r.posts?.posted_at ?? null;
-        if (!postedAt) continue;
-        const prev = coverageByPropertyId.get(r.property_id);
-        if (!prev || prev < postedAt) {
-          coverageByPropertyId.set(r.property_id, postedAt);
-        }
-      }
-    } catch (e) {
-      // Tracker coverage is decoration — never block the OH list on it.
-      console.warn("getUpcomingOpenHouses: tracker coverage fetch failed", e);
-    }
-  }
+  // If a "needs a post this weekend" signal is ever wanted again, it has to be
+  // scoped to the specific open-house OCCURRENCE (open_houses.id or the
+  // start_at date), not to the property.
 
   const rows: Array<UpcomingOpenHouse & { _building_id: string | null }> = [];
   for (const oh of ohList) {
@@ -374,9 +293,6 @@ export async function getUpcomingOpenHouses(
           ? officeDivisionByID.get(property.office_id) ?? null
           : null,
       first_seen_at: oh.created_at,
-      promoted_at: property?.id
-        ? coverageByPropertyId.get(property.id) ?? null
-        : null,
       _building_id: property?.building_id ?? null,
     });
   }
@@ -410,8 +326,6 @@ export async function getUpcomingOpenHouses(
       if (!members.includes(row.mls_number)) members.push(row.mls_number);
       entry.building_member_mls = members;
       entry.building_oh_count = (entry.building_oh_count ?? 1) + 1;
-      // A building entry counts as promoted when ANY member unit was.
-      entry.promoted_at = entry.promoted_at ?? row.promoted_at ?? null;
       // Keep the freshest first_seen_at across the building's OHs so the
       // dashboard "new in last 24h" badge fires when ANY unit's OH is new.
       if (row.first_seen_at > entry.first_seen_at) {
