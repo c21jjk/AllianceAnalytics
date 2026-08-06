@@ -582,9 +582,13 @@ function PrepSection({
         </li>
         <li>Select the photos for the video, in the order they should play</li>
         <li>
-          On the Edit step switch orientation to{" "}
-          <span className="font-semibold text-neutral-900">Portrait</span> (it
-          defaults to Landscape, which is wrong for reels)
+          Leave orientation on{" "}
+          <span className="font-semibold text-neutral-900">Landscape</span>{" "}
+          {/* 2026-08-05 (John): landscape is the current standard — which is
+              AutoReel's default, so this step is "touch nothing". If the
+              standard flips back to portrait later, restore the warning:
+              the Edit step defaults to Landscape. */}
+          (AutoReel's default — our current standard)
         </li>
         <li>Pick template/music if you want them, then Render</li>
       </ol>
