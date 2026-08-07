@@ -221,18 +221,25 @@ export default function MilestoneListingRow({
           <PlusGlyph />
           Build Studio Post
         </Link>
-        <AutoReelLaunchButton
-          variant="row"
-          listing={{
-            mls_number: listing.mls_number,
-            source_mls: listing.source_mls,
-            address: listing.address,
-            city: listing.city,
-            state: listing.state,
-            list_price: listing.list_price,
-            hero_image_url: listing.hero_image_url,
-          }}
-        />
+        {/* 2026-08-05 (John): "AutoReel is only for Recently Listed posts,
+            not Just Sold, UC or Price Reductions. We will only use studio for
+            those posts." Gated on post type here rather than at the four call
+            sites so the rule lives in one place and can't be forgotten when a
+            new section is added. */}
+        {postType === "just_listed" ? (
+          <AutoReelLaunchButton
+            variant="row"
+            listing={{
+              mls_number: listing.mls_number,
+              source_mls: listing.source_mls,
+              address: listing.address,
+              city: listing.city,
+              state: listing.state,
+              list_price: listing.list_price,
+              hero_image_url: listing.hero_image_url,
+            }}
+          />
+        ) : null}
         <PostedCheckbox
           mlsNumber={listing.mls_number}
           postType={postType}

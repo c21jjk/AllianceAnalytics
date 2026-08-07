@@ -221,7 +221,14 @@ export default async function LivePropertyDetail({
 
       {/* AutoReel — reel maker for listings that don't get a live video.
           Prep sheet (copy chips + popup launcher) and finished-video import.
-          2026-08-05. */}
+          2026-08-05.
+
+          ACTIVE listings only: John's rule the same day is that AutoReel is a
+          Just Listed play, and Just Sold / Under Contract / Price Reduction
+          posts are Studio-only. A pending or sold property page therefore
+          doesn't offer it. (Dashboard rows enforce the same rule via
+          postType in MilestoneListingRow.) */}
+      {property.status === "active" ? (
       <section className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-card flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
@@ -263,6 +270,7 @@ export default async function LivePropertyDetail({
           }
         />
       </section>
+      ) : null}
 
       {/* Owner Story page — PRIMARY owner-facing surface (Phase 4 promotion).
           Sits directly under the hero so Larissa never has to scroll past
