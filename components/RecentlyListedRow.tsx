@@ -87,7 +87,6 @@ export default function RecentlyListedRow({
 
   if (renderEarly) return null;
 
-  const noun = listings.length === 1 ? "listing" : "listings";
   const scope = officeShortCode ? ` (${officeShortCode})` : "";
 
   return (
@@ -117,13 +116,11 @@ export default function RecentlyListedRow({
                 </span>
               ) : null}
             </h2>
-            {!collapsed ? (
-              <p className="mt-0.5 text-xs text-neutral-600">
-                {statusFilter === "needs_only"
-                  ? `${listings.length} ${noun} still need a Just Listed post. Tick the checkbox once one is made, or leave it — cards also drop off automatically when a hashtagged post auto-links.`
-                  : `${listings.length} recent ${noun}. Banners across the thumbnail show whether each one has been posted, dismissed, or still needs attention.`}
-              </p>
-            ) : null}
+            {/* 2026-08-05 (John): the how-it-works subtitle is gone from every
+                milestone card. "Tick the checkbox once one is made, or leave
+                it — cards also drop off automatically…" was onboarding copy
+                that reads as noise once you know the tool. The count already
+                lives in the heading; the controls explain themselves. */}
           </div>
         </button>
         {!collapsed ? (

@@ -44,11 +44,24 @@ export interface ListingMilestone {
    */
   display_price: number | null;
   /**
-   * The date that defines the row's "freshness." For sold = close_date,
-   * for pending = listing_date (or updated_at when listing_date missing).
+   * The date that defines the row's "freshness," and the one printed next to
+   * the section's eyebrow label. It must always be the date that DEFINES the
+   * milestone, because the label asserts it:
+   *   sold    = close_date          → "Sold Aug 4"
+   *   pending = status_changed_at   → "Under contract Aug 4"
+   *   reduced = changed_at          → "Reduced Aug 4"
+   *
+   * 2026-08-05 (John): pending used to key off listing_date while the row
+   * still said "Under contract", so an Aug 4 contract on an April listing
+   * rendered as "Under contract Apr 24" and looked like the Aug 1 floor was
+   * broken. The floor was fine; the printed date was the wrong field.
    */
   reference_date: string;
-  reference_date_kind: "close_date" | "listing_date" | "updated_at";
+  reference_date_kind:
+    | "close_date"
+    | "listing_date"
+    | "status_changed_at"
+    | "updated_at";
   hero_image_url: string | null;
   /** Listing-side agent (Paragon LA1_*). NULL when only buyer-side known. */
   agent_name: string | null;
@@ -198,7 +211,10 @@ function rowToSold(
 
 /**
  * Convert a DB row to the shared ListingMilestone shape for pending listings.
- * Pending rows display list_price and key off listing_date.
+ * Pending rows display list_price and key off status_changed_at — the moment
+ * the listing flipped to pending, which is both what the "Under contract"
+ * label claims AND the column getUnderContractListings filters on, so the
+ * card's heading, its filter and every printed date finally agree.
  */
 function rowToPending(
   p: DbPropertyRow,
@@ -215,8 +231,12 @@ function rowToPending(
     state: p.state,
     list_price: p.list_price === null ? null : Number(p.list_price),
     display_price: p.list_price === null ? null : Number(p.list_price),
-    reference_date: p.listing_date ?? p.updated_at,
-    reference_date_kind: p.listing_date ? "listing_date" : "updated_at",
+    reference_date: p.status_changed_at ?? p.listing_date ?? p.updated_at,
+    reference_date_kind: p.status_changed_at
+      ? "status_changed_at"
+      : p.listing_date
+        ? "listing_date"
+        : "updated_at",
     hero_image_url: p.hero_image_url,
     agent_name: p.agent_name,
     office_short_code: p.office_id

@@ -101,11 +101,12 @@ export default function UpcomingOpenHousesRow({
                 </span>
               ) : null}
             </h2>
-            {!collapsed ? (
+            {/* 2026-08-05 (John): "Click any open house to make a promo post
+                for it" removed as noise. The empty-state line stays — that one
+                answers a real question (is it broken, or is nothing booked?). */}
+            {!collapsed && openHouses.length === 0 ? (
               <p className="mt-0.5 text-xs text-neutral-600">
-                {openHouses.length === 0
-                  ? "Nothing scheduled in the next " + windowDays + " days."
-                  : "Click any open house to make a promo post for it."}
+                Nothing scheduled in the next {windowDays} days.
               </p>
             ) : null}
           </div>

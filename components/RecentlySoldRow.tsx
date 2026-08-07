@@ -91,13 +91,9 @@ export default function RecentlySoldRow({
                 </span>
               ) : null}
             </h2>
-            {!collapsed ? (
-              <p className="mt-0.5 text-xs text-neutral-600">
-                {listings.length === 0
-                  ? MILESTONE_FLOOR_EMPTY_COPY
-                  : "Click any listing to make a Just-Sold post. Price shown is the settled price."}
-              </p>
-            ) : null}
+            {/* 2026-08-05 (John): how-it-works subtitle removed from every
+                milestone card. The empty state below already covers the "why
+                is this empty" case, so printing it here too said it twice. */}
           </div>
         </button>
       </header>

@@ -51,6 +51,13 @@ export function floorIso(rollingCutoffIso: string): string {
  * when it is empty purely because of the slate, so Larissa doesn't read an
  * empty section as a broken one.
  */
+/**
+ * 2026-08-05 (John): trimmed from a full explanation ("The dashboard starts
+ * fresh from Aug 1, 2026 — anything older is intentionally hidden") down to
+ * four words. Every card heading already reads "· since Aug 1", so the long
+ * version explained the same fact a second time. The card subtitles that also
+ * printed this string are gone now — that pairing is what made Price Changes
+ * say the whole sentence twice in a row.
+ */
 export const MILESTONE_FLOOR_LABEL = "Aug 1";
-export const MILESTONE_FLOOR_EMPTY_COPY =
-  "Nothing since Aug 1. The dashboard starts fresh from Aug 1, 2026 — anything older is intentionally hidden.";
+export const MILESTONE_FLOOR_EMPTY_COPY = "Nothing since Aug 1.";
