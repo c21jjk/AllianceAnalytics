@@ -32,6 +32,19 @@ export interface ClientNoteEntry {
 export interface NoteActionResult {
   ok: boolean;
   error?: string;
+  /**
+   * Names actually emailed, so the panel can confirm "Emailed Cheryl" instead
+   * of leaving the writer wondering whether the notification went out.
+   */
+  notified?: string[];
+}
+
+/** A teammate who can be ticked in the notify row under the note box. */
+export interface NotifiableTeammate {
+  id: string;
+  name: string;
+  /** First name, lowercased. Used for the pre-tick scan of the note body. */
+  first_name: string;
 }
 
 export interface LoadNoteThreadResult {
@@ -40,4 +53,33 @@ export interface LoadNoteThreadResult {
   entries?: ClientNoteEntry[];
   held?: boolean;
   hold_label?: string | null;
+  /** Everyone the signed-in user could notify, i.e. the team minus themselves. */
+  teammates?: NotifiableTeammate[];
+}
+
+/**
+ * Which teammates a note body appears to be addressed to. Used ONLY to
+ * pre-tick the notify checkboxes, never to send on its own: a silent
+ * notification nobody chose is worse than a missed one they can see.
+ *
+ * Word-boundary match so "Cheryl" hits but "Cheryls" and a mid-word run of
+ * letters do not. Case-insensitive.
+ */
+export function detectMentionedTeammates(
+  body: string,
+  teammates: NotifiableTeammate[],
+): string[] {
+  const text = (body ?? "").toLowerCase();
+  if (!text.trim()) return [];
+  const out: string[] = [];
+  for (const mate of teammates) {
+    const first = mate.first_name;
+    if (!first || first.length < 2) continue;
+    // Escape anything regex-significant in a name before building the pattern.
+    const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(^|[^a-z0-9])@?${safe}([^a-z0-9]|$)`, "i").test(text)) {
+      out.push(mate.id);
+    }
+  }
+  return out;
 }

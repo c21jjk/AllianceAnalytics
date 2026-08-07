@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { NotifiableTeammate } from "@/lib/listing-notes-shared";
 
 /**
  * listing_notes / listing_holds — the shared per-listing scratchpad.
@@ -231,6 +232,79 @@ export async function getListingNoteThread(
     : null;
 
   return { entries, on_hold };
+}
+
+/**
+ * Everyone who can be ticked in the notify row, i.e. every active profile
+ * except the person writing. Ordered by created_at so the list reads in the
+ * order the team was set up rather than shuffling between renders.
+ */
+export async function getNotifiableTeammates(
+  excludeUserId: string,
+): Promise<NotifiableTeammate[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, is_active")
+    .eq("is_active", true)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("[listing-notes] teammate fetch failed:", error.message);
+    return [];
+  }
+
+  const out: NotifiableTeammate[] = [];
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    full_name: string | null;
+    email: string | null;
+  }>) {
+    if (row.id === excludeUserId) continue;
+    const name = authorName(row);
+    out.push({
+      id: row.id,
+      name,
+      first_name: name.split(/\s+/)[0].toLowerCase(),
+    });
+  }
+  return out;
+}
+
+/**
+ * Resolve profile ids to name + email for an outbound notification. Silently
+ * drops anyone deactivated or missing an address: a note must never fail to
+ * save because a recipient is unreachable.
+ */
+export async function getNotificationRecipients(
+  userIds: string[],
+): Promise<Array<{ id: string; name: string; email: string }>> {
+  const unique = Array.from(new Set(userIds.filter(Boolean)));
+  if (unique.length === 0) return [];
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, is_active")
+    .in("id", unique)
+    .eq("is_active", true);
+
+  if (error) {
+    console.error("[listing-notes] recipient fetch failed:", error.message);
+    return [];
+  }
+
+  const out: Array<{ id: string; name: string; email: string }> = [];
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    full_name: string | null;
+    email: string | null;
+  }>) {
+    const email = (row.email ?? "").trim();
+    if (!email) continue;
+    out.push({ id: row.id, name: authorName(row), email });
+  }
+  return out;
 }
 
 /**

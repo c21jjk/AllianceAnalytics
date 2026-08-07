@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getListingNoteThread } from "@/lib/data/listing-notes";
+import {
+  getListingNoteThread,
+  getNotifiableTeammates,
+  getNotificationRecipients,
+} from "@/lib/data/listing-notes";
+import { sendListingNoteNotifications } from "@/lib/email/listing-note-notification";
 // NOTE: a "use server" module may export ONLY async functions, so the length
 // cap and the result types live in a plain module. See lib/listing-notes-shared.ts.
 import {
@@ -34,7 +39,10 @@ export async function loadListingNoteThreadAction(
     return { ok: false, error: "Missing MLS number." };
   }
 
-  const { entries, on_hold } = await getListingNoteThread(mlsNumber);
+  const [{ entries, on_hold }, teammates] = await Promise.all([
+    getListingNoteThread(mlsNumber),
+    getNotifiableTeammates(profile.id),
+  ]);
 
   return {
     ok: true,
@@ -47,7 +55,25 @@ export async function loadListingNoteThreadAction(
     })),
     held: Boolean(on_hold),
     hold_label: on_hold ? on_hold.set_by_name : null,
+    teammates,
   };
+}
+
+/**
+ * Street address for the notification subject line. Best effort: a missing
+ * address just means the email says "MLS 12345" instead.
+ */
+async function lookupAddress(mlsNumber: string): Promise<string | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("properties")
+    .select("address, city")
+    .eq("mls_number", mlsNumber)
+    .maybeSingle();
+  if (!data) return null;
+  const row = data as { address: string | null; city: string | null };
+  if (!row.address) return null;
+  return row.city ? `${row.address}, ${row.city}` : row.address;
 }
 
 /**
@@ -186,6 +212,7 @@ export async function saveListingNoteAndHoldAction(
   mlsNumber: string,
   body: string,
   held: boolean,
+  notifyUserIds: string[] = [],
 ): Promise<NoteActionResult> {
   const profile = await requireAdmin();
 
@@ -202,6 +229,11 @@ export async function saveListingNoteAndHoldAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const untyped = supabase as any;
 
+  // Never email yourself, whatever arrives from the client.
+  const recipientIds = Array.from(
+    new Set((notifyUserIds ?? []).filter((id) => id && id !== profile.id)),
+  );
+
   let insertedNoteId: string | null = null;
 
   if (trimmed) {
@@ -211,12 +243,24 @@ export async function saveListingNoteAndHoldAction(
         mls_number: mlsNumber,
         body: trimmed,
         author_id: profile.id,
+        notify_user_ids: recipientIds,
       })
       .select("id")
       .single();
     if (error) return { ok: false, error: error.message };
     insertedNoteId = (data as { id: string } | null)?.id ?? null;
   }
+
+  // Read the stored hold BEFORE writing, so we can tell an actual change from
+  // a save that merely re-submitted the same state. Only a real transition is
+  // worth an email.
+  const { data: priorHold } = await untyped
+    .from("listing_holds")
+    .select("mls_number")
+    .eq("mls_number", mlsNumber)
+    .maybeSingle();
+  const wasHeld = Boolean(priorHold);
+  const holdChanged = held !== wasHeld;
 
   if (held) {
     const { error } = await untyped.from("listing_holds").upsert(
@@ -240,5 +284,50 @@ export async function saveListingNoteAndHoldAction(
   }
 
   revalidateNoteSurfaces(mlsNumber);
-  return { ok: true };
+
+  // ---- notifications -----------------------------------------------------
+  // Everything below FAILS OPEN. The note is already saved; an email problem
+  // must never turn a successful save into an error the writer sees.
+  let notified: string[] = [];
+  try {
+    // A hold going on or coming off is a stop/go signal about a real post, so
+    // it reaches the whole team by default rather than only the ticked boxes.
+    // When both happened in one save, ONE email carries the note text: two
+    // messages about the same click is how people learn to ignore them.
+    const kind = holdChanged
+      ? held
+        ? ("hold_set" as const)
+        : ("hold_released" as const)
+      : ("note" as const);
+
+    const targetIds = holdChanged
+      ? Array.from(
+          new Set([
+            ...(await getNotifiableTeammates(profile.id)).map((t) => t.id),
+            ...recipientIds,
+          ]),
+        )
+      : recipientIds;
+
+    if (targetIds.length > 0 && (trimmed || holdChanged)) {
+      const [recipients, address] = await Promise.all([
+        getNotificationRecipients(targetIds),
+        lookupAddress(mlsNumber),
+      ]);
+      notified = await sendListingNoteNotifications({
+        kind,
+        mlsNumber,
+        address,
+        authorName: profile.full_name?.trim() || profile.email,
+        authorEmail: profile.email,
+        body: trimmed || null,
+        noteId: insertedNoteId,
+        recipients,
+      });
+    }
+  } catch (e) {
+    console.error("[note-actions] notification failed (note still saved):", e);
+  }
+
+  return { ok: true, notified };
 }

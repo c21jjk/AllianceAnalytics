@@ -19,7 +19,9 @@ import {
 // a "use server" module may export only async functions.
 import {
   MAX_NOTE_LENGTH,
+  detectMentionedTeammates,
   type ClientNoteEntry,
+  type NotifiableTeammate,
 } from "@/lib/listing-notes-shared";
 
 /**
@@ -267,6 +269,17 @@ function NotePanel() {
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
 
+  // 2026-08-07 (John) — "if a note mentions someone else... that person can be
+  // notified via email?" Explicit checkboxes rather than @mention parsing: a
+  // typo in an @mention notifies nobody while the writer believes it did.
+  const [teammates, setTeammates] = useState<NotifiableTeammate[]>([]);
+  const [notifyIds, setNotifyIds] = useState<string[]>([]);
+  // Set once the writer touches a checkbox. From then on the name scan stops
+  // overriding them, or unticking a pre-ticked box would silently re-tick on
+  // the next keystroke.
+  const [notifyTouched, setNotifyTouched] = useState(false);
+  const [sentTo, setSentTo] = useState<string[] | null>(null);
+
   const mlsNumber = ctx?.mlsNumber ?? "";
 
   const load = useCallback(async () => {
@@ -278,6 +291,7 @@ function NotePanel() {
       setHeld(Boolean(res.held));
       setServerHeld(Boolean(res.held));
       setServerHoldBy(res.hold_label ?? null);
+      setTeammates(res.teammates ?? []);
       setError(null);
     } else {
       setError(res.error ?? "Couldn't load notes.");
@@ -291,22 +305,53 @@ function NotePanel() {
     void load();
   }, [load]);
 
+  // Name detection PRE-TICKS, it never sends on its own. Writing "Cheryl can
+  // you grab this one" ticks Cheryl's box, visibly, and the writer can untick
+  // it. Stops as soon as they touch a checkbox themselves.
+  useEffect(() => {
+    if (notifyTouched || teammates.length === 0) return;
+    const detected = detectMentionedTeammates(draft, teammates);
+    setNotifyIds((prev) =>
+      prev.length === detected.length && prev.every((id) => detected.includes(id))
+        ? prev
+        : detected,
+    );
+  }, [draft, teammates, notifyTouched]);
+
   if (!ctx) return null;
 
   const remaining = MAX_NOTE_LENGTH - draft.trim().length;
   const holdChanged = held !== serverHeld;
   const canSave = (draft.trim().length > 0 || holdChanged) && remaining >= 0;
 
+  function toggleNotify(id: string) {
+    setNotifyTouched(true);
+    setNotifyIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
   function handleSave() {
     if (!canSave || isPending) return;
     setError(null);
+    setSentTo(null);
     startTransition(async () => {
-      const res = await saveListingNoteAndHoldAction(mlsNumber, draft, held);
+      const res = await saveListingNoteAndHoldAction(
+        mlsNumber,
+        draft,
+        held,
+        notifyIds,
+      );
       if (!res.ok) {
         setError(res.error ?? "Couldn't save.");
         return;
       }
       setDraft("");
+      setNotifyIds([]);
+      setNotifyTouched(false);
+      // Confirm what actually went out. Without this the writer has no way to
+      // know whether the email happened.
+      setSentTo(res.notified ?? []);
       await load();
     });
   }
@@ -436,6 +481,44 @@ function NotePanel() {
           placeholder="Add a note for the team…"
           className="w-full rounded-[7px] border border-neutral-200 px-2 py-1.5 text-[12px] leading-[1.45] text-neutral-800 placeholder:text-neutral-400 resize-none focus:outline-none focus:border-gold-300 focus:ring-2 focus:ring-gold-500/15"
         />
+
+        {/* Notify row. Ticking a name emails them the note with a link back to
+            the listing. Names mentioned in the text pre-tick themselves. */}
+        {teammates.length > 0 ? (
+          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+            <span className="text-[9.5px] font-bold uppercase tracking-[0.09em] text-neutral-400">
+              Email
+            </span>
+            {teammates.map((mate) => {
+              const on = notifyIds.includes(mate.id);
+              return (
+                <button
+                  key={mate.id}
+                  type="button"
+                  onClick={() => toggleNotify(mate.id)}
+                  aria-pressed={on}
+                  className={clsx(
+                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                    on
+                      ? "border-neutral-900 bg-neutral-900 text-white"
+                      : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400",
+                  )}
+                >
+                  {on ? <TinyCheck /> : null}
+                  {mate.name}
+                </button>
+              );
+            })}
+            {held !== serverHeld ? (
+              <span className="text-[10px] text-amber-700">
+                {held
+                  ? "everyone gets the hold notice"
+                  : "everyone gets the all-clear"}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="mt-1.5 flex items-center gap-2">
           <span
             className={clsx(
@@ -447,6 +530,10 @@ function NotePanel() {
           </span>
           {error ? (
             <span className="text-[10px] text-red-700">{error}</span>
+          ) : sentTo && sentTo.length > 0 ? (
+            <span className="text-[10px] text-emerald-700">
+              Emailed {sentTo.join(", ")}
+            </span>
           ) : null}
           {ctx.pinned ? (
             <span className="ml-auto" />
@@ -569,6 +656,24 @@ function MiniGlyph({ held = false }: { held?: boolean }) {
         strokeWidth={1.8}
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function TinyCheck() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={9}
+      height={9}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={3.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 6L9 17l-5-5" />
     </svg>
   );
 }
