@@ -8,7 +8,6 @@ import {
 } from "@/app/(app)/listings/actions";
 import MilestoneListingRow from "@/components/MilestoneListingRow";
 import ListingStatusRibbon from "@/components/ListingStatusRibbon";
-import AutoReelLaunchButton from "@/components/AutoReelPanel";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
 
@@ -51,7 +50,7 @@ export default function NeedsPostsCard({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [skipOpen, setSkipOpen] = useState(false);
   const [otherReason, setOtherReason] = useState("");
   const [showOtherInput, setShowOtherInput] = useState(false);
 
@@ -72,7 +71,7 @@ export default function NeedsPostsCard({
 
   function handleDismiss(reason: string) {
     setError(null);
-    setMenuOpen(false);
+    setSkipOpen(false);
     setShowOtherInput(false);
     startTransition(async () => {
       const result = await dismissListingPromotionAction(
@@ -87,7 +86,7 @@ export default function NeedsPostsCard({
 
   function handleReset() {
     setError(null);
-    setMenuOpen(false);
+    setSkipOpen(false);
     startTransition(async () => {
       // Clear whichever flag applies; idempotent server-side.
       if (listing.promotion_status === "dismissed") {
@@ -149,159 +148,109 @@ export default function NeedsPostsCard({
         dimmed={isDismissed}
         ribbon={<ListingStatusRibbon status={listing.promotion_status} size="sm" />}
         metaSuffix={
-          <div style={{ marginTop: 4 }}>
-            <button
-              type="button"
-              onClick={handleCopyMls}
-              className="inline-flex items-center gap-1 rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-1.5 py-0.5 text-[11px] font-mono text-neutral-700 hover:bg-neutral-100 transition-colors"
-              title="Copy this hashtag and paste it into your IG/TT/FB caption — the auto-linker will pick it up."
-            >
-              <span className="truncate max-w-[140px]">
-                {listing.mls_hashtag}
-              </span>
-              <span className="text-[9px] uppercase tracking-wide font-semibold text-neutral-500">
-                {copyState === "copied" ? "✓" : "copy"}
-              </span>
-            </button>
-          </div>
-        }
-        trailingAction={
-          <div className="flex flex-col items-end gap-1">
-            {/* AutoReel — the reel path for listings that don't get a live
-                video. Opens the prep sheet (copy chips + popup launcher +
-                finished-video import). 2026-08-05. */}
-            <AutoReelLaunchButton
-              variant="row"
-              listing={{
-                mls_number: listing.mls_number,
-                source_mls: listing.source_mls,
-                address: listing.address,
-                city: listing.city,
-                state: listing.state,
-                list_price: listing.list_price,
-                hero_image_url: listing.hero_image_url,
-              }}
-            />
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((o) => !o)}
-              disabled={isPending}
-              className="inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              aria-label="More actions"
-              title="More actions: dismiss or reset"
-            >
-              <KebabGlyph />
-            </button>
-            {menuOpen ? (
-              <div
-                role="menu"
-                className="absolute top-full right-0 mt-1 w-60 rounded-lg border border-neutral-200 bg-white shadow-lg z-10 p-1"
+          <>
+            <div style={{ marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={handleCopyMls}
+                className="inline-flex items-center gap-1 rounded-md border border-dashed border-neutral-300 bg-neutral-50 px-1.5 py-0.5 text-[11px] font-mono text-neutral-700 hover:bg-neutral-100 transition-colors"
+                title="Copy this hashtag and paste it into your IG/TT/FB caption — the auto-linker will pick it up."
               >
-                {/* Dismiss reasons — shown unless already dismissed */}
-                {!isDismissed ? (
-                  <>
-                    <p className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-                      Dismiss — why skip?
-                    </p>
-                    {REASON_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          if (opt.value === "other") {
-                            setShowOtherInput(true);
-                          } else {
-                            handleDismiss(opt.value);
-                          }
-                        }}
-                        className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-neutral-50"
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </>
-                ) : null}
+                <span className="truncate max-w-[140px]">
+                  {listing.mls_hashtag}
+                </span>
+                <span className="text-[9px] uppercase tracking-wide font-semibold text-neutral-500">
+                  {copyState === "copied" ? "✓" : "copy"}
+                </span>
+              </button>
+            </div>
 
+            {/* 2026-08-05 (John): the skip reasons used to live in a floating
+                kebab menu that rendered OVER the section below it. They now
+                open inline, inside the row, so nothing can ever overlap. */}
+            {skipOpen ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-2">
+                <span className="text-[9.5px] font-bold uppercase tracking-wider text-neutral-500">
+                  Skip because
+                </span>
+                {REASON_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => {
+                      if (opt.value === "other") {
+                        setShowOtherInput(true);
+                      } else {
+                        handleDismiss(opt.value);
+                      }
+                    }}
+                    className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-[11px] text-neutral-700 hover:border-neutral-900 hover:bg-neutral-900 hover:text-white transition-colors disabled:opacity-50"
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSkipOpen(false);
+                    setShowOtherInput(false);
+                    setOtherReason("");
+                  }}
+                  className="ml-auto text-[10.5px] text-neutral-400 hover:text-neutral-700"
+                >
+                  Cancel
+                </button>
                 {showOtherInput ? (
-                  <div className="border-t border-neutral-100 p-2">
+                  <div className="mt-1 flex w-full items-center gap-1.5">
                     <input
                       type="text"
                       autoFocus
                       value={otherReason}
                       onChange={(e) => setOtherReason(e.target.value)}
                       placeholder="Reason..."
-                      className="w-full rounded-md border border-neutral-200 px-2 py-1 text-[11px] text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
                       maxLength={200}
+                      className="flex-1 rounded-md border border-neutral-200 px-2 py-1 text-[11px] text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
                     />
-                    <div className="mt-1 flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          setShowOtherInput(false);
-                          setOtherReason("");
-                        }}
-                        className="text-[10px] text-neutral-500 hover:text-neutral-700 px-1.5 py-0.5"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleDismiss(otherReason.trim() || "other")
-                        }
-                        className="text-[10px] font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded px-1.5 py-0.5"
-                      >
-                        Confirm
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {showResetOption ? (
-                  <>
-                    <div className="border-t border-neutral-100 my-1" />
                     <button
                       type="button"
-                      role="menuitem"
-                      onClick={handleReset}
-                      className="block w-full rounded-md px-2 py-1.5 text-left text-[11px] text-neutral-600 hover:bg-neutral-50"
+                      onClick={() => handleDismiss(otherReason.trim() || "other")}
+                      className="rounded bg-neutral-900 px-2 py-1 text-[10px] font-semibold text-white hover:bg-neutral-800"
                     >
-                      ↺ Reset (back to needs post)
+                      Confirm
                     </button>
-                  </>
+                  </div>
                 ) : null}
               </div>
             ) : null}
-          </div>
-          </div>
+          </>
+        }
+        trailingAction={
+          showResetOption ? (
+            <button
+              type="button"
+              onClick={handleReset}
+              disabled={isPending}
+              className="text-[10.5px] text-neutral-400 hover:text-neutral-700 underline underline-offset-2 disabled:opacity-50 text-left"
+            >
+              Undo
+            </button>
+          ) : !isDismissed ? (
+            <button
+              type="button"
+              onClick={() => setSkipOpen((o) => !o)}
+              disabled={isPending}
+              className="text-[10.5px] text-neutral-400 hover:text-neutral-700 underline underline-offset-2 disabled:opacity-50 text-left"
+              title="Not worth a post? Skip it and say why."
+            >
+              Skip this listing
+            </button>
+          ) : null
         }
       />
       {error ? (
         <p className="text-[10px] text-red-700 pb-2">{error}</p>
       ) : null}
     </div>
-  );
-}
-
-function KebabGlyph() {
-  // why: three-dot "more" glyph — standard pattern for secondary action
-  // menus. The vertical orientation reads as "in-row context menu" without
-  // competing with the gold CTA next to it.
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className="w-3.5 h-3.5"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <circle cx="8" cy="3.5" r="1.3" />
-      <circle cx="8" cy="8" r="1.3" />
-      <circle cx="8" cy="12.5" r="1.3" />
-    </svg>
   );
 }

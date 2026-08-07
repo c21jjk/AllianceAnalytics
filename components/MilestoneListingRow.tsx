@@ -4,6 +4,7 @@ import type { AllianceRole, ListingMilestone } from "@/lib/data/recently-sold";
 import { formatCurrency } from "@/lib/format";
 import OfficeThumbBadge from "./OfficeThumbBadge";
 import PostedCheckbox, { type MilestonePostType } from "./PostedCheckbox";
+import AutoReelLaunchButton from "./AutoReelPanel";
 
 interface MilestoneListingRowProps {
   listing: ListingMilestone;
@@ -39,11 +40,13 @@ interface MilestoneListingRowProps {
 }
 
 /**
- * Shared compact editorial row used inside UnderContractRow, RecentlySoldRow
- * and PriceChangeRow:
+ * Shared compact editorial row used by every milestone section (Recently
+ * Listed, Under Contract, Recently Sold, Price Changes):
  *
- *   [56×56 thumb]  ADDRESS LINE                    [+ Build post]
- *                  $PRICE · EYEBROW DATE · code    [☑ Posted    ]
+ *   [56×56 thumb]  ADDRESS LINE                 [+ Build Studio Post ]
+ *                  $PRICE · EYEBROW DATE · code [🎬 Build AutoReel Post]
+ *                  #MLS copy chip               [☐ Not posted yet     ]
+ *                  Listed by AGENT              [ Skip this listing   ]
  *
  * 2026-08-05 (John) — "each should have a Build Post tab and a simple checkbox
  * if a post for that property has been created". Previously the entire row was
@@ -76,7 +79,7 @@ export default function MilestoneListingRow({
     <div
       className={dimmed ? "grid items-center opacity-60" : "grid items-center"}
       style={{
-        gridTemplateColumns: "56px 1fr auto",
+        gridTemplateColumns: "56px 1fr 156px",
         gap: 14,
         padding: "12px 0",
         borderTop: isFirst ? "none" : "1px solid #ececec",
@@ -191,23 +194,51 @@ export default function MilestoneListingRow({
         />
       </div>
 
-      {/* Right column — the two controls every milestone section now shares:
-          the primary "+ Build post" CTA and the "Posted" checkbox. Stacked
-          vertically to mirror the Recently Listed and Open Houses chips. */}
-      <div className="flex flex-col items-end gap-1 shrink-0">
+      {/* Right column, rebuilt 2026-08-05 (John): "Build Post and Build Auto
+          Reel need to be listed 1st." The two things that MAKE something now
+          sit together at the top as a matched pair, and the bookkeeping sits
+          underneath as quiet status text instead of alternating with them.
+
+          Naming: "Build Studio Post" and "Build AutoReel Post" — John, same
+          day. "Reel" alone was ambiguous because Alliance Social has its own
+          native Reel builder (Reel Studio); each button now names the tool it
+          actually opens.
+
+          Full-width stacked rather than side by side: "Build AutoReel Post"
+          is too long to sit beside anything without truncating. */}
+      <div className="flex flex-col items-stretch gap-1.5">
         <Link
           href={`/post-builder?mls=${mls}&postType=${postType}`}
-          className="inline-flex items-center gap-1 rounded-md bg-gold-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gold-600 transition-colors"
+          className={
+            listing.post_made
+              ? // Already handled — go quiet so a finished row stops competing
+                // for attention. Still clickable; nothing is hidden.
+                "inline-flex items-center justify-center gap-1.5 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-gold-300 hover:text-gold-800 transition-colors"
+              : "inline-flex items-center justify-center gap-1.5 rounded-md bg-gold-500 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-gold-600 transition-colors"
+          }
           title="Open the Post Builder with this listing pre-selected"
         >
           <PlusGlyph />
-          Build post
+          Build Studio Post
         </Link>
+        <AutoReelLaunchButton
+          variant="row"
+          listing={{
+            mls_number: listing.mls_number,
+            source_mls: listing.source_mls,
+            address: listing.address,
+            city: listing.city,
+            state: listing.state,
+            list_price: listing.list_price,
+            hero_image_url: listing.hero_image_url,
+          }}
+        />
         <PostedCheckbox
           mlsNumber={listing.mls_number}
           postType={postType}
           checked={listing.post_made}
           autoDetected={listing.post_auto_detected}
+          markedAt={listing.post_marked_at}
         />
         {trailingAction}
       </div>

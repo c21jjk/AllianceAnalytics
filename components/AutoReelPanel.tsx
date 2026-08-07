@@ -176,15 +176,19 @@ export default function AutoReelLaunchButton({
         <button
           type="button"
           onClick={handleClick}
-          className="relative inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-600 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition-colors"
+          className={
+            pendingDraft
+              ? "relative inline-flex items-center justify-center gap-1.5 rounded-md border border-gold-500 bg-gold-50 px-2.5 py-1.5 text-[11px] font-semibold text-gold-800 hover:bg-gold-100 transition-colors"
+              : "relative inline-flex items-center justify-center gap-1.5 rounded-md border border-gold-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-gold-800 hover:border-gold-400 hover:bg-gold-50/60 transition-colors"
+          }
           title={
             pendingDraft
-              ? "A reel is imported and waiting — click to preview and publish"
-              : "Make a reel for this listing with AutoReel"
+              ? "A video is imported and waiting — click to preview and publish"
+              : "Build a video for this listing in AutoReel"
           }
         >
-          <ClapperGlyph />
-          AutoReel
+          {pendingDraft ? <PlayGlyph /> : <ClapperGlyph />}
+          {pendingDraft ? "AutoReel ready" : "Build AutoReel Post"}
           {dot}
         </button>
       ) : variant === "card" ? (
@@ -195,12 +199,12 @@ export default function AutoReelLaunchButton({
         >
           <ClapperGlyph />
           {pendingDraft
-            ? "AutoReel · reel ready to publish"
+            ? "AutoReel Post ready to publish"
             : project?.status === "video_imported"
               ? "AutoReel · video imported"
               : project?.project_url
                 ? "Open AutoReel project"
-                : "Make a reel with AutoReel"}
+                : "Build AutoReel Post"}
           {dot}
         </button>
       ) : (
@@ -876,6 +880,14 @@ function CopyChip({ label, value }: { label: string; value: string }) {
         {copied ? "✓ copied" : "copy"}
       </span>
     </button>
+  );
+}
+
+function PlayGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="currentColor" aria-hidden="true">
+      <path d="M8 5v14l11-7z" />
+    </svg>
   );
 }
 

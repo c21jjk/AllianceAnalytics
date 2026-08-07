@@ -28,6 +28,8 @@ interface PostedCheckboxProps {
    * went out, and the tooltip explains why.
    */
   autoDetected?: boolean;
+  /** When the manual tick happened, so the row can say "Posted Aug 5". */
+  markedAt?: string | null;
   className?: string;
 }
 
@@ -57,6 +59,7 @@ export default function PostedCheckbox({
   postType,
   checked,
   autoDetected = false,
+  markedAt = null,
   className,
 }: PostedCheckboxProps) {
   const [isPending, startTransition] = useTransition();
@@ -89,6 +92,17 @@ export default function PostedCheckbox({
       ? `Marked as posted. Click to clear.`
       : `Tick once a ${LABEL[postType]} post has been made for this property.`;
 
+  // 2026-08-05 (John): this used to render as an outlined "Posted" button,
+  // which made it read as a third action sitting under the two Build buttons.
+  // It is STATUS, not an action, so it is now a quiet inline line: an empty
+  // box + "Not posted yet", flipping to a green check + "Posted Aug 5". Same
+  // single click, far less visual weight.
+  const label = value
+    ? markedAt
+      ? `Posted ${formatMarkDate(markedAt)}`
+      : "Posted"
+    : "Not posted yet";
+
   return (
     <button
       type="button"
@@ -104,14 +118,11 @@ export default function PostedCheckbox({
       }}
       title={error ?? title}
       className={clsx(
-        "inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors",
-        "border",
-        value
-          ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-          : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50",
-        locked && "cursor-default opacity-90",
+        "inline-flex items-center gap-1.5 py-0.5 text-[11px] font-medium transition-colors text-left",
+        value ? "text-emerald-700" : "text-neutral-500 hover:text-neutral-800",
+        locked && "cursor-default",
         isPending && "opacity-60",
-        error && "border-red-300 bg-red-50 text-red-700",
+        error && "text-red-700",
         className,
       )}
     >
@@ -120,13 +131,13 @@ export default function PostedCheckbox({
         className={clsx(
           "grid place-items-center w-3.5 h-3.5 rounded-[3px] border shrink-0",
           value
-            ? "border-emerald-500 bg-emerald-500 text-white"
+            ? "border-emerald-600 bg-emerald-600 text-white"
             : "border-neutral-300 bg-white",
         )}
       >
         {value ? <CheckGlyph /> : null}
       </span>
-      Posted
+      {label}
       {locked ? (
         <span
           aria-hidden="true"
@@ -137,6 +148,17 @@ export default function PostedCheckbox({
       ) : null}
     </button>
   );
+}
+
+/** "Aug 5" — pinned to Eastern per the standing render-path timezone rule. */
+function formatMarkDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "America/New_York",
+  });
 }
 
 function CheckGlyph() {
