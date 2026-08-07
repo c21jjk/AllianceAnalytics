@@ -30,6 +30,7 @@ import {
 import { fetchCreatedPostsByMls } from "@/lib/data/created-posts-db";
 import { getAutoReelProject } from "@/lib/data/autoreel-db";
 import AutoReelLaunchButton from "@/components/AutoReelPanel";
+import { ListingNoteCard } from "@/components/ListingNote";
 
 interface LivePropertyDetailProps {
   property: PropertyDetail;
@@ -271,6 +272,11 @@ export default async function LivePropertyDetail({
         />
       </section>
       ) : null}
+
+      {/* 2026-08-07 (John) — shared team notes. Full thread, always expanded,
+          no truncation: the dashboard shows only the newest line, so this is
+          where the whole conversation about a listing lives. */}
+      <ListingNoteCard mlsNumber={property.mls_number} />
 
       {/* Owner Story page — PRIMARY owner-facing surface (Phase 4 promotion).
           Sits directly under the hero so Larissa never has to scroll past

@@ -12,6 +12,7 @@ import {
 import type { TemplateMeta } from "@/lib/template-builder";
 import { fetchCreatedPostResume } from "@/lib/data/created-posts-db";
 import { loadSystemConfig } from "@/lib/data/system-config";
+import { getListingNoteStates } from "@/lib/data/listing-notes";
 import Link from "next/link";
 import { FileText } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
@@ -220,6 +221,38 @@ export default async function PostBuilderPage({
   // seed new posts to the right default and render the inline banner.
   const systemConfig = await loadSystemConfig();
 
+  // 2026-08-07 (John) — shared team notes for every listing in the picker, so
+  // the note travels with the SELECTION rather than only with the ?mls= deep
+  // link. Cheryl can change her mind about which listing she's building and
+  // still see "Larissa said don't post this one yet".
+  //
+  // One batched query for the whole page (the five buckets overlap heavily —
+  // getListingNoteStates dedupes internally).
+  const listingNotesByMls = await (async () => {
+    const allMls = POST_TYPES.flatMap((pt) =>
+      listingsByPostType[pt].map((l) => l.mls_number),
+    );
+    const states = await getListingNoteStates(allMls);
+    const out: Record<
+      string,
+      {
+        latest_body: string | null;
+        latest_author: string | null;
+        count: number;
+        held_by: string | null;
+      }
+    > = {};
+    for (const [mls, state] of states) {
+      out[mls] = {
+        latest_body: state.note_latest?.body ?? null,
+        latest_author: state.note_latest?.author.name ?? null,
+        count: state.note_count,
+        held_by: state.on_hold?.set_by_name ?? null,
+      };
+    }
+    return out;
+  })();
+
   // 2026-05-28 — when the resume row is a multi-OH carousel, the dedicated
   // MultiOhFinalStage screen carries its own header chrome (title, subtitle,
   // hosts line). Suppress the generic Post Builder PageHeader + Saved-posts
@@ -279,6 +312,7 @@ export default async function PostBuilderPage({
         initialPick={initialPick}
         globalTestModeDefault={systemConfig.publish_test_mode}
         globalTestModeOn={systemConfig.publish_test_mode}
+        listingNotesByMls={listingNotesByMls}
       />
     </div>
   );

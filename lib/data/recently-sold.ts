@@ -6,6 +6,11 @@ import {
   getListingPostMarks,
   type MilestonePostType,
 } from "@/lib/data/listing-post-marks";
+import {
+  getListingNoteStates,
+  EMPTY_NOTE_STATE,
+  type ListingNoteState,
+} from "@/lib/data/listing-notes";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -84,6 +89,13 @@ export interface ListingMilestone {
   post_auto_detected: boolean;
   /** When the manual checkbox was ticked, else null. */
   post_marked_at: string | null;
+  /**
+   * 2026-08-07 (John) — shared team notes on this listing. Only the newest
+   * entry travels with the row; the full thread loads when the panel opens.
+   * `on_hold` set means "don't post this yet" and paints the HOLD chip.
+   * See lib/data/listing-notes.ts.
+   */
+  notes: ListingNoteState;
 }
 
 export interface GetUnderContractOptions {
@@ -179,6 +191,7 @@ function rowToSold(
   p: DbPropertyRow,
   officeShortByID: Map<string, string>,
   marks?: PostMarkLookup,
+  noteStates?: Map<string, ListingNoteState>,
 ): ListingMilestone {
   return {
     id: p.id,
@@ -206,6 +219,7 @@ function rowToSold(
     alliance_role: coerceAllianceRole(p.alliance_role),
     first_seen_at: p.status_changed_at,
     ...resolvePostMark(p, marks),
+    notes: noteStates?.get(p.mls_number) ?? EMPTY_NOTE_STATE,
   };
 }
 
@@ -220,6 +234,7 @@ function rowToPending(
   p: DbPropertyRow,
   officeShortByID: Map<string, string>,
   marks?: PostMarkLookup,
+  noteStates?: Map<string, ListingNoteState>,
 ): ListingMilestone {
   return {
     id: p.id,
@@ -246,6 +261,7 @@ function rowToPending(
     alliance_role: coerceAllianceRole(p.alliance_role),
     first_seen_at: p.status_changed_at,
     ...resolvePostMark(p, marks),
+    notes: noteStates?.get(p.mls_number) ?? EMPTY_NOTE_STATE,
   };
 }
 
@@ -291,8 +307,13 @@ export async function getUnderContractListings(
   if (properties.length === 0) return [];
 
   const officeShortByID = await attachOfficeLabels(supabase, properties);
-  const marks = await attachPostMarks(properties, "under_contract");
-  return properties.map((p) => rowToPending(p, officeShortByID, marks));
+  const [marks, noteStates] = await Promise.all([
+    attachPostMarks(properties, "under_contract"),
+    getListingNoteStates(properties.map((p) => p.mls_number)),
+  ]);
+  return properties.map((p) =>
+    rowToPending(p, officeShortByID, marks, noteStates),
+  );
 }
 
 /**
@@ -346,8 +367,13 @@ export async function getRecentlySoldListings(
   if (properties.length === 0) return [];
 
   const officeShortByID = await attachOfficeLabels(supabase, properties);
-  const marks = await attachPostMarks(properties, "just_sold");
-  return properties.map((p) => rowToSold(p, officeShortByID, marks));
+  const [marks, noteStates] = await Promise.all([
+    attachPostMarks(properties, "just_sold"),
+    getListingNoteStates(properties.map((p) => p.mls_number)),
+  ]);
+  return properties.map((p) =>
+    rowToSold(p, officeShortByID, marks, noteStates),
+  );
 }
 
 /**

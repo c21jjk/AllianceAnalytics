@@ -173,6 +173,30 @@ interface Props {
    *  the global banner inline on the page when true. Allows users to see
    *  the default mode without having to navigate to /settings. */
   globalTestModeOn?: boolean;
+  /**
+   * 2026-08-07 (John) — shared team notes, keyed by mls_number. Populated for
+   * every listing in the picker rather than only the deep-linked one, so the
+   * note follows the selection if Cheryl changes her mind mid-flow.
+   *
+   * `held_by` non-null means someone ticked "Hold — don't post yet" on the
+   * dashboard. The publish modal then requires an explicit acknowledgement.
+   * It WARNS, it never blocks — the tick is right there in the modal.
+   */
+  listingNotesByMls?: Record<string, ListingNoteBadge>;
+}
+
+/**
+ * Compact note shape the builder needs. Deliberately a local mirror of
+ * lib/data/listing-notes.ts rather than an import: that module is
+ * "server-only" and this is a client component, so importing it would drag
+ * the server module into the client bundle. Same pattern as PostedCheckbox's
+ * MilestonePostType. Keep the two in sync.
+ */
+export interface ListingNoteBadge {
+  latest_body: string | null;
+  latest_author: string | null;
+  count: number;
+  held_by: string | null;
 }
 
 type PostPlatform = "facebook" | "instagram" | "tiktok";
@@ -334,6 +358,7 @@ export default function PostBuilderClient({
   initialPick,
   globalTestModeDefault = true,
   globalTestModeOn = false,
+  listingNotesByMls = {},
 }: Props) {
   const [postType, setPostType] = useState<PostType>("just_listed");
   const [format, setFormat] = useState<PostFormat>("square_1x1");
@@ -1156,6 +1181,13 @@ export default function PostBuilderClient({
     () => listings.find((l) => l.mls_number === selectedMls) ?? null,
     [listings, selectedMls],
   );
+
+  // 2026-08-07 (John) — the team note for whichever listing is selected right
+  // now. Drives the strip at the top of the builder and the acknowledgement
+  // gate in the publish modal.
+  const activeNote = selectedMls
+    ? listingNotesByMls[selectedMls] ?? null
+    : null;
 
   // 2026-08-05 (John): "Why is this 'Listing' Section even here? I don't see
   // where it would ever be used. We already chose what listing we are looking
@@ -4110,6 +4142,43 @@ export default function PostBuilderClient({
 
   return (
     <div className="space-y-5">
+      {/* 2026-08-07 — the selected listing's team note, surfaced at the moment
+          the post is being built rather than only back on the dashboard. This
+          is the entire point of the hold flag: Larissa writes "build the reel
+          but don't post it" on the row, and Cheryl sees it HERE, on the screen
+          where she would otherwise publish. */}
+      {activeNote && (activeNote.latest_body || activeNote.held_by) ? (
+        <div
+          className={[
+            "rounded-lg px-3 py-2 text-xs ring-1",
+            activeNote.held_by
+              ? "bg-amber-50 text-amber-900 ring-amber-300"
+              : "bg-neutral-50 text-neutral-700 ring-neutral-200",
+          ].join(" ")}
+        >
+          {activeNote.held_by ? (
+            <span className="mr-1.5 inline-flex items-center rounded bg-amber-200/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 align-[1px]">
+              On hold
+            </span>
+          ) : null}
+          {activeNote.latest_body ? (
+            <>
+              <span className="font-semibold">
+                {activeNote.latest_author ?? "Someone"}:
+              </span>{" "}
+              {activeNote.latest_body}
+              {activeNote.count > 1 ? (
+                <span className="text-neutral-400">
+                  {" "}
+                  (+{activeNote.count - 1} more on the dashboard)
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span>Put on hold by {activeNote.held_by}. No note was left.</span>
+          )}
+        </div>
+      ) : null}
       {/* Post type segmented picker — hidden in multi-OH mode (the
           carousel is locked to "open_house" and the picker tabs would
           let Larissa wander out of the multi-OH context confusingly). */}
@@ -5171,6 +5240,11 @@ export default function PostBuilderClient({
           onMakeReel={carouselSlides.length >= 1 ? handleMakeReel : undefined}
           makingReel={makingReel}
           earliestOpenHouseMs={earliestOpenHouseMs}
+          holdNotice={
+            activeNote?.held_by
+              ? { by: activeNote.held_by, body: activeNote.latest_body }
+              : null
+          }
         />
       ) : null}
       {/* === Canvas Editor (Path C) — overlay portal ===
@@ -5634,6 +5708,14 @@ interface PostNowModalProps {
   testModeSaving: boolean;
   globalTestModeOn: boolean;
   /**
+   * 2026-08-07 — set when someone put this listing on hold from the dashboard
+   * notes panel. Renders an amber strip above the publish mode block and arms
+   * an acknowledgement checkbox that the confirm button waits on. Null in
+   * multi-OH mode: a carousel spans several listings, so there is no single
+   * hold to honour.
+   */
+  holdNotice?: { by: string; body: string | null } | null;
+  /**
    * Latest error message from the parent (Save failed / Post Now threw /
    * scope error). Rendered inside the modal so it's visible to the user;
    * the page-level banner is hidden behind the modal overlay so any
@@ -5686,6 +5768,7 @@ function PostNowModal(props: PostNowModalProps) {
     onSetTestMode,
     testModeSaving,
     globalTestModeOn,
+    holdNotice = null,
     error,
     onClearError,
     slideCount,
@@ -5761,7 +5844,16 @@ function PostNowModal(props: PostNowModalProps) {
   const armed = armElapsed >= POST_NOW_ARM_MS;
   const armPct = Math.round((armElapsed / POST_NOW_ARM_MS) * 100);
 
-  const canConfirm = platforms.size > 0 && armed && !sending && !results;
+  // 2026-08-07 — a listing someone put on hold needs an explicit tick before
+  // the confirm button will arm. Warn, never block: the tick sits right above
+  // the button, so publishing anyway costs one click and a moment's thought.
+  const [holdAck, setHoldAck] = useState(false);
+  const canConfirm =
+    platforms.size > 0 &&
+    armed &&
+    !sending &&
+    !results &&
+    (!holdNotice || holdAck);
 
   // 2026-05-27 — the full pre-formatted caption block was retired in favor
   // of CaptionCollapsedPreview (snippet + "view full" toggle), since the
@@ -6019,6 +6111,37 @@ function PostNowModal(props: PostNowModalProps) {
               value is persisted to generated_posts.test_mode the moment
               the user flips, so any cron tick OR the Post Now button below
               both pick up the right value. */}
+          {/* 2026-08-07 — hold acknowledgement. Sits directly above Publish
+              mode so it is impossible to reach the confirm button without
+              reading it. */}
+          {holdNotice ? (
+            <div className="rounded-lg ring-1 ring-amber-300 bg-amber-50 p-3">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center rounded bg-amber-200/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
+                  On hold
+                </span>
+                <span className="text-xs font-semibold text-amber-900">
+                  {holdNotice.by} asked that this listing not be posted yet
+                </span>
+              </div>
+              {holdNotice.body ? (
+                <p className="mt-1.5 text-xs leading-relaxed text-amber-900/90">
+                  &ldquo;{holdNotice.body}&rdquo;
+                </p>
+              ) : null}
+              <label className="mt-2 flex items-center gap-2 text-xs font-medium text-amber-900 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={holdAck}
+                  onChange={(e) => setHoldAck(e.target.checked)}
+                  disabled={sending}
+                  className="h-3.5 w-3.5 rounded border-amber-400 text-amber-700 focus:ring-amber-500"
+                />
+                I&rsquo;ve read this — post anyway
+              </label>
+            </div>
+          ) : null}
+
           <div className="rounded-lg ring-1 ring-neutral-200 bg-neutral-50 p-3">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">

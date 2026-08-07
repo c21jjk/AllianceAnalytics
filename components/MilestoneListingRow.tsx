@@ -5,6 +5,13 @@ import { formatCurrency } from "@/lib/format";
 import OfficeThumbBadge from "./OfficeThumbBadge";
 import PostedCheckbox, { type MilestonePostType } from "./PostedCheckbox";
 import AutoReelLaunchButton from "./AutoReelPanel";
+import {
+  ListingHoldChip,
+  ListingNoteButton,
+  ListingNoteLine,
+  ListingNotePanel,
+  ListingNoteProvider,
+} from "./ListingNote";
 
 interface MilestoneListingRowProps {
   listing: ListingMilestone;
@@ -75,7 +82,26 @@ export default function MilestoneListingRow({
   const cityState = listing.city ?? "";
   const mls = encodeURIComponent(listing.mls_number);
 
+  // 2026-08-07 (John) — shared team notes. The provider wraps the whole row
+  // because its two visible pieces live in DIFFERENT grid columns: the quiet
+  // one-liner under the agent name, and the labelled NOTES control under the
+  // Posted checkbox. See components/ListingNote.tsx.
+  const noteLatest = listing.notes?.note_latest
+    ? {
+        id: listing.notes.note_latest.id,
+        body: listing.notes.note_latest.body,
+        created_at: listing.notes.note_latest.created_at,
+        author_name: listing.notes.note_latest.author.name,
+      }
+    : null;
+
   return (
+    <ListingNoteProvider
+      mlsNumber={listing.mls_number}
+      latest={noteLatest}
+      count={listing.notes?.note_count ?? 0}
+      hold={listing.notes?.on_hold ?? null}
+    >
     <div
       className={dimmed ? "grid items-center opacity-60" : "grid items-center"}
       style={{
@@ -143,6 +169,10 @@ export default function MilestoneListingRow({
               , {cityState}
             </span>
           ) : null}
+          {/* The one element on this row allowed to catch the eye: missing a
+              "don't post this yet" is the expensive mistake this whole feature
+              exists to prevent. */}
+          <ListingHoldChip />
         </Link>
         <div
           style={{
@@ -192,6 +222,10 @@ export default function MilestoneListingRow({
           listingAgent={listing.agent_name}
           buyerAgent={listing.buyer_agent_name}
         />
+
+        {/* Renders nothing at all on listings with no notes and no hold, so
+            untouched rows look exactly as they did before 8/07. */}
+        <ListingNoteLine />
       </div>
 
       {/* Right column, rebuilt 2026-08-05 (John): "Build Post and Build Auto
@@ -240,16 +274,25 @@ export default function MilestoneListingRow({
             }}
           />
         ) : null}
-        <PostedCheckbox
-          mlsNumber={listing.mls_number}
-          postType={postType}
-          checked={listing.post_made}
-          autoDetected={listing.post_auto_detected}
-          markedAt={listing.post_marked_at}
-        />
+        {/* Status line + the Notes control share a row: the checkbox answers
+            "did this go out", the note answers "should it". */}
+        <div className="flex items-start gap-1.5">
+          <PostedCheckbox
+            mlsNumber={listing.mls_number}
+            postType={postType}
+            checked={listing.post_made}
+            autoDetected={listing.post_auto_detected}
+            markedAt={listing.post_marked_at}
+          />
+          <ListingNoteButton className="ml-auto" />
+        </div>
         {trailingAction}
       </div>
     </div>
+    {/* Full row width, below the grid — the body column is far too narrow to
+        read a thread in. Renders nothing when closed. */}
+    <ListingNotePanel />
+    </ListingNoteProvider>
   );
 }
 

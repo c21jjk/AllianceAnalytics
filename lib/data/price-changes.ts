@@ -5,6 +5,10 @@ import {
   getAutoPostedPropertyIds,
   getListingPostMarks,
 } from "@/lib/data/listing-post-marks";
+import {
+  getListingNoteStates,
+  EMPTY_NOTE_STATE,
+} from "@/lib/data/listing-notes";
 import type { AllianceRole, ListingMilestone } from "@/lib/data/recently-sold";
 import type { Database } from "@/lib/supabase/types";
 
@@ -183,7 +187,7 @@ export async function getPriceChanges(
     }
   }
 
-  const [manualMarks, autoPosted] = await Promise.all([
+  const [manualMarks, autoPosted, noteStates] = await Promise.all([
     getListingPostMarks(
       properties.map((p) => p.mls_number),
       "price_reduction",
@@ -192,6 +196,7 @@ export async function getPriceChanges(
       properties.map((p) => p.id),
       "price_reduction",
     ),
+    getListingNoteStates(properties.map((p) => p.mls_number)),
   ]);
 
   const out: PriceChangeMilestone[] = properties.map((p) => {
@@ -230,6 +235,7 @@ export async function getPriceChanges(
       post_made: autoDetected || markedAt !== null,
       post_auto_detected: autoDetected,
       post_marked_at: markedAt,
+      notes: noteStates.get(p.mls_number) ?? EMPTY_NOTE_STATE,
       previous_price: oldPrice,
       new_price: newPrice,
       original_list_price:

@@ -2,6 +2,11 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { floorDate, floorIso } from "@/lib/dashboard-window";
 import { getListingPostMarks } from "@/lib/data/listing-post-marks";
+import {
+  getListingNoteStates,
+  EMPTY_NOTE_STATE,
+  type ListingNoteState,
+} from "@/lib/data/listing-notes";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -69,6 +74,11 @@ export interface ListingNeedingPosts {
   post_auto_detected: boolean;
   /** When the manual checkbox was ticked, else null. */
   post_marked_at: string | null;
+  /**
+   * 2026-08-07 (John) — shared team notes. Newest entry + count + hold flag;
+   * the full thread loads on demand. See lib/data/listing-notes.ts.
+   */
+  notes: ListingNoteState;
   /** Three-state rollup — drives the ribbon overlay on the listing card. */
   promotion_status: ListingPromotionStatus;
   /** When set, the admin marked this listing as "posted, stop reminding me". */
@@ -322,10 +332,14 @@ export async function getListingsNeedingPosts(
 
   // 2026-08-05 — manual "posted" ticks for the just_listed milestone. One
   // round trip for the whole page rather than one per row.
-  const marks = await getListingPostMarks(
-    properties.map((p) => p.mls_number),
-    "just_listed",
-  );
+  // 2026-08-07 — shared team notes ride along on the same principle.
+  const [marks, noteStates] = await Promise.all([
+    getListingPostMarks(
+      properties.map((p) => p.mls_number),
+      "just_listed",
+    ),
+    getListingNoteStates(properties.map((p) => p.mls_number)),
+  ]);
 
   // Compute three-state status + shape the result.
   const out: ListingNeedingPosts[] = [];
@@ -396,6 +410,7 @@ export async function getListingsNeedingPosts(
       promotion_dismissed_at: p.promotion_dismissed_at,
       promotion_dismissed_reason: p.promotion_dismissed_reason,
       first_seen_at: p.created_at,
+      notes: noteStates.get(p.mls_number) ?? EMPTY_NOTE_STATE,
     });
 
     if (out.length >= limit) break;

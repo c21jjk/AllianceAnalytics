@@ -1,5 +1,10 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  getListingNoteStates,
+  EMPTY_NOTE_STATE,
+  type ListingNoteState,
+} from "@/lib/data/listing-notes";
 
 /**
  * Server-only fetchers for the dashboard "Open Houses" card and the listing
@@ -44,6 +49,11 @@ export interface UpcomingOpenHouse {
   /** When this OH was first inserted into our DB. Drives the dashboard's
    *  "fresh in last 24h" badge. */
   first_seen_at: string;
+  /**
+   * 2026-08-07 (John) — shared team notes for the LISTING this open house
+   * belongs to. See lib/data/listing-notes.ts.
+   */
+  notes: ListingNoteState;
   /** Building consolidation: set when this entry represents a multi-unit
    *  building (collapsed from several units' open houses). Undefined for a
    *  standalone single-unit listing. */
@@ -261,6 +271,14 @@ export async function getUpcomingOpenHouses(
   // scoped to the specific open-house OCCURRENCE (open_houses.id or the
   // start_at date), not to the property.
 
+  // 2026-08-07 (John) — shared team notes, one batched round trip for the
+  // whole card. Notes are per LISTING, not per open-house occurrence: "build
+  // the reel but don't post it" is a fact about the property, and a weekly
+  // open house shouldn't make you retype it every Saturday.
+  const noteStates = await getListingNoteStates(
+    ohList.map((oh) => oh.mls_number),
+  );
+
   const rows: Array<UpcomingOpenHouse & { _building_id: string | null }> = [];
   for (const oh of ohList) {
     if (scopedMlsNumbers && !scopedMlsNumbers.has(oh.mls_number)) continue;
@@ -293,6 +311,7 @@ export async function getUpcomingOpenHouses(
           ? officeDivisionByID.get(property.office_id) ?? null
           : null,
       first_seen_at: oh.created_at,
+      notes: noteStates.get(oh.mls_number) ?? EMPTY_NOTE_STATE,
       _building_id: property?.building_id ?? null,
     });
   }
@@ -405,5 +424,8 @@ export async function getOpenHousesForProperty(
     office_short_code: officeShortCode,
     division,
     first_seen_at: oh.created_at,
+    // The property detail page renders the note thread in its own card, so
+    // the per-OH rows here don't need to carry it.
+    notes: EMPTY_NOTE_STATE,
   }));
 }

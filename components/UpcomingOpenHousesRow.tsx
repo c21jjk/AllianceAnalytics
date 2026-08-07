@@ -7,6 +7,13 @@ import { formatCurrency } from "@/lib/format";
 import OfficeThumbBadge from "./OfficeThumbBadge";
 import SyncOpenHousesButton from "./SyncOpenHousesButton";
 import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
+import {
+  ListingHoldChip,
+  ListingNoteButton,
+  ListingNoteLine,
+  ListingNotePanel,
+  ListingNoteProvider,
+} from "./ListingNote";
 
 interface UpcomingOpenHousesRowProps {
   openHouses: UpcomingOpenHouse[];
@@ -341,7 +348,25 @@ function OpenHouseRow({
     openHouse.mls_number,
   )}&postType=open_house`;
 
+  // 2026-08-07 (John) — shared team notes. Notes attach to the LISTING, not to
+  // the open-house occurrence: "don't post this one yet" is a fact about the
+  // property, and a weekly open house shouldn't require retyping it.
+  const noteLatest = openHouse.notes?.note_latest
+    ? {
+        id: openHouse.notes.note_latest.id,
+        body: openHouse.notes.note_latest.body,
+        created_at: openHouse.notes.note_latest.created_at,
+        author_name: openHouse.notes.note_latest.author.name,
+      }
+    : null;
+
   return (
+    <ListingNoteProvider
+      mlsNumber={openHouse.mls_number}
+      latest={noteLatest}
+      count={openHouse.notes?.note_count ?? 0}
+      hold={openHouse.notes?.on_hold ?? null}
+    >
     <div
       className="grid items-center"
       style={{
@@ -381,7 +406,10 @@ function OpenHouseRow({
         <OfficeThumbBadge code={openHouse.office_short_code} />
       </Link>
 
-      {/* Body — also a link into property detail */}
+      {/* Body — the address block links into property detail; the note line
+          has to sit OUTSIDE that anchor (it's a button, and nesting one inside
+          an <a> is invalid HTML that swallows the click). */}
+      <div style={{ minWidth: 0 }}>
       <Link
         href={propertyHref}
         className="block hover:opacity-80 transition-opacity"
@@ -435,6 +463,7 @@ function OpenHouseRow({
               , {cityState}
             </span>
           ) : null}
+          <ListingHoldChip />
         </div>
         <div
           style={{
@@ -503,6 +532,8 @@ function OpenHouseRow({
           );
         })()}
       </Link>
+        <ListingNoteLine />
+      </div>
 
       {/* Right column — primary "Build OH promo" CTA, with the chevron
           collapsed into a quiet "Open" link below. */}
@@ -533,8 +564,11 @@ function OpenHouseRow({
           Open
           <ArrowIcon />
         </Link>
+        <ListingNoteButton />
       </div>
     </div>
+    <ListingNotePanel />
+    </ListingNoteProvider>
   );
 }
 
