@@ -4,6 +4,13 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getListingNoteThread } from "@/lib/data/listing-notes";
+// NOTE: a "use server" module may export ONLY async functions, so the length
+// cap and the result types live in a plain module. See lib/listing-notes-shared.ts.
+import {
+  MAX_NOTE_LENGTH,
+  type LoadNoteThreadResult,
+  type NoteActionResult,
+} from "@/lib/listing-notes-shared";
 
 /**
  * 2026-08-07 (John) — shared per-listing notes + the "hold, don't post yet"
@@ -13,35 +20,6 @@ import { getListingNoteThread } from "@/lib/data/listing-notes";
  * app/(app)/listings/actions.ts — that file is already ~24KB and covers a
  * different concern (listing CRUD + promotion dismissal).
  */
-
-export interface NoteActionResult {
-  ok: boolean;
-  error?: string;
-}
-
-export const MAX_NOTE_LENGTH = 500;
-
-/** One thread entry as the client panel renders it. */
-export interface ClientNoteEntry {
-  id: string;
-  body: string;
-  created_at: string;
-  author_name: string;
-  /**
-   * Whether the signed-in user wrote this. Computed server-side so the panel
-   * can show a delete affordance only where the delete would actually succeed
-   * — the action itself still enforces it.
-   */
-  is_mine: boolean;
-}
-
-export interface LoadNoteThreadResult {
-  ok: boolean;
-  error?: string;
-  entries?: ClientNoteEntry[];
-  held?: boolean;
-  hold_label?: string | null;
-}
 
 /**
  * Fetch the full thread when the panel opens, rather than shipping every note

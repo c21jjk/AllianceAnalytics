@@ -14,9 +14,13 @@ import {
   deleteListingNoteAction,
   loadListingNoteThreadAction,
   saveListingNoteAndHoldAction,
+} from "@/app/(app)/listings/note-actions";
+// Constants and wire types come from the plain module, not the action file —
+// a "use server" module may export only async functions.
+import {
   MAX_NOTE_LENGTH,
   type ClientNoteEntry,
-} from "@/app/(app)/listings/note-actions";
+} from "@/lib/listing-notes-shared";
 
 /**
  * 2026-08-07 (John): "I think there needs to be some sort of simple 'notes'
