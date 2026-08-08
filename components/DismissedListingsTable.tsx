@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { undismissListingPromotionAction } from "@/app/(app)/listings/actions";
+import { clearListingSkipAction } from "@/app/(app)/listings/skip-actions";
 import { formatCurrency, formatShortDate } from "@/lib/format";
 
 export interface DismissedListingRow {
@@ -18,6 +19,11 @@ export interface DismissedListingRow {
   dismissed_at: string | null;
   dismissed_reason: string | null;
   dismissed_by_name: string | null;
+  /**
+   * 2026-08-07 — which milestone was skipped. "just_listed" also covers the
+   * legacy property-wide dismissals, which is why it is the fallback.
+   */
+  post_type: "just_listed" | "under_contract" | "just_sold" | "price_reduction";
 }
 
 interface Props {
@@ -76,7 +82,16 @@ function DismissedRow({ row }: { row: DismissedListingRow }) {
   function handleRestore() {
     setError(null);
     startTransition(async () => {
-      const result = await undismissListingPromotionAction(row.mls_number);
+      // 2026-08-07 — skips now live in listing_skip_marks, per milestone.
+      // clearListingSkipAction also clears the legacy property-wide column
+      // for just_listed, so one call restores either kind of skip.
+      const result =
+        row.post_type === "just_listed"
+          ? await clearListingSkipAction(row.mls_number, "just_listed").then(
+              async (r) =>
+                r.ok ? undismissListingPromotionAction(row.mls_number) : r,
+            )
+          : await clearListingSkipAction(row.mls_number, row.post_type);
       if (!result.ok) setError(result.error ?? "Unable to restore.");
     });
   }

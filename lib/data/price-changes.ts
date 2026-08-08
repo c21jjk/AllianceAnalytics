@@ -9,7 +9,12 @@ import {
   getListingNoteStates,
   EMPTY_NOTE_STATE,
 } from "@/lib/data/listing-notes";
-import type { AllianceRole, ListingMilestone } from "@/lib/data/recently-sold";
+import { getListingSkipMarks } from "@/lib/data/listing-skip-marks";
+import {
+  applyMilestoneWindow,
+  type AllianceRole,
+  type ListingMilestone,
+} from "@/lib/data/recently-sold";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -187,7 +192,7 @@ export async function getPriceChanges(
     }
   }
 
-  const [manualMarks, autoPosted, noteStates] = await Promise.all([
+  const [manualMarks, autoPosted, noteStates, skips] = await Promise.all([
     getListingPostMarks(
       properties.map((p) => p.mls_number),
       "price_reduction",
@@ -197,6 +202,10 @@ export async function getPriceChanges(
       "price_reduction",
     ),
     getListingNoteStates(properties.map((p) => p.mls_number)),
+    getListingSkipMarks(
+      properties.map((p) => p.mls_number),
+      "price_reduction",
+    ),
   ]);
 
   const out: PriceChangeMilestone[] = properties.map((p) => {
@@ -236,6 +245,8 @@ export async function getPriceChanges(
       post_auto_detected: autoDetected,
       post_marked_at: markedAt,
       notes: noteStates.get(p.mls_number) ?? EMPTY_NOTE_STATE,
+      skipped_at: skips.get(p.mls_number)?.skipped_at ?? null,
+      skip_reason: skips.get(p.mls_number)?.reason ?? null,
       previous_price: oldPrice,
       new_price: newPrice,
       original_list_price:
@@ -246,7 +257,8 @@ export async function getPriceChanges(
     };
   });
 
-  // Newest reduction first, then cap.
-  out.sort((a, b) => b.reference_date.localeCompare(a.reference_date));
-  return out.slice(0, limit);
+  // 2026-08-07 — the shared rule replaces the plain newest-first sort + cap:
+  // handled rows (posted or skipped) drop off after 7 days, unhandled rows
+  // persist and sort to the top. See lib/dashboard-window.ts.
+  return applyMilestoneWindow(out, limit);
 }

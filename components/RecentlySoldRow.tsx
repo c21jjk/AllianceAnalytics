@@ -5,7 +5,7 @@ import type { ListingMilestone } from "@/lib/data/recently-sold";
 import MilestoneListingRow from "./MilestoneListingRow";
 import {
   MILESTONE_FLOOR_EMPTY_COPY,
-  MILESTONE_FLOOR_LABEL,
+  ROLLING_WINDOW_LABEL,
 } from "@/lib/dashboard-window";
 
 interface RecentlySoldRowProps {
@@ -82,7 +82,7 @@ export default function RecentlySoldRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Sold
               <span className="text-neutral-400 font-normal">
-                · since {MILESTONE_FLOOR_LABEL} · {listings.length} {noun}{scope}
+                · {ROLLING_WINDOW_LABEL} · {listings.length} {noun}{scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
               {collapsed && freshCount === 0 ? (

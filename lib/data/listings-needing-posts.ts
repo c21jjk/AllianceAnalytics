@@ -1,6 +1,12 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { floorDate, floorIso } from "@/lib/dashboard-window";
+import {
+  floorDate,
+  floorIso,
+  isVisibleOnMilestoneCard,
+  compareMilestoneRows,
+} from "@/lib/dashboard-window";
+import { getListingSkipMarks } from "@/lib/data/listing-skip-marks";
 import { getListingPostMarks } from "@/lib/data/listing-post-marks";
 import {
   getListingNoteStates,
@@ -79,6 +85,9 @@ export interface ListingNeedingPosts {
    * the full thread loads on demand. See lib/data/listing-notes.ts.
    */
   notes: ListingNoteState;
+  /** 2026-08-07 — per-milestone skip. Null when not skipped. */
+  skipped_at: string | null;
+  skip_reason: string | null;
   /** Three-state rollup — drives the ribbon overlay on the listing card. */
   promotion_status: ListingPromotionStatus;
   /** When set, the admin marked this listing as "posted, stop reminding me". */
@@ -333,12 +342,16 @@ export async function getListingsNeedingPosts(
   // 2026-08-05 — manual "posted" ticks for the just_listed milestone. One
   // round trip for the whole page rather than one per row.
   // 2026-08-07 — shared team notes ride along on the same principle.
-  const [marks, noteStates] = await Promise.all([
+  const [marks, noteStates, skips] = await Promise.all([
     getListingPostMarks(
       properties.map((p) => p.mls_number),
       "just_listed",
     ),
     getListingNoteStates(properties.map((p) => p.mls_number)),
+    getListingSkipMarks(
+      properties.map((p) => p.mls_number),
+      "just_listed",
+    ),
   ]);
 
   // Compute three-state status + shape the result.
@@ -371,8 +384,15 @@ export async function getListingsNeedingPosts(
       !!p.posts_confirmed_at ||
       legacyManualPlatforms.length > 0;
 
+    // 2026-08-07 — a listing can be skipped via the NEW per-milestone table
+    // or via the legacy property-wide promotion_dismissed_at. The legacy
+    // column is honoured on read so nothing already skipped reappears, but
+    // nothing new is ever written to it. See lib/data/listing-skip-marks.ts.
+    const skip = skips.get(p.mls_number) ?? null;
+    const skippedAt = skip?.skipped_at ?? p.promotion_dismissed_at ?? null;
+
     let promotionStatus: ListingPromotionStatus;
-    if (p.promotion_dismissed_at) {
+    if (skippedAt) {
       promotionStatus = "dismissed";
     } else if (postMade) {
       promotionStatus = "posted";
@@ -385,6 +405,19 @@ export async function getListingsNeedingPosts(
     }
 
     const referenceDate = p.listing_date ?? p.created_at;
+
+    // The shared 7-day rule. In the "all" view a handled row drops off once it
+    // is also outside the window; unhandled rows stay until acted on. The
+    // needs_only view already excluded handled rows above, so this is a no-op
+    // there.
+    if (
+      !isVisibleOnMilestoneCard({
+        referenceDate,
+        handled: postMade || skippedAt !== null,
+      })
+    ) {
+      continue;
+    }
     out.push({
       id: p.id,
       mls_hashtag: toHashtag(p.mls_number, p.source_mls as SourceMls),
@@ -411,10 +444,27 @@ export async function getListingsNeedingPosts(
       promotion_dismissed_reason: p.promotion_dismissed_reason,
       first_seen_at: p.created_at,
       notes: noteStates.get(p.mls_number) ?? EMPTY_NOTE_STATE,
+      skipped_at: skip?.skipped_at ?? null,
+      skip_reason: skip?.reason ?? null,
     });
 
-    if (out.length >= limit) break;
+    // 2026-08-07 — the early break is gone. Capping mid-loop cut the list
+    // before the sort below could pull unhandled rows to the top, which would
+    // hide exactly the work this card exists to surface.
   }
 
-  return out;
+  // Needs-action first, then newest-first inside each group, then cap.
+  out.sort((a, b) =>
+    compareMilestoneRows(
+      {
+        handled: a.promotion_status !== "needs_post",
+        referenceDate: a.reference_date,
+      },
+      {
+        handled: b.promotion_status !== "needs_post",
+        referenceDate: b.reference_date,
+      },
+    ),
+  );
+  return out.slice(0, limit);
 }

@@ -61,3 +61,75 @@ export function floorIso(rollingCutoffIso: string): string {
  */
 export const MILESTONE_FLOOR_LABEL = "Aug 1";
 export const MILESTONE_FLOOR_EMPTY_COPY = "Nothing since Aug 1.";
+
+/* -------------------------------------------------------------------------- */
+/* Rolling window — 2026-08-07                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 2026-08-07 (John): "I'm thinking we can use a 7 day rolling period... 7 day
+ * drop off only for published properties, but also add skip control to all
+ * statuses (except open houses). 7 days for all statuses."
+ *
+ * Before this, every card used a different window and no two agreed: Recently
+ * Listed was 14 days, Recently Sold 30, and Under Contract and Price Changes
+ * had no rolling window at all, leaning entirely on the Aug 1 floor. Nobody
+ * could have told you that by looking at the screen.
+ */
+export const ROLLING_WINDOW_DAYS = 7;
+
+/** Heading copy. Every milestone card prints the same phrase. */
+export const ROLLING_WINDOW_LABEL = "last 7 days";
+
+/**
+ * The one visibility question, asked identically by all four milestone cards.
+ *
+ * A row shows when EITHER:
+ *   - its milestone date is inside the rolling window, or
+ *   - it has not been handled yet (no post made, not skipped)
+ *
+ * The second clause is the important one. A plain rolling window drops rows
+ * whether or not anything was done about them, so a week of sick leave erases
+ * a week of work with no trace. Pinning unhandled rows keeps each card a
+ * worklist. Skip is what lets a listing nobody intends to promote leave anyway.
+ *
+ * The Aug 1 floor still applies underneath this, enforced in each fetcher's
+ * query. It is NOT redundant: without it, "unhandled rows stay" would drag
+ * every unposted listing from before the slate back onto the dashboard.
+ */
+export function isVisibleOnMilestoneCard(args: {
+  /** The date that defines this row's milestone (ISO date or timestamp). */
+  referenceDate: string | null;
+  /** True when a post of this milestone type exists, or the row was skipped. */
+  handled: boolean;
+  now?: number;
+}): boolean {
+  if (!args.handled) return true;
+
+  const t = args.referenceDate ? Date.parse(args.referenceDate) : NaN;
+  // Unparseable date on a handled row: keep it rather than vanish it. A row
+  // that lingers is a visible annoyance; one that disappears is a silent bug.
+  if (!Number.isFinite(t)) return true;
+
+  const cutoff =
+    (args.now ?? Date.now()) - ROLLING_WINDOW_DAYS * 24 * 3600_000;
+  return t >= cutoff;
+}
+
+/**
+ * Sort comparator for milestone rows: anything still needing action first,
+ * then newest-first inside each group.
+ *
+ * Without this, a growing backlog of unhandled rows sorts by date among the
+ * handled ones and can be pushed off the bottom by the row cap, which would
+ * hide exactly the work the card exists to surface.
+ */
+export function compareMilestoneRows(
+  a: { handled: boolean; referenceDate: string | null },
+  b: { handled: boolean; referenceDate: string | null },
+): number {
+  if (a.handled !== b.handled) return a.handled ? 1 : -1;
+  const at = a.referenceDate ? Date.parse(a.referenceDate) : 0;
+  const bt = b.referenceDate ? Date.parse(b.referenceDate) : 0;
+  return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+}

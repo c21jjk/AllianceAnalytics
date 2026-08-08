@@ -140,6 +140,8 @@ export default function NeedsPostsCard({
     // by hand, so a new ListingMilestone field silently arrives as undefined
     // unless it's listed here.
     notes: listing.notes,
+    skipped_at: listing.skipped_at,
+    skip_reason: listing.skip_reason,
   };
 
   return (

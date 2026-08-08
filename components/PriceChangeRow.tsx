@@ -5,7 +5,7 @@ import type { PriceChangeMilestone } from "@/lib/data/price-changes";
 import { formatCurrency } from "@/lib/format";
 import {
   MILESTONE_FLOOR_EMPTY_COPY,
-  MILESTONE_FLOOR_LABEL,
+  ROLLING_WINDOW_LABEL,
 } from "@/lib/dashboard-window";
 import MilestoneListingRow from "./MilestoneListingRow";
 
@@ -108,7 +108,7 @@ export default function PriceChangeRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Price Changes
               <span className="text-neutral-400 font-normal">
-                · since {MILESTONE_FLOOR_LABEL} · {listings.length} {noun}
+                · {ROLLING_WINDOW_LABEL} · {listings.length} {noun}
                 {scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}

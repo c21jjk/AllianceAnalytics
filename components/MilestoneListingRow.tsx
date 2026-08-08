@@ -12,6 +12,7 @@ import {
   ListingNotePanel,
   ListingNoteProvider,
 } from "./ListingNote";
+import SkipListingControl from "./SkipListingControl";
 
 interface MilestoneListingRowProps {
   listing: ListingMilestone;
@@ -286,7 +287,24 @@ export default function MilestoneListingRow({
           />
           <ListingNoteButton className="ml-auto" />
         </div>
-        {trailingAction}
+        {/* 2026-08-07 (John): "add skip control to all statuses (except open
+            houses)." Defaulting it here rather than at each call site means
+            Under Contract, Recently Sold and Price Changes all pick it up at
+            once, and a future milestone card cannot forget it.
+
+            Recently Listed passes its own trailingAction (it has a legacy
+            property-wide dismissal plus an Undo for auto-detected posts), so
+            it overrides this and keeps its existing behaviour. */}
+        {trailingAction ??
+          // open_house is excluded by design: those rows expire on their own
+          // 6 hours after the event starts, so a skip would have nothing to do.
+          (postType === "open_house" ? null : (
+            <SkipListingControl
+              mlsNumber={listing.mls_number}
+              postType={postType}
+              skippedAt={listing.skipped_at}
+            />
+          ))}
       </div>
     </div>
     {/* Full row width, below the grid — the body column is far too narrow to

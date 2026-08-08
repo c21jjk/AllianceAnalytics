@@ -7,7 +7,7 @@ import ListingsFilterChips from "./ListingsFilterChips";
 import NeedsPostsCard from "./NeedsPostsCard";
 import {
   MILESTONE_FLOOR_EMPTY_COPY,
-  MILESTONE_FLOOR_LABEL,
+  ROLLING_WINDOW_LABEL,
 } from "@/lib/dashboard-window";
 
 interface RecentlyListedRowProps {
@@ -107,7 +107,7 @@ export default function RecentlyListedRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Listed
               <span className="text-neutral-400 font-normal">
-                · since {MILESTONE_FLOOR_LABEL} · needs a post{scope}
+                · {ROLLING_WINDOW_LABEL} · needs a post{scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
               {collapsed && freshCount === 0 ? (

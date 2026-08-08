@@ -1,6 +1,13 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { MILESTONE_FLOOR_ISO, floorDate, floorIso } from "@/lib/dashboard-window";
+import {
+  MILESTONE_FLOOR_ISO,
+  floorDate,
+  floorIso,
+  isVisibleOnMilestoneCard,
+  compareMilestoneRows,
+} from "@/lib/dashboard-window";
+import { getListingSkipMarks } from "@/lib/data/listing-skip-marks";
 import {
   getAutoPostedPropertyIds,
   getListingPostMarks,
@@ -89,6 +96,13 @@ export interface ListingMilestone {
   post_auto_detected: boolean;
   /** When the manual checkbox was ticked, else null. */
   post_marked_at: string | null;
+  /**
+   * 2026-08-07 (John) — "not worth a post" for THIS milestone. Skipping counts
+   * as handled, so the row drops off once it is also outside the 7-day window.
+   * Per milestone: skipping the Just Sold leaves the Price Change alone.
+   */
+  skipped_at: string | null;
+  skip_reason: string | null;
   /**
    * 2026-08-07 (John) — shared team notes on this listing. Only the newest
    * entry travels with the row; the full thread loads when the panel opens.
@@ -192,6 +206,7 @@ function rowToSold(
   officeShortByID: Map<string, string>,
   marks?: PostMarkLookup,
   noteStates?: Map<string, ListingNoteState>,
+  skips?: Map<string, { skipped_at: string; reason: string | null }>,
 ): ListingMilestone {
   return {
     id: p.id,
@@ -220,6 +235,8 @@ function rowToSold(
     first_seen_at: p.status_changed_at,
     ...resolvePostMark(p, marks),
     notes: noteStates?.get(p.mls_number) ?? EMPTY_NOTE_STATE,
+    skipped_at: skips?.get(p.mls_number)?.skipped_at ?? null,
+    skip_reason: skips?.get(p.mls_number)?.reason ?? null,
   };
 }
 
@@ -235,6 +252,7 @@ function rowToPending(
   officeShortByID: Map<string, string>,
   marks?: PostMarkLookup,
   noteStates?: Map<string, ListingNoteState>,
+  skips?: Map<string, { skipped_at: string; reason: string | null }>,
 ): ListingMilestone {
   return {
     id: p.id,
@@ -262,6 +280,8 @@ function rowToPending(
     first_seen_at: p.status_changed_at,
     ...resolvePostMark(p, marks),
     notes: noteStates?.get(p.mls_number) ?? EMPTY_NOTE_STATE,
+    skipped_at: skips?.get(p.mls_number)?.skipped_at ?? null,
+    skip_reason: skips?.get(p.mls_number)?.reason ?? null,
   };
 }
 
@@ -294,7 +314,11 @@ export async function getUnderContractListings(
     .gte("status_changed_at", MILESTONE_FLOOR_ISO)
     .order("status_changed_at", { ascending: false })
     .order("updated_at", { ascending: false })
-    .limit(limit);
+    // 2026-08-07 — overfetch. Unhandled rows now persist past the 7-day
+    // window, so the caller's cap cannot be applied at the DB level any more
+    // or an old unposted listing would be cut before the filter ever sees it.
+    // The Aug 1 floor bounds this, so the pool stays small.
+    .limit(Math.max(limit * 8, 100));
 
   if (officeFilter.office_id) query = query.eq("office_id", officeFilter.office_id);
 
@@ -307,12 +331,19 @@ export async function getUnderContractListings(
   if (properties.length === 0) return [];
 
   const officeShortByID = await attachOfficeLabels(supabase, properties);
-  const [marks, noteStates] = await Promise.all([
+  const [marks, noteStates, skips] = await Promise.all([
     attachPostMarks(properties, "under_contract"),
     getListingNoteStates(properties.map((p) => p.mls_number)),
+    getListingSkipMarks(
+      properties.map((p) => p.mls_number),
+      "under_contract",
+    ),
   ]);
-  return properties.map((p) =>
-    rowToPending(p, officeShortByID, marks, noteStates),
+  return applyMilestoneWindow(
+    properties.map((p) =>
+      rowToPending(p, officeShortByID, marks, noteStates, skips),
+    ),
+    limit,
   );
 }
 
@@ -354,7 +385,8 @@ export async function getRecentlySoldListings(
     )
     .order("close_date", { ascending: false, nullsFirst: false })
     .order("updated_at", { ascending: false })
-    .limit(limit);
+    // Overfetch: see the note in getUnderContractListings.
+    .limit(Math.max(limit * 8, 100));
 
   if (officeFilter.office_id) query = query.eq("office_id", officeFilter.office_id);
 
@@ -367,13 +399,56 @@ export async function getRecentlySoldListings(
   if (properties.length === 0) return [];
 
   const officeShortByID = await attachOfficeLabels(supabase, properties);
-  const [marks, noteStates] = await Promise.all([
+  const [marks, noteStates, skips] = await Promise.all([
     attachPostMarks(properties, "just_sold"),
     getListingNoteStates(properties.map((p) => p.mls_number)),
+    getListingSkipMarks(
+      properties.map((p) => p.mls_number),
+      "just_sold",
+    ),
   ]);
-  return properties.map((p) =>
-    rowToSold(p, officeShortByID, marks, noteStates),
+  return applyMilestoneWindow(
+    properties.map((p) =>
+      rowToSold(p, officeShortByID, marks, noteStates, skips),
+    ),
+    limit,
   );
+}
+
+/**
+ * The shared 7-day rule, applied identically by every milestone card.
+ *
+ * 2026-08-07 (John): handled rows (posted or skipped) drop off after 7 days.
+ * Unhandled rows stay until somebody acts on them, and sort to the top so a
+ * growing backlog can never be pushed off the bottom by the row cap.
+ */
+export function applyMilestoneWindow<
+  T extends {
+    post_made: boolean;
+    skipped_at: string | null;
+    reference_date: string | null;
+  },
+>(rows: T[], limit: number): T[] {
+  const withHandled = rows.map((r) => ({
+    row: r,
+    handled: r.post_made || r.skipped_at !== null,
+  }));
+
+  return withHandled
+    .filter(({ row, handled }) =>
+      isVisibleOnMilestoneCard({
+        referenceDate: row.reference_date,
+        handled,
+      }),
+    )
+    .sort((a, b) =>
+      compareMilestoneRows(
+        { handled: a.handled, referenceDate: a.row.reference_date },
+        { handled: b.handled, referenceDate: b.row.reference_date },
+      ),
+    )
+    .slice(0, limit)
+    .map(({ row }) => row);
 }
 
 /**
