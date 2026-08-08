@@ -86,6 +86,14 @@ export interface PostBuilderListing {
   /** Open House comments/notes from Paragon — used to parse "Hosted by …"
    *  patterns that override the listing agent attribution. */
   oh_comments?: string | null;
+  /**
+   * 2026-08-07 (John): the Multi-OH wizard needs to batch its picker by
+   * division the same way the dashboard Open Houses card does. Resolved from
+   * properties.office_id via the offices table in the listings fetcher.
+   */
+  office_short_code?: string | null;
+  /** offices.division, e.g. "shore" / "south_jersey". Null when unset. */
+  division?: string | null;
 }
 
 /**

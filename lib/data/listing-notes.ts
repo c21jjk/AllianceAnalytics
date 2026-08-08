@@ -243,10 +243,22 @@ export async function getNotifiableTeammates(
   excludeUserId: string,
 ): Promise<NotifiableTeammate[]> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase
+  // 2026-08-07 (John): "Bob Latigona should not be listed in the notes
+  // section. He has nothing to do with this program."
+  //
+  // Gated on profiles.receives_listing_notes rather than a name check in the
+  // component: being an admin and being part of the social posting workflow
+  // are two different things, and the next change to that roster should be an
+  // UPDATE rather than a deploy.
+  //
+  // Untyped: receives_listing_notes isn't in the generated Database type yet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const untyped = supabase as any;
+  const { data, error } = await untyped
     .from("profiles")
     .select("id, full_name, email, is_active")
     .eq("is_active", true)
+    .eq("receives_listing_notes", true)
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -283,11 +295,16 @@ export async function getNotificationRecipients(
   if (unique.length === 0) return [];
 
   const supabase = createAdminClient();
-  const { data, error } = await supabase
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const untyped = supabase as any;
+  const { data, error } = await untyped
     .from("profiles")
     .select("id, full_name, email, is_active")
     .in("id", unique)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    // Same gate on the send path, so a stale client that still held a
+    // now-excluded person's id cannot email them anyway.
+    .eq("receives_listing_notes", true);
 
   if (error) {
     console.error("[listing-notes] recipient fetch failed:", error.message);

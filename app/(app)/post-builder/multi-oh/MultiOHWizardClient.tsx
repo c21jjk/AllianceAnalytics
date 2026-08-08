@@ -1708,54 +1708,19 @@ function Step1Pick({
     );
   }
 
-  return (
-    <section className="card p-6">
-      <div className="mb-1 flex items-start justify-between gap-3">
-        <h2 className="text-lg font-semibold text-neutral-900">
-          Pick the open houses for this event
-        </h2>
-        {/* Task 18 — manual OH entry, right where a missing property is
-            noticed. Opens the shared AddOpenHouseModal.
-            2026-07-31 — paired with the on-demand feed sync: "it's missing"
-            has two fixes, and pulling the feed is the one to try first. */}
-        <div className="flex flex-none items-start gap-2">
-          <SyncOpenHousesButton variant="compact" />
-          <button
-            type="button"
-            onClick={onAddOpenHouse}
-            className="flex-none inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-gold-50/40 px-3 py-1.5 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
-          >
-            + Add Open House
-          </button>
-        </div>
-      </div>
-      <p className="text-sm text-neutral-600 mb-4">
-        Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Sync the feeds or add it by hand with the buttons above.
-      </p>
+  // 2026-08-07 (John) — the picker is batched by office division to match the
+  // dashboard card. `listings` already arrives sorted by open-house start time
+  // (see the sort in lib/post-builder/listings.ts), and bucketing preserves
+  // that order inside each section, so Saturday morning still reads before
+  // Saturday afternoon before Sunday.
+  const divisionSections = useMemo(
+    () => groupListingsByDivision(listings),
+    [listings],
+  );
 
-
-      {/* Consolidation hint — only when picks > unique-MLS. Mirrors the
-          server-side consolidatePropertiesByMls behavior so the user sees
-          ahead-of-time that "5 windows → 4 slides" is intentional. */}
-      {consolidationSummary ? (
-        <div className="mb-3 text-[11px] text-neutral-500 leading-snug">
-          {consolidationSummary.pickCount} windows selected → {consolidationSummary.slideCount} carousel{" "}
-          {consolidationSummary.slideCount === 1 ? "slide" : "slides"}
-          {consolidationSummary.duplicateExamples.length > 0 ? (
-            <>
-              {" "}(
-              {consolidationSummary.duplicateExamples.join(", ")} appears twice
-              {consolidationSummary.extraDuplicates > 0
-                ? ` and ${consolidationSummary.extraDuplicates} ${consolidationSummary.extraDuplicates === 1 ? "other" : "others"}`
-                : ""}
-              )
-            </>
-          ) : null}
-        </div>
-      ) : null}
-
-      <ul className="space-y-2">
-        {listings.map((l) => {
+  // One row renderer, used by both the flat and the grouped branch. Defined
+  // here rather than inline so the two branches can never drift apart.
+  const renderListingRow = (l: (typeof listings)[number]) => {
           const selectionIndex = selectedMls.indexOf(l.mls_number);
           const isSelected = selectionIndex >= 0;
           const isDisabled = !isSelected && atCap;
@@ -1833,9 +1798,155 @@ function Step1Pick({
               ) : null}
             </li>
           );
-        })}
-      </ul>
+  };
+
+  return (
+    <section className="card p-6">
+      <div className="mb-1 flex items-start justify-between gap-3">
+        <h2 className="text-lg font-semibold text-neutral-900">
+          Pick the open houses for this event
+        </h2>
+        {/* Task 18 — manual OH entry, right where a missing property is
+            noticed. Opens the shared AddOpenHouseModal.
+            2026-07-31 — paired with the on-demand feed sync: "it's missing"
+            has two fixes, and pulling the feed is the one to try first. */}
+        <div className="flex flex-none items-start gap-2">
+          <SyncOpenHousesButton variant="compact" />
+          <button
+            type="button"
+            onClick={onAddOpenHouse}
+            className="flex-none inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-gold-50/40 px-3 py-1.5 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
+          >
+            + Add Open House
+          </button>
+        </div>
+      </div>
+      <p className="text-sm text-neutral-600 mb-4">
+        Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Sync the feeds or add it by hand with the buttons above.
+      </p>
+
+
+      {/* Consolidation hint — only when picks > unique-MLS. Mirrors the
+          server-side consolidatePropertiesByMls behavior so the user sees
+          ahead-of-time that "5 windows → 4 slides" is intentional. */}
+      {consolidationSummary ? (
+        <div className="mb-3 text-[11px] text-neutral-500 leading-snug">
+          {consolidationSummary.pickCount} windows selected → {consolidationSummary.slideCount} carousel{" "}
+          {consolidationSummary.slideCount === 1 ? "slide" : "slides"}
+          {consolidationSummary.duplicateExamples.length > 0 ? (
+            <>
+              {" "}(
+              {consolidationSummary.duplicateExamples.join(", ")} appears twice
+              {consolidationSummary.extraDuplicates > 0
+                ? ` and ${consolidationSummary.extraDuplicates} ${consolidationSummary.extraDuplicates === 1 ? "other" : "others"}`
+                : ""}
+              )
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* 2026-08-07 (John): "On the home screen, the open houses are
+          separated by South Jersey division and Shore division but when you
+          click the build a multi property open house button it merges them
+          all together in the next screen."
+
+          Same batching as the dashboard Open Houses card, same labels and
+          same order, so the two surfaces finally agree. Collapses to a flat
+          list when only one section has rows, so a lone subheader and a
+          stray divider can never appear. */}
+      {divisionSections.length <= 1 ? (
+        <ul className="space-y-2">
+          {(divisionSections[0]?.rows ?? listings).map(renderListingRow)}
+        </ul>
+      ) : (
+        <div>
+          {divisionSections.map((section, si) => (
+            <div
+              key={section.key}
+              className={si > 0 ? "mt-5 pt-5 border-t border-neutral-200" : ""}
+            >
+              <DivisionHeader
+                label={section.label}
+                count={section.rows.length}
+              />
+              <ul className="space-y-2">
+                {section.rows.map(renderListingRow)}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
+  );
+}
+
+/**
+ * Division batching for the Step 1 picker.
+ *
+ * Deliberately a copy of the shape used by components/UpcomingOpenHousesRow
+ * rather than a shared import: that module works on UpcomingOpenHouse rows
+ * from lib/data/open-houses, this one works on PostBuilderListing rows from
+ * lib/post-builder/listings. Same labels, same order, same "Other Offices"
+ * safety net, different row type. Keep the two lists in sync.
+ */
+const DIVISION_SECTIONS: { key: string; label: string }[] = [
+  { key: "south_jersey", label: "South Jersey Division" },
+  { key: "shore", label: "Shore Division" },
+];
+
+interface ListingDivisionSection<T> {
+  key: string;
+  label: string;
+  rows: T[];
+}
+
+/**
+ * Bucket listings by office division, preserving the incoming order (which is
+ * open-house start time ascending) inside each bucket. Anything with a missing
+ * or unrecognised division falls into a trailing "Other Offices" bucket, so an
+ * office with no division set can never make an open house silently vanish
+ * from the picker.
+ */
+function groupListingsByDivision<T extends { division?: string | null }>(
+  // readonly: Step1Props types `listings` as a readonly array, and this helper
+  // only ever reads from it.
+  listings: readonly T[],
+): ListingDivisionSection<T>[] {
+  const byKey = new Map<string, T[]>();
+  const other: T[] = [];
+  for (const l of listings) {
+    const known = DIVISION_SECTIONS.some((s) => s.key === l.division);
+    if (l.division && known) {
+      const arr = byKey.get(l.division) ?? [];
+      arr.push(l);
+      byKey.set(l.division, arr);
+    } else {
+      other.push(l);
+    }
+  }
+  const sections: ListingDivisionSection<T>[] = [];
+  for (const { key, label } of DIVISION_SECTIONS) {
+    const rows = byKey.get(key);
+    if (rows && rows.length > 0) sections.push({ key, label, rows });
+  }
+  if (other.length > 0) {
+    sections.push({ key: "other", label: "Other Offices", rows: other });
+  }
+  return sections;
+}
+
+/** Subheader labelling a division batch, with its open-house count. */
+function DivisionHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-sky-800">
+        {label}
+      </h3>
+      <span className="inline-flex items-center rounded-full bg-sky-100 ring-1 ring-sky-200 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 tabular-nums">
+        {count}
+      </span>
+    </div>
   );
 }
 

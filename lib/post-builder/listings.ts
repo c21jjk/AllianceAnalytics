@@ -49,6 +49,7 @@ interface PropertyRow {
   listing_date: string | null;
   close_date: string | null;
   unit_number: string | null;
+  office_id: string | null;
 }
 
 export async function fetchListingsForPostBuilder(
@@ -62,7 +63,7 @@ export async function fetchListingsForPostBuilder(
   let q = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number, office_id",
     )
     .not("hero_image_url", "is", null)
     // 2026-08-04 — the caller's limit must NOT truncate the candidate pool for
@@ -129,6 +130,13 @@ export async function fetchListingsForPostBuilder(
 
   let listings: PostBuilderListingWithOH[] = rows.map((r) => toListing(r));
 
+  // 2026-08-07 (John) — attach office short_code + division so the Multi-OH
+  // wizard can batch its picker by division the way the dashboard Open Houses
+  // card already does. One bulk query for the whole page; runs for every post
+  // type because it costs a single round trip and callers shouldn't have to
+  // opt in to knowing which office a listing belongs to.
+  await attachOfficeMeta(supabase, rows, listings);
+
   // Open House: filter to listings with an upcoming open_houses row, and
   // attach the soonest one's start_at + end_at.
   if (opts.post_type === "open_house" && listings.length > 0) {
@@ -173,11 +181,79 @@ export async function fetchListingsForPostBuilder(
             }
           : l;
       });
+
+    // 2026-08-07 (John): "We would also like them to be listed in the order
+    // they will actually be happening, meaning Saturday open houses will show
+    // before Sunday open houses and the ones that start early in the morning
+    // will be first in the list."
+    //
+    // The base query orders by listing_date DESC, which is meaningless for
+    // open houses: it sorts by when the property came on the market, not by
+    // when its open house happens. Re-sort by the start time we just attached.
+    //
+    // This also makes the .slice(limit) below keep the SOONEST open houses
+    // instead of an arbitrary set, which starts to matter the moment the
+    // candidate pool exceeds the cap.
+    listings.sort((a, b) => {
+      const at = a.oh_start_at
+        ? Date.parse(a.oh_start_at)
+        : Number.MAX_SAFE_INTEGER;
+      const bt = b.oh_start_at
+        ? Date.parse(b.oh_start_at)
+        : Number.MAX_SAFE_INTEGER;
+      if (at !== bt) return at - bt;
+      // Same start time: stable and readable, so the list doesn't reshuffle
+      // between renders.
+      return (a.address ?? "").localeCompare(b.address ?? "");
+    });
   }
 
   // Apply the caller's cap here, after any post-filtering, so a small limit
   // never starves a filtered bucket (see the .limit comment above).
   return listings.slice(0, limit);
+}
+
+/**
+ * Resolve properties.office_id to the office short_code + division and write
+ * them onto the listing objects in place. Best effort: a failed lookup leaves
+ * both fields null, which downstream renders as an ungrouped list rather than
+ * an error.
+ */
+async function attachOfficeMeta(
+  supabase: ReturnType<typeof createAdminClient>,
+  rows: PropertyRow[],
+  listings: PostBuilderListingWithOH[],
+): Promise<void> {
+  const officeIds = Array.from(
+    new Set(rows.map((r) => r.office_id).filter((x): x is string => !!x)),
+  );
+  if (officeIds.length === 0) return;
+
+  const { data, error } = await supabase
+    .from("offices")
+    .select("id, short_code, division")
+    .in("id", officeIds);
+  if (error) {
+    console.error("[post-builder/listings] office lookup failed:", error.message);
+    return;
+  }
+
+  const byId = new Map<string, { short_code: string; division: string | null }>();
+  for (const o of (data ?? []) as Array<{
+    id: string;
+    short_code: string;
+    division: string | null;
+  }>) {
+    byId.set(o.id, { short_code: o.short_code, division: o.division });
+  }
+
+  // rows and listings are index-aligned: listings was built with rows.map().
+  rows.forEach((row, i) => {
+    const office = row.office_id ? byId.get(row.office_id) : undefined;
+    if (!office || !listings[i]) return;
+    listings[i].office_short_code = office.short_code;
+    listings[i].division = office.division;
+  });
 }
 
 function toListing(r: PropertyRow): PostBuilderListingWithOH {
