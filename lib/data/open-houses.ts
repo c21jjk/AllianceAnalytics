@@ -54,6 +54,15 @@ export interface UpcomingOpenHouse {
    * belongs to. See lib/data/listing-notes.ts.
    */
   notes: ListingNoteState;
+  /**
+   * 2026-08-07 (John) — when a published open-house post exists for THIS
+   * occurrence, the ISO timestamp it went out. Null otherwise.
+   *
+   * Scoped to the occurrence, not the property: a listing that holds an open
+   * house every weekend gets a fresh, untagged row each time. See
+   * getOpenHousePostMarks below for why that resets with no expiry logic.
+   */
+  post_made_at: string | null;
   /** Building consolidation: set when this entry represents a multi-unit
    *  building (collapsed from several units' open houses). Undefined for a
    *  standalone single-unit listing. */
@@ -275,9 +284,12 @@ export async function getUpcomingOpenHouses(
   // whole card. Notes are per LISTING, not per open-house occurrence: "build
   // the reel but don't post it" is a fact about the property, and a weekly
   // open house shouldn't make you retype it every Saturday.
-  const noteStates = await getListingNoteStates(
-    ohList.map((oh) => oh.mls_number),
-  );
+  // 2026-08-07 (John) — the "posted" tag is back, scoped to the occurrence.
+  // Both lookups are one batched round trip for the whole card.
+  const [noteStates, ohPostMarks] = await Promise.all([
+    getListingNoteStates(ohList.map((oh) => oh.mls_number)),
+    getOpenHousePostMarks(ohList.map((oh) => oh.id)),
+  ]);
 
   const rows: Array<UpcomingOpenHouse & { _building_id: string | null }> = [];
   for (const oh of ohList) {
@@ -312,6 +324,7 @@ export async function getUpcomingOpenHouses(
           : null,
       first_seen_at: oh.created_at,
       notes: noteStates.get(oh.mls_number) ?? EMPTY_NOTE_STATE,
+      post_made_at: ohPostMarks.get(oh.id) ?? null,
       _building_id: property?.building_id ?? null,
     });
   }
@@ -355,6 +368,121 @@ export async function getUpcomingOpenHouses(
   return out;
   // mlsNumbers var is unused below — keep for future debug uses.
   void mlsNumbers;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Open-house post coverage — 2026-08-07                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How far apart two open houses can be and still count as the same event for
+ * tagging purposes. One post normally promotes a whole Sat + Sun weekend, so
+ * marking only the Saturday occurrence would leave Sunday reading as "still
+ * needs a post" when it doesn't.
+ *
+ * 72 hours rather than calendar-weekend logic on purpose: Sat 10am covers Sun
+ * 10am (24h), two separate weekends stay independent (168h), and there is no
+ * timezone or Fri-vs-Sat edge case to get subtly wrong.
+ */
+export const OH_SAME_EVENT_WINDOW_MS = 72 * 3600_000;
+
+/**
+ * Which open-house occurrences a post for this listing should be stamped
+ * against: the soonest upcoming one, plus any other occurrence for the same
+ * listing starting within {@link OH_SAME_EVENT_WINDOW_MS} of it.
+ *
+ * Called at SAVE time, so it works whether the user deep-linked from the
+ * dashboard or picked the listing by hand in the builder. Returns [] when the
+ * listing has no upcoming open house, which is the correct no-op: a post with
+ * no occurrence to attach to simply never lights a tag.
+ */
+export async function resolveOpenHouseIdsForListing(
+  mlsNumber: string,
+): Promise<string[]> {
+  if (!mlsNumber) return [];
+  const supabase = createAdminClient();
+
+  // Same 6-hour grace as the dashboard card: an open house running right now
+  // is still the one a post published this morning was promoting.
+  const startCutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
+  const { data, error } = await supabase
+    .from("open_houses")
+    .select("id, start_at")
+    .eq("mls_number", mlsNumber)
+    .gte("start_at", startCutoff)
+    .order("start_at", { ascending: true })
+    .limit(10);
+
+  if (error) {
+    console.error("[open-houses] resolve for stamping failed:", error.message);
+    return [];
+  }
+  const rows = (data ?? []) as Array<{ id: string; start_at: string }>;
+  if (rows.length === 0) return [];
+
+  const anchor = Date.parse(rows[0].start_at);
+  if (!Number.isFinite(anchor)) return [rows[0].id];
+
+  return rows
+    .filter((r) => {
+      const t = Date.parse(r.start_at);
+      return (
+        Number.isFinite(t) && t - anchor >= 0 && t - anchor <= OH_SAME_EVENT_WINDOW_MS
+      );
+    })
+    .map((r) => r.id);
+}
+
+/**
+ * "Which of these open houses already have a published post?"
+ *
+ * Reads generated_posts ONLY. The pre-8/06 version unioned this with the
+ * synced social feed (posts joined through post_listings), and that feed has
+ * no idea what a post was ABOUT, so a Just Listed or Price Reduction post lit
+ * the open-house tag. That union is not coming back.
+ *
+ * posted_at IS NOT NULL is the "actually went live" gate, so a draft or a
+ * scheduled-but-unfired row doesn't tag anything.
+ *
+ * Returns a Map of open_houses.id → posted_at ISO.
+ */
+export async function getOpenHousePostMarks(
+  openHouseIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = Array.from(new Set(openHouseIds.filter(Boolean)));
+  if (unique.length === 0) return out;
+
+  const supabase = createAdminClient();
+  // open_house_ids isn't in the generated Database type yet.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const untyped = supabase as any;
+
+  const { data, error } = await untyped
+    .from("generated_posts")
+    .select("open_house_ids, posted_at")
+    .not("posted_at", "is", null)
+    .overlaps("open_house_ids", unique);
+
+  if (error) {
+    console.error("[open-houses] post-mark lookup failed:", error.message);
+    return out;
+  }
+
+  const wanted = new Set(unique);
+  for (const row of (data ?? []) as Array<{
+    open_house_ids: string[] | null;
+    posted_at: string;
+  }>) {
+    for (const id of row.open_house_ids ?? []) {
+      if (!wanted.has(id)) continue;
+      // Keep the EARLIEST publish for an occurrence: "posted Aug 5" should
+      // mean when it first went out, not when it was last re-posted.
+      const existing = out.get(id);
+      if (!existing || row.posted_at < existing) out.set(id, row.posted_at);
+    }
+  }
+  return out;
 }
 
 /**
@@ -427,5 +555,8 @@ export async function getOpenHousesForProperty(
     // The property detail page renders the note thread in its own card, so
     // the per-OH rows here don't need to carry it.
     notes: EMPTY_NOTE_STATE,
+    // The posted tag is a dashboard-card affordance; the property page shows
+    // the listing's full post history separately.
+    post_made_at: null,
   }));
 }

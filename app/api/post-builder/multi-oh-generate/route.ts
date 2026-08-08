@@ -99,6 +99,7 @@ import {
 } from "@/lib/post-builder/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPublishTestMode } from "@/lib/data/system-config";
+import { resolveOpenHouseIdsForListing } from "@/lib/data/open-houses";
 import {
   getAgentAttribution,
   type AgentAttribution,
@@ -1427,6 +1428,25 @@ export async function POST(request: Request): Promise<Response> {
       // skipped it, so multi-OH rows ignored publish_test_mode.
       const test_mode_default = await getPublishTestMode();
 
+      // 2026-08-07 (John) — stamp every open-house occurrence this carousel
+      // promotes, one lookup per featured property. A multi-property event
+      // covers all of them, so each of their dashboard rows should show the
+      // "Posted" tag, not just the first listing's.
+      //
+      // Best effort and never fatal: a failed lookup costs a tag, while a
+      // thrown error here would cost the whole carousel.
+      const open_house_ids = Array.from(
+        new Set(
+          (
+            await Promise.all(
+              input.properties.map((p) =>
+                resolveOpenHouseIdsForListing(p.mls_number).catch(() => []),
+              ),
+            )
+          ).flat(),
+        ),
+      );
+
       // linked_property_ids isn't in the generated Database types yet; use a
       // permissive client for this insert (mirrors the untyped-client pattern
       // already used for the new owner-story + portal tables).
@@ -1440,6 +1460,8 @@ export async function POST(request: Request): Promise<Response> {
           property_id: firstProp.listing_id,
           linked_property_ids:
             linkedPropertyIds.length > 0 ? linkedPropertyIds : null,
+          // Every occurrence this event promotes. See the resolve above.
+          open_house_ids,
           post_type: "open_house",
           // why: persist the wizard's chosen per-property variant (v2/v3/v6/v8).
           // 2026-05-21 — used to hardcode "v1" here back when v1 was the

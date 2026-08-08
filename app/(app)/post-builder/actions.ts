@@ -8,6 +8,7 @@ import {
   loadMetaCredentials,
 } from "@/lib/post-builder/publish";
 import { getPublishTestMode } from "@/lib/data/system-config";
+import { resolveOpenHouseIdsForListing } from "@/lib/data/open-houses";
 import { getOpenHousesForProperty } from "@/lib/data/open-houses";
 // 2026-05-28 unification — Studio "Save as Template" now persists into the
 // admin Template Builder catalog (template_definitions) instead of the
@@ -75,7 +76,29 @@ export async function saveGeneratedPostAction(
   // override per-post via setPostTestModeAction after the row exists.
   const test_mode_default = await getPublishTestMode();
 
-  const { data, error } = await supabase
+  // 2026-08-07 (John) — stamp WHICH open house this post promotes, so the
+  // dashboard card's "Posted" tag can be scoped to the occurrence instead of
+  // the property. Resolved here at save time rather than threaded through the
+  // UI, so it works whether the user arrived via the dashboard deep link or
+  // picked the listing by hand in the builder.
+  //
+  // Covers the whole weekend: resolveOpenHouseIdsForListing returns the
+  // soonest upcoming occurrence plus any within 72 hours of it, because one
+  // post normally promotes both the Saturday and the Sunday window.
+  //
+  // Empty array is a fine no-op (listing has no upcoming open house). Never
+  // blocks the save.
+  const open_house_ids =
+    input.post_type === "open_house"
+      ? await resolveOpenHouseIdsForListing(input.mls_number).catch(() => [])
+      : [];
+
+  // open_house_ids isn't in the generated Database type yet, so this insert
+  // uses the permissive client (same pattern as the multi-OH generate route
+  // and the owner-story / portal tables).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sbAny = supabase as any;
+  const { data, error } = await sbAny
     .from("generated_posts")
     .insert({
       mls_number: input.mls_number,
@@ -116,6 +139,9 @@ export async function saveGeneratedPostAction(
       ai_design_token_output: input.ai_design?.token_output ?? null,
       ai_design_duration_ms: input.ai_design?.duration_ms ?? null,
       original_template_id: input.ai_design?.original_template_id ?? null,
+      // See the resolve above. Read back by getOpenHousePostMarks, filtered to
+      // posted_at IS NOT NULL, to drive the Open Houses card tag.
+      open_house_ids,
     })
     .select("id")
     .maybeSingle();

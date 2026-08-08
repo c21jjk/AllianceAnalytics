@@ -538,18 +538,41 @@ function OpenHouseRow({
       {/* Right column — primary "Build OH promo" CTA, with the chevron
           collapsed into a quiet "Open" link below. */}
       <div className="flex flex-col items-end gap-1 shrink-0">
-        {/* 2026-08-06 (John) — the "✓ Posted <day>" coverage badge that lived
-            here is gone. It was added 2026-07-17 to answer "which of this
-            morning's open houses still need a post", which assumed a property
-            gets promoted once. Several properties hold an open house EVERY
-            weekend, so a prior OH post says nothing about whether this
-            weekend's needs one — and a badge reading "already posted"
-            actively discourages building the post that should be built.
-            John: "There are several properties that will have Open Houses
-            every weekend, so it will be common to have multiple OH posts for
-            the same Property."
-            The Build post button loses its badge-conditional styling with it,
-            so every row now reads identically. */}
+        {/* The coverage badge, removed 2026-08-06, is back as of 2026-08-07 —
+            rebuilt on a different key. It was wrong twice before:
+
+            1. Coverage was generated_posts UNION the synced social feed. The
+               synced feed does not know what a post was ABOUT, so a Just
+               Listed or Price Reduction post lit the open-house badge. The
+               new signal reads generated_posts only.
+            2. Coverage was keyed to the PROPERTY, so a listing that holds an
+               open house every weekend looked permanently handled. It is now
+               keyed to the specific open_houses OCCURRENCE.
+
+            Because open_houses ids are stable across syncs (UNIQUE on
+            feed_short_code + oh_unique_id means the sync upserts), next
+            weekend is a different row and the tag resets with no expiry
+            logic. The row itself leaves this card 6 hours after the open
+            house starts, taking the tag with it.
+
+            John, 2026-08-07: "I'd like to have the tag back, but it would
+            need to reset after each weekend, so a new open house post can be
+            created for the next open house."
+
+            INFORMATIONAL ONLY. It does not gate the Build post button, does
+            not disable the row, and there is no confirm dialog. Blocking a
+            second post is exactly what made this unusable last time. */}
+        {openHouse.post_made_at ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
+            title={`An Open House post for this open house was published ${formatPostedStamp(
+              openHouse.post_made_at,
+            )}. You can still build another.`}
+          >
+            <CheckGlyph />
+            Posted {formatPostedStamp(openHouse.post_made_at)}
+          </span>
+        ) : null}
         <Link
           href={buildHref}
           className="inline-flex items-center rounded-md text-[11px] font-semibold px-2.5 py-1 transition-colors bg-sky-600 hover:bg-sky-700 text-white"
@@ -607,6 +630,35 @@ function ChevronIcon({ collapsed }: { collapsed: boolean }) {
       aria-hidden="true"
     >
       <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+/** "Aug 5" — pinned to Eastern per the standing render-path timezone rule. */
+function formatPostedStamp(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "America/New_York",
+  });
+}
+
+function CheckGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={9}
+      height={9}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={3.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 6L9 17l-5-5" />
     </svg>
   );
 }
