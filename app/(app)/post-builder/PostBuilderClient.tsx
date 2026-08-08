@@ -78,7 +78,7 @@ import MagicDesignModal, {
 // why: when ?gp=<id> resolves to a multi-OH carousel, swap the whole
 // generic Post Builder grid for a focused "Step 3 of 3" review screen.
 // See the component for the framing rationale.
-import MultiOhFinalStage from "./MultiOhFinalStage";
+import FinalReviewStage from "./FinalReviewStage";
 import type {
   CanvasExportResult,
   CanvasTemplateSchema,
@@ -305,6 +305,33 @@ interface AgentAttributionResponse {
   phone?: string | null;
   photo_url?: string | null;
   error?: string;
+}
+
+/**
+ * 2026-08-08 — the lighter third line on the Final Review header, carrying
+ * whatever actually matters for the post being published. It occupies the
+ * slot multi-OH uses for its "Hosted by" line.
+ *
+ * Kept deliberately short: price, beds/baths, office. The address is already
+ * on the line above, and the render itself is right underneath.
+ */
+function buildSingleDetailLine(
+  listing: PostBuilderListing | null,
+): string | null {
+  if (!listing) return null;
+  const bits: string[] = [];
+  const price = listing.close_price ?? listing.list_price;
+  if (typeof price === "number" && price > 0) {
+    bits.push(`$${price.toLocaleString()}`);
+  }
+  const beds = listing.bedrooms;
+  const baths = (listing.bathrooms_full ?? 0) + (listing.bathrooms_half ?? 0) * 0.5;
+  if (typeof beds === "number" && beds > 0) {
+    bits.push(`${beds} bed${beds === 1 ? "" : "s"}`);
+  }
+  if (baths > 0) bits.push(`${baths} bath${baths === 1 ? "" : "s"}`);
+  if (listing.agent_name) bits.push(`Listed by ${listing.agent_name}`);
+  return bits.length > 0 ? bits.join(" · ") : null;
 }
 
 const POST_TYPES: { id: PostType; label: string; helper: string }[] = [
@@ -749,6 +776,23 @@ export default function PostBuilderClient({
   // "ready to publish" rather than looking like the prior screen. Reset when
   // the listing/template tuple changes (alongside the renderResult reset).
   const [studioSavedOnce, setStudioSavedOnce] = useState(false);
+  /**
+   * 2026-08-08 (John): "I need all processes to be consistent."
+   *
+   * Every post type now ends on the same Final Review screen multi-OH always
+   * had. This flag swaps the build grid for it; multi-OH reaches the same
+   * screen via isMultiOHPost, so there is ONE mechanism, not two.
+   */
+  const [finalReview, setFinalReview] = useState(false);
+  /**
+   * 2026-08-08 — anything that changes WHAT would publish drops out of Final
+   * Review. Without this you could switch listings behind the review screen
+   * and publish something you never actually looked at.
+   */
+  useEffect(() => {
+    setFinalReview(false);
+  }, [selectedMls, postType, format, variantId]);
+
   useEffect(() => {
     if (!pendingReviewScroll || studioOpen) return;
     // Double rAF: first frame lets the overlay-removed commit paint, the
@@ -4058,14 +4102,15 @@ export default function PostBuilderClient({
   // actions (Schedule, Post Now, slide edits launched from elsewhere) keep
   // working unchanged. See PostBuilderClient.tsx imports and
   // MultiOhFinalStage.tsx for the rationale.
-  if (isMultiOHPost) {
+  if (isMultiOHPost || finalReview) {
     const hasCaption =
       editedCaptions.instagram.trim().length > 0 ||
       editedCaptions.facebook.trim().length > 0 ||
       editedCaptions.tiktok.trim().length > 0;
     return (
       <div className="space-y-5">
-        <MultiOhFinalStage
+        <FinalReviewStage
+          mode={isMultiOHPost ? "multi_oh" : "single"}
           heroImageUrl={renderResult?.image_url ?? null}
           carouselSlides={carouselSlides}
           slideMetadata={slideMetadata}
@@ -4084,11 +4129,34 @@ export default function PostBuilderClient({
             // listing — the carousel is multi-property by definition — so
             // the caption pipeline can't ask for a refresh against any one
             // listing. Hide the affordance instead of wiring a half-broken
-            // button. A future "regenerate from event metadata" endpoint
-            // could plug in here.
-            undefined
+            // button. Single mode HAS a selected listing, so it gets the
+            // real thing.
+            isMultiOHPost ? undefined : regenerateCaption
           }
           regeneratingCaption={regeneratingCaption}
+          singleSubtitle={
+            isMultiOHPost
+              ? null
+              : [
+                  POST_TYPES.find((t) => t.id === postType)?.label ?? postType,
+                  [selectedListing?.address, selectedListing?.city]
+                    .filter(Boolean)
+                    .join(", "),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+          }
+          singleDetailLine={
+            isMultiOHPost ? null : buildSingleDetailLine(selectedListing)
+          }
+          mlsHashtag={captionResult?.mls_hashtag ?? null}
+          holdNotice={
+            activeNote?.held_by
+              ? { by: activeNote.held_by, body: activeNote.latest_body }
+              : null
+          }
+          testMode={currentTestMode}
+          onBackToEditing={() => setFinalReview(false)}
         />
         {postNowOpen ? (
           <PostNowModal
@@ -4100,20 +4168,33 @@ export default function PostBuilderClient({
             // the hero only when no per-property slides exist so the
             // strip isn't empty on a malformed row.
             allSlideUrls={
-              carouselSlides.length > 0
-                ? carouselSlides.map((s) => s.url)
-                : renderResult?.image_url
-                  ? [renderResult.image_url]
-                  : []
+              // Single mode: the hero IS slide 1 and DOES publish, so it
+              // leads the strip. Multi-OH: hero excluded, per the note above.
+              !isMultiOHPost
+                ? [
+                    ...(renderResult?.image_url
+                      ? [renderResult.image_url]
+                      : []),
+                    ...carouselSlides.map((s) => s.url),
+                  ]
+                : carouselSlides.length > 0
+                  ? carouselSlides.map((s) => s.url)
+                  : renderResult?.image_url
+                    ? [renderResult.image_url]
+                    : []
             }
             listingLabel={
               // why: in multi-OH mode there's no single listing label —
               // use the per-property slide-count framing so the modal's
               // asset summary line still makes sense. Count excludes the
               // hero (see allSlideUrls above).
-              `Multi-property Open House · ${carouselSlides.length} slide${
-                carouselSlides.length === 1 ? "" : "s"
-              }`
+              isMultiOHPost
+                ? `Multi-property Open House · ${carouselSlides.length} slide${
+                    carouselSlides.length === 1 ? "" : "s"
+                  }`
+                : [selectedListing?.address, selectedListing?.city]
+                    .filter(Boolean)
+                    .join(", ") || selectedMls || "Listing"
             }
             captionPreview={editedCaption}
             platforms={postNowPlatforms}
@@ -4131,8 +4212,13 @@ export default function PostBuilderClient({
             error={error}
             onClearError={() => setError(null)}
             // why: per-property count (no hero) — feeds the per-platform
-            // "N-image carousel" copy on the platform cards.
-            slideCount={carouselSlides.length}
+            // "N-image carousel" copy on the platform cards. Single mode
+            // counts the hero, because there it publishes.
+            slideCount={
+              isMultiOHPost
+                ? carouselSlides.length
+                : 1 + carouselSlides.length
+            }
             earliestOpenHouseMs={earliestOpenHouseMs}
           />
         ) : null}
@@ -4962,34 +5048,11 @@ export default function PostBuilderClient({
                         <button
                           type="button"
                           onClick={openStudio}
-                          className={
-                            studioSavedOnce
-                              ? "flex-1 min-w-[110px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
-                              : "btn-primary flex-[2] min-w-[150px] inline-flex items-center justify-center gap-1.5"
-                          }
+                          className="flex-1 min-w-[110px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
                           title="Open this post in the Studio editor for fine-tuning"
                         >
                           <Edit3 size={14} aria-hidden="true" />
                           Edit in Studio
-                        </button>
-                      ) : null}
-                      {/* Post Now — promoted to primary gold once the user has
-                          finished an edit pass in Studio (studioSavedOnce), so
-                          coming back from Studio clearly reads as "ready to
-                          publish". Outline secondary before that. */}
-                      {isAdmin ? (
-                        <button
-                          type="button"
-                          onClick={openPostNow}
-                          className={
-                            studioSavedOnce
-                              ? "btn-primary flex-[2] min-w-[150px] inline-flex items-center justify-center gap-1.5"
-                              : "flex-1 min-w-[110px] inline-flex items-center justify-center gap-1.5 rounded-lg border-2 border-gold-500 bg-white px-4 py-2.5 text-sm font-semibold text-gold-800 transition-colors hover:bg-gold-50 focus-ring"
-                          }
-                          title="Publish directly to Facebook + Instagram"
-                        >
-                          Post Now
-                          <ChevronRight size={14} aria-hidden="true" />
                         </button>
                       ) : null}
                       <button
@@ -5006,6 +5069,23 @@ export default function PostBuilderClient({
                           <Download size={16} aria-hidden="true" />
                         )}
                       </button>
+                      {/* 2026-08-08 (John): "I need all processes to be
+                          consistent." One full-width primary, so there is
+                          exactly one way forward from here. Publishing and
+                          scheduling both live on the Final Review screen now,
+                          the same one multi-OH has always used. */}
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          onClick={() => setFinalReview(true)}
+                          disabled={!renderResult}
+                          className="btn-primary w-full inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          title="Review the post, then choose platforms and publish or schedule"
+                        >
+                          Continue to final review
+                          <ChevronRight size={14} aria-hidden="true" />
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
 
