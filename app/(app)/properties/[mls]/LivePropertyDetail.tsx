@@ -31,6 +31,8 @@ import { fetchCreatedPostsByMls } from "@/lib/data/created-posts-db";
 import { getAutoReelProject } from "@/lib/data/autoreel-db";
 import AutoReelLaunchButton from "@/components/AutoReelPanel";
 import { ListingNoteCard } from "@/components/ListingNote";
+import ListingPhotoGallery from "@/components/ListingPhotoGallery";
+import { readListingPhotos } from "@/lib/post-builder/photos";
 
 interface LivePropertyDetailProps {
   property: PropertyDetail;
@@ -82,6 +84,12 @@ export default async function LivePropertyDetail({
     ? await fetchOwnerStoryViewStats(existingReport.report_id)
     : null;
   const openHouses = await getOpenHousesForProperty(property.id);
+  // 2026-08-08 (John) — the full photo set, so the "are these good enough to
+  // build a post from?" call can be made here instead of three steps into
+  // Studio. Same reader the Post Builder picker, Magic Design, Studio, Reel
+  // Studio and mobile Quick Create already use; nothing new is being fetched,
+  // it just had nowhere to be looked at outside of building a post.
+  const listingPhotos = await readListingPhotos(property.mls_number);
   // AutoReel project tracking — drives the reel-maker card below the hero.
   const autoReelProject = await getAutoReelProject(property.mls_number);
   // why: per-listing Created Posts strip — pulls every generated_posts row
@@ -219,6 +227,14 @@ export default async function LivePropertyDetail({
           </div>
         </div>
       </section>
+
+      {/* Photos — every image on the listing, at a size where quality is
+          actually judgeable. Sits directly under the hero because it is about
+          the listing itself, not about posting it. */}
+      <ListingPhotoGallery
+        photos={listingPhotos}
+        address={property.address}
+      />
 
       {/* AutoReel — reel maker for listings that don't get a live video.
           Prep sheet (copy chips + popup launcher) and finished-video import.

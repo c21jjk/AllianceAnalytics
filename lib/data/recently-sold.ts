@@ -362,9 +362,14 @@ export async function getRecentlySoldListings(
   const officeFilter = await resolveOfficeFilter(supabase, opts.office_short_code);
   if (!officeFilter.ok) return [];
 
-  // 2026-08-05 — rolling window floored at the shared milestone slate date.
-  // Both branches of the OR get the floored value so a sold row with no
-  // close_date can't slip through on updated_at alone.
+  // 2026-08-05 — query window is the shared milestone slate date. Both
+  // branches of the OR get it so a sold row with no close_date can't slip
+  // through on updated_at alone.
+  //
+  // 2026-08-08 — see the longer note in listings-needing-posts.ts: this used
+  // to take whichever of the slate and the 30-day window was more recent,
+  // which would have started truncating the query on Aug 31 and silently
+  // dropped sales nobody had posted yet.
   const rawCutoffIso = new Date(
     Date.now() - windowDays * 86400_000,
   ).toISOString();

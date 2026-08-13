@@ -232,6 +232,14 @@ export default async function PostBuilderPage({
     const allMls = POST_TYPES.flatMap((pt) =>
       listingsByPostType[pt].map((l) => l.mls_number),
     );
+    // 2026-08-08 — the buckets are "what still needs a post", so a listing
+    // you already built a draft for has usually left them. Resuming that
+    // draft used to arrive with no note and no hold, which meant the publish
+    // gate never armed for exactly the posts furthest along. Add the resumed
+    // row's MLS (and the ?mls= deep link's) explicitly; getListingNoteStates
+    // dedupes, so the overlap costs nothing.
+    if (resume?.mls_number) allMls.push(resume.mls_number);
+    if (mlsParam) allMls.push(mlsParam);
     const states = await getListingNoteStates(allMls);
     const out: Record<
       string,

@@ -1623,6 +1623,22 @@ function Step1Pick({
 }: Step1Props) {
   const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
 
+  // 2026-08-07 (John) — the picker is batched by office division to match the
+  // dashboard card. `listings` already arrives sorted by open-house start time
+  // (see the sort in lib/post-builder/listings.ts), and bucketing preserves
+  // that order inside each section, so Saturday morning still reads before
+  // Saturday afternoon before Sunday.
+  //
+  // 2026-08-08 — MUST stay above the two early returns below. It originally
+  // sat next to its first use, which put a hook behind a conditional return:
+  // with 0 or 1 upcoming open houses Step1Pick returned early and never ran
+  // this useMemo, so the render where a second open house arrived changed the
+  // hook count and React threw. Hooks first, then the guards.
+  const divisionSections = useMemo(
+    () => groupListingsByDivision(listings),
+    [listings],
+  );
+
   if (listings.length === 0) {
     return (
       <section className="card p-6">
@@ -1708,15 +1724,6 @@ function Step1Pick({
     );
   }
 
-  // 2026-08-07 (John) — the picker is batched by office division to match the
-  // dashboard card. `listings` already arrives sorted by open-house start time
-  // (see the sort in lib/post-builder/listings.ts), and bucketing preserves
-  // that order inside each section, so Saturday morning still reads before
-  // Saturday afternoon before Sunday.
-  const divisionSections = useMemo(
-    () => groupListingsByDivision(listings),
-    [listings],
-  );
 
   // One row renderer, used by both the flat and the grouped branch. Defined
   // here rather than inline so the two branches can never drift apart.

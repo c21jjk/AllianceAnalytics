@@ -4109,6 +4109,33 @@ export default function PostBuilderClient({
       editedCaptions.tiktok.trim().length > 0;
     return (
       <div className="space-y-5">
+        {/* 2026-08-08 — these two banners used to live only in the build
+            screen's markup below, which stopped rendering the moment Final
+            Review took over the publish step. A "Scheduled for Saturday
+            9:00am" confirmation and any post-close failure were both
+            invisible from the only screen that can produce them. */}
+        {error ? (
+          <div
+            // Same ref as the build screen's banner. The two branches are
+            // mutually exclusive so only one is ever mounted, which keeps the
+            // scroll-into-view effect working on whichever one that is.
+            ref={errorBannerRef}
+            role="alert"
+            className="inline-flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
+          >
+            <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+        {scheduleNotice ? (
+          <div
+            role="status"
+            className="inline-flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+          >
+            <Check size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+            <span>{scheduleNotice}</span>
+          </div>
+        ) : null}
         <FinalReviewStage
           mode={isMultiOHPost ? "multi_oh" : "single"}
           heroImageUrl={renderResult?.image_url ?? null}
@@ -4119,6 +4146,13 @@ export default function PostBuilderClient({
           formatMeta={formatMeta[format] ?? null}
           editedCaptions={editedCaptions}
           onEditedCaptionsChange={setEditedCaptions}
+          // 2026-08-08 — Final Review used to own a SECOND, independent
+          // active-platform tab. The confirm dialog's caption snippet reads
+          // the parent's tab, so the two disagreed: you could be looking at
+          // the TikTok caption and be shown Instagram's in the dialog that
+          // actually publishes. One piece of state now, owned here.
+          activeCaptionPlatform={activeCaptionPlatform}
+          onActiveCaptionPlatformChange={setActiveCaptionPlatform}
           hasCaption={hasCaption}
           busy={generating}
           onPostNow={openPostNow}
@@ -4220,6 +4254,27 @@ export default function PostBuilderClient({
                 : 1 + carouselSlides.length
             }
             earliestOpenHouseMs={earliestOpenHouseMs}
+            /* 2026-08-08 — THE hold gate. Bundle 7 rerouted publishing
+               through this modal and dropped the prop, so PostNowModal's
+               `canConfirm` guard (!holdNotice || holdAck) was trivially
+               true and a listing Larissa had marked "don't post yet"
+               published with no acknowledgement at all. The modal that
+               still had it wired sat in a branch nothing can reach. */
+            holdNotice={
+              activeNote?.held_by
+                ? { by: activeNote.held_by, body: activeNote.latest_body }
+                : null
+            }
+            /* 2026-06-05 — post-publish "Make it a Reel" on-ramp. Carousel
+               posts only, and the modal further gates on a successful
+               publish. Multi-OH is excluded: handleMakeReel builds from a
+               single listing's carousel. */
+            onMakeReel={
+              !isMultiOHPost && carouselSlides.length >= 1
+                ? handleMakeReel
+                : undefined
+            }
+            makingReel={makingReel}
           />
         ) : null}
       </div>
@@ -5283,50 +5338,14 @@ export default function PostBuilderClient({
         </section>
       </div>
 
-      {postNowOpen ? (
-        <PostNowModal
-          previewImageUrl={renderResult?.image_url ?? null}
-          allSlideUrls={
-            renderResult?.image_url
-              ? [renderResult.image_url, ...carouselSlides.map((s) => s.url)]
-              : carouselSlides.map((s) => s.url)
-          }
-          listingLabel={
-            selectedListing
-              ? `${selectedListing.address ?? selectedListing.mls_number}`
-              : ""
-          }
-          captionPreview={editedCaption}
-          platforms={postNowPlatforms}
-          onTogglePlatform={togglePostNowPlatform}
-          armedAt={postNowArmedAt}
-          sending={postNowSending}
-          results={postNowResults}
-          onCancel={closePostNow}
-          onConfirm={submitPostNow}
-          onSchedule={submitSchedule}
-          testMode={currentTestMode}
-          onSetTestMode={handleSetTestMode}
-          testModeSaving={testModeSaving}
-          globalTestModeOn={globalTestModeOn}
-          error={error}
-          onClearError={() => setError(null)}
-          // why: pass the actual slide count so the platform cards' copy
-          // can describe carousels accurately. hero (1) + extra slides.
-          slideCount={1 + carouselSlides.length}
-          // 2026-06-05 — post-publish "Make it a Reel" on-ramp. Only carousel
-          // posts (extra slides present) get the offer; the modal further
-          // gates on a successful publish.
-          onMakeReel={carouselSlides.length >= 1 ? handleMakeReel : undefined}
-          makingReel={makingReel}
-          earliestOpenHouseMs={earliestOpenHouseMs}
-          holdNotice={
-            activeNote?.held_by
-              ? { by: activeNote.held_by, body: activeNote.latest_body }
-              : null
-          }
-        />
-      ) : null}
+      {/* 2026-08-08 — the second <PostNowModal> that used to live here is
+          gone. `setPostNowOpen(true)` has exactly one caller, openPostNow,
+          which is only reachable from <FinalReviewStage> — and that renders
+          inside the `if (isMultiOHPost || finalReview)` early return above.
+          So whenever postNowOpen was true this JSX had already been skipped.
+          It was dead code that LOOKED like the wired-up one (it was the only
+          copy carrying holdNotice and onMakeReel), which is exactly why the
+          hold gate read as fine while being dead. One modal now. */}
       {/* === Canvas Editor (Path C) — overlay portal ===
           why: rendered at the top level of the component's JSX so it covers
           all underlying UI including the PostNowModal. Unmounts entirely when

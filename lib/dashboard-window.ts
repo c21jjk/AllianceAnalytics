@@ -28,22 +28,35 @@ export const MILESTONE_FLOOR_DATE = "2026-08-01";
 export const MILESTONE_FLOOR_ISO = `${MILESTONE_FLOOR_DATE}T00:00:00.000Z`;
 
 /**
- * Pick the later of the floor and a rolling-window cutoff, as a YYYY-MM-DD
- * string. Sections keep their own window (e.g. "last 14 days") and the floor
- * simply wins whenever it is more recent, which it is until the window grows
- * past the slate date.
+ * The date a milestone fetcher should query back to.
+ *
+ * 2026-08-08 — this used to return the LATER of the slate date and the
+ * caller's own rolling window (14 days for Recently Listed, 30 for Recently
+ * Sold), which reads sensibly and is a time bomb. The slate is fixed at Aug 1
+ * while the rolling cutoff moves forward every day, so on Aug 16 the 14-day
+ * window overtakes it and on Aug 31 the 30-day one does. After that an
+ * unhandled listing older than the window is filtered out by the SQL and
+ * never reaches isVisibleOnMilestoneCard, which is the only thing that knows
+ * it was never posted. A listing nobody dealt with would have quietly
+ * disappeared, which is precisely what the 7-day rule exists to prevent.
+ *
+ * So: the query goes back to the slate, and nothing further. Visibility is
+ * decided downstream by isVisibleOnMilestoneCard, which CAN see the handled
+ * flag — published rows age out after 7 days, unhandled ones stay until
+ * someone posts or skips them.
+ *
+ * The `rollingCutoffDate` argument is kept so call sites read the same and to
+ * document what the caller thought it wanted; it is deliberately unused.
  */
 export function floorDate(rollingCutoffDate: string): string {
-  return rollingCutoffDate > MILESTONE_FLOOR_DATE
-    ? rollingCutoffDate
-    : MILESTONE_FLOOR_DATE;
+  void rollingCutoffDate;
+  return MILESTONE_FLOOR_DATE;
 }
 
 /** Timestamp flavour of {@link floorDate}. */
 export function floorIso(rollingCutoffIso: string): string {
-  return rollingCutoffIso > MILESTONE_FLOOR_ISO
-    ? rollingCutoffIso
-    : MILESTONE_FLOOR_ISO;
+  void rollingCutoffIso;
+  return MILESTONE_FLOOR_ISO;
 }
 
 /**

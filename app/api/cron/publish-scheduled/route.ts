@@ -36,6 +36,7 @@
  */
 import "server-only";
 import { NextResponse } from "next/server";
+import { backfillOpenHouseIdsForPublishedPost } from "@/lib/data/open-houses";
 import { requireCronAuth } from "@/lib/cron-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -840,6 +841,18 @@ async function processRow(
       `[cron/publish-scheduled] update failed for ${row.id}:`,
       updError.message,
     );
+  }
+
+  // 2026-08-08 — same occurrence stamp as the Post Now route. Scheduled
+  // Open House posts are the common case for this tag, so leaving it to the
+  // manual path only would have covered the rarer half.
+  if (summary.succeeded.length > 0) {
+    await backfillOpenHouseIdsForPublishedPost({
+      generatedPostId: row.id,
+      mlsNumber: row.mls_number,
+      postType: row.post_type,
+      templateId: row.template_id,
+    });
   }
 
   // ---- agent outbox notification -------------------------------------

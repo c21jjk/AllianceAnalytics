@@ -151,6 +151,15 @@ export interface FinalReviewStageProps {
    */
   onRegenerateCaption?: () => void;
   regeneratingCaption: boolean;
+  /**
+   * 2026-08-08 — which caption tab is showing. Optional so this component
+   * still works uncontrolled, but the Post Builder passes its own state down
+   * because the publish dialog's caption snippet reads from there. When the
+   * two were separate you could be editing TikTok's caption and be shown
+   * Instagram's in the dialog that publishes.
+   */
+  activeCaptionPlatform?: SchedulablePlatform;
+  onActiveCaptionPlatformChange?: (next: SchedulablePlatform) => void;
 
   /* ---- single mode only ------------------------------------------------ */
 
@@ -545,18 +554,36 @@ function computeSinglePreflight(args: {
   // The canonical hashtag is what ties a published post back to its listing
   // in /posts and on the Owner Story. Losing it doesn't break the post, it
   // breaks the reporting, silently and only weeks later.
+  //
+  // 2026-08-08 — check the caption that WILL publish, not the hashtag the
+  // generator produced. The textarea on this screen is editable and
+  // splitBodyAndHashtags re-parses every #token from it, so deleting the MLS
+  // tag there used to leave this row green while attribution was already
+  // gone. Every platform that has a caption has to carry the tag: losing it
+  // on Facebook only is still a hole in the reporting.
+  const canonicalTag = (args.mlsHashtag ?? "").trim();
+  const writtenCaptions = Object.values(args.editedCaptions).filter(
+    (c) => c.trim().length > 0,
+  );
+  const tagPresent =
+    canonicalTag.length > 0 &&
+    writtenCaptions.length > 0 &&
+    writtenCaptions.every((c) =>
+      c.toLowerCase().includes(canonicalTag.toLowerCase()),
+    );
   checks.push(
-    args.mlsHashtag && args.mlsHashtag.trim().length > 0
+    tagPresent
       ? {
           key: "mls",
           status: "ok",
-          label: `MLS hashtag ${args.mlsHashtag} included, so the post links back to the listing`,
+          label: `MLS hashtag ${canonicalTag} included, so the post links back to the listing`,
         }
       : {
           key: "mls",
           status: "warn",
-          label:
-            "No MLS hashtag in the caption — this post won't link back to the listing in reporting",
+          label: canonicalTag
+            ? `MLS hashtag ${canonicalTag} is missing from the caption — this post won't link back to the listing in reporting`
+            : "No MLS hashtag in the caption — this post won't link back to the listing in reporting",
         },
   );
 
@@ -606,6 +633,8 @@ export default function FinalReviewStage({
   postNowEnabled,
   onRegenerateCaption,
   regeneratingCaption,
+  activeCaptionPlatform: controlledCaptionPlatform,
+  onActiveCaptionPlatformChange,
   singleSubtitle = null,
   singleDetailLine = null,
   mlsHashtag = null,
@@ -619,8 +648,15 @@ export default function FinalReviewStage({
   // walkthrough with Larissa flagged the collapsed view as a hidden-state
   // trap (Larissa's ADHD memory) — show the real caption + hashtag line at
   // all times so the user sees exactly what will publish.
-  const [activeCaptionPlatform, setActiveCaptionPlatform] =
+  // Uncontrolled fallback. When the parent passes its own tab down (the Post
+  // Builder always does) that wins, so the screen and the publish dialog can
+  // never disagree about which caption you are looking at.
+  const [localCaptionPlatform, setLocalCaptionPlatform] =
     useState<SchedulablePlatform>("instagram");
+  const activeCaptionPlatform =
+    controlledCaptionPlatform ?? localCaptionPlatform;
+  const setActiveCaptionPlatform =
+    onActiveCaptionPlatformChange ?? setLocalCaptionPlatform;
 
   // Branch 1 + 2: the two lines under the title. Multi-OH describes the
   // event; single mode names the post and the listing, then whatever detail

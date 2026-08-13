@@ -91,6 +91,25 @@ export default async function PromotionsPage() {
   // property-wide dismissals above.
   const skipRows = await listAllListingSkipMarks(200);
   const skipMls = Array.from(new Set(skipRows.map((r) => r.mls_number)));
+
+  // 2026-08-08 — resolve who skipped each row, the same way the legacy
+  // dismissals above do. Without this every per-milestone skip rendered with
+  // no attribution while the legacy rows showed a name, which read as "the
+  // system lost track of it" rather than "nobody recorded it".
+  const skipperIds = Array.from(
+    new Set(
+      skipRows.map((r) => r.skipped_by).filter((x): x is string => !!x),
+    ),
+  ).filter((id) => !profilesById.has(id));
+  if (skipperIds.length > 0) {
+    const { data: skipperRows } = await admin
+      .from("profiles")
+      .select("id, email, full_name")
+      .in("id", skipperIds);
+    for (const p of skipperRows ?? []) {
+      profilesById.set(p.id, { email: p.email, full_name: p.full_name });
+    }
+  }
   const propsByMls = new Map<
     string,
     {
@@ -138,7 +157,10 @@ export default async function PromotionsPage() {
       agent_name: p?.agent_name ?? null,
       dismissed_at: skip.skipped_at,
       dismissed_reason: skip.reason,
-      dismissed_by_name: null,
+      dismissed_by_name: (() => {
+        const s = skip.skipped_by ? profilesById.get(skip.skipped_by) : null;
+        return s?.full_name ?? s?.email ?? null;
+      })(),
       post_type: skip.post_type,
     });
   }

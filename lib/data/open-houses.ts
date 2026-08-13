@@ -560,3 +560,75 @@ export async function getOpenHousesForProperty(
     post_made_at: null,
   }));
 }
+
+/**
+ * Best-effort backfill of generated_posts.open_house_ids at publish time.
+ *
+ * 2026-08-08 — the occurrence "Posted" tag reads this column via
+ * getOpenHousePostMarks. Only saveGeneratedPostAction and the multi-OH
+ * generate route write it, so a row created by the Studio upsert (Open House
+ * -> Edit in Studio -> Save) or by mobile Quick Create published with an empty
+ * array and never lit the tag. Publish is the one point every path passes
+ * through, so the backfill lives here instead of a fourth call site.
+ *
+ * Deliberately narrow. It only acts when:
+ *   - the post is an open_house post,
+ *   - it is NOT a multi-property event (those already carry the full id list;
+ *     resolving from a single mls_number would be wrong for them),
+ *   - and the column is still empty, so a correct stamp is never overwritten.
+ *
+ * Never throws and never blocks publishing: a missing dashboard tag is a far
+ * smaller problem than a publish that fails after the post is already live.
+ */
+export async function backfillOpenHouseIdsForPublishedPost(args: {
+  generatedPostId: string;
+  mlsNumber: string | null | undefined;
+  postType: string | null | undefined;
+  templateId: string | null | undefined;
+}): Promise<void> {
+  try {
+    if (args.postType !== "open_house") return;
+    if (!args.mlsNumber) return;
+    if (
+      typeof args.templateId === "string" &&
+      args.templateId.startsWith("multi_oh_event_")
+    ) {
+      return;
+    }
+
+    const supabase = createAdminClient();
+    // open_house_ids isn't in the generated Database type yet.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const untyped = supabase as any;
+
+    const { data: row } = await untyped
+      .from("generated_posts")
+      .select("open_house_ids")
+      .eq("id", args.generatedPostId)
+      .maybeSingle();
+
+    const existing = (row?.open_house_ids ?? []) as string[];
+    if (existing.length > 0) return;
+
+    const ids = await resolveOpenHouseIdsForListing(args.mlsNumber);
+    if (ids.length === 0) return;
+
+    const { error } = await untyped
+      .from("generated_posts")
+      .update({ open_house_ids: ids })
+      .eq("id", args.generatedPostId);
+    if (error) {
+      console.warn(
+        "[open-houses] open_house_ids backfill failed for",
+        args.generatedPostId,
+        error.message,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      "[open-houses] open_house_ids backfill threw for",
+      args.generatedPostId,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}

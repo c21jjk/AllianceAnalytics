@@ -93,15 +93,19 @@ export async function listAllListingSkipMarks(limit = 200): Promise<
     post_type: SkippablePostType;
     reason: string | null;
     skipped_at: string;
+    skipped_by: string | null;
   }>
 > {
   const supabase = createAdminClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const untyped = supabase as any;
 
+  // 2026-08-08 — skipped_by is written on every skip (skip-actions.ts) and
+  // was never selected, so the audit page could only ever show attribution
+  // for the legacy property-wide dismissals. A new skip looked anonymous.
   const { data, error } = await untyped
     .from("listing_skip_marks")
-    .select("mls_number, post_type, reason, skipped_at")
+    .select("mls_number, post_type, reason, skipped_at, skipped_by")
     .order("skipped_at", { ascending: false })
     .limit(limit);
 
@@ -114,5 +118,6 @@ export async function listAllListingSkipMarks(limit = 200): Promise<
     post_type: SkippablePostType;
     reason: string | null;
     skipped_at: string;
+    skipped_by: string | null;
   }>;
 }

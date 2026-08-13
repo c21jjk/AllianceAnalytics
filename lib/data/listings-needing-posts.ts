@@ -194,10 +194,19 @@ export async function getListingsNeedingPosts(
     officeFilterId = officeRow.id;
   }
 
-  // 2026-08-05 — the rolling window is now floored at the shared milestone
-  // slate date (see lib/dashboard-window.ts). Whichever is more recent wins,
-  // so today the Aug 1 floor is binding and after ~Aug 15 the 14-day window
-  // takes over again.
+  // 2026-08-05 — the query window is the shared milestone slate date (see
+  // lib/dashboard-window.ts).
+  //
+  // 2026-08-08 — it used to be "whichever of the slate and the 14-day window
+  // is more recent", which would have handed the window control on Aug 16 and
+  // started dropping unposted listings older than 14 days before the 7-day
+  // rule ever saw them. The SQL cannot tell a posted listing from an unposted
+  // one, so it must not be the thing deciding what disappears; it fetches
+  // back to the slate and applyMilestoneWindow decides.
+  //
+  // The overfetch below is what bounds the result set now. If active listings
+  // since the slate ever exceed it, raise the multiplier rather than
+  // narrowing the date window.
   const rawCutoffIso = new Date(
     Date.now() - windowDays * 86400_000,
   ).toISOString();

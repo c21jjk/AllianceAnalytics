@@ -15,6 +15,7 @@
  * posted_at, last_post_error on the generated_posts row.
  */
 import { NextResponse } from "next/server";
+import { backfillOpenHouseIdsForPublishedPost } from "@/lib/data/open-houses";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -635,6 +636,19 @@ export async function POST(request: Request) {
   if (updateErr) {
     // Don't fail the request — posts went up. Just log so we know.
     console.error("[post] generated_posts update failed:", updateErr.message);
+  }
+
+  // 2026-08-08 — stamp which open house this post promoted, if nothing
+  // did already. See backfillOpenHouseIdsForPublishedPost: without this the
+  // dashboard's occurrence "Posted" tag stays dark for any Open House post
+  // whose row was created by the Studio save or mobile Quick Create.
+  if (successResults.length > 0) {
+    await backfillOpenHouseIdsForPublishedPost({
+      generatedPostId: gp.id,
+      mlsNumber: gp.mls_number,
+      postType: gp.post_type,
+      templateId: gp.template_id,
+    });
   }
 
   // Phase 5 — Agent Activation Loop. After a successful publish, drop a row

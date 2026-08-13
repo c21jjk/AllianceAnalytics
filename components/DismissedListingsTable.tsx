@@ -30,6 +30,20 @@ interface Props {
   rows: DismissedListingRow[];
 }
 
+/**
+ * 2026-08-08 — skips are per milestone, so the same listing legitimately
+ * appears more than once (skipped at Just Listed, skipped again at Just
+ * Sold). Without this column the two rows were visually identical and the
+ * two Restore buttons did different things, with nothing on screen saying
+ * which was which.
+ */
+const MILESTONE_LABELS: Record<DismissedListingRow["post_type"], string> = {
+  just_listed: "Just Listed",
+  under_contract: "Under Contract",
+  just_sold: "Just Sold",
+  price_reduction: "Price Reduction",
+};
+
 const REASON_LABELS: Record<string, string> = {
   low_price: "Low price point",
   condition: "Property condition",
@@ -60,6 +74,7 @@ export default function DismissedListingsTable({ rows }: Props) {
         <thead className="bg-neutral-50 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
           <tr>
             <th className="text-left px-4 py-2.5">Listing</th>
+            <th className="text-left px-4 py-2.5">Milestone</th>
             <th className="text-left px-4 py-2.5">Dismissed</th>
             <th className="text-left px-4 py-2.5">Reason</th>
             <th className="text-right px-4 py-2.5">Action</th>
@@ -67,7 +82,13 @@ export default function DismissedListingsTable({ rows }: Props) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <DismissedRow key={row.mls_number} row={row} />
+            // Key on the real grain of the table. listing_skip_marks is keyed
+            // (mls_number, post_type), so keying on the MLS alone produced
+            // duplicate keys as soon as one listing was skipped twice.
+            <DismissedRow
+              key={`${row.mls_number}:${row.post_type}`}
+              row={row}
+            />
           ))}
         </tbody>
       </table>
@@ -129,6 +150,11 @@ function DismissedRow({ row }: { row: DismissedListingRow }) {
             </div>
           </div>
         </div>
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700">
+          {MILESTONE_LABELS[row.post_type] ?? row.post_type}
+        </span>
       </td>
       <td className="px-4 py-3 text-[12px] text-neutral-700">
         <div>
