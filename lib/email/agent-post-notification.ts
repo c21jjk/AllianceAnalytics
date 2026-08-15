@@ -230,6 +230,42 @@ export async function notifyListingAgentsForPost(args: {
     );
   }
 
+  // 2026-08-15 — global pause switch (system_config.agent_emails_paused_until).
+  // When that timestamp is in the future, outbox rows are still created (the
+  // dashboard reshare workflow keeps working) but NO agent emails go out.
+  // Built for the recreate-and-repost case: regenerated posts get new
+  // generated_post_ids, so the outbox idempotency can't dedupe them and every
+  // featured agent would be emailed again. Self-expiring — once the timestamp
+  // passes, emails resume with no code or DB change. Fail-open: any read
+  // error means emails send as normal. To pause again:
+  //   update system_config set agent_emails_paused_until = now() + interval '24 hours' where id = 1;
+  let emailsPaused = false;
+  if (args.send_emails) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sbAny = supabase as any;
+      const { data: cfg } = await sbAny
+        .from("system_config")
+        .select("agent_emails_paused_until")
+        .eq("id", 1)
+        .maybeSingle();
+      const until = cfg?.agent_emails_paused_until
+        ? new Date(cfg.agent_emails_paused_until as string)
+        : null;
+      if (until && !Number.isNaN(until.getTime()) && until.getTime() > Date.now()) {
+        emailsPaused = true;
+        console.log(
+          `[agent-email] paused until ${until.toISOString()} — outbox rows created, emails skipped for post ${args.generated_post_id}`,
+        );
+      }
+    } catch (e) {
+      console.error(
+        "[agent-email] pause check failed (sending anyway):",
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+
   const emailed = new Set<string>();
   for (const propertyId of propertyIds) {
     try {
@@ -246,7 +282,7 @@ export async function notifyListingAgentsForPost(args: {
         );
         continue;
       }
-      if (args.send_emails) {
+      if (args.send_emails && !emailsPaused) {
         const sentTo = await sendAgentEngagementEmail({
           outboxRowId: outbox.id,
           excludeEmails: emailed,
