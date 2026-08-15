@@ -133,9 +133,16 @@ export async function fetchOwnerStoryViewStats(
 function normalizeAgentName(raw: string): string | null {
   const trimmed = raw.trim().toLowerCase();
   if (!trimmed) return null;
+  // 2026-08-15 — hyphens split words, same as spaces. The Bright feed says
+  // "Elvis Ochoa-Rosendo" while the Drive headshot label says "Elvis Ochoa
+  // Rosendo"; keeping the hyphen inside the word made those normalize to
+  // different first+last pairs ("elvis ochoa-rosendo" vs "elvis rosendo")
+  // and every hyphenated agent missed. Both sides now collapse to
+  // "elvis rosendo". Mirrored in owner-story-db.ts + alliance-dash-agents.ts
+  // — change BOTH or headshot and phone lookups drift apart.
   const parts = trimmed
-    .split(/\s+/)
-    .map((p) => p.replace(/[^a-z'-]/g, ""))
+    .split(/[\s-]+/)
+    .map((p) => p.replace(/[^a-z']/g, ""))
     .filter(Boolean);
   if (parts.length === 0) return null;
   if (parts.length === 1) return parts[0];

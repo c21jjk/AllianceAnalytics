@@ -89,9 +89,16 @@ function getAllianceDashClient(): AllianceDashClient | null {
 function normalizeAgentName(raw: string): string | null {
   const trimmed = raw.trim().toLowerCase();
   if (!trimmed) return null;
+  // 2026-08-15 — hyphens split words, same as spaces. The Bright feed says
+  // "Elvis Ochoa-Rosendo" while the Drive headshot label says "Elvis Ochoa
+  // Rosendo"; keeping the hyphen inside the word made those normalize to
+  // different first+last pairs ("elvis ochoa-rosendo" vs "elvis rosendo")
+  // and every hyphenated agent missed. Both sides now collapse to
+  // "elvis rosendo". Mirrored in owner-story-db.ts + alliance-dash-agents.ts
+  // — change BOTH or headshot and phone lookups drift apart.
   const parts = trimmed
-    .split(/\s+/)
-    .map((p) => p.replace(/[^a-z'-]/g, ""))
+    .split(/[\s-]+/)
+    .map((p) => p.replace(/[^a-z']/g, ""))
     .filter(Boolean);
   if (parts.length === 0) return null;
   if (parts.length === 1) return parts[0];
@@ -564,7 +571,11 @@ export async function loadAllianceDashPhoneIndex(): Promise<AllianceDashPhoneInd
   for (const row of rows) {
     const norm = normalizeAgentName(`${row.first} ${row.last}`.trim());
     if (norm && !byNorm.has(norm)) byNorm.set(norm, row.phone);
-    const lastKey = row.last.toLowerCase();
+    // 2026-08-15 — key by the FINAL hyphen/space-split token so a
+    // "Ochoa-Rosendo" roster row is findable by lookup()'s "rosendo"
+    // needle (the normalizer now splits on hyphens too).
+    const lastKey =
+      row.last.toLowerCase().split(/[\s-]+/).filter(Boolean).pop() ?? "";
     if (!lastKey) continue;
     const list = byLast.get(lastKey) ?? [];
     list.push(row);
