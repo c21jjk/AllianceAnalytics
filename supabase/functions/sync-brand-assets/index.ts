@@ -651,6 +651,9 @@ async function runSync(): Promise<SyncReport> {
   //     agent_headshot/partner_logo rows alone — and vice-versa.
   //   - We never touch rows already status='archived' (the WHERE clause
   //     filters to 'active' only), so re-runs are idempotent.
+  //   - We never touch source='manual' rows (uploaded in-app via /agents).
+  //     They have no drive_file_id, so they would otherwise be archived on
+  //     the very next run.
   //
   // We do this in a single SQL update via .not("drive_file_id", "in", ...)
   // — Supabase's PostgREST takes the list as a comma-separated string in
@@ -677,6 +680,11 @@ async function runSync(): Promise<SyncReport> {
           .update({ status: "archived", updated_at: new Date().toISOString() })
           .in("kind", kindsToSweep)
           .eq("status", "active")
+          // 2026-08-14 — only sweep rows this sync actually owns. Headshots
+          // uploaded by hand through /agents carry source='manual' and no
+          // drive_file_id, so without this filter every nightly run would
+          // archive them and the agent's photo would vanish overnight.
+          .eq("source", "drive")
           .not("drive_file_id", "in", `(${seenList.map((id) => `"${id}"`).join(",")})`)
           .select("id");
         if (archiveErr) {

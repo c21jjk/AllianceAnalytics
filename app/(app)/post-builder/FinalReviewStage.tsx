@@ -61,7 +61,8 @@
  *   with everything intact.
  */
 
-import { useMemo, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
+import Link from "next/link";
 import { AlertTriangle, CheckCircle2, ChevronRight, RotateCw, XCircle } from "lucide-react";
 import type {
   PostBuilderListing,
@@ -371,6 +372,13 @@ const IG_SLIDE_CAP = 10;
 
 interface PreflightCheck {
   key: string;
+  /**
+   * 2026-08-14 — optional link rendered after the label. Added so a warning
+   * can hand you the fix instead of just naming the problem: "no headshot
+   * for Elvis" is only useful next to somewhere to put one.
+   */
+  href?: string;
+  hrefLabel?: string;
   status: "ok" | "warn" | "fail";
   label: string;
 }
@@ -429,6 +437,13 @@ function computeMultiOhPreflight(args: {
   slideMetadata: readonly SlideMetadata[];
   listingsByMls: ReadonlyMap<string, PostBuilderListing>;
   nowMs: number;
+  /**
+   * Hosting agents whose headshot or phone came back empty, resolved from
+   * the same /api/agents/attribution the renderer uses. Null while the
+   * lookup is still in flight, so a slow response never flashes a false
+   * "missing" warning.
+   */
+  hostingGaps: HostingGap[] | null;
 }): PreflightCheck[] {
   const checks: PreflightCheck[] = captionChecks(args.editedCaptions);
 
@@ -495,7 +510,51 @@ function computeMultiOhPreflight(args: {
     }
   }
 
+  // ---- hosting agent contact details ------------------------------------
+  // 2026-08-14 — the open house templates carry a hosting block with a
+  // headshot, a name and a phone. When brand_assets has no photo for that
+  // agent the layer is dropped (hideIfEmpty) and the slide publishes with a
+  // hole where a face should be; a missing phone prints nothing at all.
+  // Both used to be silent: the 8/13 walkthrough shipped a carousel where
+  // one of three hosts had no headshot and nothing on this panel said so.
+  // Warn, never fail — a post with two good slides and one faceless one is
+  // still worth publishing on a Friday afternoon, and blocking it is how the
+  // old open-house coverage tag made itself unusable.
+  if (args.hostingGaps && args.hostingGaps.length > 0) {
+    const noPhoto = args.hostingGaps.filter((g) => !g.hasPhoto);
+    const noPhone = args.hostingGaps.filter((g) => !g.hasPhone);
+    const parts: string[] = [];
+    if (noPhoto.length > 0) {
+      parts.push(
+        `no headshot for ${noPhoto.map((g) => g.name).join(", ")}`,
+      );
+    }
+    if (noPhone.length > 0) {
+      parts.push(`no phone for ${noPhone.map((g) => g.name).join(", ")}`);
+    }
+    checks.push({
+      key: "hosting_contact",
+      status: "warn",
+      label: `Hosting block will be incomplete — ${parts.join("; ")}`,
+      href: "/agents?filter=missing",
+      hrefLabel: "Add it now",
+    });
+  } else if (args.hostingGaps) {
+    checks.push({
+      key: "hosting_contact",
+      status: "ok",
+      label: "Every hosting agent has a headshot and a phone number",
+    });
+  }
+
   return checks;
+}
+
+/** One hosting agent and what we could not find for them. */
+interface HostingGap {
+  name: string;
+  hasPhoto: boolean;
+  hasPhone: boolean;
 }
 
 /**
@@ -679,6 +738,66 @@ export default function FinalReviewStage({
     [editedCaptions, activeCaptionPlatform],
   );
 
+  // 2026-08-14 — resolve each hosting agent's headshot + phone so the
+  // pre-flight can say when the hosting block will render incomplete. We ask
+  // the same endpoint the canvas asks (/api/agents/attribution), rather than
+  // threading hosting_agents_by_index down through PostBuilderClient, so
+  // this screen agrees with what actually gets drawn even when the post was
+  // generated before an agent's photo was added. Multi-OH only: single-mode
+  // posts have their own agent handling and their own pre-flight rows.
+  const [hostingGaps, setHostingGaps] = useState<HostingGap[] | null>(null);
+  const hostingNamesKey = useMemo(() => {
+    if (isSingle) return "";
+    const names = new Set<string>();
+    for (const meta of slideMetadata) {
+      const n = meta.hosting_agent_name?.trim();
+      if (n) names.add(n);
+    }
+    return [...names].sort().join("|");
+  }, [isSingle, slideMetadata]);
+
+  useEffect(() => {
+    if (!hostingNamesKey) {
+      setHostingGaps(null);
+      return;
+    }
+    const names = hostingNamesKey.split("|").filter(Boolean);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const results = await Promise.all(
+          names.map(async (name) => {
+            const res = await fetch(
+              `/api/agents/attribution?name=${encodeURIComponent(name)}`,
+            );
+            if (!res.ok) return null;
+            const json = (await res.json()) as {
+              ok?: boolean;
+              phone?: string | null;
+              photo_url?: string | null;
+            };
+            return {
+              name,
+              hasPhoto: Boolean(json.photo_url),
+              hasPhone: Boolean(json.phone),
+            } satisfies HostingGap;
+          }),
+        );
+        if (cancelled) return;
+        // A failed lookup returns null and is dropped rather than reported
+        // as missing — same reasoning as the open-house window block above,
+        // a false alarm here trains people to ignore the panel.
+        const resolved = results.filter((r): r is HostingGap => r !== null);
+        setHostingGaps(resolved.filter((r) => !r.hasPhoto || !r.hasPhone));
+      } catch {
+        if (!cancelled) setHostingGaps(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hostingNamesKey]);
+
   // 2026-07-24 — pre-flight checks. nowMs is captured once per mount;
   // minute-level drift while the screen is open doesn't matter for
   // whole-day OH windows.
@@ -701,6 +820,7 @@ export default function FinalReviewStage({
             slideMetadata,
             listingsByMls,
             nowMs: preflightNowMs,
+            hostingGaps,
           }),
     [
       isSingle,
@@ -713,6 +833,7 @@ export default function FinalReviewStage({
       slideMetadata,
       listingsByMls,
       preflightNowMs,
+      hostingGaps,
     ],
   );
 
@@ -920,6 +1041,17 @@ export default function FinalReviewStage({
                 }
               >
                 {c.label}
+                {c.href ? (
+                  <>
+                    {" "}
+                    <Link
+                      href={c.href}
+                      className="font-medium underline underline-offset-2 hover:text-neutral-900"
+                    >
+                      {c.hrefLabel ?? "Fix this"}
+                    </Link>
+                  </>
+                ) : null}
               </span>
             </li>
           ))}

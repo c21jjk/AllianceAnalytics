@@ -10,7 +10,9 @@ import type { PostBuilderListingWithOH } from "./listing-html-utils";
  *   - just_listed     → status='active', recent listing_date (default 60d)
  *   - just_sold       → status='sold', recent close_date (default 60d)
  *   - under_contract  → status='pending'
- *   - open_house      → status='active' AND has open_houses row in next 14d
+ *   - open_house      → status IN ('active','pending') AND has an open_houses
+ *                       row in next 14d (pending = under contract but the open
+ *                       house is still on the calendar; see 2026-08-14 note)
  *
  * All return the same PostBuilderListingWithOH shape so the UI doesn't
  * need to branch on post_type for rendering.
@@ -105,8 +107,19 @@ export async function fetchListingsForPostBuilder(
       // nullsFirst: false — a NULL listing_date sorts FIRST under DESC in
       // Postgres, so rows with no listing date would otherwise crowd out real
       // candidates in a small-limit query.
+      //
+      // 2026-08-14 (John): "Show the scheduled open house, even if it shows
+      // as pending." A listing that goes under contract keeps its advertised
+      // open house on the MLS calendar, and somebody still has to stand in
+      // that house on Sunday. Filtering to status='active' meant the
+      // dashboard Open Houses card listed it (getUpcomingOpenHouses never
+      // filtered on status) while the multi-OH picker silently dropped it —
+      // two surfaces disagreeing about the same weekend. What defines this
+      // card is having an upcoming open_houses row, not the contract status,
+      // so pending is allowed in and the row carries a badge instead.
+      // 'sold' and 'expired' stay out: those open houses are cancelled.
       q = q
-        .eq("status", "active")
+        .in("status", ["active", "pending"])
         .order("listing_date", { ascending: false, nullsFirst: false });
       break;
     }

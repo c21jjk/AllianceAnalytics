@@ -27,17 +27,23 @@ export default function InlineVideoModal({
   postings,
   defaultPlatform,
 }: InlineVideoModalProps) {
+  // 2026-08-15 — selection is keyed by post_id, not platform. A merged group
+  // can legitimately hold two postings on the SAME platform (e.g. two multi-OH
+  // campaigns posted the same day); keying by platform made the second chip
+  // unreachable (find() always returned the first) and rendered duplicate
+  // React keys. defaultPlatform still picks that platform's first posting.
   const initial = useMemo(() => {
-    if (defaultPlatform && postings.some((p) => p.platform === defaultPlatform)) {
-      return defaultPlatform;
+    if (defaultPlatform) {
+      const match = postings.find((p) => p.platform === defaultPlatform);
+      if (match) return match.post_id;
     }
-    return postings[0]?.platform;
+    return postings[0]?.post_id;
   }, [defaultPlatform, postings]);
 
-  const [active, setActive] = useState<Platform | undefined>(initial);
+  const [activeId, setActiveId] = useState<string | undefined>(initial);
 
   useEffect(() => {
-    if (open) setActive(initial);
+    if (open) setActiveId(initial);
   }, [open, initial]);
 
   useEffect(() => {
@@ -53,10 +59,13 @@ export default function InlineVideoModal({
     };
   }, [open, onClose]);
 
-  if (!open || !active) return null;
+  if (!open) return null;
 
-  const activePosting = postings.find((p) => p.platform === active);
-  const embedUrl = activePosting ? buildEmbedUrl(activePosting) : undefined;
+  const activePosting =
+    postings.find((p) => p.post_id === activeId) ?? postings[0];
+  if (!activePosting) return null;
+  const active = activePosting.platform;
+  const embedUrl = buildEmbedUrl(activePosting);
   // Portrait aspect for vertical video (Reels/TT/FB Reels). Square-ish
   // aspect for static image posts so they don't get letterboxed inside a
   // tall frame.
@@ -95,17 +104,17 @@ export default function InlineVideoModal({
           <div className="flex items-center gap-1">
             {postings.map((p) => (
               <button
-                key={p.platform}
+                key={p.post_id}
                 type="button"
-                onClick={() => setActive(p.platform)}
+                onClick={() => setActiveId(p.post_id)}
                 className={clsx(
                   "px-2.5 py-1 rounded-md text-xs font-medium transition",
-                  active === p.platform
+                  activeId === p.post_id
                     ? "bg-neutral-900 text-white"
                     : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200",
                 )}
               >
-                {platformLabel(p.platform)}
+                {chipLabel(p, postings)}
               </button>
             ))}
           </div>
@@ -154,6 +163,33 @@ export default function InlineVideoModal({
       </div>
     </div>
   );
+}
+
+/**
+ * Chip label — the platform name alone when it appears once in the group;
+ * "Facebook · 10:11 AM" (Eastern) when the same platform posted more than
+ * once, so two same-platform chips are tellable apart. Falls back to an
+ * ordinal ("Facebook #2") when posted_at is missing on older rows.
+ */
+function chipLabel(p: PlatformPosting, all: PlatformPosting[]): string {
+  const base = platformLabel(p.platform);
+  const samePlatform = all.filter((x) => x.platform === p.platform);
+  if (samePlatform.length < 2) return base;
+  const t = formatEasternTime(p.posted_at);
+  if (t) return `${base} · ${t}`;
+  return `${base} #${samePlatform.indexOf(p) + 1}`;
+}
+
+/** RULE (7/23): every render-path date formatter pins America/New_York. */
+function formatEasternTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  });
 }
 
 function buildEmbedUrl(p: PlatformPosting): string | undefined {

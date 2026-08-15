@@ -37,6 +37,13 @@ export interface PlatformPosting {
   is_video: boolean;
   /** IG/TT shortcode used to build embed URLs. Optional — falls back to permalink parsing. */
   shortcode?: string;
+  /**
+   * 2026-08-15 — ISO timestamp the post went live (posts.posted_at). Lets the
+   * preview modal disambiguate two same-platform postings in one merged group
+   * ("Facebook · 10:11 AM" vs "Facebook · 10:56 AM") instead of rendering two
+   * identical chips. Optional so synthesized/legacy postings stay valid.
+   */
+  posted_at?: string | null;
 }
 
 export type AiInsightTone = "info" | "success" | "warning" | "quiet";

@@ -123,12 +123,35 @@ function firstNameMatches(a: string, b: string): boolean {
 }
 
 /**
+ * Bright office codes for the 6 C21 Alliance offices on the Bright feed —
+ * mirrors `mls_feeds.office_filter` for short_code='bright' (analytics DB).
+ * Used ONLY to scope the bulk roster preload; the per-name lookup searches
+ * the full Bright roster so co-op hosts resolve too.
+ */
+const BRIGHT_ALLIANCE_OFFICE_IDS = [
+  "YALL02",
+  "YALL03",
+  "YALL05",
+  "YALL06",
+  "YALL10",
+  "C21ALLWW",
+];
+
+/**
  * Resolve an agent's phone number against the Alliance Dash roster.
  *
  * 2026-05-27 — REWRITTEN to query `cmc_active_agents` + `sjsr_active_agents`
  * in parallel. The previous implementation hit the `agents` table whose
  * `.phone` column is 0/259 populated in production. The active-feed tables
  * carry the real data (CMC: 2007/2088 phone1 populated; SJSR: 2655/3321).
+ *
+ * 2026-08-15 — ADDED `bright_active_agents` as a third source so Open House
+ * posts for Bright-feed listings (Gloucester/Burlington/Camden + Manahawkin)
+ * get a phone too. Bright's `phone1` is the RETS `Agent:Member` resource's
+ * `MemberPreferredPhone` — the same number Market View shows in Alliance
+ * Dash (verified live 2026-08-15). CMC/SJSR keep precedence: they carry the
+ * agent-entered cell for shore agents, while Bright's preferred slot is
+ * occasionally an office line. Bright fills the gap when CMC/SJSR miss.
  *
  * Three-pass strategy (per table, in parallel union semantics — return
  * the first non-null phone1 from any pass):
@@ -227,9 +250,9 @@ export async function fetchAgentPhone(
 
   const lastNeedle = last ?? first;
 
-  // ---- Pass 1: EXACT first+last across both tables, parallel ----
+  // ---- Pass 1: EXACT first+last across all three tables, parallel ----
   try {
-    const [cmcExact, sjsrExact] = await Promise.all([
+    const [cmcExact, sjsrExact, brightExact] = await Promise.all([
       supabase
         .from("cmc_active_agents")
         .select("phone1")
@@ -244,6 +267,13 @@ export async function fetchAgentPhone(
         .ilike("last_name", lastNeedle)
         .limit(1)
         .maybeSingle(),
+      supabase
+        .from("bright_active_agents")
+        .select("phone1")
+        .ilike("first_name", first)
+        .ilike("last_name", lastNeedle)
+        .limit(1)
+        .maybeSingle(),
     ]);
     console.log("[fetchAgentPhone] pass 1 result:", {
       agentName,
@@ -251,6 +281,8 @@ export async function fetchAgentPhone(
       cmcError: cmcExact.error?.message ?? null,
       sjsrHasRow: !!sjsrExact.data,
       sjsrError: sjsrExact.error?.message ?? null,
+      brightHasRow: !!brightExact.data,
+      brightError: brightExact.error?.message ?? null,
     });
     const cmcPhone = pickPhone(
       cmcExact.data as { phone1: string | null } | null,
@@ -266,6 +298,16 @@ export async function fetchAgentPhone(
       console.log("[fetchAgentPhone] returning pass-1 SJSR phone:", sjsrPhone);
       return sjsrPhone;
     }
+    const brightPhone = pickPhone(
+      brightExact.data as { phone1: string | null } | null,
+    );
+    if (brightPhone) {
+      console.log(
+        "[fetchAgentPhone] returning pass-1 Bright phone:",
+        brightPhone,
+      );
+      return brightPhone;
+    }
   } catch (err) {
     console.error("[fetchAgentPhone] pass 1 failed:", err);
     // Fall through to the last-name fallback path on any failure.
@@ -273,7 +315,7 @@ export async function fetchAgentPhone(
 
   // ---- Pass 2 + 3: LAST-NAME fallback + single-result tiebreaker ----
   try {
-    const [cmcRes, sjsrRes] = await Promise.all([
+    const [cmcRes, sjsrRes, brightRes] = await Promise.all([
       supabase
         .from("cmc_active_agents")
         .select("first_name, last_name, phone1")
@@ -281,6 +323,11 @@ export async function fetchAgentPhone(
         .limit(50),
       supabase
         .from("sjsr_active_agents")
+        .select("first_name, last_name, phone1")
+        .ilike("last_name", `%${lastNeedle}%`)
+        .limit(50),
+      supabase
+        .from("bright_active_agents")
         .select("first_name, last_name, phone1")
         .ilike("last_name", `%${lastNeedle}%`)
         .limit(50),
@@ -293,13 +340,19 @@ export async function fetchAgentPhone(
     };
     const cmcRows: AgentRow[] = (cmcRes.data as AgentRow[] | null) ?? [];
     const sjsrRows: AgentRow[] = (sjsrRes.data as AgentRow[] | null) ?? [];
-    const combined: AgentRow[] = [...cmcRows, ...sjsrRows];
+    const brightRows: AgentRow[] = (brightRes.data as AgentRow[] | null) ?? [];
+    // why this order: CMC/SJSR first so the shore feeds' agent-entered cell
+    // wins pass 2 when the same person exists in multiple rosters; Bright
+    // (MemberPreferredPhone) fills in when the shore feeds miss.
+    const combined: AgentRow[] = [...cmcRows, ...sjsrRows, ...brightRows];
     console.log("[fetchAgentPhone] pass 2/3 row counts:", {
       agentName,
       cmcRows: cmcRows.length,
       cmcError: cmcRes.error?.message ?? null,
       sjsrRows: sjsrRows.length,
       sjsrError: sjsrRes.error?.message ?? null,
+      brightRows: brightRows.length,
+      brightError: brightRes.error?.message ?? null,
     });
 
     // Pass 2 — normalize-compare each result's first+last against input.
@@ -406,4 +459,146 @@ export async function getAgentAttribution(
 
   cache.set(norm, resolving);
   return resolving;
+}
+
+
+// ---------------------------------------------------------------------------
+// Bulk phone index — for the /agents roster page (2026-08-14)
+// ---------------------------------------------------------------------------
+
+/**
+ * A phone we could resolve for one agent, and which pass found it.
+ */
+export interface ResolvedRosterPhone {
+  phone: string;
+  match: "exact" | "sole" | "prefix";
+}
+
+/**
+ * Pre-loaded CMC + SJSR + Bright(Alliance offices) rosters, indexed for
+ * in-memory matching.
+ *
+ * why this exists: `fetchAgentPhone` is correct but issues up to four
+ * round trips per name. The /agents page asks about ~260 agents at once,
+ * and 261 of those 262 have a NULL `mls_agents.phone` because the RETS
+ * feeds do not carry it — the real number lives in Alliance Dash. Calling
+ * the per-name function in a loop would be a thousand queries, and NOT
+ * calling it would make the page claim almost everybody is missing a phone
+ * when they are not. So: pull both rosters once, match with exactly the
+ * same passes, in memory.
+ *
+ * The passes below mirror `fetchAgentPhone` passes 1 to 4. If you change
+ * the matching there, change it here, or the roster page will disagree with
+ * what actually renders on a slide.
+ */
+export interface AllianceDashPhoneIndex {
+  lookup(fullName: string): ResolvedRosterPhone | null;
+  /** Row count loaded, for logging. */
+  size: number;
+}
+
+interface RosterRow {
+  first: string;
+  last: string;
+  phone: string;
+}
+
+/**
+ * Load both Alliance Dash rosters and return an in-memory matcher.
+ *
+ * Returns null when the ALLIANCE_DASH_* env vars are absent, which is the
+ * same "no client" condition `fetchAgentPhone` already handles by returning
+ * null. Callers should treat null as "cannot tell", NOT as "no phone".
+ */
+export async function loadAllianceDashPhoneIndex(): Promise<AllianceDashPhoneIndex | null> {
+  const supabase = getAllianceDashClient();
+  if (!supabase) return null;
+
+  const rows: RosterRow[] = [];
+  try {
+    // 2026-08-15 — bright_active_agents joined the preload. It is scoped to
+    // the 6 Alliance office codes because the full Bright roster is ~34k
+    // rows (way past the 5000 cap) and the roster page only asks about our
+    // own agents anyway. Order matters: CMC/SJSR rows land first so byNorm
+    // keeps their (agent-entered cell) number when the same agent also has
+    // a Bright row.
+    const [cmcRes, sjsrRes, brightRes] = await Promise.all([
+      supabase
+        .from("cmc_active_agents")
+        .select("first_name, last_name, phone1")
+        .limit(5000),
+      supabase
+        .from("sjsr_active_agents")
+        .select("first_name, last_name, phone1")
+        .limit(5000),
+      supabase
+        .from("bright_active_agents")
+        .select("first_name, last_name, phone1")
+        .in("office_id", BRIGHT_ALLIANCE_OFFICE_IDS)
+        .limit(5000),
+    ]);
+    type Row = {
+      first_name: string | null;
+      last_name: string | null;
+      phone1: string | null;
+    };
+    for (const r of [
+      ...(((cmcRes.data as Row[] | null) ?? [])),
+      ...(((sjsrRes.data as Row[] | null) ?? [])),
+      ...(((brightRes.data as Row[] | null) ?? [])),
+    ]) {
+      const phone = typeof r.phone1 === "string" ? r.phone1.trim() : "";
+      if (!phone) continue;
+      const first = (r.first_name ?? "").trim();
+      const last = (r.last_name ?? "").trim();
+      if (!first && !last) continue;
+      rows.push({ first, last, phone });
+    }
+  } catch (err) {
+    console.error("[alliance-dash] roster preload failed:", err);
+    return null;
+  }
+
+  const byNorm = new Map<string, string>();
+  const byLast = new Map<string, RosterRow[]>();
+  for (const row of rows) {
+    const norm = normalizeAgentName(`${row.first} ${row.last}`.trim());
+    if (norm && !byNorm.has(norm)) byNorm.set(norm, row.phone);
+    const lastKey = row.last.toLowerCase();
+    if (!lastKey) continue;
+    const list = byLast.get(lastKey) ?? [];
+    list.push(row);
+    byLast.set(lastKey, list);
+  }
+
+  return {
+    size: rows.length,
+    lookup(fullName: string): ResolvedRosterPhone | null {
+      const norm = normalizeAgentName(fullName);
+      if (!norm) return null;
+      const [first, last] = norm.split(" ");
+      if (!first) return null;
+
+      // Pass 1 + 2 collapse to the same thing once both sides are
+      // normalized: exact first+last.
+      const exact = byNorm.get(norm);
+      if (exact) return { phone: exact, match: "exact" };
+
+      const lastKey = (last ?? first).toLowerCase();
+      const candidates = byLast.get(lastKey) ?? [];
+
+      // Pass 3 — exactly one person carries that surname.
+      if (candidates.length === 1) {
+        return { phone: candidates[0].phone, match: "sole" };
+      }
+
+      // Pass 4 — "Ed" matches "Edward".
+      for (const row of candidates) {
+        if (row.first && firstNameMatches(first, row.first)) {
+          return { phone: row.phone, match: "prefix" };
+        }
+      }
+      return null;
+    },
+  };
 }

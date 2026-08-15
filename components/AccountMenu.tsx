@@ -135,6 +135,21 @@ export default function AccountMenu({ profile }: AccountMenuProps) {
             sub="Photo-to-video reel maker"
           />
 
+          {/* 2026-08-14 (John) — "if an Agent doesnt have a head shot or
+              phone # in the database, I need us (me, Cheryl and larissa) to
+              be able to add it". Team-visible on purpose: Cheryl and Larissa
+              are the ones who notice a missing headshot mid-build. Lives here
+              rather than the top nav because the nav is capped at six tabs
+              (see the tombstone in nav-config.tsx); the open house pre-flight
+              deep-links straight to /agents?filter=missing. */}
+          <MenuItem
+            href="/agents"
+            onSelect={() => setOpen(false)}
+            icon={<UsersIcon />}
+            label="Agents"
+            sub="Headshots and phone numbers"
+          />
+
           {isAdmin ? (
             <>
               <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-neutral-400">

@@ -1787,6 +1787,18 @@ function Step1Pick({
                         ${l.list_price.toLocaleString()}
                       </span>
                     ) : null}
+                    {/* 2026-08-14 (John): "Show the scheduled open house,
+                        even if it shows as pending." Pending listings now
+                        reach this picker (lib/post-builder/listings.ts), so
+                        the row has to say so — a host is still standing in
+                        that house on Sunday, but whoever builds the post
+                        should know the contract status before they write
+                        "come see it" copy. */}
+                    {l.status === "pending" ? (
+                      <span className="inline-flex items-center rounded-md bg-amber-50 ring-1 ring-amber-200 px-1.5 py-0.5 font-medium text-amber-800">
+                        Under contract
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <SelectionChip selectionIndex={selectionIndex} />

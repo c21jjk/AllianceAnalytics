@@ -228,6 +228,7 @@ function postingFromRow(row: DbPostRow): PlatformPosting {
     engagements,
     is_video: row.media_type === "video" || row.media_type === "reel",
     shortcode: shortcodeFor(platform, permalink),
+    posted_at: row.posted_at,
   };
 }
 
