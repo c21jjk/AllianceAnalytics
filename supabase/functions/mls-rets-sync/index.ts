@@ -974,6 +974,23 @@ function readClosePrice(row: RowMap): number | null {
   return null;
 }
 
+
+/**
+ * Collapse immediately-repeated words ("STREET STREET" -> "STREET",
+ * "Dr Dr" -> "Dr"). Both feeds ship doubled words: Bright bakes the suffix
+ * into StreetName and also sends StreetSuffix; Paragon's L_Address itself
+ * sometimes arrives pre-doubled. Case-insensitive, keeps the first casing.
+ */
+function collapseRepeatedWords(s: string): string {
+  const parts = s.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (const p of parts) {
+    if (out.length > 0 && out[out.length - 1].toLowerCase() === p.toLowerCase()) continue;
+    out.push(p);
+  }
+  return out.join(" ");
+}
+
 /**
  * Convert a raw Paragon row into our MappedListing shape.
  *
@@ -1012,7 +1029,9 @@ function mapRow(
   return {
     mls_number: mlsRaw.trim().toUpperCase(),
     source_mls: sourceMls,
-    address: addr.trim(),
+    // 2026-08-15 — Paragon's L_Address sometimes arrives with the suffix
+    // doubled ("4 Essex Dr Dr", "1934 West Ave Ave"); collapse repeats.
+    address: collapseRepeatedWords(addr.trim()),
     city: (row["L_City"] ?? "").trim() || null,
     state: "NJ",
     zip: (row["L_Zip"] ?? "").trim() || null,

@@ -340,11 +340,28 @@ function mapBrightStatus(raw: string | undefined): ListingStatus {
   return "expired";
 }
 
+
+/**
+ * Collapse immediately-repeated words ("STREET STREET" -> "STREET",
+ * "Dr Dr" -> "Dr"). Both feeds ship doubled words: Bright bakes the suffix
+ * into StreetName and also sends StreetSuffix; Paragon's L_Address itself
+ * sometimes arrives pre-doubled. Case-insensitive, keeps the first casing.
+ */
+function collapseRepeatedWords(s: string): string {
+  const parts = s.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (const p of parts) {
+    if (out.length > 0 && out[out.length - 1].toLowerCase() === p.toLowerCase()) continue;
+    out.push(p);
+  }
+  return out.join(" ");
+}
+
 function buildAddress(row: RowMap): string | null {
   const parts = ["StreetNumber", "StreetDirPrefix", "StreetName", "StreetSuffix", "StreetDirSuffix"]
     .map((k) => (row[k] ?? "").trim())
     .filter((p) => p.length > 0);
-  const joined = parts.join(" ").replace(/\s+/g, " ").trim();
+  const joined = collapseRepeatedWords(parts.join(" ").replace(/\s+/g, " ").trim());
   if (joined) return joined;
   const city = (row["City"] ?? "").trim();
   return city ? city : null;
