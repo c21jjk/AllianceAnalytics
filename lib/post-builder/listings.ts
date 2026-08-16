@@ -52,6 +52,9 @@ interface PropertyRow {
   close_date: string | null;
   unit_number: string | null;
   office_id: string | null;
+  alliance_role: "listing" | "buyer" | "both" | null;
+  buyer_agent_name: string | null;
+  buyer_office_name: string | null;
 }
 
 export async function fetchListingsForPostBuilder(
@@ -65,7 +68,7 @@ export async function fetchListingsForPostBuilder(
   let q = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number, office_id",
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number, office_id, alliance_role, buyer_agent_name, buyer_office_name",
     )
     .not("hero_image_url", "is", null)
     // 2026-08-04 — the caller's limit must NOT truncate the candidate pool for
@@ -270,6 +273,23 @@ async function attachOfficeMeta(
 }
 
 function toListing(r: PropertyRow): PostBuilderListingWithOH {
+  // 2026-08-15 (John) — "It needs to always be the C21 Alliance Agent."
+  // On buyer-side sales (alliance_role='buyer') properties.agent_name holds
+  // the CO-OP listing agent (e.g. 507 E Orchid: Joan Morey / Long & Foster)
+  // while OUR agent is buyer_agent_name (Barbara Hunt). Every Post Builder
+  // surface — the Agent Name layer plus the name-keyed photo and phone
+  // lookups — reads agent_name off this shape, so the swap happens here,
+  // once, for all of them. Mirrors the 5/19 rule: co-op agents are NEVER
+  // featured. 'both' keeps agent_name (we're on the list side too).
+  const allianceBuyerSide = r.alliance_role === "buyer";
+  const displayAgent =
+    allianceBuyerSide && r.buyer_agent_name?.trim()
+      ? r.buyer_agent_name
+      : r.agent_name;
+  const displayOffice =
+    allianceBuyerSide && r.buyer_office_name?.trim()
+      ? r.buyer_office_name
+      : r.listing_office_name;
   return {
     id: r.id,
     mls_number: r.mls_number,
@@ -287,8 +307,8 @@ function toListing(r: PropertyRow): PostBuilderListingWithOH {
     property_type: r.property_type,
     public_remarks: r.public_remarks,
     hero_image_url: r.hero_image_url,
-    listing_office_name: r.listing_office_name,
-    agent_name: r.agent_name,
+    listing_office_name: displayOffice,
+    agent_name: displayAgent,
     listing_date: r.listing_date,
     status: r.status,
     unit_number: r.unit_number,
