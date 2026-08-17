@@ -427,11 +427,36 @@ async function fetchListingById(
       // 2026-07-29: square_feet added; it was omitted from this select so
       // every Square Ft placeholder rendered blank (mapListingToPayload reads
       // listing.square_feet into squareFeet).
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number",
+      // 2026-08-17: alliance_role + buyer_agent_name + buyer_office_name
+      // added for the buyer-side swap below and the agent_role_label bound
+      // field ("Listing Agent" / "Buyers Agent" / "Dual Agent").
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, close_date, unit_number, alliance_role, buyer_agent_name, buyer_office_name",
     )
     .eq("id", id)
     .maybeSingle();
   if (error || !data) return null;
+  // 2026-08-17 — mirror of the 8/15 toListing swap (lib/post-builder/
+  // listings.ts). This page re-fetches the listing itself, so without the
+  // same swap a buyer-side sale (alliance_role='buyer') rendered the CO-OP
+  // listing agent from properties.agent_name onto the final PNG — and the
+  // name-keyed headshot/phone resolvers above followed it. Co-op agents are
+  // NEVER featured (5/19 rule): on 'buyer' rows the Alliance agent is
+  // buyer_agent_name / buyer_office_name. 'listing'/'both' unchanged.
+  const row = data as {
+    alliance_role?: string | null;
+    buyer_agent_name?: string | null;
+    buyer_office_name?: string | null;
+    agent_name?: string | null;
+    listing_office_name?: string | null;
+  };
+  if (row.alliance_role === "buyer") {
+    if (row.buyer_agent_name?.trim()) {
+      row.agent_name = row.buyer_agent_name;
+    }
+    if (row.buyer_office_name?.trim()) {
+      row.listing_office_name = row.buyer_office_name;
+    }
+  }
   // why: PostBuilderListing has more fields than we strictly need here; we
   // cast through unknown because the canvas-editor binding code only
   // touches the fields above (hero_image_url, address, list_price, etc.).

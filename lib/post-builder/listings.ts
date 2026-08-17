@@ -309,6 +309,11 @@ function toListing(r: PropertyRow): PostBuilderListingWithOH {
     hero_image_url: r.hero_image_url,
     listing_office_name: displayOffice,
     agent_name: displayAgent,
+    // 2026-08-17 (John): side-of-transaction label for Just Sold templates
+    // ("Listing Agent" / "Buyers Agent" / "Dual Agent"). Passed through raw —
+    // the display swap above already resolved WHO is featured; this says
+    // which side that person worked.
+    alliance_role: r.alliance_role,
     listing_date: r.listing_date,
     status: r.status,
     unit_number: r.unit_number,

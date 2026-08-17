@@ -264,6 +264,28 @@ export function resolveTextBoundField(
       return STATUS_LABEL_MAP[listing.status] ?? "";
     case "agent_name":
       return listing.agentName ?? "";
+    case "agent_role_label": {
+      // 2026-08-17 (John) — "we need to list 'Buyers Agent' or 'Listing
+      // Agent' under the Agents name, to identify which side of the
+      // transaction the agent represented."
+      //
+      // Resolves from properties.alliance_role, threaded through
+      // PostBuilderListing → mapListingToPayload (and the headless render
+      // page's own listing fetch). The 8/15 toListing swap already puts the
+      // ALLIANCE buyer agent's name in agentName on 'buyer' rows, so this
+      // label always describes the featured Alliance agent. Wording per
+      // John 8/17: no apostrophe in "Buyers Agent"; 'both' → "Dual Agent".
+      // null/undefined defaults to "Listing Agent" — properties.agent_name
+      // is the listing agent on every non-buyer-side row.
+      switch (listing.allianceRole) {
+        case "buyer":
+          return "Buyers Agent";
+        case "both":
+          return "Dual Agent";
+        default:
+          return "Listing Agent";
+      }
+    }
     case "agent_phone": {
       // 2026-08-06 (John) — "the actual photo and agent phone # (which we def
       // have access to) are not populating the slide."

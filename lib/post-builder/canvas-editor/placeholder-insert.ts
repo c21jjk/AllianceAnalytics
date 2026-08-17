@@ -79,6 +79,9 @@ export const PLACEHOLDER_GROUPS: readonly PlaceholderGroup[] = [
     fields: [
       { field: "agent_photo", label: "Agent Photo", kind: "image" },
       { field: "agent_name", label: "Agent Name", kind: "text" },
+      // 2026-08-17 (John): Just Sold side-of-transaction label — resolves to
+      // "Listing Agent" / "Buyers Agent" / "Dual Agent" per alliance_role.
+      { field: "agent_role_label", label: "Agent Role", kind: "text" },
       { field: "agent_title", label: "Agent Title", kind: "text" },
       { field: "agent_phone", label: "Agent Phone", kind: "text" },
       { field: "agent_email", label: "Agent Email", kind: "text" },
@@ -130,7 +133,14 @@ const AGENT_FIELDS_BY_CATEGORY: Record<string, ReadonlySet<BoundField>> = {
     "hosting_agent_name",
     "hosting_agent_phone",
   ]),
-  just_sold: new Set<BoundField>(["agent_photo", "agent_name"]),
+  // 2026-08-17: agent_role_label joins the 8/04 pair — the side-of-
+  // transaction label renders on every Just Sold post, so authors may
+  // place it. Phone, email and title remain deliberately not granted.
+  just_sold: new Set<BoundField>([
+    "agent_photo",
+    "agent_name",
+    "agent_role_label",
+  ]),
 };
 
 /** True for any bound field in the agent family (generic or hosting). */

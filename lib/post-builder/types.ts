@@ -74,6 +74,17 @@ export interface PostBuilderListing {
   hero_image_url: string | null;
   listing_office_name: string | null;
   agent_name: string | null;
+  /**
+   * 2026-08-17 (John): which side of the transaction Alliance represented
+   * (properties.alliance_role). Drives the `agent_role_label` bound field on
+   * Just Sold templates ("Listing Agent" / "Buyers Agent" / "Dual Agent").
+   * Note agent_name is ALREADY the display agent by the time this shape
+   * exists — toListing swaps in buyer_agent_name on 'buyer' rows (8/15 fix) —
+   * so this field only labels the side; it never changes who is featured.
+   * Optional: legacy callers that build this shape without it keep compiling
+   * and simply default to the "Listing Agent" label.
+   */
+  alliance_role?: "listing" | "buyer" | "both" | null;
   listing_date: string | null;
   status: "active" | "pending" | "sold" | "expired";
   /** Condo/townhouse/lot identifier from Paragon's L_Address2 — e.g.

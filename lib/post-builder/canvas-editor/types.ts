@@ -122,6 +122,11 @@ export type TextBoundField =
   | "tagline" // marketing line (auto-generated upstream, see captions.ts)
   | "status_label" // "JUST LISTED" / "JUST SOLD" / "PRICE REDUCED" / "UNDER CONTRACT" / "OPEN HOUSE"
   | "agent_name" // "John Koch"
+  // why: 2026-08-17 (John) — Just Sold posts must say which SIDE of the
+  // transaction the featured agent represented. Resolves from
+  // MLSListingPayload.allianceRole: 'buyer' → "Buyers Agent",
+  // 'both' → "Dual Agent", 'listing'/null → "Listing Agent".
+  | "agent_role_label" // "Listing Agent" / "Buyers Agent" / "Dual Agent"
   | "agent_phone" // "(609) 522-1212"
   | "agent_email" // "c21anj@gmail.com"
   | "agent_title" // "Broker / Co-Owner"
@@ -674,6 +679,14 @@ export interface MLSListingPayload {
   agentTitle: string | null;
   /** Agent headshot URL. Null if not configured for this agent. */
   agentPhotoUrl: string | null;
+  /**
+   * Which side of the transaction Alliance represented (properties.
+   * alliance_role). Drives the `agent_role_label` bound field on Just Sold
+   * templates: 'buyer' → "Buyers Agent", 'both' → "Dual Agent",
+   * 'listing'/null/undefined → "Listing Agent". Optional so older payload
+   * constructors (fixtures, reel manifest) stay valid without edits.
+   */
+  allianceRole?: "listing" | "buyer" | "both" | null;
 
   // --- hosting agent (Open House only) ---
   /**

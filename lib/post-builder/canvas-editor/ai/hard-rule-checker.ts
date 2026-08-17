@@ -47,6 +47,10 @@ const RESTRICTED_AGENT_CATEGORIES = new Set([
 const ALLOWED_AGENT_FIELDS_BY_CATEGORY: Record<string, Set<string>> = {
   just_sold: new Set([
     "agent_name",
+    // 2026-08-17: side-of-transaction label ("Listing Agent" / "Buyers
+    // Agent" / "Dual Agent") — ships on all three Just Sold templates, so
+    // the AI-design validator must not strip it.
+    "agent_role_label",
     "agent_photo",
     "hosting_agent_name",
     "hosting_agent_photo",

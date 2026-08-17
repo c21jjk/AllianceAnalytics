@@ -186,6 +186,10 @@ export function mapListingToPayload(
     agentEmail: ctx.agentEmail ?? null,
     agentTitle: ctx.agentTitle ?? null,
     agentPhotoUrl: ctx.agentPhotoUrl ?? null,
+    // 2026-08-17: side-of-transaction for the `agent_role_label` bound field
+    // (Just Sold templates). Optional on both shapes; absent → resolver
+    // defaults to "Listing Agent".
+    allianceRole: listing.alliance_role ?? null,
 
     // office
     officeName: ctx.officeName ?? listing.listing_office_name ?? null,
