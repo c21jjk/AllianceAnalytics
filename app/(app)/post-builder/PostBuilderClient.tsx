@@ -21,6 +21,8 @@ import {
   Flag,
   Download,
   HelpCircle,
+  Clock,
+  Film,
 } from "lucide-react";
 import type {
   AiDesignProvenance,
@@ -742,7 +744,20 @@ export default function PostBuilderClient({
   // successful schedule as a failure. Rendered as a green banner next to
   // the error banner; cleared alongside error whenever the user changes
   // post type / listing so it can't linger against a different post.
-  const [scheduleNotice, setScheduleNotice] = useState<string | null>(null);
+  // 2026-08-19 — post-success confirmation overlay (John: "after a post has
+  // successfully posted, there should be some sort of notification in the
+  // center of the screen ... then prompts the user to click the button to
+  // return back to the main dashboard"). Non-null after a publish where at
+  // least one platform succeeded, or after a successful schedule. Replaces
+  // BOTH the old results-inside-PostNowModal success state (which ended on a
+  // bare "Close" with no next step) and the small green scheduleNotice
+  // banner. Cleared by the same invalidation points that used to clear
+  // scheduleNotice, and by the user leaving via either overlay button.
+  const [postSuccess, setPostSuccess] = useState<
+    | { kind: "posted"; results: PostNowResult[] }
+    | { kind: "scheduled"; scheduledFor: ScheduledFor }
+    | null
+  >(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
   // Phase 2L (2026-05-22) — auto-scroll the error banner into view when an
@@ -3044,7 +3059,7 @@ export default function PostBuilderClient({
     setCaptionResult(null);
     setEditedCaption("");
     setError(null);
-    setScheduleNotice(null);
+    setPostSuccess(null);
     setSearch("");
     setAvailablePhotos([]);
     setSelectedPhotoIndex(0);
@@ -3067,14 +3082,14 @@ export default function PostBuilderClient({
     setFormat(next);
     setRenderResult(null);
     setError(null);
-    setScheduleNotice(null);
+    setPostSuccess(null);
   }
 
   function changeVariant(next: PostVariant) {
     setVariantId(next);
     setRenderResult(null);
     setError(null);
-    setScheduleNotice(null);
+    setPostSuccess(null);
     // Keep the photo offset; the new variant just slices a different
     // window. If we end up beyond the wrap point that's fine — the slice
     // wraps modulo availablePhotos.length.
@@ -3098,7 +3113,7 @@ export default function PostBuilderClient({
     setEditingSlideIndex(null);
     setGeneratedPostId(null);
     setError(null);
-    setScheduleNotice(null);
+    setPostSuccess(null);
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -3235,6 +3250,17 @@ export default function PostBuilderClient({
       if (!json.ok) {
         setError(`Post Now failed: ${json.error}`);
         setPostNowResults(null);
+      } else if (json.results.some((r) => r.ok)) {
+        // 2026-08-19 — at least one platform published: close the modal and
+        // hand off to the centered PostSuccessOverlay ("Your post is live" +
+        // Back to Dashboard). Partial failures ride along on the overlay so
+        // an FB-ok/IG-failed publish is still impossible to miss. Only the
+        // all-failed case keeps the old results-inside-the-modal rendering,
+        // because there the error details + re-auth hints are the point.
+        setPostNowOpen(false);
+        setPostNowArmedAt(null);
+        setPostNowResults(null);
+        setPostSuccess({ kind: "posted", results: json.results });
       } else {
         setPostNowResults(json.results);
       }
@@ -3310,18 +3336,17 @@ export default function PostBuilderClient({
         setError(`Schedule failed: ${result.error}`);
         return;
       }
-      // 2026-07-29: success now flows through scheduleNotice (green
-      // banner) instead of setError; a successful schedule rendered in the
-      // rose error banner with an AlertTriangle read as a failure. Also
-      // formats the instant in America/New_York with an explicit "ET"
-      // suffix (was browser-local with the UI claiming ET).
-      const earliestIso = Object.values(result.scheduled_for)
-        .filter((v): v is string => typeof v === "string")
-        .sort()[0];
-      if (earliestIso) {
-        setError(null);
-        setScheduleNotice(`Scheduled for ${formatHumanScheduleHint(earliestIso)}`);
-      }
+      // 2026-08-19: success now lands on the centered PostSuccessOverlay
+      // (clock variant) with the per-platform times and a "Back to
+      // Dashboard" primary action, replacing the small green banner that
+      // was easy to miss and answered no "what do I click now?" question
+      // (2026-07-29 note: keep formatting these instants in
+      // America/New_York with an explicit "ET" suffix, never browser-local).
+      // result.scheduled_for is the MERGED map after the write, so a
+      // re-schedule shows every platform's current time, not just the
+      // ones from this submit.
+      setError(null);
+      setPostSuccess({ kind: "scheduled", scheduledFor: result.scheduled_for });
       closePostNow();
     } catch (e) {
       setError(
@@ -3339,6 +3364,9 @@ export default function PostBuilderClient({
     setPostNowOpen(false);
     setPostNowResults(null);
     setPostNowArmedAt(null);
+    // 2026-08-19 — the success overlay describes a specific published/
+    // scheduled row; a different listing or a fresh render invalidates it.
+    setPostSuccess(null);
   }, [selectedMls, renderResult?.image_url]);
 
   // If the listing only has N photos but the user has v4 (2) or v5 (3) selected,
@@ -3363,10 +3391,14 @@ export default function PostBuilderClient({
     // Keep results so user can see what just happened until they close.
   }
 
-  // 2026-06-05 — "Make it a Reel" post-publish on-ramp (C). Seeds a draft
-  // Reel row from the just-published carousel (branded hero + the carousel
-  // photos) and navigates into the dedicated Reel editor to tune + render.
-  // Fired from the Post Now success footer; only offered for carousel posts.
+  // 2026-06-05 — "Make it a Reel" manual on-ramp. Seeds a draft Reel row
+  // from the current carousel (branded hero + the carousel photos) and
+  // navigates into the dedicated Reel editor to tune + render.
+  // 2026-08-19 — the post-publish copy of this button (PostNowModal success
+  // footer) was removed as redundant with the automatic reel pipeline
+  // (lib/post-builder/auto-reel.ts). The only remaining caller is the
+  // pre-publish doorway on the build screen's carousel strip, which exists
+  // so a Reel can be built/tested WITHOUT publishing first.
   const [makingReel, setMakingReel] = useState(false);
   const handleMakeReel = useCallback(async (): Promise<void> => {
     if (!selectedListing || carouselSlides.length === 0) return;
@@ -3441,7 +3473,7 @@ export default function PostBuilderClient({
     if (!selectedListing) return;
     setGenerating(true);
     setError(null);
-    setScheduleNotice(null);
+    setPostSuccess(null);
     setRenderResult(null);
     setCaptionResult(null);
     setEditedCaption("");
@@ -3542,7 +3574,7 @@ export default function PostBuilderClient({
     }
     setGenerating(true);
     setError(null);
-    setScheduleNotice(null);
+    setPostSuccess(null);
     setRenderResult(null);
     setCaptionResult(null);
     setEditedCaption("");
@@ -3651,7 +3683,7 @@ export default function PostBuilderClient({
     }
     setGenerating(true);
     setError(null);
-    setScheduleNotice(null);
+    setPostSuccess(null);
     setAiError(null);
     setAiCaptionHint(null);
     setRenderResult(null);
@@ -4107,13 +4139,41 @@ export default function PostBuilderClient({
       editedCaptions.instagram.trim().length > 0 ||
       editedCaptions.facebook.trim().length > 0 ||
       editedCaptions.tiktok.trim().length > 0;
+    // 2026-08-19 — one line of context on the success overlay so "Your post
+    // is live" is verifiably about THIS post. Mirrors the singleSubtitle /
+    // listingLabel framing used elsewhere in this branch.
+    const successSubtitle = isMultiOHPost
+      ? `Multi-property Open House · ${carouselSlides.length} slide${
+          carouselSlides.length === 1 ? "" : "s"
+        }`
+      : [
+          POST_TYPES.find((t) => t.id === postType)?.label ?? postType,
+          [selectedListing?.address, selectedListing?.city]
+            .filter(Boolean)
+            .join(", "),
+        ]
+          .filter(Boolean)
+          .join(" · ");
+    // 2026-08-19 — client-side mirror of maybeKickoffAutoReel's guards
+    // (lib/post-builder/auto-reel.ts: image post, not test mode, has
+    // property anchor + hero + carousel photos; multi-OH needs ≥2 slides).
+    // Drives the "a Reel is coming automatically" line on the success
+    // overlay. Approximation on purpose: when in doubt the line is simply
+    // not shown — it must never promise a reel the server will skip.
+    const autoReelExpected =
+      !currentTestMode &&
+      Boolean(renderResult?.image_url) &&
+      (isMultiOHPost
+        ? carouselSlides.length >= 2
+        : carouselSlides.length >= 1 && Boolean(selectedListing?.id));
     return (
       <div className="space-y-5">
-        {/* 2026-08-08 — these two banners used to live only in the build
-            screen's markup below, which stopped rendering the moment Final
-            Review took over the publish step. A "Scheduled for Saturday
-            9:00am" confirmation and any post-close failure were both
-            invisible from the only screen that can produce them. */}
+        {/* 2026-08-08 — this banner used to live only in the build screen's
+            markup below, which stopped rendering the moment Final Review
+            took over the publish step, leaving post-close failures
+            invisible from the only screen that can produce them. (The green
+            schedule banner that sat beside it became the PostSuccessOverlay
+            on 2026-08-19.) */}
         {error ? (
           <div
             // Same ref as the build screen's banner. The two branches are
@@ -4125,15 +4185,6 @@ export default function PostBuilderClient({
           >
             <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
             <span>{error}</span>
-          </div>
-        ) : null}
-        {scheduleNotice ? (
-          <div
-            role="status"
-            className="inline-flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-          >
-            <Check size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
-            <span>{scheduleNotice}</span>
           </div>
         ) : null}
         <FinalReviewStage
@@ -4265,16 +4316,23 @@ export default function PostBuilderClient({
                 ? { by: activeNote.held_by, body: activeNote.latest_body }
                 : null
             }
-            /* 2026-06-05 — post-publish "Make it a Reel" on-ramp. Carousel
-               posts only, and the modal further gates on a successful
-               publish. Multi-OH is excluded: handleMakeReel builds from a
-               single listing's carousel. */
-            onMakeReel={
-              !isMultiOHPost && carouselSlides.length >= 1
-                ? handleMakeReel
-                : undefined
+          />
+        ) : null}
+        {/* 2026-08-19 — the centered post-success confirmation. Mounted
+            AFTER the PostNowModal block but the two are never up together:
+            submitPostNow / submitSchedule close the modal in the same
+            state update that sets postSuccess. */}
+        {postSuccess ? (
+          <PostSuccessOverlay
+            kind={postSuccess.kind}
+            results={postSuccess.kind === "posted" ? postSuccess.results : []}
+            scheduledFor={
+              postSuccess.kind === "scheduled" ? postSuccess.scheduledFor : null
             }
-            makingReel={makingReel}
+            subtitle={successSubtitle}
+            autoReelExpected={postSuccess.kind === "posted" && autoReelExpected}
+            onDashboard={() => router.push("/")}
+            onStay={() => setPostSuccess(null)}
           />
         ) : null}
       </div>
@@ -4970,19 +5028,10 @@ export default function PostBuilderClient({
                 </div>
               ) : null}
 
-              {/* 2026-07-29: schedule SUCCESS banner. Green + Check so a
-                  successful "Scheduled for …" no longer masquerades as an
-                  error (it previously rode the rose banner above). Cleared
-                  wherever error clears on user changes. */}
-              {scheduleNotice ? (
-                <div
-                  role="status"
-                  className="mb-3 inline-flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-                >
-                  <Check size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
-                  <span>{scheduleNotice}</span>
-                </div>
-              ) : null}
+              {/* 2026-08-19: the green "Scheduled for …" banner that lived
+                  here became the centered PostSuccessOverlay (scheduling
+                  can only happen from Final Review, so this build-screen
+                  copy could never fire anyway). */}
 
               {/* Phase 2 AI Design — surface the streamed pipeline status
                   in a single line above the preview. Stays visible only
@@ -5836,15 +5885,6 @@ interface PostNowModalProps {
    * out after the doors open is a wasted post).
    */
   earliestOpenHouseMs?: number | null;
-  /**
-   * 2026-06-05 — "Make it a Reel" post-publish on-ramp. When provided AND the
-   * post is a carousel (slideCount >= 2) AND at least one platform published
-   * successfully, the success footer offers to turn the carousel into a Reel.
-   * Omitted on non-carousel posts. The parent seeds the Reel draft + navigates.
-   */
-  onMakeReel?: () => void;
-  /** True while the Reel seed action + navigation is in flight. */
-  makingReel?: boolean;
 }
 
 const POST_NOW_ARM_MS = 2000;
@@ -5871,8 +5911,6 @@ function PostNowModal(props: PostNowModalProps) {
     error,
     onClearError,
     slideCount,
-    onMakeReel,
-    makingReel,
     earliestOpenHouseMs,
   } = props;
 
@@ -6529,50 +6567,21 @@ function PostNowModal(props: PostNowModalProps) {
 
         <div className="p-5 border-t border-neutral-200 bg-neutral-50 rounded-b-2xl">
           {results ? (
-            (() => {
-              // 2026-06-05 — offer "Make it a Reel" only after a carousel post
-              // actually published to at least one platform. The branded hero
-              // + the carousel photos become a cinematic Reel in the Reel
-              // editor. Non-carousel posts (or any all-failed publish) just
-              // see Close.
-              const anyPosted = results.some((r) => r.ok);
-              const canMakeReel = Boolean(onMakeReel) && slideCount >= 2 && anyPosted;
-              if (!canMakeReel) {
-                return (
-                  <button
-                    type="button"
-                    onClick={onCancel}
-                    className="btn-primary w-full"
-                  >
-                    Close
-                  </button>
-                );
-              }
-              return (
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={onMakeReel}
-                    disabled={makingReel}
-                    className="btn-primary w-full inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
-                  >
-                    <Sparkles size={14} aria-hidden="true" />
-                    {makingReel ? "Building your Reel…" : "Now make it a Reel"}
-                    {!makingReel ? (
-                      <ChevronRight size={14} aria-hidden="true" />
-                    ) : null}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onCancel}
-                    disabled={makingReel}
-                    className="btn-secondary w-full disabled:opacity-60"
-                  >
-                    Not now
-                  </button>
-                </div>
-              );
-            })()
+            // 2026-08-19 — results only render in-modal when EVERY platform
+            // failed (any success closes this modal and opens the
+            // PostSuccessOverlay instead), so the footer is just Close. The
+            // "Now make it a Reel" offer that lived here was removed: the
+            // auto-reel pipeline (2026-07-23) already spawns a Reel from
+            // every qualifying publish, so the manual prompt only produced
+            // duplicates. The pre-publish "Make it a Reel" doorway on the
+            // build screen stays — it's the no-publish testing path.
+            <button
+              type="button"
+              onClick={onCancel}
+              className="btn-primary w-full"
+            >
+              Close
+            </button>
           ) : tab === "schedule" ? (
             // Schedule tab — primary action queues to /api/cron drain.
             // No hold-to-confirm; scheduling is reversible (unschedule
@@ -6670,6 +6679,181 @@ function PostNowModal(props: PostNowModalProps) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 2026-08-19: PostSuccessOverlay — the centered "it worked, here's what to
+// click next" screen (John: after a post posts there was nothing telling him
+// what to do; the modal's results ended on a bare "Close"). Shown when a
+// publish succeeded on ≥1 platform (green check variant, partial failures
+// listed in rose so an FB-ok/IG-failed publish stays visible) or when a
+// schedule was written (clock variant with the per-platform times). One
+// primary action — Back to Dashboard — plus a quiet "Stay in Post Builder"
+// link for building another post without re-navigating (Option A, approved
+// from mockups 2026-08-19).
+// ---------------------------------------------------------------------------
+
+interface PostSuccessOverlayProps {
+  kind: "posted" | "scheduled";
+  /** Per-platform publish results. Only meaningful when kind === "posted". */
+  results: PostNowResult[];
+  /** Per-platform times (merged map). Only meaningful when kind === "scheduled". */
+  scheduledFor: ScheduledFor | null;
+  /** One-line context: post type + address, or the multi-OH slide framing. */
+  subtitle: string;
+  /** True when the auto-reel pipeline is expected to spawn a follow-up Reel. */
+  autoReelExpected: boolean;
+  onDashboard: () => void;
+  onStay: () => void;
+}
+
+function PostSuccessOverlay(props: PostSuccessOverlayProps) {
+  const {
+    kind,
+    results,
+    scheduledFor,
+    subtitle,
+    autoReelExpected,
+    onDashboard,
+    onStay,
+  } = props;
+  const posted = kind === "posted";
+  const scheduleRows = Object.entries(scheduledFor ?? {}).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === "string" && entry[1].length > 0,
+  );
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={posted ? "Post published" : "Post scheduled"}
+    >
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
+        {posted ? (
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 ring-2 ring-emerald-200">
+            <Check
+              size={34}
+              aria-hidden="true"
+              className="text-emerald-600"
+              strokeWidth={2.5}
+            />
+          </div>
+        ) : (
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gold-50 ring-2 ring-gold-200">
+            <Clock
+              size={32}
+              aria-hidden="true"
+              className="text-gold-700"
+              strokeWidth={2}
+            />
+          </div>
+        )}
+        <h2 className="text-xl font-bold text-neutral-900">
+          {posted ? "Your post is live" : "Your post is scheduled"}
+        </h2>
+        {subtitle ? (
+          <p className="mt-1 mb-4 text-[13px] text-neutral-500">{subtitle}</p>
+        ) : (
+          <div className="mb-4" />
+        )}
+        {posted ? (
+          <div className="mb-4 space-y-2 text-left">
+            {results.map((r) => (
+              <div
+                key={r.platform}
+                className={[
+                  "rounded-lg px-3 py-2 text-sm ring-1",
+                  r.ok
+                    ? "bg-emerald-50 ring-emerald-200 text-emerald-900"
+                    : "bg-rose-50 ring-rose-200 text-rose-900",
+                ].join(" ")}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 font-semibold capitalize">
+                    {r.ok ? (
+                      <Check size={14} aria-hidden="true" />
+                    ) : (
+                      <X size={14} aria-hidden="true" />
+                    )}
+                    {r.platform}
+                  </span>
+                  {r.ok && r.permalink ? (
+                    <a
+                      href={r.permalink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-0.5 text-xs underline text-emerald-800 hover:text-emerald-900"
+                    >
+                      View post
+                      <ChevronRight size={12} aria-hidden="true" />
+                    </a>
+                  ) : null}
+                </div>
+                {/* 2026-07-17 (carried over from the modal's results view) —
+                    FB materializes API gallery posts on the Page timeline a
+                    few minutes AFTER the photos appear; say so, so nobody
+                    concludes the publish failed and re-posts a duplicate. */}
+                {r.ok && r.platform === "facebook" ? (
+                  <div className="mt-1 text-[11px] leading-snug text-emerald-800/80">
+                    Facebook can take a few minutes to show this on the Page
+                    timeline (the photos appear under Photos first). It&apos;s
+                    live. No need to re-post.
+                  </div>
+                ) : null}
+                {!r.ok && r.error ? (
+                  <div className="mt-1 text-xs leading-relaxed">{r.error}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mb-4 space-y-2 text-left">
+            {scheduleRows.map(([platform, iso]) => (
+              <div
+                key={platform}
+                className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm ring-1 ring-neutral-200"
+              >
+                <span className="font-semibold capitalize text-neutral-800">
+                  {platform}
+                </span>
+                <span className="text-xs text-neutral-600">
+                  {formatHumanScheduleHint(iso)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {posted && autoReelExpected ? (
+          <div className="mb-5 flex items-start gap-2 rounded-lg bg-neutral-50 px-3 py-2 text-left text-xs leading-snug text-neutral-600 ring-1 ring-neutral-200">
+            <Film
+              size={14}
+              aria-hidden="true"
+              className="mt-0.5 shrink-0 text-gold-600"
+            />
+            <span>
+              A Reel version of this post will be created and published
+              automatically in about 45 minutes.
+            </span>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={onDashboard}
+          className="btn-primary w-full"
+        >
+          Back to Dashboard
+        </button>
+        <button
+          type="button"
+          onClick={onStay}
+          className="focus-ring mt-2 w-full rounded py-2 text-sm font-medium text-neutral-400 underline underline-offset-4 hover:text-neutral-600"
+        >
+          Stay in Post Builder
+        </button>
       </div>
     </div>
   );
