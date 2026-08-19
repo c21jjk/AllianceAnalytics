@@ -39,7 +39,12 @@ import type {
   SchedulablePlatform,
   SlideMetadata,
 } from "@/lib/post-builder/types";
-import { OPTIMAL_POSTING_WINDOWS } from "@/lib/post-builder/types";
+import {
+  OPTIMAL_POSTING_WINDOWS,
+  isMultiEventTemplateId,
+  multiEventKindFromTemplateId,
+  type RoundupType,
+} from "@/lib/post-builder/types";
 import {
   archiveBrandAssetAction,
   listCustomTemplatesAction,
@@ -343,6 +348,23 @@ const POST_TYPES: { id: PostType; label: string; helper: string }[] = [
   { id: "open_house", label: "Open House", helper: "Upcoming OH" },
   { id: "price_reduction", label: "Price Reduced", helper: "Active · pick" },
 ];
+
+// 2026-08-19 — Under Contract + Price Reduced singles were replaced by the
+// weekly roundup posts (John, 8/19: "a single post for each property may be
+// too much and too redundant"; roundup replaces singles). The two ids stay
+// in POST_TYPES (labels, resume handling, saved-state fallbacks all read
+// it), but the segmented picker only offers these:
+const PICKABLE_POST_TYPES = POST_TYPES.filter(
+  (pt) => pt.id !== "under_contract" && pt.id !== "price_reduction",
+);
+
+/** Display label per multi-slide event kind (Final Review header, publish
+ *  modal label, success overlay subtitle). */
+const MULTI_EVENT_LABELS: Record<RoundupType, string> = {
+  open_house: "Multi-property Open House",
+  under_contract: "Under Contract Roundup",
+  price_reduction: "Price Improvement Roundup",
+};
 
 // 2026-07-29: the FORMATS validation list went away with the format
 // restore below; nothing else consumed it.
@@ -1080,7 +1102,10 @@ export default function PostBuilderClient({
       return;
     }
     const savedPT = localStorage.getItem(STORAGE_KEY_POST_TYPE) as PostType | null;
-    if (savedPT && POST_TYPES.some((p) => p.id === savedPT)) {
+    // 2026-08-19 — validate against the PICKABLE set: a stored
+    // under_contract / price_reduction from before the roundup switch
+    // would otherwise restore a tab that no longer exists in the strip.
+    if (savedPT && PICKABLE_POST_TYPES.some((p) => p.id === savedPT)) {
       setPostType(savedPT);
     }
     // 2026-07-29: format restore removed (see STORAGE_KEY_FORMAT note).
@@ -1440,12 +1465,18 @@ export default function PostBuilderClient({
    * `slideMetadata.length > 0` because the latter is briefly empty
    * during the resume effect's hydration race.
    */
-  const isMultiOHPost = useMemo<boolean>(
-    () =>
-      typeof renderResult?.template_id === "string" &&
-      renderResult.template_id.startsWith("multi_oh_event_"),
+  // 2026-08-19 — generalized to every multi-slide event kind. The weekly
+  // Under Contract / Price Reduced roundups (uc_roundup_* / pr_roundup_*)
+  // share the entire multi-OH layout: pickers hidden, hero excluded from
+  // the publish strip, Final Review in multi mode. `multiEventKind` says
+  // WHICH kind for the copy + the OH-only logic below; `isMultiOHPost`
+  // keeps its historical name as the "any multi event" layout switch so
+  // the two dozen existing gates didn't need a rename churn.
+  const multiEventKind = useMemo<RoundupType | null>(
+    () => multiEventKindFromTemplateId(renderResult?.template_id),
     [renderResult?.template_id],
   );
+  const isMultiOHPost = multiEventKind !== null;
 
   // Task 12 (2026-07-17) — earliest open-house start across the post's
   // listings, as epoch ms (null when this isn't an OH post or no OH time is
@@ -1462,14 +1493,17 @@ export default function PostBuilderClient({
       const t = Date.parse(iso);
       if (!Number.isNaN(t)) times.push(t);
     };
-    if (isMultiOHPost) {
+    // 2026-08-19 — OH kind only. A roundup property that HAPPENS to have
+    // a weekend open house must not drag OH-aware scheduling into a post
+    // that isn't about the open house.
+    if (multiEventKind === "open_house") {
       for (const m of slideMetadata) push(byMls.get(m.listing_mls)?.oh_start_at);
-    } else if (postType === "open_house") {
+    } else if (multiEventKind === null && postType === "open_house") {
       push(selectedListing?.oh_start_at);
     }
     return times.length > 0 ? Math.min(...times) : null;
   }, [
-    isMultiOHPost,
+    multiEventKind,
     slideMetadata,
     listingsByPostType,
     postType,
@@ -2316,13 +2350,22 @@ export default function PostBuilderClient({
           console.warn(
             `[edit-slide] db_template_id ${meta.db_template_id} not in sidecar; falling back to legacy registry`,
           );
-          template = findCanvasTemplate("open_house", meta.variant, meta.format);
+          template = findCanvasTemplate(
+            multiEventKind ?? "open_house",
+            meta.variant,
+            meta.format,
+          );
         }
       } else {
-        // why: multi-OH slides are always open_house variants today. If
-        // a future producer creates non-open_house slides, widen this by
-        // adding a `category` field to SlideMetadata and reading it here.
-        template = findCanvasTemplate("open_house", meta.variant, meta.format);
+        // why: the slide's template bucket follows the multi-event kind —
+        // open_house for multi-OH rows, under_contract / price_reduction
+        // for the 2026-08-19 roundup rows (whose slides render from those
+        // milestones' templates in the generate route).
+        template = findCanvasTemplate(
+          multiEventKind ?? "open_house",
+          meta.variant,
+          meta.format,
+        );
       }
       if (!template && meta.layer_tree && typeof meta.layer_tree === "object") {
         // Last-resort fallback: only consult the saved snapshot when no
@@ -2455,6 +2498,7 @@ export default function PostBuilderClient({
       // sibling thumbnail re-runs this callback with the new closure).
       carouselLayoutOverrides,
       dbTemplatesForSlides,
+      multiEventKind,
     ],
   );
 
@@ -2716,9 +2760,9 @@ export default function PostBuilderClient({
     // when they land. When `isMultiOHPost` ends up true the Studio overlay
     // isn't rendered (MultiOhFinalStage takes over) so the open is a harmless
     // no-op — matching the previous bail behavior.
-    const resumeIsMultiOH =
-      typeof initialResume.template_id === "string" &&
-      initialResume.template_id.startsWith("multi_oh_event_");
+    // 2026-08-19 — generalized to every multi-event kind (roundups share
+    // the pre-rendered-hero + per-slide-edit model exactly).
+    const resumeIsMultiOH = isMultiEventTemplateId(initialResume.template_id);
     if (resumeIsMultiOH) {
       if (carouselSlides.length > 0 && slideMetadata.length > 0) {
         resumeAutoOpenedRef.current = true;
@@ -4142,8 +4186,8 @@ export default function PostBuilderClient({
     // 2026-08-19 — one line of context on the success overlay so "Your post
     // is live" is verifiably about THIS post. Mirrors the singleSubtitle /
     // listingLabel framing used elsewhere in this branch.
-    const successSubtitle = isMultiOHPost
-      ? `Multi-property Open House · ${carouselSlides.length} slide${
+    const successSubtitle = multiEventKind
+      ? `${MULTI_EVENT_LABELS[multiEventKind]} · ${carouselSlides.length} slide${
           carouselSlides.length === 1 ? "" : "s"
         }`
       : [
@@ -4189,6 +4233,10 @@ export default function PostBuilderClient({
         ) : null}
         <FinalReviewStage
           mode={isMultiOHPost ? "multi_oh" : "single"}
+          // 2026-08-19 — which multi-event kind (drives header copy + the
+          // OH-window preflight gate). "open_house" when mode is single;
+          // FinalReviewStage ignores it there.
+          eventKind={multiEventKind ?? "open_house"}
           heroImageUrl={renderResult?.image_url ?? null}
           carouselSlides={carouselSlides}
           slideMetadata={slideMetadata}
@@ -4255,7 +4303,12 @@ export default function PostBuilderClient({
             allSlideUrls={
               // Single mode: the hero IS slide 1 and DOES publish, so it
               // leads the strip. Multi-OH: hero excluded, per the note above.
-              !isMultiOHPost
+              // 2026-08-19 — hero-exclusion is an OPEN HOUSE rule only
+              // (the OH event hero was retired from publishing 5/28). The
+              // roundup heroes DO publish as slide 1 — they're the
+              // announcement card that frames the week — so they lead the
+              // strip exactly like single-mode heroes.
+              multiEventKind !== "open_house"
                 ? [
                     ...(renderResult?.image_url
                       ? [renderResult.image_url]
@@ -4269,12 +4322,12 @@ export default function PostBuilderClient({
                     : []
             }
             listingLabel={
-              // why: in multi-OH mode there's no single listing label —
+              // why: in multi-event mode there's no single listing label —
               // use the per-property slide-count framing so the modal's
               // asset summary line still makes sense. Count excludes the
               // hero (see allSlideUrls above).
-              isMultiOHPost
-                ? `Multi-property Open House · ${carouselSlides.length} slide${
+              multiEventKind
+                ? `${MULTI_EVENT_LABELS[multiEventKind]} · ${carouselSlides.length} slide${
                     carouselSlides.length === 1 ? "" : "s"
                   }`
                 : [selectedListing?.address, selectedListing?.city]
@@ -4296,11 +4349,12 @@ export default function PostBuilderClient({
             globalTestModeOn={globalTestModeOn}
             error={error}
             onClearError={() => setError(null)}
-            // why: per-property count (no hero) — feeds the per-platform
-            // "N-image carousel" copy on the platform cards. Single mode
-            // counts the hero, because there it publishes.
+            // why: per-property count (no hero) for multi-OH — feeds the
+            // per-platform "N-image carousel" copy on the platform cards.
+            // Single mode AND the roundups count the hero, because there
+            // it publishes (see allSlideUrls above).
             slideCount={
-              isMultiOHPost
+              multiEventKind === "open_house"
                 ? carouselSlides.length
                 : 1 + carouselSlides.length
             }
@@ -4380,10 +4434,13 @@ export default function PostBuilderClient({
       ) : null}
       {/* Post type segmented picker — hidden in multi-OH mode (the
           carousel is locked to "open_house" and the picker tabs would
-          let Larissa wander out of the multi-OH context confusingly). */}
+          let Larissa wander out of the multi-OH context confusingly).
+          2026-08-19 — Under Contract + Price Reduced tabs removed:
+          those milestones publish as weekly roundups now
+          (/post-builder/roundup/*), not per-property singles. */}
       {!isMultiOHPost ? (
       <div className="card p-2 flex flex-wrap gap-1">
-        {POST_TYPES.map((pt) => {
+        {PICKABLE_POST_TYPES.map((pt) => {
           const active = pt.id === postType;
           const count = listingsByPostType[pt.id]?.length ?? 0;
           return (

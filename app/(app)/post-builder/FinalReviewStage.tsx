@@ -67,6 +67,7 @@ import { AlertTriangle, CheckCircle2, ChevronRight, RotateCw, XCircle } from "lu
 import type {
   PostBuilderListing,
   PostFormat,
+  RoundupType,
   SchedulablePlatform,
   SlideMetadata,
 } from "@/lib/post-builder/types";
@@ -102,10 +103,20 @@ export type FinalReviewMode = "multi_oh" | "single";
 export interface FinalReviewStageProps {
   mode: FinalReviewMode;
   /**
+   * 2026-08-19 — which multi-event kind is being reviewed when mode is
+   * "multi_oh" (which since the roundups really means "multi-slide
+   * event"). Drives the header copy, whether the hero is shown as a
+   * publishable slide (roundup heroes publish; the OH event hero does
+   * not), and the OH-only preflight blocks. Ignored in single mode.
+   */
+  eventKind?: RoundupType;
+  /**
    * Hero image URL.
    *
-   * multi_oh: slide 0, a Studio thumbnail that is deliberately NOT published,
-   *           so it is not shown on this screen.
+   * multi_oh (open_house kind): slide 0, a Studio thumbnail that is
+   *           deliberately NOT published, so it is not shown on this screen.
+   * multi_oh (roundup kinds): the announcement card — publishes as slide 1
+   *           and is shown large like single mode.
    * single:   the post itself. Shown large.
    */
   heroImageUrl: string | null;
@@ -251,10 +262,17 @@ function buildHostingSummary(
  */
 function buildEventSubtitle(
   slideMetadata: readonly SlideMetadata[],
+  eventKind: RoundupType,
 ): string {
   const count = slideMetadata.length;
   const propertyWord = count === 1 ? "property" : "properties";
-  return `Open House — ${count} ${propertyWord}`;
+  const lead =
+    eventKind === "under_contract"
+      ? "Under Contract Roundup"
+      : eventKind === "price_reduction"
+        ? "Price Improvement Roundup"
+        : "Open House";
+  return `${lead} — ${count} ${propertyWord}`;
 }
 
 /**
@@ -430,13 +448,18 @@ function captionChecks(
   return checks;
 }
 
-/** Multi-property Open House pre-flight: captions, slide count, OH windows. */
+/** Multi-property event pre-flight: captions, slide count, and (open_house
+ *  kind only) OH windows + hosting-contact gaps. 2026-08-19 — also serves
+ *  the Under Contract / Price Reduced roundups, which share the caption +
+ *  slide-count questions but have no OH windows or hosts to check. */
 function computeMultiOhPreflight(args: {
   editedCaptions: Record<SchedulablePlatform, string>;
   slideCount: number;
   slideMetadata: readonly SlideMetadata[];
   listingsByMls: ReadonlyMap<string, PostBuilderListing>;
   nowMs: number;
+  /** Which multi-event kind (gates the OH-only blocks below). */
+  eventKind: RoundupType;
   /**
    * Hosting agents whose headshot or phone came back empty, resolved from
    * the same /api/agents/attribution the renderer uses. Null while the
@@ -472,6 +495,9 @@ function computeMultiOhPreflight(args: {
   // Uses the listing rows' soonest-upcoming OH window (page-load data).
   // A listing with no window data is skipped rather than flagged — the
   // feed omits windows on some manual rows and a false alarm erodes trust.
+  // 2026-08-19 — open_house kind only. A roundup property that happens to
+  // have a weekend OH scheduled must not fail THIS post over it.
+  if (args.eventKind !== "open_house") return checks;
   const passedAddresses: string[] = [];
   let checkedCount = 0;
   const seenMls = new Set<string>();
@@ -678,6 +704,7 @@ function computeSinglePreflight(args: {
 
 export default function FinalReviewStage({
   mode,
+  eventKind = "open_house",
   heroImageUrl,
   carouselSlides,
   slideMetadata,
@@ -721,8 +748,9 @@ export default function FinalReviewStage({
   // event; single mode names the post and the listing, then whatever detail
   // matters for that milestone.
   const subtitle = useMemo(
-    () => (isSingle ? singleSubtitle : buildEventSubtitle(slideMetadata)),
-    [isSingle, singleSubtitle, slideMetadata],
+    () =>
+      isSingle ? singleSubtitle : buildEventSubtitle(slideMetadata, eventKind),
+    [isSingle, singleSubtitle, slideMetadata, eventKind],
   );
   const detailLine = useMemo(
     () => (isSingle ? singleDetailLine : buildHostingSummary(slideMetadata)),
@@ -816,14 +844,22 @@ export default function FinalReviewStage({
           })
         : computeMultiOhPreflight({
             editedCaptions,
-            slideCount: carouselSlides.length,
+            // 2026-08-19 — roundup heroes PUBLISH as slide 1, so the IG
+            // 10-image math counts them; the OH event hero never
+            // publishes, so it doesn't.
+            slideCount:
+              eventKind === "open_house"
+                ? carouselSlides.length
+                : carouselSlides.length + (heroImageUrl ? 1 : 0),
             slideMetadata,
             listingsByMls,
             nowMs: preflightNowMs,
+            eventKind,
             hostingGaps,
           }),
     [
       isSingle,
+      eventKind,
       editedCaptions,
       heroImageUrl,
       carouselSlides.length,
@@ -864,9 +900,12 @@ export default function FinalReviewStage({
       {/* Branch 3. In multi-OH the hero is a Studio thumbnail that never
           publishes, so only the per-property slides are shown. In single mode
           the hero IS the post: shown large, with any extra carousel slides in
-          a strip underneath in publish order. */}
+          a strip underneath in publish order.
+          2026-08-19 — the roundup kinds take the single-mode layout: their
+          hero card publishes as slide 1, so it's shown large with the
+          per-property slides in the strip below. */}
       <div className="card p-4">
-        {isSingle ? (
+        {isSingle || eventKind !== "open_house" ? (
           <>
             <div className="flex justify-center">
               <div className="w-full max-w-sm rounded-xl overflow-hidden bg-neutral-100 ring-1 ring-neutral-200">

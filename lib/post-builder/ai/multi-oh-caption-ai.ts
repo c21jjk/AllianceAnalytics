@@ -36,7 +36,7 @@ import {
   type MultiOHCaptionProperty,
   type MultiOHCaptionResult,
 } from "@/lib/post-builder/multi-oh-caption-synth";
-import type { SourceMls } from "@/lib/post-builder/types";
+import type { RoundupType, SourceMls } from "@/lib/post-builder/types";
 
 import {
   buildSystemPrompt,
@@ -197,13 +197,17 @@ const FIXED_BRAND_TAG_SET = new Set([
   "#shoredivision",
   "#southjerseyrealestate",
   "#openhouse",
+  // 2026-08-19 — roundup tail tags are deterministic too.
+  "#undercontract",
+  "#newprice",
 ]);
 
 function reconcileHashtags(
   aiTags: readonly string[],
   properties: readonly MultiOHCaptionProperty[],
+  roundupType: RoundupType,
 ): string[] {
-  const brandTags = buildBrandTags(properties);
+  const brandTags = buildBrandTags(properties, roundupType);
   const nonFixedTags = aiTags.filter(
     (t) => !FIXED_BRAND_TAG_SET.has(t.trim().toLowerCase()),
   );
@@ -248,6 +252,44 @@ function formatOhWindowForPrompt(p: MultiOHCaptionProperty): string {
     parts.push(`${dayLabel} | ${timeRange}`);
   }
   return parts.join("; ");
+}
+
+/**
+ * 2026-08-19 — milestone detail line for the roundup kinds, taking the
+ * place of `oh_window` in the prompt's property entries.
+ *   UC: "Under contract August 15"
+ *   PR: "Now $429,000 (was $450,000)"
+ * Falls back to "" when nothing usable is present (the prompt tolerates
+ * empty detail strings the same way it tolerates empty oh_windows).
+ */
+function formatRoundupDetailForPrompt(
+  p: MultiOHCaptionProperty,
+  kind: Exclude<RoundupType, "open_house">,
+): string {
+  if (kind === "under_contract") {
+    if (!p.event_date) return "Under contract this week";
+    const d = new Date(p.event_date);
+    if (Number.isNaN(d.getTime())) return "Under contract this week";
+    const label = d.toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      timeZone: PROMPT_TZ,
+    });
+    return `Under contract ${label}`;
+  }
+  const money = (n: number | null | undefined): string | null =>
+    typeof n === "number" && Number.isFinite(n) && n > 0
+      ? new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          maximumFractionDigits: 0,
+        }).format(n)
+      : null;
+  const now = money(p.price_new ?? p.list_price);
+  const was = money(p.price_old);
+  if (now && was) return `Now ${now} (was ${was})`;
+  if (now) return `Now ${now}`;
+  return "New price this week";
 }
 
 function formatCompactHour(d: Date): string {
@@ -303,11 +345,17 @@ function resolveTone(
 export async function synthesizeMultiOHCaptionAI(
   input: MultiOHCaptionInput,
 ): Promise<MultiOHCaptionResult> {
+  // 2026-08-19 — roundup kinds preserve the wizard's carousel order (there
+  // are no OH dates to sort by); open_house keeps the chronological sort.
+  const roundupType: RoundupType = input.roundup_type ?? "open_house";
+  const isOH = roundupType === "open_house";
   // why: chronological order (earliest OH date first) so the AI's day
   // sections never appear out of order. The prompt also instructs
   // chronological grouping, but sorting the source list is the reliable
   // guarantee — the model just lists what it's given, in order.
-  const properties = sortPropertiesByOpenHouse(input.properties);
+  const properties = isOH
+    ? sortPropertiesByOpenHouse(input.properties)
+    : [...input.properties];
   if (properties.length === 0) {
     throw new Error("[multi-oh-ai-caption] no properties supplied");
   }
@@ -316,14 +364,20 @@ export async function synthesizeMultiOHCaptionAI(
   const resolvedTone = resolveTone(input.tone, properties);
   const mlsKey = properties.map((p) => p.mls_number).join(",");
   const seed = hashSeed(`${properties.length}|${mlsKey}`);
-  const geoHint = buildGeoPhrase(properties, seed);
+  const geoHint = buildGeoPhrase(properties, seed, isOH);
 
   // ---- Build prompt inputs ---------------------------------------------
   const promptInput: MultiOhCaptionPromptInput = {
+    roundupType,
     properties: properties.map((p) => ({
       address: p.address,
       city: p.city,
-      oh_window: formatOhWindowForPrompt(p),
+      // OH: the pre-formatted session window. Roundups: the milestone
+      // detail line ("Under contract August 15" / "Now $429,000 (was
+      // $450,000)") so the prompt never does date/price math.
+      oh_window: isOH
+        ? formatOhWindowForPrompt(p)
+        : formatRoundupDetailForPrompt(p, roundupType),
     })),
     tone: input.tone ?? "auto",
     hostingAgentNames: [], // why: hosting agents stay slide-only — see
@@ -336,7 +390,7 @@ export async function synthesizeMultiOHCaptionAI(
     resolvedTone,
   };
 
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = buildSystemPrompt(roundupType);
   const userPrompt = buildUserPrompt(promptInput);
 
   // ---- Get client + call -----------------------------------------------
@@ -391,9 +445,9 @@ export async function synthesizeMultiOHCaptionAI(
   // 2026-07-24 — reconcile Claude's hashtags against the deterministic
   // division logic (see reconcileHashtags above). Don't trust the prompt
   // alone to keep #shoredivision off a South Jersey-only post.
-  const igHashtags = reconcileHashtags(payload.ig.hashtags, properties);
-  const fbHashtags = reconcileHashtags(payload.fb.hashtags, properties);
-  const ttHashtags = reconcileHashtags(payload.tt.hashtags, properties);
+  const igHashtags = reconcileHashtags(payload.ig.hashtags, properties, roundupType);
+  const fbHashtags = reconcileHashtags(payload.fb.hashtags, properties, roundupType);
+  const ttHashtags = reconcileHashtags(payload.tt.hashtags, properties, roundupType);
 
   // why: keep the legacy mirror = IG variant. Downstream consumers that
   // haven't migrated to `captions_by_platform` read `.legacy.caption`.

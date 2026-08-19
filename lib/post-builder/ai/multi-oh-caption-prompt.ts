@@ -53,6 +53,14 @@ import "server-only";
  *   • resolvedTone — concrete tone the prompt commits to (never "auto").
  */
 export interface MultiOhCaptionPromptInput {
+  /**
+   * 2026-08-19 — which milestone this caption promotes. "open_house" is
+   * the original behavior; the roundup kinds swap the structural rules
+   * (flat bullets, no day headers) and the core tail hashtag. For the
+   * roundup kinds, each property's `oh_window` carries the pre-formatted
+   * milestone detail line instead of an OH session window.
+   */
+  roundupType: "open_house" | "under_contract" | "price_reduction";
   properties: Array<{
     address: string | null;
     city: string | null;
@@ -144,6 +152,35 @@ HASHTAGS — brand-fixed core, division tags are CONDITIONAL:
   • Note: the consuming code re-derives the two division tags deterministically from the property list and will overwrite whatever you output here if it disagrees, so getting this right doesn't need to be perfect — but matching it means your caption preview (before reconciliation) looks correct too.`;
 
 // ---------------------------------------------------------------------------
+// 2026-08-19 — roundup overrides (under_contract / price_reduction)
+// ---------------------------------------------------------------------------
+//
+// The roundup kinds reuse the whole brand-voice block above but override
+// the OH-specific structural rules. Appending a delta block (instead of
+// forking three near-identical brand blocks) keeps the voice rules in one
+// place; the delta explicitly names each rule it replaces.
+
+const ROUNDUP_OVERRIDES: Record<"under_contract" | "price_reduction", string> =
+  {
+    under_contract: `\
+ROUNDUP MODE — THIS IS NOT AN OPEN HOUSE POST. This is a weekly UNDER CONTRACT roundup: the listed homes just went under contract (buyers committed; sales pending). Nobody can tour them; there are no dates or times to attend. The following rules REPLACE the corresponding rules above:
+  • Story: momentum + social proof. The brokerage's homes are selling. Speak to two audiences at once: sellers ("your home could be next") and buyers ("the market is moving — get ready before the next one").
+  • NO day-grouped sections and NO 📍 day headers. Use ONE flat bullet list, one bullet per property, EXACT format: \`• {Address}, {City}\` — no dates, no times, no prices on the bullets.
+  • Each property's \`oh_window\` field carries "Under contract {date}" for context — you may reference the week narratively ("this week") but do NOT put per-property dates in the bullets.
+  • NEVER say "sold" — these are under contract / pending, not closed.
+  • Do NOT invite anyone to tour, visit, or stop by these homes.
+  • Core tail hashtag is \`#undercontract\` (NOT \`#openhouse\`). All other hashtag rules (brand lead tag, conditional division tags, one regional tag) stay the same.
+  • TikTok body: one-line opener + "Full list in the carousel." + one-line closer.`,
+    price_reduction: `\
+ROUNDUP MODE — THIS IS NOT AN OPEN HOUSE POST. This is a weekly NEW PRICE roundup: the listed homes just had price improvements (reductions). They are active and available at better numbers. The following rules REPLACE the corresponding rules above:
+  • Story: opportunity. Frame reductions positively — "price improved", "new price", "better deal" — never apologetically, and never disparage the original price or the seller.
+  • NO day-grouped sections and NO 📍 day headers. Use ONE flat bullet list, one bullet per property, EXACT format: \`• {Address}, {City} | {oh_window}\` where \`{oh_window}\` is the pre-formatted price line (e.g. \`Now $429,000 (was $450,000)\`) — preserve it verbatim, never recompute the math.
+  • Do NOT invite anyone to an event; there is no event. Inviting a second look at the listing is exactly right.
+  • Core tail hashtag is \`#newprice\` (NOT \`#openhouse\`). All other hashtag rules (brand lead tag, conditional division tags, one regional tag) stay the same.
+  • TikTok body: one-line opener + "Full list in the carousel." + one-line closer.`,
+  };
+
+// ---------------------------------------------------------------------------
 // Output contract footer — explicit JSON shape Claude must return
 // ---------------------------------------------------------------------------
 
@@ -163,12 +200,16 @@ Hashtag arrays MUST contain 3 to 5 strings each per the conditional HASHTAGS pol
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the system prompt for the caption pass. Stable per-call (no
- * input-driven branches) so Claude's prefix-cache can hit on repeat
- * generations.
+ * Returns the system prompt for the caption pass. Stable per kind (the
+ * only input-driven branch is the roundup delta block) so Claude's
+ * prefix-cache can still hit on repeat generations of the same kind.
  */
-export function buildSystemPrompt(): string {
-  return `${BRAND_VOICE_BLOCK}
+export function buildSystemPrompt(
+  roundupType: "open_house" | "under_contract" | "price_reduction" = "open_house",
+): string {
+  const roundupBlock =
+    roundupType === "open_house" ? "" : `\n\n${ROUNDUP_OVERRIDES[roundupType]}`;
+  return `${BRAND_VOICE_BLOCK}${roundupBlock}
 
 You will receive the event data + a resolved tone + a geographic hint + (optionally) a Larissa-written override the user wants you to lightly polish. Compose the per-platform captions per the shape above and return them as the JSON object described in the output contract.
 

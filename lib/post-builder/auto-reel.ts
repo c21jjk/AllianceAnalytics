@@ -46,11 +46,12 @@ import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
 import {
   buildReelFromCarousel,
 } from "@/lib/post-builder/reel-templates/build-from-carousel";
-import type {
-  PostType,
-  PostVariant,
-  ReelRenderJob,
-  ScheduledFor,
+import {
+  isMultiEventTemplateId,
+  type PostType,
+  type PostVariant,
+  type ReelRenderJob,
+  type ScheduledFor,
 } from "@/lib/post-builder/types";
 import type { Json } from "@/lib/supabase/types";
 
@@ -229,9 +230,14 @@ async function kickoff(sourceGpId: string): Promise<void> {
   // story re-render only exists for single-listing canvas templates.
   if (src.media_type === "reel") return;
   if (src.test_mode === true) return;
-  const isMultiOh =
-    typeof src.template_id === "string" &&
-    src.template_id.startsWith("multi_oh_event_");
+  // 2026-08-19 — generalized to every multi-slide event kind. The weekly
+  // Under Contract / Price Reduced roundups (uc_roundup_* / pr_roundup_*)
+  // take the same path as multi-OH: their slide set IS the scene list,
+  // their square hero opens the reel as-is, and their linked_property_ids
+  // ride onto the reel row. The variable keeps its historical name.
+  const isMultiOh = isMultiEventTemplateId(
+    typeof src.template_id === "string" ? src.template_id : null,
+  );
   if (src.template_id === AUTO_REEL_TEMPLATE_ID) return;
   if (!src.property_id || !src.image_url) return;
 

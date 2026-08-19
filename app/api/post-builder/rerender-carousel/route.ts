@@ -60,6 +60,7 @@ import {
 import type {
   PostBuilderListing,
   PostFormat,
+  PostType,
   SlideMetadata,
 } from "@/lib/post-builder/types";
 import type { Json } from "@/lib/supabase/types";
@@ -158,7 +159,10 @@ export async function POST(request: Request): Promise<Response> {
   const { data: existing, error: fetchError } = await supabase
     .from("generated_posts")
     .select(
-      "id, created_by, format, additional_images, slide_metadata, hosting_agents_by_index, carousel_layout_overrides",
+      // 2026-08-19: post_type added so roundup rows (uc_roundup_* /
+      // pr_roundup_*) re-render their slides against THEIR template
+      // bucket instead of the hardcoded open_house one.
+      "id, created_by, format, post_type, additional_images, slide_metadata, hosting_agents_by_index, carousel_layout_overrides",
     )
     .eq("id", body.generated_post_id)
     .maybeSingle();
@@ -205,6 +209,15 @@ export async function POST(request: Request): Promise<Response> {
   const rowFormat = VALID_FORMATS.includes(existing.format as PostFormat)
     ? (existing.format as PostFormat)
     : "square_1x1";
+
+  // 2026-08-19 — which milestone bucket the per-slide templates resolve
+  // from. Multi-OH rows carry post_type='open_house' (the historical
+  // hardcode); roundup rows carry under_contract / price_reduction.
+  const slidePostType: PostType =
+    existing.post_type === "under_contract" ||
+    existing.post_type === "price_reduction"
+      ? existing.post_type
+      : "open_house";
 
   // The layout-overrides bag pushed by "Apply layout to all slides". For the
   // variant/canvas path we apply these in-process onto the resolved template
@@ -271,6 +284,7 @@ export async function POST(request: Request): Promise<Response> {
                   meta: slideMeta[i],
                   hostsByIndex,
                   rowFormat,
+                  slidePostType,
                   overrides,
                 }),
                 new Promise<never>((_, reject) =>
@@ -355,9 +369,20 @@ async function rerenderSlide(args: {
   meta: SlideMetadata | undefined;
   hostsByIndex: HostingAgentEntry[];
   rowFormat: PostFormat;
+  /** 2026-08-19 — the row's milestone bucket for schema resolution. */
+  slidePostType: PostType;
   overrides: CarouselLayoutOverrides;
 }): Promise<string> {
-  const { supabase, gpId, index, meta, hostsByIndex, rowFormat, overrides } = args;
+  const {
+    supabase,
+    gpId,
+    index,
+    meta,
+    hostsByIndex,
+    rowFormat,
+    slidePostType,
+    overrides,
+  } = args;
 
   if (!meta || !meta.listing_mls) {
     throw new Error("slide has no listing_mls in slide_metadata");
@@ -382,7 +407,12 @@ async function rerenderSlide(args: {
   // persisted, so we take the property's earliest upcoming/just-ended OH
   // session as the window. Empty → leave null (the listing row's own
   // oh_start_at, if any, still resolves at render time).
-  const ohs = await getOpenHousesForProperty(prop.id);
+  // 2026-08-19 — OH rows only. A roundup slide must not inherit a
+  // coincidental open-house window onto an Under Contract / New Price card.
+  const ohs =
+    slidePostType === "open_house"
+      ? await getOpenHousesForProperty(prop.id)
+      : [];
   const earliest = ohs.length > 0 ? ohs[0] : null;
 
   // Host attribution is already persisted per slide index — reuse it rather
@@ -396,10 +426,10 @@ async function rerenderSlide(args: {
     // open_house/v1 canvas template. The variant axis is cosmetic (every
     // variant maps to open_house/v1), mirroring the generator.
     const baseSchema =
-      (await resolveTemplateForStatus("open_house", format)) ??
-      findCanvasTemplate("open_house", "v1", format);
+      (await resolveTemplateForStatus(slidePostType, format)) ??
+      findCanvasTemplate(slidePostType, "v1", format);
     if (!baseSchema) {
-      throw new Error(`no canvas template for open_house/${format}`);
+      throw new Error(`no canvas template for ${slidePostType}/${format}`);
     }
     // Bake the propagated layout overrides into the schema before rendering.
     // Layout-only deltas keyed by layer id; per-slide listing/host/OH data is

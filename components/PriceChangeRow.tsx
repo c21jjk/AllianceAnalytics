@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { PriceChangeMilestone } from "@/lib/data/price-changes";
 import { formatCurrency } from "@/lib/format";
@@ -82,6 +83,10 @@ export default function PriceChangeRow({
                 isFirst={idx === 0}
                 postType="price_reduction"
                 metaSuffix={<DropLine listing={listing} />}
+                buildOverride={{
+                  href: "/post-builder/roundup/price-reduced",
+                  label: "Build Roundup Post",
+                }}
               />
             </li>
           ))}
@@ -123,6 +128,24 @@ export default function PriceChangeRow({
                 is this empty" case, so printing it here too said it twice. */}
           </div>
         </button>
+        {/* 2026-08-19 — weekly roundup entry point (John: UC + Price Reduced
+            publish as ONE company-wide multi-property post per week now, not
+            per-property singles). Mirrors the multi-OH CTA on the Open
+            Houses card. Shown whenever the week has at least one row. */}
+        {listings.length >= 1 ? (
+          <Link
+            href="/post-builder/roundup/price-reduced"
+            className="shrink-0 inline-flex items-center gap-2 rounded-md border border-gold-300 bg-gold-50 px-2.5 py-1.5 text-xs sm:text-sm font-medium text-gold-800 transition hover:border-gold-500 hover:bg-gold-100"
+            title="Build this week's price improvement roundup post"
+            aria-label={`Build price improvement roundup (${listings.length} reductions)`}
+          >
+            <RoundupGlyph />
+            <span className="hidden sm:inline">Build Roundup</span>
+            <span className="rounded-full bg-gold-200/60 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gold-900 tabular-nums">
+              {listings.length}
+            </span>
+          </Link>
+        ) : null}
       </header>
 
       {!collapsed && hydrated ? body : null}
@@ -169,6 +192,28 @@ function DropLine({ listing }: { listing: PriceChangeMilestone }) {
         </span>
       ) : null}
     </div>
+  );
+}
+
+function RoundupGlyph() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* Same multi-house glyph as the multi-OH CTA so "this builds a
+          multi-property post" reads consistently across the dashboard. */}
+      <path d="M2 14h12" />
+      <path d="M3 14V9l2-1.5L7 9v5" />
+      <path d="M9 14V9l2-1.5L13 9v5" />
+    </svg>
   );
 }
 

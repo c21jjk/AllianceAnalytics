@@ -89,11 +89,14 @@ import { synthesizeMultiOHCaptionAI } from "@/lib/post-builder/ai/multi-oh-capti
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
+  multiEventTemplateId,
   type MultiOHEventInput,
   type MultiOHEventProperty,
   type MultiOHGenerateErr,
   type PostBuilderListing,
   type PostFormat,
+  type PostType,
+  type RoundupType,
   type SlideMetadata,
   type SourceMls,
 } from "@/lib/post-builder/types";
@@ -297,6 +300,14 @@ function parseBody(raw: unknown):
     };
   }
 
+  // 2026-08-19 — milestone roundups. Absent/unknown → "open_house" so
+  // every pre-roundup client keeps working unchanged.
+  const rawRoundup = r.roundup_type;
+  const roundup_type: RoundupType =
+    rawRoundup === "under_contract" || rawRoundup === "price_reduction"
+      ? rawRoundup
+      : "open_house";
+
   // why: stale clients in the wild may still send "v1" (Hero Editorial,
   // retired from the registry on 2026-05-17). Silently upgrade to v2 —
   // structurally the closest analog and the wizard's new default — so a
@@ -320,10 +331,15 @@ function parseBody(raw: unknown):
   if (!Array.isArray(r.properties)) {
     return { ok: false, error: "properties must be an array" };
   }
-  if (r.properties.length < MULTI_OH_MIN_PROPERTIES) {
+  // 2026-08-19 — the roundup kinds accept a single property (singles were
+  // retired for those milestones, so a one-UC week still has to publish
+  // as a roundup). Open house keeps its historical minimum of 2.
+  const minProperties =
+    roundup_type === "open_house" ? MULTI_OH_MIN_PROPERTIES : 1;
+  if (r.properties.length < minProperties) {
     return {
       ok: false,
-      error: `at least ${MULTI_OH_MIN_PROPERTIES} properties required`,
+      error: `at least ${minProperties} propert${minProperties === 1 ? "y" : "ies"} required`,
     };
   }
   if (r.properties.length > MULTI_OH_MAX_PROPERTIES) {
@@ -374,6 +390,11 @@ function parseBody(raw: unknown):
         typeof p.unit_number === "string" && p.unit_number.length > 0
           ? p.unit_number
           : null,
+      // 2026-08-19 — roundup milestone fields (null-tolerant; only the
+      // roundup kinds ever populate them).
+      event_date: typeof p.event_date === "string" ? p.event_date : null,
+      price_old: typeof p.price_old === "number" ? p.price_old : null,
+      price_new: typeof p.price_new === "number" ? p.price_new : null,
     });
   }
 
@@ -463,6 +484,7 @@ function parseBody(raw: unknown):
       format: format as PostFormat,
       per_property_variant: per_property_variant as ValidPerPropertyVariant,
       db_template_id,
+      roundup_type,
       properties,
       retry_indices,
       existing_generated_post_id,
@@ -471,6 +493,13 @@ function parseBody(raw: unknown):
       caption_override,
     },
   };
+}
+
+/** The generated_posts.post_type value for each multi-event kind. The
+ *  RoundupType values were chosen to BE PostType values, so this is an
+ *  identity map with a compile-time guarantee. */
+function postTypeForKind(kind: RoundupType): PostType {
+  return kind;
 }
 
 /**
@@ -889,11 +918,17 @@ async function renderPerPropertyCards(
         // picks up HER layout with fresh per-property listing data on
         // each render. Falls back to the factory placeholder when no
         // default custom template exists or its schema_json is null.
+        //
+        // 2026-08-19 — roundups resolve against THEIR milestone's bucket
+        // (under_contract / price_reduction), which is what makes the
+        // existing single-listing UC/PR templates double as roundup slide
+        // templates with zero new designs.
+        const slidePostType = postTypeForKind(input.roundup_type ?? "open_house");
         const schema =
-          (await resolveTemplateForStatus("open_house", input.format)) ??
-          findCanvasTemplate("open_house", "v1", input.format);
+          (await resolveTemplateForStatus(slidePostType, input.format)) ??
+          findCanvasTemplate(slidePostType, "v1", input.format);
         if (!schema) {
-          const err = `no canvas template for open_house/${input.format}`;
+          const err = `no canvas template for ${slidePostType}/${input.format}`;
           callbacks.onSlideFailed(idx, err, prop.address ?? null);
           return {
             kind: "err" as const,
@@ -1379,6 +1414,9 @@ export async function POST(request: Request): Promise<Response> {
       // each call; the deterministic synth is the graceful-degradation
       // backup when Claude is unreachable or returns malformed JSON.
       const captionInput: MultiOHCaptionInput = {
+        // 2026-08-19 — the synths branch on this: roundups get flat
+        // milestone bullets + milestone tail tag instead of OH day groups.
+        roundup_type: input.roundup_type ?? "open_house",
         properties: input.properties.map((p) => ({
           address: p.address,
           city: p.city,
@@ -1390,6 +1428,9 @@ export async function POST(request: Request): Promise<Response> {
           oh_sessions: p.oh_sessions,
           oh_start_at: p.oh_start_at,
           oh_end_at: p.oh_end_at,
+          event_date: p.event_date ?? null,
+          price_old: p.price_old ?? null,
+          price_new: p.price_new ?? null,
         })),
         tone: parsed.value.tone,
         caption_override: parsed.value.caption_override,
@@ -1435,17 +1476,27 @@ export async function POST(request: Request): Promise<Response> {
       //
       // Best effort and never fatal: a failed lookup costs a tag, while a
       // thrown error here would cost the whole carousel.
-      const open_house_ids = Array.from(
-        new Set(
-          (
-            await Promise.all(
-              input.properties.map((p) =>
-                resolveOpenHouseIdsForListing(p.mls_number).catch(() => []),
+      //
+      // 2026-08-19 — OH kind only. Roundups have no open-house occurrences
+      // to stamp; their dashboard "handled" state rides linked_property_ids
+      // (see getAutoPostedPropertyIds in lib/data/listing-post-marks.ts).
+      const eventKind: RoundupType = input.roundup_type ?? "open_house";
+      const open_house_ids =
+        eventKind === "open_house"
+          ? Array.from(
+              new Set(
+                (
+                  await Promise.all(
+                    input.properties.map((p) =>
+                      resolveOpenHouseIdsForListing(p.mls_number).catch(
+                        () => [],
+                      ),
+                    ),
+                  )
+                ).flat(),
               ),
             )
-          ).flat(),
-        ),
-      );
+          : [];
 
       // linked_property_ids isn't in the generated Database types yet; use a
       // permissive client for this insert (mirrors the untyped-client pattern
@@ -1462,7 +1513,11 @@ export async function POST(request: Request): Promise<Response> {
             linkedPropertyIds.length > 0 ? linkedPropertyIds : null,
           // Every occurrence this event promotes. See the resolve above.
           open_house_ids,
-          post_type: "open_house",
+          // 2026-08-19 — the row's post_type follows the milestone the
+          // event promotes (open_house / under_contract / price_reduction)
+          // so analytics categorization + the dashboard's posted-detection
+          // (getAutoPostedPropertyIds matches on post_type) line up.
+          post_type: postTypeForKind(eventKind),
           // why: persist the wizard's chosen per-property variant (v2/v3/v6/v8).
           // 2026-05-21 — used to hardcode "v1" here back when v1 was the
           // active default, but v1 was retired from the canvas-editor
@@ -1476,9 +1531,10 @@ export async function POST(request: Request): Promise<Response> {
           variant: input.per_property_variant,
           format: input.format,
           // why: synthetic template id that won't collide with the V1 registry.
-          // Future "edit in Studio" code reads this prefix to decide whether
-          // to rehydrate the multi-OH wizard vs. open the standard editor.
-          template_id: `multi_oh_event_${formatShort}`,
+          // Downstream code reads this prefix (via multiEventKindFromTemplateId
+          // in lib/post-builder/types.ts) to decide multi-event handling:
+          // multi_oh_event_* / uc_roundup_* / pr_roundup_* + format short name.
+          template_id: multiEventTemplateId(eventKind, formatShort),
           image_url: heroUrl,
           image_path: heroPath,
           // why: the event hero is a freshly designed graphic, not derived

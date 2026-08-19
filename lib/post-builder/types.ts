@@ -404,6 +404,22 @@ export interface MultiOHEventProperty {
   /** Condo/townhouse/lot identifier — shown right after the address on
    *  hero rows and per-property cards so consumers know which unit. */
   unit_number?: string | null;
+  /**
+   * 2026-08-19 — milestone roundups (John: weekly multi-property posts for
+   * Under Contract + Price Reduced, replacing the per-property singles).
+   * The three fields below are meaningful only when the parent input's
+   * `roundup_type` is a non-OH kind; the OH flow never sets them.
+   *
+   * event_date — ISO timestamp of the milestone occurrence: the status
+   * change for under_contract (properties.status_changed_at), the price
+   * cut for price_reduction (listing_price_changes.changed_at).
+   */
+  event_date?: string | null;
+  /** price_reduction only — the price BEFORE the cut. */
+  price_old?: number | null;
+  /** price_reduction only — the price AFTER the cut (falls back to
+   *  list_price when absent). */
+  price_new?: number | null;
 }
 
 /**
@@ -462,11 +478,82 @@ export interface MultiOHEventInput {
    * override; let synth do its thing".
    */
   caption_override?: string | null;
+  /**
+   * 2026-08-19 — which milestone this multi-property event promotes.
+   * Defaults to "open_house" (the original flow) when absent so every
+   * existing caller keeps working unchanged. "under_contract" and
+   * "price_reduction" drive the weekly roundup posts: different hero
+   * copy, different slide template bucket, different captions, no OH
+   * windows / hosting agents anywhere.
+   */
+  roundup_type?: RoundupType;
   /** Properties to feature, in carousel order (slide 1 = properties[0],
-   *  slide 2 = properties[1], etc.). Minimum 2 (1 makes a single-listing
-   *  post, use the standard Post Builder for that). Maximum 9 — leaves
+   *  slide 2 = properties[1], etc.). Minimum 2 for open_house (1 makes a
+   *  single-listing post, use the standard Post Builder for that) and 1
+   *  for the roundup types (singles were retired for those milestones, so
+   *  a one-property week still needs to publish). Maximum 9 — leaves
    *  one slot for the event hero to fit under IG's 10-slide carousel cap. */
   properties: readonly MultiOHEventProperty[];
+}
+
+// ---------------------------------------------------------------------------
+// 2026-08-19 — milestone roundups (multi-property events beyond Open House)
+// ---------------------------------------------------------------------------
+
+/**
+ * The three multi-property event kinds. "open_house" is the original
+ * multi-OH carousel; the other two are the weekly roundup posts that
+ * REPLACED single-property posting for those milestones (John, 8/19:
+ * company-wide, manual dashboard-prompted, roundup replaces singles).
+ */
+export type RoundupType = "open_house" | "under_contract" | "price_reduction";
+
+/**
+ * Resolve which multi-property event kind a generated_posts row is, from
+ * its synthetic template_id. Every multi-event row carries one of three
+ * template_id prefixes (`multi_oh_event_`, `uc_roundup_`, `pr_roundup_`)
+ * followed by the format short name. Returns null for every single-post
+ * template id.
+ *
+ * why one helper instead of scattered .startsWith("multi_oh_event_")
+ * checks: the publish route, the cron, page.tsx, PostBuilderClient, and
+ * auto-reel all branch on "is this a multi-slide event row"; when the
+ * roundups landed, each hand-rolled prefix check was a place for the new
+ * kinds to silently fall into the single-post path (hero published as a
+ * slide, wrong preflight, wrong Studio handoff).
+ */
+export function multiEventKindFromTemplateId(
+  templateId: string | null | undefined,
+): RoundupType | null {
+  if (!templateId) return null;
+  if (templateId.startsWith("multi_oh_event_")) return "open_house";
+  if (templateId.startsWith("uc_roundup_")) return "under_contract";
+  if (templateId.startsWith("pr_roundup_")) return "price_reduction";
+  return null;
+}
+
+/** True when the template_id marks a multi-slide event row (multi-OH or a
+ *  roundup) — i.e. the hero is a designed overview card and the published
+ *  carousel logic must treat additional_images as the full slide set. */
+export function isMultiEventTemplateId(
+  templateId: string | null | undefined,
+): boolean {
+  return multiEventKindFromTemplateId(templateId) !== null;
+}
+
+/** Synthetic template_id for a multi-property event row of the given kind.
+ *  Mirrors the original `multi_oh_event_${formatShort}` scheme. */
+export function multiEventTemplateId(
+  kind: RoundupType,
+  formatShort: string,
+): string {
+  const prefix =
+    kind === "open_house"
+      ? "multi_oh_event_"
+      : kind === "under_contract"
+        ? "uc_roundup_"
+        : "pr_roundup_";
+  return `${prefix}${formatShort}`;
 }
 
 /** Max properties allowed in a single multi-OH event post. Capped so that

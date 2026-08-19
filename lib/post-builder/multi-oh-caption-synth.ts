@@ -40,7 +40,7 @@
  * text only. IG / FB cap at 5 hashtags total. TT shortens to one line.
  */
 
-import type { SourceMls } from "@/lib/post-builder/types";
+import type { RoundupType, SourceMls } from "@/lib/post-builder/types";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -82,11 +82,26 @@ export interface MultiOHCaptionProperty {
   }>;
   oh_start_at?: string | null;
   oh_end_at?: string | null;
+  /** 2026-08-19 — roundup kinds only. Milestone occurrence date (status
+   *  change / price cut). Ignored for open_house. */
+  event_date?: string | null;
+  /** price_reduction only — price before the cut. */
+  price_old?: number | null;
+  /** price_reduction only — price after the cut. */
+  price_new?: number | null;
 }
 
 export interface MultiOHCaptionInput {
   properties: readonly MultiOHCaptionProperty[];
-  /** Tone bias. Default `"auto"`. */
+  /**
+   * 2026-08-19 — which milestone this caption promotes. Defaults to
+   * "open_house" (original behavior). The roundup kinds swap the opener/
+   * closer pools, drop the OH day-grouping in favor of a flat bullet
+   * list, and change the core tail hashtag.
+   */
+  roundup_type?: RoundupType;
+  /** Tone bias. Default `"auto"`. Ignored by the roundup kinds — their
+   *  pools are milestone-specific, not lifestyle-tonal. */
   tone?: CaptionTone;
   /**
    * Full-caption user override. When set, replaces the auto-synthesized
@@ -229,6 +244,10 @@ const CORE_TAIL_TAG = "#openhouse";
 // posts — the AI prompt was still telling Claude to always include both.
 export function buildBrandTags(
   properties: ReadonlyArray<MultiOHCaptionProperty>,
+  // 2026-08-19 — the tail tag follows the milestone: #openhouse /
+  // #undercontract / #newprice. Optional so every existing caller keeps
+  // the OH behavior.
+  roundupType: RoundupType = "open_house",
 ): string[] {
   let shore = 0;
   let southJersey = 0;
@@ -243,9 +262,16 @@ export function buildBrandTags(
   const tags: string[] = [CORE_LEAD_TAG];
   if (shore > 0) tags.push(SHORE_DIVISION_TAG);
   if (southJersey > 0) tags.push(SOUTH_JERSEY_TAG);
-  tags.push(CORE_TAIL_TAG);
+  tags.push(ROUNDUP_TAIL_TAGS[roundupType]);
   return tags;
 }
+
+/** Per-milestone core tail hashtag. OH keeps its original #openhouse. */
+export const ROUNDUP_TAIL_TAGS: Record<RoundupType, string> = {
+  open_house: CORE_TAIL_TAG,
+  under_contract: "#undercontract",
+  price_reduction: "#newprice",
+};
 
 // ---------------------------------------------------------------------------
 // Tone auto-detection
@@ -546,6 +572,10 @@ const POOLS: Record<
 export function buildGeoPhrase(
   properties: readonly MultiOHCaptionProperty[],
   seed: number,
+  // 2026-08-19 — the single-town variant says "this weekend", which only
+  // makes sense for open houses. Roundup callers pass false and get the
+  // plain "Right here in {town}" form.
+  weekend: boolean = true,
 ): string {
   const towns = uniqueStrings(
     properties
@@ -555,7 +585,9 @@ export function buildGeoPhrase(
 
   if (towns.length === 0) return "";
   if (towns.length === 1) {
-    return `Right here in ${towns[0]} this weekend`;
+    return weekend
+      ? `Right here in ${towns[0]} this weekend`
+      : `Right here in ${towns[0]}`;
   }
   if (towns.length === 2) {
     return `From ${towns[0]} to ${towns[1]}`;
@@ -867,6 +899,14 @@ function overrideAlreadyHasHashtags(text: string): boolean {
 export function synthesizeMultiOHCaption(
   input: MultiOHCaptionInput,
 ): MultiOHCaptionResult {
+  // 2026-08-19 — roundup kinds take their own composition path: flat
+  // bullet list (no OH day grouping), milestone-specific openers/closers,
+  // milestone tail hashtag. Property order is preserved as given (the
+  // wizard's carousel order), not re-sorted by OH time.
+  const kind: RoundupType = input.roundup_type ?? "open_house";
+  if (kind !== "open_house") {
+    return synthesizeRoundupCaption(input, kind);
+  }
   // why: present open houses in strict chronological order (earliest date
   // first). See sortPropertiesByOpenHouse — fixes out-of-order day sections.
   const properties = sortPropertiesByOpenHouse(input.properties);
@@ -979,6 +1019,209 @@ export function synthesizeMultiOHCaption(
       tiktok: { caption: ttBody, hashtags: ttFinalTags },
     },
     resolved_tone: resolvedTone,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 2026-08-19 — milestone roundup captions (under_contract / price_reduction)
+// ---------------------------------------------------------------------------
+//
+// Same output contract as the OH synth (per-platform bodies + tags +
+// legacy mirror), different composition: milestone-specific opener/closer
+// pools instead of lifestyle-tone pools, a flat bullet list instead of OH
+// day groups, and the milestone tail hashtag. Deterministic + pure, same
+// seed scheme, so previews and the server always agree.
+
+interface RoundupCtx {
+  count: number;
+  /** "this home" / "these 4 homes" — pre-pluralized for the openers. */
+  countPhrase: string;
+  geoPhrase: string;
+}
+
+const UC_ROUNDUP_OPENERS: ReadonlyArray<(c: RoundupCtx) => string> = [
+  (c) =>
+    `✍️ Under contract! Buyers said yes to ${c.countPhrase} this week. ${
+      c.geoPhrase ? `${c.geoPhrase} — the` : "The"
+    } market is moving. 🖤💛`,
+  (c) =>
+    `🤝 ${
+      c.count === 1 ? "Another home" : `${c.count} more homes`
+    } went under contract with us this week. Here's the roundup. 🖤💛`,
+  (c) =>
+    `✍️ Sold signs are coming. ${
+      c.countPhrase.charAt(0).toUpperCase() + c.countPhrase.slice(1)
+    } went under contract this week${
+      c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}` : ""
+    }. 🖤💛`,
+];
+
+const UC_ROUNDUP_CLOSERS: readonly string[] = [
+  "Thinking about selling? Your address could be on next week's list. 🖤💛",
+  "Whether you're buying or selling, this is what momentum looks like. 🖤💛",
+  "The market didn't slow down this week — and neither did our agents. 🖤💛",
+];
+
+const PR_ROUNDUP_OPENERS: ReadonlyArray<(c: RoundupCtx) => string> = [
+  (c) =>
+    `💰 New week, new prices. ${
+      c.countPhrase.charAt(0).toUpperCase() + c.countPhrase.slice(1)
+    } just became a better deal — take another look. 🖤💛`,
+  (c) =>
+    `📉 Price improved on ${c.countPhrase}${
+      c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}` : ""
+    }. The sellers mean business. 🖤💛`,
+  (c) =>
+    `💰 Fresh numbers this week: ${c.countPhrase} moved closer to your budget. 🖤💛`,
+];
+
+const PR_ROUNDUP_CLOSERS: readonly string[] = [
+  "New price, same address. One of these might be the one. 🖤💛",
+  "Second looks welcome — these numbers changed for a reason. 🖤💛",
+  "A better price on the right home beats a perfect price on the wrong one. 🖤💛",
+];
+
+/** "$429,000" style short price. Null on absent/invalid values. */
+function formatRoundupPrice(price: number | null | undefined): string | null {
+  if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) {
+    return null;
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(price);
+}
+
+/**
+ * One flat bullet per property.
+ *   UC: `• {Address}, {City}`
+ *   PR: `• {Address}, {City} | Now $429,000 (was $450,000)`
+ * Address/unit composition matches formatPropertyBullet (the OH version).
+ */
+export function formatRoundupBullet(
+  p: MultiOHCaptionProperty,
+  kind: Exclude<RoundupType, "open_house">,
+): string | null {
+  const baseAddress = (p.address ?? "").trim();
+  const unit = (p.unit_number ?? "").trim();
+  const addressWithUnit = unit
+    ? baseAddress
+      ? `${baseAddress} · ${unit}`
+      : unit
+    : baseAddress;
+  const city = (p.city ?? "").trim();
+  if (!addressWithUnit && !city) return null;
+  const addressFull =
+    addressWithUnit && city
+      ? `${addressWithUnit}, ${city}`
+      : addressWithUnit || city;
+  if (kind === "price_reduction") {
+    const now = formatRoundupPrice(p.price_new ?? p.list_price);
+    const was = formatRoundupPrice(p.price_old);
+    if (now && was) return `• ${addressFull} | Now ${now} (was ${was})`;
+    if (now) return `• ${addressFull} | Now ${now}`;
+  }
+  return `• ${addressFull}`;
+}
+
+function synthesizeRoundupCaption(
+  input: MultiOHCaptionInput,
+  kind: Exclude<RoundupType, "open_house">,
+): MultiOHCaptionResult {
+  // Preserve the caller's order — it IS the carousel order the wizard set.
+  const properties = input.properties;
+  const count = properties.length;
+
+  const firstProp = properties[0];
+  const anchorMls = firstProp
+    ? canonicalMlsHashtag(firstProp.mls_number, firstProp.source_mls ?? null)
+    : "";
+
+  const mlsKey = properties.map((p) => p.mls_number).join(",");
+  const seed = hashSeed(`${kind}|${count}|${mlsKey}`);
+  const geoPhrase = buildGeoPhrase(properties, seed, false);
+
+  const countPhrase = count === 1 ? "this home" : `these ${count} homes`;
+  const ctx: RoundupCtx = { count, countPhrase, geoPhrase };
+
+  const openers = kind === "under_contract" ? UC_ROUNDUP_OPENERS : PR_ROUNDUP_OPENERS;
+  const closers = kind === "under_contract" ? UC_ROUNDUP_CLOSERS : PR_ROUNDUP_CLOSERS;
+  const opener = openers[seed % openers.length](ctx);
+  const closer = closers[(seed >>> 6) % closers.length];
+
+  const bullets = properties
+    .map((p) => formatRoundupBullet(p, kind))
+    .filter((b): b is string => b !== null);
+  const bulletBlock = bullets.join("\n");
+
+  // Hashtags — same conditional division logic, milestone tail tag.
+  // Regional tag reuses the OH picker; "coastal" unlocks the county
+  // fallback for multi-town posts (the tone param only gates that + the
+  // editorial skip).
+  const brandTags = buildBrandTags(properties, kind);
+  const regionalTag = pickRegionalTag(properties, "coastal");
+  const fixedTags = regionalTag ? [...brandTags, regionalTag] : [...brandTags];
+  const igTags = fixedTags.slice(0, 5);
+  const fbTags = fixedTags.slice(0, 5);
+  const ttTags = fixedTags.slice(0, 5);
+
+  const overrideRaw = (input.caption_override ?? "").trim();
+  const overrideActive = overrideRaw.length > 0;
+
+  let igBody: string;
+  let fbBody: string;
+  let ttBody: string;
+  let igFinalTags: string[];
+  let fbFinalTags: string[];
+  let ttFinalTags: string[];
+
+  if (overrideActive) {
+    igBody = clampBody(overrideRaw, 2200);
+    fbBody = clampBody(overrideRaw, 1500);
+    ttBody = clampBody(overrideRaw, 250);
+    if (overrideAlreadyHasHashtags(overrideRaw)) {
+      igFinalTags = [];
+      fbFinalTags = [];
+      ttFinalTags = [];
+    } else {
+      igFinalTags = igTags;
+      fbFinalTags = fbTags;
+      ttFinalTags = ttTags;
+    }
+  } else {
+    const bodyParts: string[] = [opener];
+    if (bulletBlock.length > 0) {
+      bodyParts.push("", bulletBlock);
+    }
+    bodyParts.push("", closer);
+    const baseBody = bodyParts.join("\n");
+    igBody = clampBody(baseBody, 2200);
+    fbBody = clampBody(baseBody, 1500);
+    const ttPieces: string[] = [opener];
+    if (count > 1) {
+      ttPieces.push("Full list in the carousel.");
+    }
+    ttBody = clampBody(ttPieces.join(" "), 250);
+    igFinalTags = igTags;
+    fbFinalTags = fbTags;
+    ttFinalTags = ttTags;
+  }
+
+  return {
+    legacy: {
+      caption: igBody,
+      hashtags: igFinalTags,
+      mls_hashtag: anchorMls,
+    },
+    captions: {
+      instagram: { caption: igBody, hashtags: igFinalTags },
+      facebook: { caption: fbBody, hashtags: fbFinalTags },
+      tiktok: { caption: ttBody, hashtags: ttFinalTags },
+    },
+    // Tone pools don't apply to roundups; persist the heuristic pick so
+    // the caption_tone column still reads a concrete value.
+    resolved_tone: detectTone(properties),
   };
 }
 

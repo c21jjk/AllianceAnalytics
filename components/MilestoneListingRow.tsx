@@ -45,6 +45,13 @@ interface MilestoneListingRowProps {
   ribbon?: ReactNode;
   /** Renders the row muted — used for dismissed listings. */
   dimmed?: boolean;
+  /**
+   * 2026-08-19 — replaces the per-row "Build Studio Post" deep-link.
+   * Under Contract + Price Reduced singles were retired in favor of the
+   * weekly roundup posts, so their rows point the build CTA at the
+   * roundup wizard instead of a Post Builder tab that no longer exists.
+   */
+  buildOverride?: { href: string; label: string };
 }
 
 /**
@@ -76,6 +83,7 @@ export default function MilestoneListingRow({
   trailingAction,
   ribbon,
   dimmed = false,
+  buildOverride,
 }: MilestoneListingRowProps) {
   const dateLabel = formatDateLabel(listing.reference_date);
   // 2026-07-17 (approved mockup v2) — state dropped from all dashboard
@@ -243,7 +251,7 @@ export default function MilestoneListingRow({
           is too long to sit beside anything without truncating. */}
       <div className="flex flex-col items-stretch gap-1.5">
         <Link
-          href={`/post-builder?mls=${mls}&postType=${postType}`}
+          href={buildOverride?.href ?? `/post-builder?mls=${mls}&postType=${postType}`}
           className={
             listing.post_made
               ? // Already handled — go quiet so a finished row stops competing
@@ -251,10 +259,14 @@ export default function MilestoneListingRow({
                 "inline-flex items-center justify-center gap-1.5 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-gold-300 hover:text-gold-800 transition-colors"
               : "inline-flex items-center justify-center gap-1.5 rounded-md bg-gold-500 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-gold-600 transition-colors"
           }
-          title="Open the Post Builder with this listing pre-selected"
+          title={
+            buildOverride
+              ? "Open the roundup wizard (this milestone posts as a weekly roundup)"
+              : "Open the Post Builder with this listing pre-selected"
+          }
         >
           <PlusGlyph />
-          Build Studio Post
+          {buildOverride?.label ?? "Build Studio Post"}
         </Link>
         {/* 2026-08-05 (John): "AutoReel is only for Recently Listed posts,
             not Just Sold, UC or Price Reductions. We will only use studio for

@@ -24,6 +24,7 @@ import {
   type MultiOHEventProperty,
   type PostBuilderListing,
   type PostFormat,
+  type RoundupType,
 } from "@/lib/post-builder/types";
 import {
   synthesizeMultiOHCaption,
@@ -93,7 +94,89 @@ interface PartialResult {
  *  and v8 (Standard NEW LISTING) added in its place. */
 type PerPropertyVariant = "v2" | "v3" | "v6" | "v8";
 
+/**
+ * 2026-08-19 — per-property milestone metadata for the roundup kinds,
+ * keyed by mls_number. Mirrors RoundupPropertyMeta in
+ * lib/post-builder/roundup-listings.ts (that module is server-only, so
+ * the shape is re-declared here — keep the two in lockstep).
+ */
+export interface RoundupMetaEntry {
+  event_date: string | null;
+  price_old: number | null;
+  price_new: number | null;
+  already_posted: boolean;
+}
+
+/**
+ * 2026-08-19 — kind-specific display copy. The wizard machinery (steps,
+ * persistence, streaming, reorder) is shared; only the words and the
+ * OH-only controls differ. One table so the three kinds can't drift.
+ */
+const WIZARD_COPY: Record<
+  RoundupType,
+  {
+    pickTitle: string;
+    pickSub: string;
+    emptyTitle: string;
+    emptySub: string;
+    /** Step 2 default-template card label ("Open House" etc.). */
+    templateNoun: string;
+  }
+> = {
+  open_house: {
+    pickTitle: "Pick the open houses for this event",
+    pickSub: `Choose 2-${MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they'll appear in the carousel. Missing one? Sync the feeds or add it by hand with the buttons above.`,
+    emptyTitle: "No open houses scheduled yet.",
+    emptySub:
+      "The feeds refresh every few hours. If the office just finalised the weekend, pull them in now — or add one yourself.",
+    templateNoun: "Open House",
+  },
+  under_contract: {
+    pickTitle: "Pick this week's new under contracts",
+    pickSub: `Everything that went under contract in the last 7 days is pre-selected (up to ${MULTI_OH_MAX_PROPERTIES}). Untick anything you don't want featured — the pick order is the carousel order.`,
+    emptyTitle: "No new under contracts this week.",
+    emptySub:
+      "Nothing went under contract in the last 7 days. Check back after the next status change — the dashboard's Under Contract card fills this list.",
+    templateNoun: "Under Contract",
+  },
+  price_reduction: {
+    pickTitle: "Pick this week's price improvements",
+    pickSub: `Every price reduction from the last 7 days is pre-selected (up to ${MULTI_OH_MAX_PROPERTIES}). Untick anything you don't want featured — the pick order is the carousel order.`,
+    emptyTitle: "No price reductions this week.",
+    emptySub:
+      "No listing dropped its price in the last 7 days. The dashboard's Reduced card fills this list as cuts come in from the feeds.",
+    templateNoun: "Price Reduced",
+  },
+};
+
+/** Stable default for the roundupMeta prop. A `= {}` inline default would
+ *  mint a fresh object identity every parent render, and roundupMeta is a
+ *  dependency of Step 3's caption-input memo — a new identity per render
+ *  would re-fire the debounced AI caption preview on unrelated re-renders
+ *  (tab switches, banner dismissals) in the plain multi-OH flow. */
+const EMPTY_ROUNDUP_META: Record<string, RoundupMetaEntry> = {};
+
+/** sessionStorage key per kind. OH keeps its historical key so in-flight
+ *  snapshots survive this deploy; the roundups get their own so the three
+ *  wizards never cross-restore each other's picks. */
+function storageKeyFor(kind: RoundupType): string {
+  if (kind === "under_contract") return "uc-roundup-wizard-state-v1";
+  if (kind === "price_reduction") return "pr-roundup-wizard-state-v1";
+  return STORAGE_KEY;
+}
+
 interface Props {
+  /**
+   * 2026-08-19 — which milestone this wizard builds. Defaults to
+   * "open_house" (the original multi-OH flow, mounted at
+   * /post-builder/multi-oh). The roundup routes mount the same component
+   * with "under_contract" / "price_reduction" + roundupMeta + basePath.
+   */
+  roundupType?: RoundupType;
+  /** Per-property milestone metadata (roundup kinds only). */
+  roundupMeta?: Record<string, RoundupMetaEntry>;
+  /** Route the wizard lives at, for the ?step= URL sync. */
+  basePath?: string;
   /** All upcoming-OH eligible listings, pre-fetched server-side. */
   listings: PostBuilderListing[];
   /** 2026-07-17 — company agent roster (sorted display names). The hosting
@@ -189,10 +272,12 @@ interface MultiOhWizardPersistedState {
  * hydrator actually reads. Anything beyond the contract is silently ignored
  * so we never throw at mount-time on a partially-corrupted blob.
  */
-function readPersistedState(): MultiOhWizardPersistedState | null {
+function readPersistedState(
+  storageKey: string,
+): MultiOhWizardPersistedState | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<MultiOhWizardPersistedState>;
     if (!parsed || typeof parsed !== "object") return null;
@@ -274,20 +359,23 @@ function readPersistedState(): MultiOhWizardPersistedState | null {
   }
 }
 
-function writePersistedState(state: MultiOhWizardPersistedState): void {
+function writePersistedState(
+  storageKey: string,
+  state: MultiOhWizardPersistedState,
+): void {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.sessionStorage.setItem(storageKey, JSON.stringify(state));
   } catch {
     // Quota / private-mode failures are non-fatal — the wizard still
     // works, the user just loses persistence.
   }
 }
 
-function clearPersistedState(): void {
+function clearPersistedState(storageKey: string): void {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.removeItem(STORAGE_KEY);
+    window.sessionStorage.removeItem(storageKey);
   } catch {
     // Ignore — same defensive posture as the writer.
   }
@@ -364,8 +452,18 @@ export default function MultiOHWizardClient({
   agentRoster = [],
   defaultOfficeName,
   dbTemplatesByFormat,
+  roundupType = "open_house",
+  roundupMeta = EMPTY_ROUNDUP_META,
+  basePath = "/post-builder/multi-oh",
 }: Props) {
   const router = useRouter();
+  // 2026-08-19 — roundup derivations. isOH gates every open-house-only
+  // affordance (hosting agents, Add OH modal, feed sync, OH badges);
+  // minProperties is 1 for the roundups because singles were retired for
+  // those milestones and a one-property week still has to publish.
+  const isOH = roundupType === "open_house";
+  const storageKey = storageKeyFor(roundupType);
+  const minProperties = isOH ? MULTI_OH_MIN_PROPERTIES : 1;
   // Task 18 — "Add Open House" modal (manual OH entry). On save we
   // router.refresh() so the server-fetched OH listings prop re-hydrates and
   // the newly-added property appears in the Step 1 picker.
@@ -384,7 +482,7 @@ export default function MultiOHWizardClient({
   if (persistedOnMount.current === null && typeof window !== "undefined") {
     // Set on first client render only; useRef pattern keeps it from
     // re-reading sessionStorage on every render.
-    persistedOnMount.current = readPersistedState();
+    persistedOnMount.current = readPersistedState(storageKey);
   }
   const initial = persistedOnMount.current;
 
@@ -419,7 +517,7 @@ export default function MultiOHWizardClient({
     const restoredCount = initial
       ? initial.selectedMls.filter((mls) => availableSet.has(mls)).length
       : 0;
-    return restoredCount >= MULTI_OH_MIN_PROPERTIES ? wanted : 1;
+    return restoredCount >= minProperties ? wanted : 1;
   });
 
   // ---- step 1 — selection -----------------------------------------------
@@ -432,9 +530,22 @@ export default function MultiOHWizardClient({
    *  the renderer tries to look it up.
    */
   const [selectedMls, setSelectedMls] = useState<readonly string[]>(() => {
-    if (!initial) return [];
-    const availableSet = new Set(listings.map((l) => l.mls_number));
-    return initial.selectedMls.filter((mls) => availableSet.has(mls));
+    if (initial) {
+      const availableSet = new Set(listings.map((l) => l.mls_number));
+      return initial.selectedMls.filter((mls) => availableSet.has(mls));
+    }
+    // 2026-08-19 — roundup kinds pre-tick the whole week (John: the
+    // default IS "feature everything new this week"); properties already
+    // covered by a published post of this milestone stay unticked. Capped
+    // at the carousel max. OH keeps its start-empty behavior — picking
+    // the weekend's event set is the point of that flow.
+    if (roundupType !== "open_house") {
+      return listings
+        .filter((l) => !roundupMeta[l.mls_number]?.already_posted)
+        .slice(0, MULTI_OH_MAX_PROPERTIES)
+        .map((l) => l.mls_number);
+    }
+    return [];
   });
   /**
    * Per-property hosting agent override, keyed by mls_number.
@@ -588,7 +699,7 @@ export default function MultiOHWizardClient({
   const completedStampRef = useRef(false);
   useEffect(() => {
     if (completedStampRef.current) return;
-    writePersistedState({
+    writePersistedState(storageKey, {
       step,
       selectedMls: [...selectedMls],
       perPropertyHostingAgent,
@@ -611,6 +722,7 @@ export default function MultiOHWizardClient({
     captionOverride,
     captionOverrideMlsKey,
     captionPreviewPlatform,
+    storageKey,
   ]);
 
   /**
@@ -624,7 +736,7 @@ export default function MultiOHWizardClient({
    */
   const markPersistedCompleted = useCallback((): void => {
     completedStampRef.current = true;
-    writePersistedState({
+    writePersistedState(storageKey, {
       step,
       selectedMls: [...selectedMls],
       perPropertyHostingAgent,
@@ -647,6 +759,7 @@ export default function MultiOHWizardClient({
     captionOverride,
     captionOverrideMlsKey,
     captionPreviewPlatform,
+    storageKey,
   ]);
 
   // ---- URL ?step= sync --------------------------------------------------
@@ -664,15 +777,15 @@ export default function MultiOHWizardClient({
     const current = searchParams?.get("step");
     if (step === 1) {
       if (current !== null) {
-        router.replace("/post-builder/multi-oh");
+        router.replace(basePath);
       }
     } else {
       const want = String(step);
       if (current !== want) {
-        router.replace(`/post-builder/multi-oh?step=${want}`);
+        router.replace(`${basePath}?step=${want}`);
       }
     }
-  }, [step, router, searchParams]);
+  }, [step, router, searchParams, basePath]);
 
   // ---- derived state ----------------------------------------------------
 
@@ -777,6 +890,10 @@ export default function MultiOHWizardClient({
         return [...prev, mls];
       });
 
+      // 2026-08-19 — hosting agents are an open-house concept; the roundup
+      // kinds have no per-slide host, so their map stays empty.
+      if (!isOH) return;
+
       // why: keep the hosting-agent map in lockstep with selection so a
       // deselected mls doesn't leave a stale value hanging around that
       // could leak into the payload if the user re-selects later. Selecting
@@ -796,7 +913,7 @@ export default function MultiOHWizardClient({
         return { ...prev, [mls]: defaultAgent };
       });
     },
-    [listingsByMls],
+    [listingsByMls, isOH],
   );
 
   /**
@@ -820,9 +937,8 @@ export default function MultiOHWizardClient({
   // ---- step navigation --------------------------------------------------
 
   // 2026-05-28 — event-title input was removed; Step 1 gates only on the
-  // minimum property count.
-  const canContinueFromStep1 =
-    selectedMls.length >= MULTI_OH_MIN_PROPERTIES;
+  // minimum property count (kind-aware since the 2026-08-19 roundups).
+  const canContinueFromStep1 = selectedMls.length >= minProperties;
 
   // 2026-05-28 — Bug 5 auto-skip: when no DB templates are published for
   // the active format, Step 2's only choice is "use the default Open
@@ -911,6 +1027,9 @@ export default function MultiOHWizardClient({
     const properties: MultiOHEventProperty[] = selectedListings.map((l) => {
       const rawHost = perPropertyHostingAgent[l.mls_number] ?? "";
       const trimmedHost = rawHost.trim();
+      // 2026-08-19 — roundup milestone metadata rides along per property
+      // (empty map for open_house, so these stay null there).
+      const meta = roundupMeta[l.mls_number];
       return {
         mls_number: l.mls_number,
         source_mls: l.source_mls,
@@ -929,6 +1048,9 @@ export default function MultiOHWizardClient({
         oh_end_at: l.oh_end_at ?? null,
         hosting_agent_name: trimmedHost.length > 0 ? trimmedHost : null,
         unit_number: l.unit_number ?? null,
+        event_date: meta?.event_date ?? null,
+        price_old: meta?.price_old ?? null,
+        price_new: meta?.price_new ?? null,
       };
     });
     return {
@@ -958,6 +1080,9 @@ export default function MultiOHWizardClient({
       // synth module; override wins over tone when set.
       tone,
       caption_override: captionOverride,
+      // 2026-08-19 — milestone kind; drives slide-template bucket, hero
+      // copy, captions, post_type, and the template_id prefix server-side.
+      roundup_type: roundupType,
       properties,
     };
   }, [
@@ -969,6 +1094,8 @@ export default function MultiOHWizardClient({
     perPropertyHostingAgent,
     tone,
     captionOverride,
+    roundupType,
+    roundupMeta,
   ]);
 
   /**
@@ -1288,7 +1415,7 @@ export default function MultiOHWizardClient({
    * wizard is exactly as if entered for the first time.
    */
   const startFresh = useCallback((): void => {
-    clearPersistedState();
+    clearPersistedState(storageKey);
     setRestoredBanner(null);
     setStep(1);
     setSelectedMls([]);
@@ -1300,7 +1427,7 @@ export default function MultiOHWizardClient({
     setCaptionOverrideMlsKey(null);
     setCaptionPreviewPlatform("instagram");
     setError(null);
-  }, []);
+  }, [storageKey]);
 
   /* 2026-08-06 (John) — "we need to remove the notification prompting us that
      a property has previously had an Open House post created for it. There
@@ -1374,11 +1501,15 @@ export default function MultiOHWizardClient({
             onHostingAgentChange={setHostingAgentForProperty}
             consolidationSummary={consolidationSummary}
             onAddOpenHouse={() => setAddOhOpen(true)}
+            roundupType={roundupType}
+            roundupMeta={roundupMeta}
+            minProperties={minProperties}
           />
         ) : null}
         {step === 2 ? (
           <Step2FormatVariant
             format={format}
+            templateNoun={WIZARD_COPY[roundupType].templateNoun}
             dbTemplates={dbTemplatesByFormat[format] ?? []}
             dbTemplateId={dbTemplateId}
             onDbTemplateChange={(id) => {
@@ -1393,6 +1524,8 @@ export default function MultiOHWizardClient({
         {step === 3 ? (
           <Step3Review
             selectedListings={selectedListings}
+            roundupType={roundupType}
+            roundupMeta={roundupMeta}
             tone={tone}
             onToneChange={setTone}
             captionOverride={captionOverride}
@@ -1428,6 +1561,7 @@ export default function MultiOHWizardClient({
       <StickyFooter
         step={step}
         selectedCount={selectedMls.length}
+        minProperties={minProperties}
         canContinueFromStep1={canContinueFromStep1}
         onBack={() => {
           // 2026-05-28 — Bug 5: when Step 2 is being auto-skipped (no
@@ -1453,8 +1587,10 @@ export default function MultiOHWizardClient({
           // so the next visit starts fresh. We trigger the navigation
           // ourselves (used to be a <Link>) so the clear happens
           // synchronously before the route transition.
-          clearPersistedState();
-          router.push("/post-builder");
+          // 2026-08-19 — roundups exit to the dashboard: the standard
+          // Post Builder no longer offers their milestones as singles.
+          clearPersistedState(storageKey);
+          router.push(isOH ? "/post-builder" : "/");
         }}
         onContinue={() => {
           if (step === 1 && canContinueFromStep1) {
@@ -1483,12 +1619,15 @@ export default function MultiOHWizardClient({
       ) : null}
 
       {/* Task 18 — manual "Add Open House" entry. router.refresh() re-runs
-          the server page fetch so the new OH's listing appears in Step 1. */}
-      <AddOpenHouseModal
-        open={addOhOpen}
-        onClose={() => setAddOhOpen(false)}
-        onSaved={() => router.refresh()}
-      />
+          the server page fetch so the new OH's listing appears in Step 1.
+          2026-08-19 — OH kind only; the roundups have no OH rows to add. */}
+      {isOH ? (
+        <AddOpenHouseModal
+          open={addOhOpen}
+          onClose={() => setAddOhOpen(false)}
+          onSaved={() => router.refresh()}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1609,6 +1748,10 @@ interface Step1Props {
     | null;
   /** Task 18 — opens the shared Add Open House modal (manual OH entry). */
   onAddOpenHouse: () => void;
+  /** 2026-08-19 — milestone kind + per-property meta + min-count gate. */
+  roundupType: RoundupType;
+  roundupMeta: Record<string, RoundupMetaEntry>;
+  minProperties: number;
 }
 
 function Step1Pick({
@@ -1620,8 +1763,13 @@ function Step1Pick({
   onHostingAgentChange,
   consolidationSummary,
   onAddOpenHouse,
+  roundupType,
+  roundupMeta,
+  minProperties,
 }: Step1Props) {
   const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
+  const isOH = roundupType === "open_house";
+  const copy = WIZARD_COPY[roundupType];
 
   // 2026-08-07 (John) — the picker is batched by office division to match the
   // dashboard card. `listings` already arrives sorted by open-house start time
@@ -1643,39 +1791,45 @@ function Step1Pick({
     return (
       <section className="card p-6">
         <h2 className="text-lg font-semibold text-neutral-900 mb-1">
-          Pick the open houses for this event
+          {copy.pickTitle}
         </h2>
         <p className="text-sm text-neutral-600 mb-4">
-          Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window.
+          {/* Short form in the empty state — the full pickSub references
+              "the buttons above", which don't render here. */}
+          {isOH
+            ? `Choose 2-${MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window.`
+            : copy.pickSub}
         </p>
         <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-8 text-center">
           <div className="text-sm font-medium text-neutral-900 mb-1">
-            No open houses scheduled yet.
+            {copy.emptyTitle}
           </div>
-          <div className="text-sm text-neutral-600 mb-4">
-            The feeds refresh every few hours. If the office just finalised
-            the weekend, pull them in now — or add one yourself.
-          </div>
+          <div className="text-sm text-neutral-600 mb-4">{copy.emptySub}</div>
           {/* 2026-07-31 — an empty list is the single most likely moment
               someone wants a fresh pull, so the sync sits above the fold
               here with its full result panel rather than tucked in a
-              header. */}
-          <div className="mx-auto mb-4 max-w-md text-left">
-            <SyncOpenHousesButton />
-          </div>
+              header. 2026-08-19 — OH-only: the roundup lists fill from
+              status changes / the price-change trigger, not the OH feed. */}
+          {isOH ? (
+            <div className="mx-auto mb-4 max-w-md text-left">
+              <SyncOpenHousesButton />
+            </div>
+          ) : null}
           <div className="flex items-center justify-center gap-3">
-            <button
-            type="button"
-            onClick={onAddOpenHouse}
-            className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gold-600 transition shadow-sm"
-          >
-            + Add Open House
-          </button>
+            {isOH ? (
+              <button
+                type="button"
+                onClick={onAddOpenHouse}
+                className="inline-flex items-center gap-1.5 rounded-md bg-gold-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gold-600 transition shadow-sm"
+              >
+                + Add Open House
+              </button>
+            ) : null}
             <Link
-              href="/post-builder"
+              href={isOH ? "/post-builder" : "/"}
               className="inline-flex items-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:border-gold-300 hover:text-gold-800 hover:bg-gold-50/40 transition"
             >
-              Go to Post Builder
+              {isOH ? "Go to Post Builder" : "Back to Dashboard"}
             </Link>
           </div>
         </div>
@@ -1683,7 +1837,7 @@ function Step1Pick({
     );
   }
 
-  if (listings.length < MULTI_OH_MIN_PROPERTIES) {
+  if (listings.length < minProperties) {
     return (
       <section className="card p-6">
         <h2 className="text-lg font-semibold text-neutral-900 mb-1">
@@ -1776,13 +1930,24 @@ function Step1Pick({
                     {l.zip ? ` ${l.zip}` : ""}
                   </div>
                   <div className="text-xs text-neutral-500 mt-1 flex items-center gap-2 flex-wrap">
-                    {l.oh_start_at ? (
+                    {isOH && l.oh_start_at ? (
                       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-1.5 py-0.5 font-medium text-emerald-800">
                         <span aria-hidden="true">🗓</span>
                         <span>{formatOhBadge(l.oh_start_at, l.oh_end_at ?? null)}</span>
                       </span>
                     ) : null}
-                    {typeof l.list_price === "number" ? (
+                    {/* 2026-08-19 — roundup milestone badge: UC shows the
+                        status-change date, PR shows the old → new price. */}
+                    {!isOH && roundupMeta[l.mls_number] ? (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-1.5 py-0.5 font-medium text-emerald-800">
+                        {formatRoundupRowBadge(
+                          roundupType,
+                          roundupMeta[l.mls_number],
+                        )}
+                      </span>
+                    ) : null}
+                    {typeof l.list_price === "number" &&
+                    roundupType !== "price_reduction" ? (
                       <span className="text-gold-700 font-medium">
                         ${l.list_price.toLocaleString()}
                       </span>
@@ -1793,10 +1958,21 @@ function Step1Pick({
                         the row has to say so — a host is still standing in
                         that house on Sunday, but whoever builds the post
                         should know the contract status before they write
-                        "come see it" copy. */}
-                    {l.status === "pending" ? (
+                        "come see it" copy.
+                        2026-08-19 — suppressed on the UC roundup, where
+                        EVERY row is pending by definition. */}
+                    {l.status === "pending" &&
+                    roundupType !== "under_contract" ? (
                       <span className="inline-flex items-center rounded-md bg-amber-50 ring-1 ring-amber-200 px-1.5 py-0.5 font-medium text-amber-800">
                         Under contract
+                      </span>
+                    ) : null}
+                    {/* 2026-08-19 — already covered by a published post of
+                        this milestone (anchor or linked). Not pre-ticked;
+                        still selectable on purpose. */}
+                    {!isOH && roundupMeta[l.mls_number]?.already_posted ? (
+                      <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 font-medium text-neutral-600">
+                        Posted
                       </span>
                     ) : null}
                   </div>
@@ -1806,8 +1982,9 @@ function Step1Pick({
               {/* Per-property hosting agent override — only on selected rows.
                   why: keeps the picker list scannable when nothing is selected
                   yet, and gives the user an obvious touchpoint to override the
-                  default exactly where the property lives in the list. */}
-              {isSelected ? (
+                  default exactly where the property lives in the list.
+                  2026-08-19 — OH kind only; roundup slides carry no host. */}
+              {isSelected && isOH ? (
                 <HostingAgentRow
                   mls={l.mls_number}
                   value={hostingAgentValue}
@@ -1823,26 +2000,27 @@ function Step1Pick({
     <section className="card p-6">
       <div className="mb-1 flex items-start justify-between gap-3">
         <h2 className="text-lg font-semibold text-neutral-900">
-          Pick the open houses for this event
+          {copy.pickTitle}
         </h2>
         {/* Task 18 — manual OH entry, right where a missing property is
             noticed. Opens the shared AddOpenHouseModal.
             2026-07-31 — paired with the on-demand feed sync: "it's missing"
-            has two fixes, and pulling the feed is the one to try first. */}
-        <div className="flex flex-none items-start gap-2">
-          <SyncOpenHousesButton variant="compact" />
-          <button
-            type="button"
-            onClick={onAddOpenHouse}
-            className="flex-none inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-gold-50/40 px-3 py-1.5 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
-          >
-            + Add Open House
-          </button>
-        </div>
+            has two fixes, and pulling the feed is the one to try first.
+            2026-08-19 — OH kind only. */}
+        {isOH ? (
+          <div className="flex flex-none items-start gap-2">
+            <SyncOpenHousesButton variant="compact" />
+            <button
+              type="button"
+              onClick={onAddOpenHouse}
+              className="flex-none inline-flex items-center gap-1.5 rounded-md border border-gold-300 bg-gold-50/40 px-3 py-1.5 text-xs font-semibold text-gold-800 hover:bg-gold-100 transition"
+            >
+              + Add Open House
+            </button>
+          </div>
+        ) : null}
       </div>
-      <p className="text-sm text-neutral-600 mb-4">
-        Choose 2-{MULTI_OH_MAX_PROPERTIES} properties happening within the same weekend or event window. The order you pick them in is the order they&apos;ll appear in the carousel. Missing one? Sync the feeds or add it by hand with the buttons above.
-      </p>
+      <p className="text-sm text-neutral-600 mb-4">{copy.pickSub}</p>
 
 
       {/* Consolidation hint — only when picks > unique-MLS. Mirrors the
@@ -2122,6 +2300,9 @@ function HostingAgentRow({ mls, value, onChange, roster }: HostingAgentRowProps)
 
 interface Step2Props {
   format: PostFormat;
+  /** 2026-08-19 — milestone noun for the default-template card copy
+   *  ("Open House" / "Under Contract" / "Price Reduced"). */
+  templateNoun: string;
   /** Phase 2E — DB templates available for the active format. */
   dbTemplates: readonly TemplateMeta[];
   /** Phase 2E — currently-selected DB template, or null when the default
@@ -2133,6 +2314,7 @@ interface Step2Props {
 
 function Step2FormatVariant({
   format,
+  templateNoun,
   dbTemplates,
   dbTemplateId,
   onDbTemplateChange,
@@ -2158,7 +2340,7 @@ function Step2FormatVariant({
               longer published to social (only per-property slides
               are). New copy describes the actual choice the user is
               making here. */}
-          Pick a published template, or stick with the default Open House design.
+          Pick a published template, or stick with the default {templateNoun} design.
         </p>
         {/* Phase 2E (2026-05-22) — admin-authored DB templates for OH.
             Section hides when no DB templates exist for the active
@@ -2239,10 +2421,10 @@ function Step2FormatVariant({
           // per-property slide; the user just hits Continue.
           <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
             <div className="text-sm font-semibold text-neutral-900">
-              Using the default Open House template
+              Using the default {templateNoun} template
             </div>
             <div className="mt-1 text-xs text-neutral-600 leading-relaxed">
-              Every per-property slide renders with the standard Alliance Open House layout. Publish a custom Open House template in /admin/templates to surface it here as a pick.
+              Every per-property slide renders with the standard Alliance {templateNoun} layout. Publish a custom {templateNoun} template in /admin/templates to surface it here as a pick.
             </div>
           </div>
         )}
@@ -2287,6 +2469,10 @@ function Step2FormatVariant({
 
 interface Step3Props {
   selectedListings: readonly PostBuilderListing[];
+  /** 2026-08-19 — milestone kind + per-property meta, threaded into the
+   *  caption synth/preview so roundup captions carry dates + prices. */
+  roundupType: RoundupType;
+  roundupMeta: Record<string, RoundupMetaEntry>;
   /** Caption tone bias. `auto` runs heuristic detection in the synth. */
   tone: CaptionTone;
   onToneChange: (next: CaptionTone) => void;
@@ -2320,6 +2506,8 @@ interface Step3Props {
 
 function Step3Review({
   selectedListings,
+  roundupType,
+  roundupMeta,
   tone,
   onToneChange,
   captionOverride,
@@ -2352,6 +2540,9 @@ function Step3Review({
   // result during in-flight requests further down.
   const captionInputForSynth = useMemo(
     () => ({
+      // 2026-08-19 — the synths branch on this: roundup kinds get flat
+      // milestone bullets instead of OH day groups.
+      roundup_type: roundupType,
       tone,
       caption_override: captionOverride,
       properties: selectedListings.map((l) => ({
@@ -2364,9 +2555,12 @@ function Step3Review({
         property_type: l.property_type,
         oh_start_at: l.oh_start_at ?? null,
         oh_end_at: l.oh_end_at ?? null,
+        event_date: roundupMeta[l.mls_number]?.event_date ?? null,
+        price_old: roundupMeta[l.mls_number]?.price_old ?? null,
+        price_new: roundupMeta[l.mls_number]?.price_new ?? null,
       })),
     }),
-    [tone, captionOverride, selectedListings],
+    [tone, captionOverride, selectedListings, roundupType, roundupMeta],
   );
 
   const [captionResult, setCaptionResult] = useState<MultiOHCaptionResult>(
@@ -2400,6 +2594,7 @@ function Step3Review({
           tone: captionInputForSynth.tone,
           captionOverride: captionInputForSynth.caption_override,
           hostingAgentNames: [],
+          roundup_type: captionInputForSynth.roundup_type,
         }),
       })
         .then(async (res) => {
@@ -3019,6 +3214,8 @@ function EditCaptionOverlay({
 interface StickyFooterProps {
   step: StepIndex;
   selectedCount: number;
+  /** 2026-08-19 — 2 for open_house, 1 for the roundup kinds. */
+  minProperties: number;
   canContinueFromStep1: boolean;
   onBack: () => void;
   onCancel: () => void;
@@ -3030,6 +3227,7 @@ interface StickyFooterProps {
 function StickyFooter({
   step,
   selectedCount,
+  minProperties,
   canContinueFromStep1,
   onBack,
   onCancel,
@@ -3071,10 +3269,10 @@ function StickyFooter({
               {selectedCount}
             </span>{" "}
             of {MULTI_OH_MAX_PROPERTIES} selected
-            {selectedCount < MULTI_OH_MIN_PROPERTIES ? (
+            {selectedCount < minProperties ? (
               <span className="text-neutral-500">
                 {" "}
-                · need at least {MULTI_OH_MIN_PROPERTIES}
+                · need at least {minProperties}
               </span>
             ) : null}
           </div>
@@ -3393,4 +3591,37 @@ function prettyFormat(f: PostFormat): string {
     case "story_9x16":
       return "Story 9:16";
   }
+}
+
+/**
+ * 2026-08-19 — Step 1 milestone badge for the roundup kinds.
+ *   UC: "UC Aug 15"
+ *   PR: "$450,000 → $429,000"
+ * Falls back to a bare label when the meta is incomplete.
+ */
+function formatRoundupRowBadge(
+  kind: RoundupType,
+  meta: RoundupMetaEntry,
+): string {
+  if (kind === "under_contract") {
+    if (!meta.event_date) return "Under contract";
+    const d = new Date(meta.event_date);
+    if (Number.isNaN(d.getTime())) return "Under contract";
+    // timeZone pinned so the badge date always matches the date the hero
+    // renderer + captions bake in (both pin America/New_York).
+    return `UC ${d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "America/New_York",
+    })}`;
+  }
+  const money = (n: number | null): string | null =>
+    typeof n === "number" && Number.isFinite(n) && n > 0
+      ? `$${n.toLocaleString()}`
+      : null;
+  const oldP = money(meta.price_old);
+  const newP = money(meta.price_new);
+  if (oldP && newP) return `${oldP} → ${newP}`;
+  if (newP) return `Now ${newP}`;
+  return "New price";
 }

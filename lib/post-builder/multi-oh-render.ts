@@ -9,6 +9,7 @@ import type {
   MultiOHEventInput,
   MultiOHEventProperty,
   PostFormat,
+  RoundupType,
 } from "./types";
 
 /**
@@ -88,7 +89,15 @@ export async function renderMultiOHEventOverview(
   }
 
   const supabase = createAdminClient();
-  const path = `multi_oh_event/${input.format}/${Date.now()}.png`;
+  // 2026-08-19 — roundup heroes land in their own storage dirs so a bucket
+  // listing reads cleanly; multi-OH keeps its original path untouched.
+  const kindDir =
+    (input.roundup_type ?? "open_house") === "open_house"
+      ? "multi_oh_event"
+      : input.roundup_type === "under_contract"
+        ? "uc_roundup"
+        : "pr_roundup";
+  const path = `${kindDir}/${input.format}/${Date.now()}.png`;
   const { error: uploadError } = await supabase.storage
     .from(STORAGE_BUCKET)
     .upload(path, pngBytes, {
@@ -143,6 +152,45 @@ function pickEmitter(
       throw new Error(`Unknown PostFormat: ${String(_never)}`);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 2026-08-19 — per-kind display copy (milestone roundups)
+// ---------------------------------------------------------------------------
+//
+// The hero layout (rows, chips, brand strip, density model) is shared by
+// every multi-property event kind; only the words change. One copy table
+// keeps the three kinds from drifting apart typographically.
+
+interface EventKindCopy {
+  /** Small gold uppercase eyebrow above the headline. */
+  eyebrow: string;
+  /** Right-hand tag on the brand strip footer. */
+  brandTag: string;
+  /** Headline when no usable dates exist on any property. */
+  fallbackTitle: string;
+}
+
+const KIND_COPY: Record<RoundupType, EventKindCopy> = {
+  open_house: {
+    eyebrow: "Open House Event",
+    brandTag: "Open House Event",
+    fallbackTitle: "Open House Event",
+  },
+  under_contract: {
+    eyebrow: "Under Contract",
+    brandTag: "This Week at Alliance",
+    fallbackTitle: "Under Contract This Week",
+  },
+  price_reduction: {
+    eyebrow: "New Price",
+    brandTag: "This Week at Alliance",
+    fallbackTitle: "New Prices This Week",
+  },
+};
+
+function eventKindOf(input: MultiOHEventInput): RoundupType {
+  return input.roundup_type ?? "open_house";
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +289,62 @@ function deriveEventTitle(
   const head = parts.slice(0, -1).join(", ");
   const tail = parts[parts.length - 1];
   return `Open House — ${head} & ${tail}`;
+}
+
+/**
+ * 2026-08-19 — headline for the roundup kinds. Derives a date range from
+ * the properties' `event_date` stamps (status change / price cut):
+ *
+ *   Same day        → "Under Contract — August 15"
+ *   Range, same mo. → "Under Contract — August 12–18"
+ *   Range, cross-mo → "Under Contract — July 30–August 4"
+ *   No dates        → KIND_COPY fallback ("Under Contract This Week")
+ *
+ * Headline noun is intentionally the eyebrow-free milestone phrase — the
+ * eyebrow above it already says the kind, so the date range is the news.
+ */
+function deriveRoundupTitle(
+  kind: Exclude<RoundupType, "open_house">,
+  properties: readonly MultiOHEventProperty[],
+): string {
+  const TZ = "America/New_York";
+  const lead = kind === "under_contract" ? "Under Contract" : "New Price";
+  const dates: Date[] = [];
+  for (const p of properties) {
+    if (!p.event_date) continue;
+    const d = new Date(p.event_date);
+    if (Number.isNaN(d.getTime())) continue;
+    dates.push(d);
+  }
+  if (dates.length === 0) return KIND_COPY[kind].fallbackTitle;
+  dates.sort((a, b) => a.getTime() - b.getTime());
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const fmt = (d: Date, withMonth: boolean) =>
+    withMonth
+      ? d.toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          timeZone: TZ,
+        })
+      : d.toLocaleDateString("en-US", { day: "numeric", timeZone: TZ });
+  const firstKey = first.toLocaleDateString("en-CA", { timeZone: TZ });
+  const lastKey = last.toLocaleDateString("en-CA", { timeZone: TZ });
+  if (firstKey === lastKey) return `${lead} — ${fmt(first, true)}`;
+  const sameMonth = firstKey.slice(0, 7) === lastKey.slice(0, 7);
+  return sameMonth
+    ? `${lead} — ${fmt(first, true)}–${fmt(last, false)}`
+    : `${lead} — ${fmt(first, true)}–${fmt(last, true)}`;
+}
+
+/** Kind-aware title dispatch used by every emitter. */
+function deriveTitleForKind(
+  kind: RoundupType,
+  properties: readonly MultiOHEventProperty[],
+): string {
+  return kind === "open_house"
+    ? deriveEventTitle(properties)
+    : deriveRoundupTitle(kind, properties);
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +710,17 @@ function baseCss(args: {
     font-size: ${density.priceSize}px; font-weight: 800;
     letter-spacing: -0.01em;
   }
+  /* 2026-08-19 — price_reduction roundup: struck-through previous price
+     under the (new-price) chip. Sized off the sub-line so it never
+     competes with the chip itself. */
+  .row-was {
+    font-family: "Inter", sans-serif;
+    font-size: ${Math.max(12, Math.round(density.subSize * 0.9))}px;
+    font-weight: 600;
+    color: ${BRAND.inkMuted};
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+  }
   /* ─── Footer (brand strip) ───────────────────────────────────── */
   /* The agent-name/phone block was removed 2026-05-21 — per-property
      hosting attribution lives on each carousel slide. Only the brand
@@ -672,6 +787,7 @@ function renderPropertyRow(
   p: MultiOHEventProperty,
   index: number,
   density: RowDensity,
+  kind: RoundupType,
 ): string {
   const baseAddress = (p.address ?? "").trim();
   // 2026-05-22 — suffix the unit identifier onto the displayed address so
@@ -684,40 +800,75 @@ function renderPropertyRow(
       : unit
     : baseAddress;
   const cityStateZip = composeCityStateZip(p);
-  // 2026-05-22 — when the user picks multiple OHs for the same property
-  // (e.g. Sat + Sun for one condo unit), `oh_sessions` holds the full
-  // list. Format each as "Sat · 11–1 PM" and join with a separator so
-  // the row's sub-line reads "Villas, NJ · Sat 11–1 PM · Sun 10–12 PM".
-  const sessions =
-    p.oh_sessions && p.oh_sessions.length > 0
-      ? p.oh_sessions
-      : [{ start_at: p.oh_start_at, end_at: p.oh_end_at }];
-  const sessionLabels = sessions
-    .map((s) => formatPropertyOH(s.start_at, s.end_at))
-    .filter((s): s is string => typeof s === "string" && s.length > 0);
-  const price = formatPriceChip(p.list_price);
-  const hostedBy =
-    density.showHostedBy &&
-    typeof p.hosting_agent_name === "string" &&
-    p.hosting_agent_name.trim().length > 0
-      ? p.hosting_agent_name.trim()
-      : null;
 
-  // why: city-state and time live on the same sub-line separated by a small
-  // gold dot, which lets the eye scan address → location → time top-to-bottom
-  // → left-to-right without a second line for the typical case. The hosted-by
-  // line, when present, sits below as a smaller italic note.
+  // ---- sub-line + right column, per kind --------------------------------
+  // OH: "city-state · Sat 11–1 PM [· Sun 10–12]" + list-price chip +
+  //     optional Hosted-by italic line.
+  // UC: "city-state · Under contract Aug 15" + list-price chip.
+  // PR: "city-state" + NEW-price chip with the struck-through old price
+  //     beneath it. No hosted-by anywhere outside OH.
   const subParts: string[] = [];
   if (cityStateZip) {
     subParts.push(
       `<span class="row-citystate">${escapeHtml(cityStateZip)}</span>`,
     );
   }
-  for (const label of sessionLabels) {
-    if (subParts.length > 0) {
-      subParts.push(`<span class="row-dot"></span>`);
+
+  let priceChip: string | null;
+  let wasLine: string | null = null;
+  let hostedBy: string | null = null;
+
+  if (kind === "open_house") {
+    // 2026-05-22 — when the user picks multiple OHs for the same property
+    // (e.g. Sat + Sun for one condo unit), `oh_sessions` holds the full
+    // list. Format each as "Sat · 11–1 PM" and join with a separator so
+    // the row's sub-line reads "Villas, NJ · Sat 11–1 PM · Sun 10–12 PM".
+    const sessions =
+      p.oh_sessions && p.oh_sessions.length > 0
+        ? p.oh_sessions
+        : [{ start_at: p.oh_start_at, end_at: p.oh_end_at }];
+    const sessionLabels = sessions
+      .map((s) => formatPropertyOH(s.start_at, s.end_at))
+      .filter((s): s is string => typeof s === "string" && s.length > 0);
+    for (const label of sessionLabels) {
+      if (subParts.length > 0) {
+        subParts.push(`<span class="row-dot"></span>`);
+      }
+      subParts.push(`<span class="row-time">${escapeHtml(label)}</span>`);
     }
-    subParts.push(`<span class="row-time">${escapeHtml(label)}</span>`);
+    priceChip = formatPriceChip(p.list_price);
+    hostedBy =
+      density.showHostedBy &&
+      typeof p.hosting_agent_name === "string" &&
+      p.hosting_agent_name.trim().length > 0
+        ? p.hosting_agent_name.trim()
+        : null;
+  } else if (kind === "under_contract") {
+    const dateLabel = formatEventDateShort(p.event_date ?? null);
+    if (dateLabel) {
+      if (subParts.length > 0) {
+        subParts.push(`<span class="row-dot"></span>`);
+      }
+      subParts.push(
+        `<span class="row-time">${escapeHtml(`Under contract ${dateLabel}`)}</span>`,
+      );
+    }
+    priceChip = formatPriceChip(p.list_price);
+  } else {
+    // price_reduction — the NEW price is the chip; the old price sits
+    // struck-through beneath it. Fall back to list_price when the wizard
+    // didn't carry price_new (defensive; it always should).
+    priceChip = formatPriceChip(p.price_new ?? p.list_price);
+    const oldChip = formatPriceChip(p.price_old ?? null);
+    if (oldChip) wasLine = `was ${oldChip}`;
+  }
+
+  const rightParts: string[] = [];
+  if (priceChip) {
+    rightParts.push(`<div class="row-price">${escapeHtml(priceChip)}</div>`);
+  }
+  if (wasLine) {
+    rightParts.push(`<div class="row-was">${escapeHtml(wasLine)}</div>`);
   }
 
   return `<div class="row">
@@ -727,8 +878,20 @@ function renderPropertyRow(
       ${subParts.length > 0 ? `<div class="row-sub">${subParts.join("")}</div>` : ""}
       ${hostedBy ? `<div class="row-host">Hosted by ${escapeHtml(hostedBy)}</div>` : ""}
     </div>
-    ${price ? `<div class="row-right"><div class="row-price">${escapeHtml(price)}</div></div>` : ""}
+    ${rightParts.length > 0 ? `<div class="row-right">${rightParts.join("")}</div>` : ""}
   </div>`;
+}
+
+/** "Aug 15" style short date for the UC sub-line. Null-safe. */
+function formatEventDateShort(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "America/New_York",
+  });
 }
 
 /**
@@ -749,7 +912,10 @@ function renderPropertyRow(
  * co-marketed office stamp could read input.office_name). For now, the
  * footer is identical across every event.
  */
-function renderAgentBlock(_input: MultiOHEventInput): string {
+function renderAgentBlock(input: MultiOHEventInput): string {
+  // 2026-08-19 — the footer tag follows the event kind ("Open House Event"
+  // / "This Week at Alliance" for the roundups).
+  const tag = KIND_COPY[eventKindOf(input)].brandTag;
   return `<div class="agent-block">
     <div class="brand-rule"></div>
     <div class="brand-row">
@@ -757,7 +923,7 @@ function renderAgentBlock(_input: MultiOHEventInput): string {
         <div class="brand-mark">21</div>
         <div class="brand-text">Century 21 Alliance</div>
       </div>
-      <div class="brand-tag">Open House Event</div>
+      <div class="brand-tag">${escapeHtml(tag)}</div>
     </div>
   </div>`;
 }
@@ -831,14 +997,16 @@ export function emitEventOverviewSquare(input: MultiOHEventInput): string {
 }`
       : "";
 
+  const kind = eventKindOf(input);
+  const copy = KIND_COPY[kind];
   const rowsHtml = input.properties
-    .map((p, i) => renderPropertyRow(p, i + 1, density))
+    .map((p, i) => renderPropertyRow(p, i + 1, density, kind))
     .join("");
-  const title = deriveEventTitle(input.properties);
+  const title = deriveTitleForKind(kind, input.properties);
 
   return `<!doctype html>
 <html lang="en">
-${eventOverviewHead(`Open House Event — ${title}`)}
+${eventOverviewHead(`${copy.eyebrow} — ${title}`)}
 <style>
 ${baseCss({ width, height, margin, density })}
 .header { gap: 18px; margin-bottom: 28px; }
@@ -851,7 +1019,7 @@ ${compactRowOverride}
     <div class="header">
       <div class="eyebrow">
         <span class="eyebrow-rule"></span>
-        <span class="eyebrow-text">Open House Event</span>
+        <span class="eyebrow-text">${escapeHtml(copy.eyebrow)}</span>
       </div>
       <div class="event-title">${escapeHtml(title)}</div>
     </div>
@@ -885,14 +1053,16 @@ export function emitEventOverviewPortrait(input: MultiOHEventInput): string {
   const titleSize =
     input.properties.length <= 3 ? 72 : input.properties.length <= 6 ? 60 : 52;
 
+  const kind = eventKindOf(input);
+  const copy = KIND_COPY[kind];
   const rowsHtml = input.properties
-    .map((p, i) => renderPropertyRow(p, i + 1, density))
+    .map((p, i) => renderPropertyRow(p, i + 1, density, kind))
     .join("");
-  const title = deriveEventTitle(input.properties);
+  const title = deriveTitleForKind(kind, input.properties);
 
   return `<!doctype html>
 <html lang="en">
-${eventOverviewHead(`Open House Event — ${title}`)}
+${eventOverviewHead(`${copy.eyebrow} — ${title}`)}
 <style>
 ${baseCss({ width, height, margin, density })}
 .header { gap: 22px; margin-bottom: 40px; }
@@ -904,7 +1074,7 @@ ${baseCss({ width, height, margin, density })}
     <div class="header">
       <div class="eyebrow">
         <span class="eyebrow-rule"></span>
-        <span class="eyebrow-text">Open House Event</span>
+        <span class="eyebrow-text">${escapeHtml(copy.eyebrow)}</span>
       </div>
       <div class="event-title">${escapeHtml(title)}</div>
     </div>
@@ -940,18 +1110,20 @@ export function emitEventOverviewStory(input: MultiOHEventInput): string {
   const titleSize =
     input.properties.length <= 3 ? 76 : input.properties.length <= 6 ? 64 : 56;
 
+  const kind = eventKindOf(input);
+  const copy = KIND_COPY[kind];
   const rowsHtml = input.properties
-    .map((p, i) => renderPropertyRow(p, i + 1, density))
+    .map((p, i) => renderPropertyRow(p, i + 1, density, kind))
     .join("");
 
   // why: story format pads top/bottom heavily to clear IG's UI overlays.
   // The 310px top padding = 250 safe zone + 60 visual breathing room.
   // The 200px bottom padding tucks the brand footer above the 1720 line.
-  const title = deriveEventTitle(input.properties);
+  const title = deriveTitleForKind(kind, input.properties);
 
   return `<!doctype html>
 <html lang="en">
-${eventOverviewHead(`Open House Event — ${title}`)}
+${eventOverviewHead(`${copy.eyebrow} — ${title}`)}
 <style>
 ${baseCss({ width, height, margin, density })}
 .frame {
@@ -966,7 +1138,7 @@ ${baseCss({ width, height, margin, density })}
     <div class="header">
       <div class="eyebrow">
         <span class="eyebrow-rule"></span>
-        <span class="eyebrow-text">Open House Event</span>
+        <span class="eyebrow-text">${escapeHtml(copy.eyebrow)}</span>
       </div>
       <div class="event-title">${escapeHtml(title)}</div>
     </div>

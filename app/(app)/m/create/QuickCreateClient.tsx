@@ -66,12 +66,13 @@ const STEP_LABELS: Record<Step, string> = {
   5: "Preview",
 };
 
+// 2026-08-19 — Under Contract + Price Reduced removed: those milestones
+// publish as weekly company-wide roundup posts (built on desktop at
+// /post-builder/roundup/*), not per-property singles.
 const POST_TYPES: Array<{ value: PostType; label: string }> = [
   { value: "just_listed", label: "Just Listed" },
   { value: "open_house", label: "Open House" },
   { value: "just_sold", label: "Just Sold" },
-  { value: "under_contract", label: "Under Contract" },
-  { value: "price_reduction", label: "Price Reduced" },
 ];
 
 const FORMATS: Array<{ value: PostFormat; label: string }> = [

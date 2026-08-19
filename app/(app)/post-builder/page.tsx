@@ -13,15 +13,17 @@ import type { TemplateMeta } from "@/lib/template-builder";
 import { fetchCreatedPostResume } from "@/lib/data/created-posts-db";
 import { loadSystemConfig } from "@/lib/data/system-config";
 import { getListingNoteStates } from "@/lib/data/listing-notes";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { FileText } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import AutoReelLaunchButton from "@/components/AutoReelPanel";
 import PostBuilderClient from "./PostBuilderClient";
-import type {
-  PostBuilderListing,
-  PostFormat,
-  PostType,
+import {
+  isMultiEventTemplateId,
+  type PostBuilderListing,
+  type PostFormat,
+  type PostType,
 } from "@/lib/post-builder/types";
 
 export const metadata = { title: "Post Builder — Alliance Social" };
@@ -74,6 +76,18 @@ export default async function PostBuilderPage({
   // pre-load. Server-side fetch keeps the editor's first render trustworthy
   // (no flash of "wrong" picker state) and gates the lookup by created_by.
   const sp = await searchParams;
+  // 2026-08-19 — Under Contract + Price Reduced singles were replaced by
+  // the weekly roundup posts (John, 8/19). Any surviving deep-link
+  // (?postType=under_contract / price_reduction — old bookmarks, stale
+  // dashboard tabs) forwards to the matching roundup wizard instead of
+  // pre-selecting a hidden tab.
+  const earlyPostType = asStringParam(sp.postType);
+  if (earlyPostType === "under_contract") {
+    redirect("/post-builder/roundup/under-contract");
+  }
+  if (earlyPostType === "price_reduction") {
+    redirect("/post-builder/roundup/price-reduced");
+  }
   const gpParam = Array.isArray(sp.gp) ? sp.gp[0] : sp.gp;
   const resume = gpParam
     ? await fetchCreatedPostResume(gpParam, profile.id)
@@ -261,15 +275,15 @@ export default async function PostBuilderPage({
     return out;
   })();
 
-  // 2026-05-28 — when the resume row is a multi-OH carousel, the dedicated
-  // MultiOhFinalStage screen carries its own header chrome (title, subtitle,
-  // hosts line). Suppress the generic Post Builder PageHeader + Saved-posts
-  // link so the Final Stage page reads as a focused review surface rather
-  // than a "Post Builder with extra stuff stapled on top." Mirrors the
-  // client-side `isMultiOHPost` memo at PostBuilderClient.tsx ~line 1159.
-  const isMultiOHResume =
-    typeof resume?.template_id === "string" &&
-    resume.template_id.startsWith("multi_oh_event_");
+  // 2026-05-28 — when the resume row is a multi-slide event carousel, the
+  // dedicated Final Review screen carries its own header chrome (title,
+  // subtitle, detail line). Suppress the generic Post Builder PageHeader +
+  // Saved-posts link so it reads as a focused review surface rather than a
+  // "Post Builder with extra stuff stapled on top." Mirrors the client-side
+  // `multiEventKind` memo in PostBuilderClient.
+  // 2026-08-19 — prefix check generalized: uc_roundup_* / pr_roundup_* rows
+  // get the same treatment as multi_oh_event_*.
+  const isMultiOHResume = isMultiEventTemplateId(resume?.template_id);
 
   return (
     <div>

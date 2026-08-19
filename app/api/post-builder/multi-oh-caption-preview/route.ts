@@ -32,7 +32,7 @@ import {
   type MultiOHCaptionProperty,
   type MultiOHCaptionResult,
 } from "@/lib/post-builder/multi-oh-caption-synth";
-import type { SourceMls } from "@/lib/post-builder/types";
+import type { RoundupType, SourceMls } from "@/lib/post-builder/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -63,6 +63,10 @@ interface RawProperty {
   oh_start_at?: unknown;
   oh_end_at?: unknown;
   oh_sessions?: unknown;
+  // 2026-08-19 — roundup milestone fields.
+  event_date?: unknown;
+  price_old?: unknown;
+  price_new?: unknown;
 }
 
 interface RawBody {
@@ -70,6 +74,8 @@ interface RawBody {
   tone?: unknown;
   hostingAgentNames?: unknown;
   captionOverride?: unknown;
+  /** 2026-08-19 — roundup kind; absent = open_house. */
+  roundup_type?: unknown;
 }
 
 /**
@@ -143,8 +149,27 @@ function parseBody(raw: unknown): {
               },
             )
         : undefined,
+      event_date:
+        typeof rawProp.event_date === "string" ? rawProp.event_date : null,
+      price_old:
+        typeof rawProp.price_old === "number" &&
+        Number.isFinite(rawProp.price_old)
+          ? rawProp.price_old
+          : null,
+      price_new:
+        typeof rawProp.price_new === "number" &&
+        Number.isFinite(rawProp.price_new)
+          ? rawProp.price_new
+          : null,
     });
   }
+
+  // 2026-08-19 — roundup kind pass-through (absent/unknown → open_house).
+  const roundupType: RoundupType =
+    body.roundup_type === "under_contract" ||
+    body.roundup_type === "price_reduction"
+      ? body.roundup_type
+      : "open_house";
 
   let tone: CaptionTone = "auto";
   if (typeof body.tone === "string") {
@@ -164,6 +189,7 @@ function parseBody(raw: unknown): {
   return {
     ok: true,
     input: {
+      roundup_type: roundupType,
       properties,
       tone,
       caption_override: captionOverride,

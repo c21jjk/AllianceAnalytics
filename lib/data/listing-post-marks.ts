@@ -81,6 +81,14 @@ export async function getListingPostMarks(
  *
  * The checkbox renders locked when a listing is in this set: you shouldn't be
  * able to untick a post that demonstrably went out.
+ *
+ * 2026-08-19 — roundup awareness: a weekly Under Contract / Price Reduced
+ * roundup carries ONE anchor property_id but covers every property in its
+ * linked_property_ids array. Matching only the anchor left all the other
+ * featured properties reading "not posted" on the dashboard, which is
+ * exactly the redundancy the roundups were built to remove. The query now
+ * ORs an overlaps() on linked_property_ids so every featured property
+ * counts as posted.
  */
 export async function getAutoPostedPropertyIds(
   propertyIds: string[],
@@ -92,12 +100,21 @@ export async function getAutoPostedPropertyIds(
   const supabase = createAdminClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const untyped = supabase as any;
+  // why the .or() string form: linked_property_ids isn't in the generated
+  // types, and PostgREST's or= filter is the one way to express
+  // (property_id IN … OR linked_property_ids && …) in a single query.
+  // UUID values are hex + hyphens only (validated at write time in the
+  // multi-oh-generate route), so embedding them in the filter string is
+  // injection-safe.
+  const idList = propertyIds.join(",");
   const { data, error } = await untyped
     .from("generated_posts")
-    .select("property_id")
+    .select("property_id, linked_property_ids")
     .eq("post_type", postType)
     .not("posted_at", "is", null)
-    .in("property_id", propertyIds);
+    .or(
+      `property_id.in.(${idList}),linked_property_ids.ov.{${idList}}`,
+    );
 
   if (error) {
     console.error(
@@ -106,8 +123,17 @@ export async function getAutoPostedPropertyIds(
     );
     return out;
   }
-  for (const row of (data ?? []) as Array<{ property_id: string | null }>) {
-    if (row.property_id) out.add(row.property_id);
+  const wanted = new Set(propertyIds);
+  for (const row of (data ?? []) as Array<{
+    property_id: string | null;
+    linked_property_ids: string[] | null;
+  }>) {
+    if (row.property_id && wanted.has(row.property_id)) out.add(row.property_id);
+    if (Array.isArray(row.linked_property_ids)) {
+      for (const id of row.linked_property_ids) {
+        if (typeof id === "string" && wanted.has(id)) out.add(id);
+      }
+    }
   }
   return out;
 }
