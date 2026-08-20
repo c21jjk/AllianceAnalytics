@@ -4,10 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { PriceChangeMilestone } from "@/lib/data/price-changes";
 import { formatCurrency } from "@/lib/format";
-import {
-  MILESTONE_FLOOR_EMPTY_COPY,
-  ROLLING_WINDOW_LABEL,
-} from "@/lib/dashboard-window";
+import { MILESTONE_FLOOR_EMPTY_COPY } from "@/lib/dashboard-window";
 import MilestoneListingRow from "./MilestoneListingRow";
 
 interface PriceChangeRowProps {
@@ -113,7 +110,7 @@ export default function PriceChangeRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Price Changes
               <span className="text-neutral-400 font-normal">
-                · {ROLLING_WINDOW_LABEL} · {listings.length} {noun}
+                · {listings.length} {noun}
                 {scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}

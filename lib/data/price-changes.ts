@@ -2,7 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MILESTONE_FLOOR_ISO } from "@/lib/dashboard-window";
 import {
-  getAutoPostedPropertyIds,
+  getAutoPostedMarks,
   getListingPostMarks,
 } from "@/lib/data/listing-post-marks";
 import {
@@ -197,7 +197,7 @@ export async function getPriceChanges(
       properties.map((p) => p.mls_number),
       "price_reduction",
     ),
-    getAutoPostedPropertyIds(
+    getAutoPostedMarks(
       properties.map((p) => p.id),
       "price_reduction",
     ),
@@ -218,8 +218,10 @@ export async function getPriceChanges(
       drop !== null && oldPrice !== null && oldPrice > 0
         ? Math.round((drop / oldPrice) * 1000) / 10
         : null;
-    const autoDetected = autoPosted.has(p.id);
-    const markedAt = manualMarks.get(p.mls_number) ?? null;
+    const autoMark = autoPosted.get(p.id) ?? null;
+    const autoDetected = autoMark !== null;
+    const manualMark = manualMarks.get(p.mls_number) ?? null;
+    const markedAt = manualMark?.marked_at ?? null;
 
     return {
       id: p.id,
@@ -244,6 +246,10 @@ export async function getPriceChanges(
       post_made: autoDetected || markedAt !== null,
       post_auto_detected: autoDetected,
       post_marked_at: markedAt,
+      post_posted_at: autoMark?.posted_at ?? null,
+      post_posted_by: autoMark?.posted_by_name ?? null,
+      post_created_by: autoMark?.created_by_name ?? null,
+      post_marked_by: manualMark?.marked_by_name ?? null,
       notes: noteStates.get(p.mls_number) ?? EMPTY_NOTE_STATE,
       skipped_at: skips.get(p.mls_number)?.skipped_at ?? null,
       skip_reason: skips.get(p.mls_number)?.reason ?? null,

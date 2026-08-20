@@ -7,7 +7,10 @@ import {
   compareMilestoneRows,
 } from "@/lib/dashboard-window";
 import { getListingSkipMarks } from "@/lib/data/listing-skip-marks";
-import { getListingPostMarks } from "@/lib/data/listing-post-marks";
+import {
+  getAutoPostedMarks,
+  getListingPostMarks,
+} from "@/lib/data/listing-post-marks";
 import {
   getListingNoteStates,
   EMPTY_NOTE_STATE,
@@ -80,6 +83,17 @@ export interface ListingNeedingPosts {
   post_auto_detected: boolean;
   /** When the manual checkbox was ticked, else null. */
   post_marked_at: string | null;
+  /**
+   * 2026-08-19 (John) — "show who created and posted the post and when".
+   * Attribution for the posted state, best source wins:
+   *   - in-app publish → generated_posts posted_at / posted_by / created_by
+   *   - synced-feed detection only → the feed post's posted_at, no names
+   *   - manual tick → marked_by name rides in post_marked_by
+   */
+  post_posted_at: string | null;
+  post_posted_by: string | null;
+  post_created_by: string | null;
+  post_marked_by: string | null;
   /**
    * 2026-08-07 (John) — shared team notes. Newest entry + count + hold flag;
    * the full thread loads on demand. See lib/data/listing-notes.ts.
@@ -280,12 +294,16 @@ export async function getListingsNeedingPosts(
   for (const id of propertyIds) {
     counts.set(id, { facebook: 0, instagram: 0, tiktok: 0 });
   }
+  // 2026-08-19 — newest dedicated feed post date per property, so a listing
+  // detected only from the synced feed can still say WHEN it was posted (the
+  // feed doesn't know who).
+  const feedPostedAt = new Map<string, string>();
 
   if (candidatePostIds.length > 0) {
     // 2) The candidate posts' platform + intent + own property_id.
     const { data: candPosts } = await untyped
       .from("posts")
-      .select("id, platform, listing_intent, property_id")
+      .select("id, platform, listing_intent, property_id, posted_at")
       .in("id", candidatePostIds);
     // 3) EVERY listing each candidate post links (to size the listing set).
     const { data: candLinks } = await untyped
@@ -295,14 +313,22 @@ export async function getListingsNeedingPosts(
 
     // Build each post's full listing set (post_listings ∪ posts.property_id).
     const listingSet = new Map<string, Set<string>>();
-    const meta = new Map<string, { platform: PostPlatform; intent: string | null }>();
+    const meta = new Map<
+      string,
+      { platform: PostPlatform; intent: string | null; posted_at: string | null }
+    >();
     for (const p of (candPosts ?? []) as Array<{
       id: string;
       platform: PostPlatform;
       listing_intent: string | null;
       property_id: string | null;
+      posted_at: string | null;
     }>) {
-      meta.set(p.id, { platform: p.platform, intent: p.listing_intent });
+      meta.set(p.id, {
+        platform: p.platform,
+        intent: p.listing_intent,
+        posted_at: p.posted_at,
+      });
       const set = listingSet.get(p.id) ?? new Set<string>();
       if (p.property_id) set.add(p.property_id);
       listingSet.set(p.id, set);
@@ -328,6 +354,10 @@ export async function getListingsNeedingPosts(
       const bucket = counts.get(pid);
       if (!bucket) continue;
       bucket[m.platform] = (bucket[m.platform] ?? 0) + 1;
+      if (m.posted_at) {
+        const prev = feedPostedAt.get(pid);
+        if (!prev || m.posted_at > prev) feedPostedAt.set(pid, m.posted_at);
+      }
     }
   }
 
@@ -351,11 +381,18 @@ export async function getListingsNeedingPosts(
   // 2026-08-05 — manual "posted" ticks for the just_listed milestone. One
   // round trip for the whole page rather than one per row.
   // 2026-08-07 — shared team notes ride along on the same principle.
-  const [marks, noteStates, skips] = await Promise.all([
+  // 2026-08-19 — appPosted is the fix for "I just published a Just Listed
+  // post in the app and the dashboard still says Not posted yet": the other
+  // three milestone cards already read generated_posts for instant
+  // auto-detection, but this fetcher only watched the synced social feed,
+  // which lags publishes by up to a sync cycle (~4h) and needs the
+  // auto-linker to connect the post back. Both sources now count.
+  const [marks, appPosted, noteStates, skips] = await Promise.all([
     getListingPostMarks(
       properties.map((p) => p.mls_number),
       "just_listed",
     ),
+    getAutoPostedMarks(propertyIds, "just_listed"),
     getListingNoteStates(properties.map((p) => p.mls_number)),
     getListingSkipMarks(
       properties.map((p) => p.mls_number),
@@ -384,9 +421,12 @@ export async function getListingsNeedingPosts(
       (plat) =>
         plat === "facebook" || plat === "instagram" || plat === "tiktok",
     );
-    const autoDetected =
+    const feedDetected =
       (c.facebook ?? 0) > 0 || (c.instagram ?? 0) > 0 || (c.tiktok ?? 0) > 0;
-    const markedAt = marks.get(p.mls_number) ?? null;
+    const appMark = appPosted.get(p.id) ?? null;
+    const autoDetected = feedDetected || appMark !== null;
+    const manualMark = marks.get(p.mls_number) ?? null;
+    const markedAt = manualMark?.marked_at ?? null;
     const postMade =
       autoDetected ||
       markedAt !== null ||
@@ -447,6 +487,12 @@ export async function getListingsNeedingPosts(
       post_made: postMade,
       post_auto_detected: autoDetected,
       post_marked_at: markedAt,
+      // The in-app record wins the attribution line (it knows who); a
+      // feed-only detection can at least say when.
+      post_posted_at: appMark?.posted_at ?? feedPostedAt.get(p.id) ?? null,
+      post_posted_by: appMark?.posted_by_name ?? null,
+      post_created_by: appMark?.created_by_name ?? null,
+      post_marked_by: manualMark?.marked_by_name ?? null,
       promotion_status: promotionStatus,
       posts_confirmed_at: p.posts_confirmed_at,
       promotion_dismissed_at: p.promotion_dismissed_at,

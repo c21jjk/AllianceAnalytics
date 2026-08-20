@@ -3,10 +3,7 @@
 import { useEffect, useState } from "react";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
 import MilestoneListingRow from "./MilestoneListingRow";
-import {
-  MILESTONE_FLOOR_EMPTY_COPY,
-  ROLLING_WINDOW_LABEL,
-} from "@/lib/dashboard-window";
+import { MILESTONE_FLOOR_EMPTY_COPY } from "@/lib/dashboard-window";
 
 interface RecentlySoldRowProps {
   listings: ListingMilestone[];
@@ -82,7 +79,7 @@ export default function RecentlySoldRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Sold
               <span className="text-neutral-400 font-normal">
-                · {ROLLING_WINDOW_LABEL} · {listings.length} {noun}{scope}
+                · {listings.length} {noun}{scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
               {collapsed && freshCount === 0 ? (

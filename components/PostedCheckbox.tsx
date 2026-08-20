@@ -30,6 +30,17 @@ interface PostedCheckboxProps {
   autoDetected?: boolean;
   /** When the manual tick happened, so the row can say "Posted Aug 5". */
   markedAt?: string | null;
+  /**
+   * 2026-08-19 (John) — "show who created and posted the post and when".
+   * For auto-detected posts: publish timestamp + display names of who built
+   * and who published (from generated_posts). For manual ticks: who ticked.
+   * All optional — a post detected only from the synced feed has a date but
+   * no names, and older marks predate the attribution columns.
+   */
+  postedAt?: string | null;
+  postedBy?: string | null;
+  createdBy?: string | null;
+  markedBy?: string | null;
   className?: string;
 }
 
@@ -60,6 +71,10 @@ export default function PostedCheckbox({
   checked,
   autoDetected = false,
   markedAt = null,
+  postedAt = null,
+  postedBy = null,
+  createdBy = null,
+  markedBy = null,
   className,
 }: PostedCheckboxProps) {
   const [isPending, startTransition] = useTransition();
@@ -86,10 +101,14 @@ export default function PostedCheckbox({
     });
   }
 
+  // 2026-08-19 — the locked tooltip carries the full story (builder,
+  // publisher, exact time); the row itself stays a short one-liner.
   const title = locked
-    ? `A ${LABEL[postType]} post for this property is already published, so this can't be unchecked.`
+    ? `${describePublished(postType, postedAt, postedBy, createdBy)} This can't be unchecked.`
     : value
-      ? `Marked as posted. Click to clear.`
+      ? markedBy
+        ? `Marked as posted by ${markedBy}. Click to clear.`
+        : `Marked as posted. Click to clear.`
       : `Tick once a ${LABEL[postType]} post has been made for this property.`;
 
   // 2026-08-05 (John): this used to render as an outlined "Posted" button,
@@ -97,10 +116,17 @@ export default function PostedCheckbox({
   // It is STATUS, not an action, so it is now a quiet inline line: an empty
   // box + "Not posted yet", flipping to a green check + "Posted Aug 5". Same
   // single click, far less visual weight.
+  //
+  // 2026-08-19 (John) — "show who created and posted the post and when".
+  // The line now reads "Posted Aug 19 · Cheryl": date from the publish (or
+  // the manual tick), name of whoever published (or ticked). Full detail —
+  // builder vs publisher, exact time — lives in the tooltip.
+  const stampDate = locked ? postedAt : markedAt;
+  const stampName = locked ? postedBy : markedBy;
   const label = value
-    ? markedAt
-      ? `Posted ${formatMarkDate(markedAt)}`
-      : "Posted"
+    ? `Posted${stampDate ? ` ${formatMarkDate(stampDate)}` : ""}${
+        stampName ? ` · ${stampName}` : ""
+      }`
     : "Not posted yet";
 
   return (
@@ -159,6 +185,41 @@ function formatMarkDate(iso: string): string {
     day: "numeric",
     timeZone: "America/New_York",
   });
+}
+
+/** "Aug 19, 9:16 AM" — Eastern, for the locked tooltip's full detail. */
+function formatMarkDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  });
+}
+
+/**
+ * Full attribution sentence for the locked tooltip:
+ *   "Built by Larissa, published by Cheryl on Aug 19, 9:16 AM."
+ * Collapses gracefully when names match or are unknown (feed-detected posts
+ * have a date but no names; older rows may have neither).
+ */
+function describePublished(
+  postType: MilestonePostType,
+  postedAt: string | null,
+  postedBy: string | null,
+  createdBy: string | null,
+): string {
+  const when = postedAt ? ` on ${formatMarkDateTime(postedAt)}` : "";
+  if (postedBy && createdBy && createdBy !== postedBy) {
+    return `Built by ${createdBy}, published by ${postedBy}${when}.`;
+  }
+  if (postedBy) {
+    return `${LABEL[postType]} post published by ${postedBy}${when}.`;
+  }
+  return `A ${LABEL[postType]} post for this property is already published${when}.`;
 }
 
 function CheckGlyph() {

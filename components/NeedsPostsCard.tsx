@@ -136,6 +136,10 @@ export default function NeedsPostsCard({
     post_made: listing.post_made,
     post_auto_detected: listing.post_auto_detected,
     post_marked_at: listing.post_marked_at,
+    post_posted_at: listing.post_posted_at,
+    post_posted_by: listing.post_posted_by,
+    post_created_by: listing.post_created_by,
+    post_marked_by: listing.post_marked_by,
     // 2026-08-07 — must be carried across explicitly: this adapter is written
     // by hand, so a new ListingMilestone field silently arrives as undefined
     // unless it's listed here.

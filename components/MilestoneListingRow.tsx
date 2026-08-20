@@ -296,6 +296,10 @@ export default function MilestoneListingRow({
             checked={listing.post_made}
             autoDetected={listing.post_auto_detected}
             markedAt={listing.post_marked_at}
+            postedAt={listing.post_posted_at}
+            postedBy={listing.post_posted_by}
+            createdBy={listing.post_created_by}
+            markedBy={listing.post_marked_by}
           />
           <ListingNoteButton className="ml-auto" />
         </div>

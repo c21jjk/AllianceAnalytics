@@ -91,8 +91,11 @@ export const MILESTONE_FLOOR_EMPTY_COPY = "Nothing since Aug 1.";
  */
 export const ROLLING_WINDOW_DAYS = 7;
 
-/** Heading copy. Every milestone card prints the same phrase. */
-export const ROLLING_WINDOW_LABEL = "last 7 days";
+// 2026-08-19 (John): ROLLING_WINDOW_LABEL ("last 7 days") removed from the
+// card headings. Unhandled rows deliberately persist past the window, so the
+// label claimed something the cards don't do — a 13-day-old unposted listing
+// under a "last 7 days" heading reads as a bug. Rows carry their own dates;
+// the drop-off behavior itself is unchanged.
 
 /**
  * The one visibility question, asked identically by all four milestone cards.

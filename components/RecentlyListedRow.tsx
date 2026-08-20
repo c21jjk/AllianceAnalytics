@@ -5,10 +5,7 @@ import Link from "next/link";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import ListingsFilterChips from "./ListingsFilterChips";
 import NeedsPostsCard from "./NeedsPostsCard";
-import {
-  MILESTONE_FLOOR_EMPTY_COPY,
-  ROLLING_WINDOW_LABEL,
-} from "@/lib/dashboard-window";
+import { MILESTONE_FLOOR_EMPTY_COPY } from "@/lib/dashboard-window";
 
 interface RecentlyListedRowProps {
   listings: ListingNeedingPosts[];
@@ -107,7 +104,7 @@ export default function RecentlyListedRow({
             <h2 className="text-sm font-semibold text-neutral-900 inline-flex items-center flex-wrap gap-2">
               Recently Listed
               <span className="text-neutral-400 font-normal">
-                · {ROLLING_WINDOW_LABEL} · needs a post{scope}
+                · needs a post{scope}
               </span>
               {freshCount > 0 ? <FreshBadge count={freshCount} /> : null}
               {collapsed && freshCount === 0 ? (

@@ -9,8 +9,10 @@ import {
 } from "@/lib/dashboard-window";
 import { getListingSkipMarks } from "@/lib/data/listing-skip-marks";
 import {
-  getAutoPostedPropertyIds,
+  getAutoPostedMarks,
   getListingPostMarks,
+  type AutoPostedMark,
+  type ManualPostMark,
   type MilestonePostType,
 } from "@/lib/data/listing-post-marks";
 import {
@@ -96,6 +98,15 @@ export interface ListingMilestone {
   post_auto_detected: boolean;
   /** When the manual checkbox was ticked, else null. */
   post_marked_at: string | null;
+  /**
+   * 2026-08-19 (John) — "show who created and posted the post and when".
+   * From the published generated_post when auto-detected; the manual tick's
+   * author rides in post_marked_by. Any of these can be null.
+   */
+  post_posted_at: string | null;
+  post_posted_by: string | null;
+  post_created_by: string | null;
+  post_marked_by: string | null;
   /**
    * 2026-08-07 (John) — "not worth a post" for THIS milestone. Skipping counts
    * as handled, so the row drops off once it is also outside the 7-day window.
@@ -470,7 +481,7 @@ async function attachPostMarks(
       properties.map((p) => p.mls_number),
       postType,
     ),
-    getAutoPostedPropertyIds(
+    getAutoPostedMarks(
       properties.map((p) => p.id),
       postType,
     ),
@@ -479,25 +490,35 @@ async function attachPostMarks(
 }
 
 export interface PostMarkLookup {
-  /** mls_number → marked_at */
-  manual: Map<string, string>;
-  /** property ids with a published post of this type */
-  auto: Set<string>;
+  /** mls_number → manual tick (when + who) */
+  manual: Map<string, ManualPostMark>;
+  /** property id → published in-app post of this type (when + who) */
+  auto: Map<string, AutoPostedMark>;
 }
 
-/** Resolve the three post-mark fields for one row. */
+/** Resolve the post-mark fields for one row. */
 function resolvePostMark(
   row: DbPropertyRow,
   marks: PostMarkLookup | undefined,
 ): Pick<
   ListingMilestone,
-  "post_made" | "post_auto_detected" | "post_marked_at"
+  | "post_made"
+  | "post_auto_detected"
+  | "post_marked_at"
+  | "post_posted_at"
+  | "post_posted_by"
+  | "post_created_by"
+  | "post_marked_by"
 > {
-  const autoDetected = marks?.auto.has(row.id) ?? false;
-  const markedAt = marks?.manual.get(row.mls_number) ?? null;
+  const autoMark = marks?.auto.get(row.id) ?? null;
+  const manualMark = marks?.manual.get(row.mls_number) ?? null;
   return {
-    post_made: autoDetected || markedAt !== null,
-    post_auto_detected: autoDetected,
-    post_marked_at: markedAt,
+    post_made: autoMark !== null || manualMark !== null,
+    post_auto_detected: autoMark !== null,
+    post_marked_at: manualMark?.marked_at ?? null,
+    post_posted_at: autoMark?.posted_at ?? null,
+    post_posted_by: autoMark?.posted_by_name ?? null,
+    post_created_by: autoMark?.created_by_name ?? null,
+    post_marked_by: manualMark?.marked_by_name ?? null,
   };
 }
