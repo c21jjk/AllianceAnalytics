@@ -267,10 +267,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         officeShortCode={officeFilter}
       />
 
-      {/* Milestones grid — four collapsible cards.
+      {/* Milestones grid — five collapsible cards.
           Layout: 2-column grid on desktop, single column on mobile.
-            Left  (50%): Recently Listed — needs coverage (full height)
-            Right (50%): Open Houses → Under Contract → Recently Sold
+            Left  (50%): Recently Listed → Recently Sold  (single-listing posts)
+            Right (50%): Open Houses → Under Contract → Price Changes
+                         (the three GROUPED/roundup post types together)
           Each card collapses by default; freshCount drives the "X new"
           badge that pulls Larissa into whichever card has news from the
           last 24 hours. */}
@@ -311,18 +312,18 @@ export default async function HomePage({ searchParams }: HomePageProps) {
               storyViewsLast24h={storyViewsLast24h ?? 0}
             />
 
-            {/* 2026-08-05 (John) — "The Recently Listed side of the screen vs
-                the Open House, Under Contract, Recently Sold, Price Change are
-                disproportioned. Think we should shift Just Sold & maybe Under
-                Contract to under the Recently Listed section."
+            {/* 2026-08-19 (John) — "Move the Under Contract section to under
+                the Open House Section. This way all 3 'grouped' posts (Open
+                House, Under Contract and Recently Reduced) are on the same
+                side of the screen. Just Listed and Just Sold will be on the
+                other side."
 
-                Recently Listed sat alone on the left while four cards stacked
-                on the right, so the two columns never came close to matching
-                height. Under Contract and Recently Sold move under Recently
-                Listed; Open Houses and Price Changes stay on the right. Card
-                order within each column is unchanged, and each card keeps its
-                own collapse memory, so heights still shift with what you have
-                open. */}
+                The columns now split by POST SHAPE, matching the 8/19 roundup
+                build: the left column's two cards each publish a dedicated
+                single-listing post, the right column's three all publish as
+                multi-property roundups. (The 8/05 split was about balancing
+                column heights; this one is about workflow.) Each card keeps
+                its own collapse memory and anchor id. */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
               <div className="grid grid-cols-1 gap-4">
                 <div id="recently-listed" className="scroll-mt-32">
@@ -331,13 +332,6 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                     statusFilter={listingsFilter}
                     officeShortCode={officeFilter}
                     freshCount={listedFreshCount}
-                  />
-                </div>
-                <div id="under-contract" className="scroll-mt-32">
-                  <UnderContractRow
-                    listings={underContractListings}
-                    officeShortCode={officeFilter}
-                    freshCount={underContractFreshCount}
                   />
                 </div>
                 <div id="recently-sold" className="scroll-mt-32">
@@ -358,6 +352,13 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                     officeShortCode={officeFilter}
                     freshCount={openHousesFreshCount}
                     canSync={profile.role === "admin"}
+                  />
+                </div>
+                <div id="under-contract" className="scroll-mt-32">
+                  <UnderContractRow
+                    listings={underContractListings}
+                    officeShortCode={officeFilter}
+                    freshCount={underContractFreshCount}
                   />
                 </div>
                 <div id="price-changes" className="scroll-mt-32">
