@@ -613,3 +613,71 @@ export async function loadAllianceDashPhoneIndex(): Promise<AllianceDashPhoneInd
     },
   };
 }
+
+/**
+ * 2026-08-21 (John) — company agent names for the Multi-OH hosting-agent
+ * roster.
+ *
+ * The wizard's combobox restricts entry to a roster (exact-name matching is
+ * what makes phone + headshot attribution resolve), but that roster was
+ * built from the analytics DB's mls_agents table + properties.agent_name —
+ * both listing-derived, so an agent with no listings yet was unfindable.
+ * Susan Roselli (joined June, hosting 508 E 7th Ave's Saturday OH for PJ
+ * Dougherty) is exactly that case.
+ *
+ * Source: the SAME three Alliance Dash MLS-membership tables the phone
+ * preload reads (cmc/sjsr/bright active agents; Bright scoped to Alliance
+ * offices). MLS membership starts before the first listing, so new agents
+ * appear here on day one — and because the phone lookup reads the same
+ * rows, every name this returns is guaranteed phone-resolvable. The
+ * Darwin-fed `agents` table is deliberately NOT used: its RLS is
+ * authenticated-only and this module holds the anon key.
+ *
+ * Returns display names ("Susan Roselli"), trimmed and case-insensitively
+ * deduped. Empty array when the client is unavailable or every query fails
+ * — callers just merge, so the roster degrades to its analytics-DB sources.
+ */
+export async function listAllianceCompanyAgentNames(): Promise<string[]> {
+  const supabase = getAllianceDashClient();
+  if (!supabase) return [];
+
+  try {
+    const [cmcRes, sjsrRes, brightRes] = await Promise.all([
+      supabase
+        .from("cmc_active_agents")
+        .select("first_name, last_name")
+        .eq("is_active", true)
+        .limit(5000),
+      supabase
+        .from("sjsr_active_agents")
+        .select("first_name, last_name")
+        .eq("is_active", true)
+        .limit(5000),
+      supabase
+        .from("bright_active_agents")
+        .select("first_name, last_name")
+        .eq("is_active", true)
+        .in("office_id", BRIGHT_ALLIANCE_OFFICE_IDS)
+        .limit(5000),
+    ]);
+    type Row = { first_name: string | null; last_name: string | null };
+    const seen = new Map<string, string>();
+    for (const r of [
+      ...((cmcRes.data as Row[] | null) ?? []),
+      ...((sjsrRes.data as Row[] | null) ?? []),
+      ...((brightRes.data as Row[] | null) ?? []),
+    ]) {
+      const name = [r.first_name, r.last_name]
+        .map((x) => (x ?? "").trim())
+        .filter(Boolean)
+        .join(" ");
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!seen.has(key)) seen.set(key, name);
+    }
+    return Array.from(seen.values());
+  } catch (err) {
+    console.error("[alliance-dash] company roster fetch failed:", err);
+    return [];
+  }
+}

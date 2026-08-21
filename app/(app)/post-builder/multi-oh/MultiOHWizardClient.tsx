@@ -232,6 +232,17 @@ interface MultiOhWizardPersistedState {
   step: StepIndex;
   selectedMls: string[];
   perPropertyHostingAgent: Record<string, string>;
+  /**
+   * 2026-08-21 — per-occurrence overrides for properties with MORE THAN ONE
+   * open house in the window, keyed `${mls_number}|${start_at}`. Only
+   * user-made changes are stored; defaults (included, property-level host)
+   * are computed at read time, so legacy snapshots without this field
+   * restore cleanly with every occurrence included.
+   */
+  occurrenceOverrides?: Record<
+    string,
+    { included?: boolean; host?: string }
+  >;
   format: PostFormat;
   dbTemplateId: string | null;
   tone: CaptionTone;
@@ -328,6 +339,17 @@ function readPersistedState(
     ) {
       return null;
     }
+    // 2026-08-21 — occurrenceOverrides is OPTIONAL (legacy snapshots lack
+    // it). Malformed values coerce to absent rather than invalidating the
+    // whole snapshot.
+    if (
+      parsed.occurrenceOverrides !== undefined &&
+      (parsed.occurrenceOverrides === null ||
+        typeof parsed.occurrenceOverrides !== "object" ||
+        Array.isArray(parsed.occurrenceOverrides))
+    ) {
+      parsed.occurrenceOverrides = undefined;
+    }
     // 2026-07-24 additions — OPTIONAL fields, so legacy snapshots (written
     // before this deploy) stay valid. Malformed values coerce to null
     // rather than invalidating the whole snapshot.
@@ -389,6 +411,41 @@ function clearPersistedState(storageKey: string): void {
  */
 function mlsKeyOf(mls: readonly string[]): string {
   return [...mls].sort().join(",");
+}
+
+// ---------------------------------------------------------------------------
+// Per-occurrence helpers — 2026-08-21
+// ---------------------------------------------------------------------------
+
+/** One open-house window of a listing. */
+interface OhOccurrence {
+  start_at: string;
+  end_at: string | null;
+}
+
+/** Stable key for one occurrence of one listing. start_at (not a DB id)
+ *  so it survives feed re-syncs and sessionStorage round trips. */
+function occKey(mls: string, startAt: string): string {
+  return `${mls}|${startAt}`;
+}
+
+/**
+ * Every open-house window a listing has in the picker window, chronological.
+ * Falls back to the singular oh_start_at / oh_end_at pair for callers whose
+ * listings were fetched before oh_occurrences existed (e.g. a hydrated
+ * page straddling a deploy).
+ */
+function occurrencesOf(l: PostBuilderListing): OhOccurrence[] {
+  if (l.oh_occurrences && l.oh_occurrences.length > 0) {
+    return l.oh_occurrences.map((o) => ({
+      start_at: o.start_at,
+      end_at: o.end_at ?? null,
+    }));
+  }
+  if (l.oh_start_at) {
+    return [{ start_at: l.oh_start_at, end_at: l.oh_end_at ?? null }];
+  }
+  return [];
 }
 
 /**
@@ -579,6 +636,23 @@ export default function MultiOHWizardClient({
     return out;
   });
 
+  /**
+   * 2026-08-21 (John) — per-OCCURRENCE overrides, keyed
+   * `${mls_number}|${start_at}`. Only relevant when a property has more
+   * than one open house in the window (508 E 7th Ave: Sat hosted by Susan
+   * Roselli for PJ Dougherty, Sun hosted by PJ).
+   *
+   * Sparse by design: an entry exists only once the user unticks an
+   * occurrence or edits its host. Defaults are computed at READ time —
+   * included=true, host = the property-level value — so restored legacy
+   * snapshots and freshly-selected rows need no seeding pass, and the
+   * property-level input keeps working as the "same host all weekend"
+   * fast path.
+   */
+  const [occurrenceOverrides, setOccurrenceOverrides] = useState<
+    Record<string, { included?: boolean; host?: string }>
+  >(() => initial?.occurrenceOverrides ?? {});
+
   // ---- step 1 (cont.) — bulk hosting agent -----------------------------
   // why: the common case is "Larissa hosts everything" — set once at the
   // top of the picker rather than re-typing on every row. The control
@@ -703,6 +777,7 @@ export default function MultiOHWizardClient({
       step,
       selectedMls: [...selectedMls],
       perPropertyHostingAgent,
+      occurrenceOverrides,
       format,
       dbTemplateId,
       tone,
@@ -716,6 +791,7 @@ export default function MultiOHWizardClient({
     step,
     selectedMls,
     perPropertyHostingAgent,
+    occurrenceOverrides,
     format,
     dbTemplateId,
     tone,
@@ -740,6 +816,7 @@ export default function MultiOHWizardClient({
       step,
       selectedMls: [...selectedMls],
       perPropertyHostingAgent,
+      occurrenceOverrides,
       format,
       dbTemplateId,
       tone,
@@ -753,6 +830,7 @@ export default function MultiOHWizardClient({
     step,
     selectedMls,
     perPropertyHostingAgent,
+    occurrenceOverrides,
     format,
     dbTemplateId,
     tone,
@@ -823,14 +901,44 @@ export default function MultiOHWizardClient({
     duplicateExamples: string[];
     extraDuplicates: number;
   } | null>(() => {
-    if (selectedListings.length < 2) return null;
+    // 2026-08-21 — recomputed from OCCURRENCES rather than duplicate mls
+    // picks (the picker shows each property once now). Mirrors the
+    // server's consolidatePropertiesByMls: a multi-window property's
+    // included occurrences merge into one slide only when they share a
+    // host, so the "N windows → M slides" hint stays truthful whether the
+    // weekend is one slide (same host) or two (Susan Sat / PJ Sun).
+    if (!isOH || selectedListings.length === 0) return null;
+    let pickCount = 0;
     const counts = new Map<string, { listing: PostBuilderListing; count: number }>();
     for (const l of selectedListings) {
-      const existing = counts.get(l.mls_number);
-      if (existing) existing.count += 1;
-      else counts.set(l.mls_number, { listing: l, count: 1 });
+      const propertyHost = (
+        perPropertyHostingAgent[l.mls_number] ?? ""
+      ).trim();
+      const occs = occurrencesOf(l);
+      const included =
+        occs.length <= 1
+          ? occs
+          : occs.filter(
+              (o) =>
+                occurrenceOverrides[occKey(l.mls_number, o.start_at)]
+                  ?.included !== false,
+            );
+      const use = included.length > 0 ? included : occs.slice(0, 1);
+      for (const o of use) {
+        pickCount += 1;
+        const host = (
+          occurrenceOverrides[occKey(l.mls_number, o.start_at)]?.host ??
+          propertyHost
+        )
+          .trim()
+          .toLowerCase();
+        const key = `${l.mls_number} ${host}`;
+        const existing = counts.get(key);
+        if (existing) existing.count += 1;
+        else counts.set(key, { listing: l, count: 1 });
+      }
     }
-    if (counts.size === selectedListings.length) return null;
+    if (counts.size === pickCount) return null;
     const duplicates: PostBuilderListing[] = [];
     for (const { listing, count } of counts.values()) {
       if (count > 1) duplicates.push(listing);
@@ -840,12 +948,12 @@ export default function MultiOHWizardClient({
       return base.length > 0 ? base : l.mls_number;
     });
     return {
-      pickCount: selectedListings.length,
+      pickCount,
       slideCount: counts.size,
       duplicateExamples: exampleNames,
       extraDuplicates: Math.max(0, duplicates.length - exampleNames.length),
     };
-  }, [selectedListings]);
+  }, [selectedListings, isOH, perPropertyHostingAgent, occurrenceOverrides]);
 
   // 2026-05-28 — bulk hosting-agent apply / undo callbacks removed alongside
   // the "Hosted by everyone" UI strip. Per-property hosting-agent inputs
@@ -912,6 +1020,18 @@ export default function MultiOHWizardClient({
         // will coerce empty → null.
         return { ...prev, [mls]: defaultAgent };
       });
+
+      // 2026-08-21 — deselecting also clears any per-occurrence overrides
+      // for this property, mirroring the per-property map's lockstep rule
+      // so a stale untick/host can't leak into a later re-select.
+      setOccurrenceOverrides((prev) => {
+        const prefix = `${mls}|`;
+        const keys = Object.keys(prev).filter((k) => k.startsWith(prefix));
+        if (keys.length === 0) return prev;
+        const next = { ...prev };
+        for (const k of keys) delete next[k];
+        return next;
+      });
     },
     [listingsByMls, isOH],
   );
@@ -930,6 +1050,35 @@ export default function MultiOHWizardClient({
         if (prev[mls] === undefined) return prev;
         return { ...prev, [mls]: value };
       });
+    },
+    [],
+  );
+
+  /**
+   * 2026-08-21 — include/exclude one occurrence of a multi-window property.
+   * The UI disables unticking the last included occurrence, and the payload
+   * builder falls back to the soonest window if state ever ends up with
+   * zero anyway (belt and braces — a selected property must produce a slide).
+   */
+  const setOccurrenceIncluded = useCallback(
+    (mls: string, startAt: string, included: boolean): void => {
+      setOccurrenceOverrides((prev) => {
+        const k = occKey(mls, startAt);
+        return { ...prev, [k]: { ...prev[k], included } };
+      });
+    },
+    [],
+  );
+
+  /** 2026-08-21 — host override for one occurrence. The compound key rides
+   *  through HostingAgentRow's `mls` prop unchanged (the row just echoes
+   *  it back), so the combobox component needed no changes. */
+  const setOccurrenceHost = useCallback(
+    (key: string, value: string): void => {
+      setOccurrenceOverrides((prev) => ({
+        ...prev,
+        [key]: { ...prev[key], host: value },
+      }));
     },
     [],
   );
@@ -1024,13 +1173,19 @@ export default function MultiOHWizardClient({
    * this point is the user explicitly asking to suppress the override.
    */
   const buildBasePayload = useCallback((): MultiOHEventInput => {
-    const properties: MultiOHEventProperty[] = selectedListings.map((l) => {
-      const rawHost = perPropertyHostingAgent[l.mls_number] ?? "";
-      const trimmedHost = rawHost.trim();
+    // 2026-08-21 (John) — a multi-window property (508 E 7th: Sat + Sun)
+    // ships one payload entry PER INCLUDED OCCURRENCE, each carrying that
+    // occurrence's window + host. The route's consolidatePropertiesByMls
+    // then merges same-host entries back into one slide (oh_sessions) and
+    // keeps different-host entries separate — so Susan's Saturday and PJ's
+    // Sunday each get their own slide with their own attribution, while a
+    // same-host weekend still renders as one slide listing both days.
+    const properties: MultiOHEventProperty[] = selectedListings.flatMap((l) => {
+      const propertyHost = (perPropertyHostingAgent[l.mls_number] ?? "").trim();
       // 2026-08-19 — roundup milestone metadata rides along per property
       // (empty map for open_house, so these stay null there).
       const meta = roundupMeta[l.mls_number];
-      return {
+      const base = {
         mls_number: l.mls_number,
         source_mls: l.source_mls,
         listing_id: l.id,
@@ -1044,14 +1199,45 @@ export default function MultiOHWizardClient({
         bathrooms_half: l.bathrooms_half,
         property_type: l.property_type,
         hero_image_url: l.hero_image_url,
-        oh_start_at: l.oh_start_at ?? null,
-        oh_end_at: l.oh_end_at ?? null,
-        hosting_agent_name: trimmedHost.length > 0 ? trimmedHost : null,
         unit_number: l.unit_number ?? null,
         event_date: meta?.event_date ?? null,
         price_old: meta?.price_old ?? null,
         price_new: meta?.price_new ?? null,
       };
+
+      const occs = isOH ? occurrencesOf(l) : [];
+      if (occs.length <= 1) {
+        // Single window (or a roundup kind) — exactly the pre-8/21 entry.
+        return [
+          {
+            ...base,
+            oh_start_at: l.oh_start_at ?? null,
+            oh_end_at: l.oh_end_at ?? null,
+            hosting_agent_name: propertyHost.length > 0 ? propertyHost : null,
+          },
+        ];
+      }
+
+      const included = occs.filter(
+        (o) =>
+          occurrenceOverrides[occKey(l.mls_number, o.start_at)]?.included !==
+          false,
+      );
+      // Belt and braces — a selected property must produce a slide; the UI
+      // disables unticking the last occurrence, so this only fires on a
+      // corrupted snapshot.
+      const use = included.length > 0 ? included : [occs[0]];
+      return use.map((o) => {
+        const override =
+          occurrenceOverrides[occKey(l.mls_number, o.start_at)]?.host;
+        const host = (override ?? propertyHost).trim();
+        return {
+          ...base,
+          oh_start_at: o.start_at,
+          oh_end_at: o.end_at,
+          hosting_agent_name: host.length > 0 ? host : null,
+        };
+      });
     });
     return {
       // 2026-05-28 — event_title was removed from the payload. The
@@ -1092,6 +1278,8 @@ export default function MultiOHWizardClient({
     dbTemplateId,
     defaultOfficeName,
     perPropertyHostingAgent,
+    occurrenceOverrides,
+    isOH,
     tone,
     captionOverride,
     roundupType,
@@ -1499,6 +1687,9 @@ export default function MultiOHWizardClient({
             onToggle={toggleSelect}
             perPropertyHostingAgent={perPropertyHostingAgent}
             onHostingAgentChange={setHostingAgentForProperty}
+            occurrenceOverrides={occurrenceOverrides}
+            onOccurrenceIncludedChange={setOccurrenceIncluded}
+            onOccurrenceHostChange={setOccurrenceHost}
             consolidationSummary={consolidationSummary}
             onAddOpenHouse={() => setAddOhOpen(true)}
             roundupType={roundupType}
@@ -1735,6 +1926,16 @@ interface Step1Props {
   perPropertyHostingAgent: Record<string, string>;
   /** Update one property's hosting agent override. */
   onHostingAgentChange: (mls: string, value: string) => void;
+  /** 2026-08-21 — sparse per-occurrence overrides, keyed `${mls}|${start_at}`. */
+  occurrenceOverrides: Record<string, { included?: boolean; host?: string }>;
+  /** Tick/untick one occurrence of a multi-window property. */
+  onOccurrenceIncludedChange: (
+    mls: string,
+    startAt: string,
+    included: boolean,
+  ) => void;
+  /** Host override for one occurrence — receives the compound occKey. */
+  onOccurrenceHostChange: (key: string, value: string) => void;
   /** Consolidation hint info (null when no duplicates picked). Surfaces the
    *  N-picks → M-slides math so the user isn't surprised the carousel is
    *  smaller than their pick count. */
@@ -1761,6 +1962,9 @@ function Step1Pick({
   onToggle,
   perPropertyHostingAgent,
   onHostingAgentChange,
+  occurrenceOverrides,
+  onOccurrenceIncludedChange,
+  onOccurrenceHostChange,
   consolidationSummary,
   onAddOpenHouse,
   roundupType,
@@ -1930,12 +2134,20 @@ function Step1Pick({
                     {l.zip ? ` ${l.zip}` : ""}
                   </div>
                   <div className="text-xs text-neutral-500 mt-1 flex items-center gap-2 flex-wrap">
-                    {isOH && l.oh_start_at ? (
-                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-1.5 py-0.5 font-medium text-emerald-800">
-                        <span aria-hidden="true">🗓</span>
-                        <span>{formatOhBadge(l.oh_start_at, l.oh_end_at ?? null)}</span>
-                      </span>
-                    ) : null}
+                    {/* 2026-08-21 — one badge per open-house window, so a
+                        Sat + Sun property reads as two windows at a glance
+                        instead of silently showing only the soonest. */}
+                    {isOH
+                      ? occurrencesOf(l).map((o) => (
+                          <span
+                            key={o.start_at}
+                            className="inline-flex items-center gap-1 rounded-md bg-emerald-50 ring-1 ring-emerald-200 px-1.5 py-0.5 font-medium text-emerald-800"
+                          >
+                            <span aria-hidden="true">🗓</span>
+                            <span>{formatOhBadge(o.start_at, o.end_at)}</span>
+                          </span>
+                        ))
+                      : null}
                     {/* 2026-08-19 — roundup milestone badge: UC shows the
                         status-change date, PR shows the old → new price. */}
                     {!isOH && roundupMeta[l.mls_number] ? (
@@ -1983,15 +2195,97 @@ function Step1Pick({
                   why: keeps the picker list scannable when nothing is selected
                   yet, and gives the user an obvious touchpoint to override the
                   default exactly where the property lives in the list.
-                  2026-08-19 — OH kind only; roundup slides carry no host. */}
-              {isSelected && isOH ? (
-                <HostingAgentRow
-                  mls={l.mls_number}
-                  value={hostingAgentValue}
-                  onChange={onHostingAgentChange}
-                  roster={agentRoster}
-                />
-              ) : null}
+                  2026-08-19 — OH kind only; roundup slides carry no host.
+
+                  2026-08-21 (John) — a property with MORE THAN ONE window in
+                  the picker range (508 E 7th: Sat + Sun) gets one sub-row per
+                  occurrence instead: a tick to include/exclude that window
+                  and its own hosting-agent combobox, so Susan Roselli can
+                  host Saturday while PJ Dougherty keeps Sunday. Same host on
+                  every window still consolidates to one slide server-side;
+                  different hosts split into one slide each. */}
+              {isSelected && isOH
+                ? (() => {
+                    const occs = occurrencesOf(l);
+                    if (occs.length <= 1) {
+                      return (
+                        <HostingAgentRow
+                          mls={l.mls_number}
+                          value={hostingAgentValue}
+                          onChange={onHostingAgentChange}
+                          roster={agentRoster}
+                        />
+                      );
+                    }
+                    const includedCount = occs.filter(
+                      (o) =>
+                        occurrenceOverrides[occKey(l.mls_number, o.start_at)]
+                          ?.included !== false,
+                    ).length;
+                    return (
+                      <div className="mt-1.5 ml-3 mr-3 space-y-1.5">
+                        {occs.map((o) => {
+                          const k = occKey(l.mls_number, o.start_at);
+                          const override = occurrenceOverrides[k];
+                          const included = override?.included !== false;
+                          // Occurrence host falls back to the property-level
+                          // value so the common same-host case needs no
+                          // extra typing.
+                          const hostValue =
+                            override?.host ?? hostingAgentValue;
+                          const lockLastTick = included && includedCount <= 1;
+                          return (
+                            <div
+                              key={o.start_at}
+                              className={[
+                                "rounded-md border px-3 py-2",
+                                included
+                                  ? "border-neutral-200 bg-white/70"
+                                  : "border-neutral-200 bg-neutral-50 opacity-60",
+                              ].join(" ")}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={included}
+                                  disabled={lockLastTick}
+                                  onChange={(e) =>
+                                    onOccurrenceIncludedChange(
+                                      l.mls_number,
+                                      o.start_at,
+                                      e.target.checked,
+                                    )
+                                  }
+                                  title={
+                                    lockLastTick
+                                      ? "A selected property needs at least one open-house window — deselect the property instead."
+                                      : undefined
+                                  }
+                                  className="h-3.5 w-3.5 rounded border-neutral-300 text-gold-600 focus:ring-gold-500/30"
+                                />
+                                <span className="text-xs font-medium text-neutral-800">
+                                  {formatOhBadge(o.start_at, o.end_at)}
+                                </span>
+                              </label>
+                              {included ? (
+                                <HostingAgentRow
+                                  // Compound occurrence key rides through the
+                                  // row's `mls` prop and comes back verbatim
+                                  // in onChange — see setOccurrenceHost.
+                                  mls={k}
+                                  value={hostValue}
+                                  onChange={onOccurrenceHostChange}
+                                  roster={agentRoster}
+                                />
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()
+                : null}
             </li>
           );
   };

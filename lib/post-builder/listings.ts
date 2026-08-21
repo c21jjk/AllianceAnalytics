@@ -171,31 +171,43 @@ export async function fetchListingsForPostBuilder(
       console.error("[post-builder/listings] open_houses fetch error:", ohError);
       return [];
     }
-    const nextOhByMls = new Map<
+    // 2026-08-21 (John) — collect EVERY upcoming window per property, not
+    // just the soonest. A property with Sat + Sun open houses (508 E 7th
+    // Ave) was reaching the wizard with only Saturday attached, so the
+    // Sunday session — and its different hosting agent — could never make
+    // it onto the post. Rows arrive sorted by start_at ascending, so each
+    // property's occurrence list is already chronological and the FIRST
+    // entry is the soonest (kept on the singular oh_* fields for backward
+    // compatibility).
+    const ohsByMls = new Map<
       string,
-      { start_at: string; end_at: string | null; comments: string | null }
+      Array<{ start_at: string; end_at: string | null; comments: string | null }>
     >();
     for (const oh of ohRows ?? []) {
-      if (!nextOhByMls.has(oh.mls_number)) {
-        nextOhByMls.set(oh.mls_number, {
-          start_at: oh.start_at,
-          end_at: oh.end_at,
-          comments: oh.comments ?? null,
-        });
-      }
+      const arr = ohsByMls.get(oh.mls_number) ?? [];
+      arr.push({
+        start_at: oh.start_at,
+        end_at: oh.end_at,
+        comments: oh.comments ?? null,
+      });
+      ohsByMls.set(oh.mls_number, arr);
     }
     listings = listings
-      .filter((l) => nextOhByMls.has(l.mls_number))
+      .filter((l) => ohsByMls.has(l.mls_number))
       .map((l) => {
-        const oh = nextOhByMls.get(l.mls_number);
-        return oh
-          ? {
-              ...l,
-              oh_start_at: oh.start_at,
-              oh_end_at: oh.end_at,
-              oh_comments: oh.comments,
-            }
-          : l;
+        const occs = ohsByMls.get(l.mls_number);
+        if (!occs || occs.length === 0) return l;
+        const soonest = occs[0];
+        return {
+          ...l,
+          oh_start_at: soonest.start_at,
+          oh_end_at: soonest.end_at,
+          oh_comments: soonest.comments,
+          oh_occurrences: occs.map((o) => ({
+            start_at: o.start_at,
+            end_at: o.end_at,
+          })),
+        };
       });
 
     // 2026-08-07 (John): "We would also like them to be listed in the order

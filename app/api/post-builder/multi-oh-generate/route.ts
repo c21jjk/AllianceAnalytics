@@ -618,6 +618,15 @@ function toRenderListing(
  * 2026-05-22 — added when John pointed out that 511 E 11th Unit 207 with
  * a Sat + Sun open house was showing as two separate rows on the hero
  * (and two duplicate slides in the carousel).
+ *
+ * 2026-08-21 (John) — the merge key now includes the hosting agent, so
+ * same-property sessions consolidate ONLY when the same person hosts them.
+ * 508 E 7th Ave: Susan Roselli hosts Saturday for PJ Dougherty, PJ hosts
+ * Sunday — those must stay two entries (two slides, two hero rows), each
+ * with its own host attribution, because a slide's agent block can only
+ * carry one person. Same-host weekends still collapse to one slide listing
+ * both days, exactly as before. Roundup kinds ship hosting_agent_name=null
+ * on every entry, so their key degenerates to plain mls_number — unchanged.
  */
 function consolidatePropertiesByMls(
   properties: readonly MultiOHEventProperty[],
@@ -625,7 +634,8 @@ function consolidatePropertiesByMls(
   const seen = new Map<string, MultiOHEventProperty>();
   const order: string[] = [];
   for (const p of properties) {
-    const key = p.mls_number;
+    const hostKey = (p.hosting_agent_name ?? "").trim().toLowerCase();
+    const key = `${p.mls_number} ${hostKey}`;
     const session = { start_at: p.oh_start_at, end_at: p.oh_end_at };
     const existing = seen.get(key);
     if (!existing) {

@@ -98,6 +98,19 @@ export interface PostBuilderListing {
    *  patterns that override the listing agent attribution. */
   oh_comments?: string | null;
   /**
+   * 2026-08-21 (John) — ALL upcoming open-house windows for this listing
+   * (next 14 days, chronological), not just the soonest. 508 E 7th Ave had
+   * Sat AND Sun open houses with different hosts, and only Saturday ever
+   * reached the wizard. oh_start_at / oh_end_at above stay the SOONEST
+   * window for backward compatibility; single-occurrence listings behave
+   * exactly as before. Set by the listings fetcher when
+   * post_type='open_house'.
+   */
+  oh_occurrences?: ReadonlyArray<{
+    start_at: string;
+    end_at: string | null;
+  }>;
+  /**
    * 2026-08-07 (John): the Multi-OH wizard needs to batch its picker by
    * division the same way the dashboard Open Houses card does. Resolved from
    * properties.office_id via the offices table in the listings fetcher.

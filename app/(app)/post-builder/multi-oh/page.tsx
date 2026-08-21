@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
 import { listTemplatesForPostType } from "@/lib/template-builder";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { listAllianceCompanyAgentNames } from "@/lib/data/alliance-dash-agents";
 import MultiOHWizardClient from "./MultiOHWizardClient";
 
 // why: requireUser is still called here even though we no longer thread
@@ -64,17 +65,26 @@ export default async function MultiOHPage() {
   // so the selector now offers the company roster: the app's mls_agents
   // table (all 8 offices) + everyone currently listing with the company.
   // ~250 names — small enough to ship once and filter client-side.
+  //
+  // 2026-08-21 (John) — plus the Alliance Dash MLS-membership rosters
+  // (cmc/sjsr/bright active agents). The two sources above are both
+  // listing-derived, so a new agent with no listings yet — Susan Roselli,
+  // hosting 508 E 7th Ave's Saturday OH — was unfindable in the typeahead.
+  // MLS membership starts on day one, and it's the same data the phone
+  // lookup reads, so every added name resolves attribution.
   let agentRoster: string[] = [];
   try {
     const supabase = createAdminClient();
-    const [{ data: rosterRows }, { data: listingAgents }] = await Promise.all([
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase as any)
-        .from("mls_agents")
-        .select("full_name")
-        .eq("is_active", true),
-      supabase.from("properties").select("agent_name").not("agent_name", "is", null),
-    ]);
+    const [{ data: rosterRows }, { data: listingAgents }, dashNames] =
+      await Promise.all([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (supabase as any)
+          .from("mls_agents")
+          .select("full_name")
+          .eq("is_active", true),
+        supabase.from("properties").select("agent_name").not("agent_name", "is", null),
+        listAllianceCompanyAgentNames(),
+      ]);
     const seen = new Map<string, string>();
     const add = (raw: unknown) => {
       if (typeof raw !== "string") return;
@@ -85,6 +95,7 @@ export default async function MultiOHPage() {
     };
     for (const r of rosterRows ?? []) add(r.full_name);
     for (const r of listingAgents ?? []) add((r as { agent_name: string | null }).agent_name);
+    for (const name of dashNames) add(name);
     agentRoster = Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
   } catch (e) {
     console.warn("[multi-oh] agent roster fetch failed:", e);
