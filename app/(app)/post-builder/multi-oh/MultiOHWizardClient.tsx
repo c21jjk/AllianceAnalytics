@@ -571,10 +571,22 @@ export default function MultiOHWizardClient({
     const wanted: StepIndex = urlStep ?? initial?.step ?? 1;
     if (wanted === 1) return 1;
     const availableSet = new Set(listings.map((l) => l.mls_number));
-    const restoredCount = initial
-      ? initial.selectedMls.filter((mls) => availableSet.has(mls)).length
-      : 0;
-    return restoredCount >= minProperties ? wanted : 1;
+    const restoredMls = initial
+      ? initial.selectedMls.filter((mls) => availableSet.has(mls))
+      : [];
+    // 2026-08-21 (John) — the OH minimum counts open-house WINDOWS, not
+    // properties: one property with a Sat + Sun open house is a valid
+    // event on its own. Roundup kinds keep the plain property count.
+    if (roundupType !== "open_house") {
+      return restoredMls.length >= minProperties ? wanted : 1;
+    }
+    const byMls = new Map(listings.map((l) => [l.mls_number, l]));
+    let windows = 0;
+    for (const mls of restoredMls) {
+      const l = byMls.get(mls);
+      if (l) windows += Math.max(1, occurrencesOf(l).length);
+    }
+    return windows >= MULTI_OH_MIN_PROPERTIES ? wanted : 1;
   });
 
   // ---- step 1 — selection -----------------------------------------------
@@ -1087,7 +1099,35 @@ export default function MultiOHWizardClient({
 
   // 2026-05-28 — event-title input was removed; Step 1 gates only on the
   // minimum property count (kind-aware since the 2026-08-19 roundups).
-  const canContinueFromStep1 = selectedMls.length >= minProperties;
+  //
+  // 2026-08-21 (John) — "when I have 2 open houses scheduled for the same
+  // property, on 2 days with 2 different hosts, I need to be able to build
+  // a Multi Property Open House post, even though there's not a 2nd
+  // property." The OH minimum now counts included open-house WINDOWS
+  // across the selection, so one property with Sat + Sun qualifies. The
+  // roundup kinds keep their plain selected-property count (min 1).
+  const selectedWindowCount = useMemo(() => {
+    if (!isOH) return selectedMls.length;
+    let n = 0;
+    for (const l of selectedListings) {
+      const occs = occurrencesOf(l);
+      if (occs.length <= 1) {
+        n += 1;
+        continue;
+      }
+      const included = occs.filter(
+        (o) =>
+          occurrenceOverrides[occKey(l.mls_number, o.start_at)]?.included !==
+          false,
+      );
+      // A selected property always yields at least one slide (the payload
+      // builder falls back to the soonest window), so never count 0.
+      n += Math.max(1, included.length);
+    }
+    return n;
+  }, [isOH, selectedMls, selectedListings, occurrenceOverrides]);
+
+  const canContinueFromStep1 = selectedWindowCount >= minProperties;
 
   // 2026-05-28 — Bug 5 auto-skip: when no DB templates are published for
   // the active format, Step 2's only choice is "use the default Open
@@ -1752,7 +1792,17 @@ export default function MultiOHWizardClient({
       <StickyFooter
         step={step}
         selectedCount={selectedMls.length}
-        minProperties={minProperties}
+        // 2026-08-21 — the "need at least N" hint follows the real gate
+        // (windows for OH, properties for roundups) instead of re-deriving
+        // it from the selected-property count, which went stale the moment
+        // one property could carry two windows.
+        gateHint={
+          canContinueFromStep1
+            ? null
+            : isOH
+              ? `need at least ${minProperties} open houses`
+              : `need at least ${minProperties}`
+        }
         canContinueFromStep1={canContinueFromStep1}
         onBack={() => {
           // 2026-05-28 — Bug 5: when Step 2 is being auto-skipped (no
@@ -2041,7 +2091,13 @@ function Step1Pick({
     );
   }
 
-  if (listings.length < minProperties) {
+  // 2026-08-21 (John) — the gate counts open-house WINDOWS, not
+  // properties: one listing with Sat + Sun open houses is enough to
+  // build the event post. Roundup kinds keep the plain listing count.
+  const totalWindows = isOH
+    ? listings.reduce((n, l) => n + Math.max(1, occurrencesOf(l).length), 0)
+    : listings.length;
+  if (totalWindows < (isOH ? MULTI_OH_MIN_PROPERTIES : minProperties)) {
     return (
       <section className="card p-6">
         <h2 className="text-lg font-semibold text-neutral-900 mb-1">
@@ -2052,7 +2108,7 @@ function Step1Pick({
         </p>
         <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 p-8 text-center">
           <div className="text-sm font-medium text-neutral-900 mb-1">
-            Only {listings.length} upcoming open house right now.
+            Only {totalWindows} upcoming open house right now.
           </div>
           <div className="text-sm text-neutral-600 mb-4">
             Pull the latest from the MLS feeds, add another open house right
@@ -3508,8 +3564,10 @@ function EditCaptionOverlay({
 interface StickyFooterProps {
   step: StepIndex;
   selectedCount: number;
-  /** 2026-08-19 — 2 for open_house, 1 for the roundup kinds. */
-  minProperties: number;
+  /** 2026-08-21 — "need at least …" text when the Step 1 gate isn't met;
+   *  null hides it. Computed by the parent because the gate counts
+   *  open-house windows for OH and properties for the roundups. */
+  gateHint: string | null;
   canContinueFromStep1: boolean;
   onBack: () => void;
   onCancel: () => void;
@@ -3521,7 +3579,7 @@ interface StickyFooterProps {
 function StickyFooter({
   step,
   selectedCount,
-  minProperties,
+  gateHint,
   canContinueFromStep1,
   onBack,
   onCancel,
@@ -3563,10 +3621,10 @@ function StickyFooter({
               {selectedCount}
             </span>{" "}
             of {MULTI_OH_MAX_PROPERTIES} selected
-            {selectedCount < minProperties ? (
+            {gateHint ? (
               <span className="text-neutral-500">
                 {" "}
-                · need at least {minProperties}
+                · {gateHint}
               </span>
             ) : null}
           </div>
