@@ -27,6 +27,10 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadAllianceDashPhoneIndex } from "@/lib/data/alliance-dash-agents";
+import {
+  normalizeAgentName,
+  firstNameMatches,
+} from "@/lib/data/agent-name-match";
 
 /**
  * mls_agents.phone_override is absent from the generated Database type and
@@ -103,36 +107,16 @@ export interface AgentRoster {
 }
 
 /**
- * Normalize to "first last", lowercased, punctuation stripped.
+ * Name matching, shared with the two lookups this page reports on.
  *
- * Copied deliberately from lib/data/owner-story-db.ts rather than imported:
- * that one is module-private, and lib/data/brand-asset-resolver.ts exports a
- * DIFFERENT normalizer that also strips noise words like "headshot". Pulling
- * in the wrong one would silently change which agents look matched.
+ * 2026-08-21 — this file used to carry its own copy, and it had drifted:
+ * it split on whitespace only and kept the hyphen inside the word, so
+ * "Elvis Ochoa-Rosendo" normalized to "elvis ochoa-rosendo" here but
+ * "elvis rosendo" in the renderer. The page was confidently reporting a
+ * different answer than production. Now both read
+ * lib/data/agent-name-match.ts, so what this page says an agent will
+ * render with is what the agent renders with.
  */
-function normalizeAgentName(raw: string): string | null {
-  const trimmed = raw.trim().toLowerCase();
-  if (!trimmed) return null;
-  const parts = trimmed
-    .split(/\s+/)
-    .map((p) => p.replace(/[^a-z'-]/g, ""))
-    .filter(Boolean);
-  if (parts.length === 0) return null;
-  if (parts.length === 1) return parts[0];
-  return `${parts[0]} ${parts[parts.length - 1]}`;
-}
-
-/** "Ed" ↔ "Edward". Mirrors owner-story-db.ts firstNameMatches. */
-function firstNameMatches(a: string, b: string): boolean {
-  const x = a.trim().toLowerCase();
-  const y = b.trim().toLowerCase();
-  if (!x || !y) return false;
-  if (x === y) return true;
-  const shorter = x.length < y.length ? x : y;
-  const longer = x.length < y.length ? y : x;
-  if (shorter.length < 2) return false;
-  return longer.startsWith(shorter);
-}
 
 interface HeadshotAsset {
   label: string;
@@ -191,22 +175,15 @@ export async function getAgentRoster(
     (a) => typeof a.label === "string" && a.label.trim().length > 0,
   );
 
-  // Index the headshots once, three ways, so each agent is a map lookup
-  // rather than a scan of 205 rows.
+  // Index by label for the override pass. The normalized/surname indexes
+  // that used to live here are gone: the surname pool is now built with the
+  // same substring test the resolver's `label ILIKE %surname%` performs, and
+  // a prebuilt token index quietly disagreed with it (a "hunt" needle also
+  // reaches "Hunter"). 206 labels × 262 agents is a rounding error; being
+  // wrong about what the renderer does is not.
   const byLowerLabel = new Map<string, HeadshotAsset>();
-  const byNormalized = new Map<string, HeadshotAsset[]>();
-  const byLastName = new Map<string, HeadshotAsset[]>();
   for (const asset of assets) {
     byLowerLabel.set(asset.label.trim().toLowerCase(), asset);
-    const norm = normalizeAgentName(asset.label);
-    if (!norm) continue;
-    const list = byNormalized.get(norm) ?? [];
-    list.push(asset);
-    byNormalized.set(norm, list);
-    const last = norm.split(" ")[1] ?? norm;
-    const lastList = byLastName.get(last) ?? [];
-    lastList.push(asset);
-    byLastName.set(last, lastList);
   }
 
   interface AgentDbRow {
@@ -222,6 +199,12 @@ export async function getAgentRoster(
     is_active: boolean | null;
   }
 
+  // Every active agent's normalized name, for the pass-4 claim guard below.
+  const activeAgentNorms = ((agentData ?? []) as AgentDbRow[])
+    .filter((a) => a.is_active !== false)
+    .map((a) => normalizeAgentName((a.full_name ?? "").trim()))
+    .filter((n): n is string => !!n && n.includes(" "));
+
   const rows: AgentRosterRow[] = [];
   for (const a of (agentData ?? []) as AgentDbRow[]) {
     const fullName = (a.full_name ?? "").trim();
@@ -231,7 +214,12 @@ export async function getAgentRoster(
     let match: HeadshotMatch = "none";
     let asset: HeadshotAsset | null = null;
 
-    // Pass 1 — explicit override. Same as owner-story-db pass 1.
+    // The passes below mirror lib/data/agent-headshot-resolver.ts exactly:
+    // override → exact → nickname → guarded sole. This page's whole job is
+    // to tell Cheryl what the renderer will do, so a divergence here is not
+    // a cosmetic bug — it is the page lying.
+
+    // Pass 1 — explicit override. Always wins.
     if (override) {
       asset = byLowerLabel.get(override.toLowerCase()) ?? null;
       if (asset) match = "override";
@@ -241,30 +229,28 @@ export async function getAgentRoster(
     const first = norm?.split(" ")[0] ?? null;
     const last = norm?.split(" ")[1] ?? first;
 
+    // Candidate pool — active labels CONTAINING the surname. Substring, not
+    // token equality, because the resolver's query is `label ILIKE %surname%`
+    // and the size of this pool is what gates the sole pass below.
+    const candidates =
+      !asset && last
+        ? assets.filter((x) => x.label.toLowerCase().includes(last))
+        : [];
+
     // Pass 2 — exact normalized first+last.
     if (!asset && norm) {
-      const hits = byNormalized.get(norm);
-      if (hits && hits.length > 0) {
-        asset = hits[0];
+      const hit = candidates.find((x) => normalizeAgentName(x.label) === norm);
+      if (hit) {
+        asset = hit;
         match = "exact";
       }
     }
 
-    // Pass 3 — exactly one headshot carries that last name. Mirrors the
-    // "data.length === 1" branch, which exists to catch label junk like
-    // "Jeanne Gibbons2" that survives normalization.
-    if (!asset && last) {
-      const hits = byLastName.get(last);
-      if (hits && hits.length === 1) {
-        asset = hits[0];
-        match = "sole";
-      }
-    }
-
-    // Pass 4 — abbreviated first name against the same last name.
+    // Pass 3 — same surname, first name the same by another spelling
+    // ("Chuck" ↔ "Charles"). Ahead of the sole pass: a verified first name
+    // beats "there was only one row".
     if (!asset && first && last) {
-      const hits = byLastName.get(last) ?? [];
-      for (const hit of hits) {
+      for (const hit of candidates) {
         const hitNorm = normalizeAgentName(hit.label);
         if (!hitNorm) continue;
         const [hitFirst, hitLast] = hitNorm.split(" ");
@@ -274,6 +260,28 @@ export async function getAgentRoster(
           match = "prefix";
           break;
         }
+      }
+    }
+
+    // Pass 4 — sole surname holder, unless another active agent has a
+    // stronger claim on that label. Without the guard this pass gave
+    // Dorothy Macquade her colleague Mitchell's face. See the resolver.
+    if (!asset && candidates.length === 1 && norm) {
+      const only = candidates[0];
+      const onlyNorm = normalizeAgentName(only.label);
+      const [onlyFirst, onlyLast] = (onlyNorm ?? "").split(" ");
+      const claimed =
+        !!onlyFirst &&
+        !!onlyLast &&
+        activeAgentNorms.some((otherNorm) => {
+          if (otherNorm === norm) return false;
+          const [otherFirst, otherLast] = otherNorm.split(" ");
+          if (!otherFirst || otherLast !== onlyLast) return false;
+          return otherNorm === onlyNorm || firstNameMatches(otherFirst, onlyFirst);
+        });
+      if (!claimed) {
+        asset = only;
+        match = "sole";
       }
     }
 

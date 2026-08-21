@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveAgentHeadshotUrlShared } from "@/lib/data/agent-headshot-resolver";
 
 /**
  * brand-asset-resolver — resolve per-listing brand assets (agent headshots)
@@ -31,42 +32,33 @@ export function normalizeAgentName(input: string): string {
 
 /**
  * Resolve the public URL of an agent's headshot from the brand_assets
- * library by normalized-name match. Prefers an active row in the same office
- * when `officeId` is supplied. Returns null when no confident match exists
- * (the caller then leaves the frame empty / flags for review).
+ * library.
+ *
+ * 2026-08-21 (John): "there's a few Agent photos that are not flowing
+ * through to the templates, but they are in studio Agent pics."
+ *
+ * This function was the reason. It matched on the FULL normalized label,
+ * token for token, so a middle initial, a generational suffix or a short
+ * form was enough to miss: "Jacqueline A Self" ≠ "Jacqueline Self",
+ * "Philip Dougherty IV" ≠ "Philip Dougherty", "Charles Meyer" ≠ "Chuck
+ * Meyer". It also ignored `mls_agents.headshot_label_override` entirely —
+ * so an override set on /agents made the roster page report a match while
+ * the template it was supposed to fix carried on rendering nothing.
+ *
+ * It now delegates to the shared cascade in agent-headshot-resolver.ts,
+ * the same one the Open House hosting-agent block runs. On the live library
+ * that took template-path resolution from 160 to 206 of 262 active agents.
+ *
+ * `officeId` still breaks ties between equally-good exact matches. Returns
+ * null when no confident match exists — the caller then leaves the frame
+ * empty and flags for review, which is the right outcome: see the pass-4
+ * guard in the resolver for why a wrong face is worse than no face.
  */
 export async function resolveAgentHeadshotUrl(
   agentName: string | null | undefined,
   officeId?: string | null,
 ): Promise<string | null> {
-  if (!agentName) return null;
-  const target = normalizeAgentName(agentName);
-  if (!target) return null;
-
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("brand_assets")
-    .select("label, public_url, office_id, status")
-    .eq("kind", "agent_headshot")
-    .eq("status", "active");
-
-  if (error || !data) return null;
-
-  const matches = data.filter(
-    (row) =>
-      typeof row.label === "string" &&
-      typeof row.public_url === "string" &&
-      row.public_url.length > 0 &&
-      normalizeAgentName(row.label) === target,
-  );
-  if (matches.length === 0) return null;
-
-  const sameOffice =
-    officeId != null
-      ? matches.find((m) => m.office_id === officeId)
-      : undefined;
-  const chosen = sameOffice ?? matches[0];
-  return typeof chosen.public_url === "string" ? chosen.public_url : null;
+  return resolveAgentHeadshotUrlShared(agentName, officeId);
 }
 
 /**

@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveAgentHeadshotUrlShared } from "@/lib/data/agent-headshot-resolver";
 import { reachOf, engagementsOf, isReachReported } from "@/lib/data/post-metrics";
 import { fetchCompanyRollup, type CompanyRollup } from "@/lib/data/company-rollup";
 import {
@@ -128,151 +129,33 @@ export async function fetchOwnerStoryViewStats(
  * to the initials medallion.
  *
  * Match is by normalized (first + last, lowercased) name. Strips middle
- * initials and punctuation so "John J. Koch" matches a stored "John Koch".
+ * initials, punctuation and generational suffixes so "John J. Koch" matches
+ * a stored "John Koch" and "Philip Dougherty IV" matches "Philip Dougherty".
+ *
+ * 2026-08-21 — `normalizeAgentName` and `firstNameMatches` moved to
+ * lib/data/agent-name-match.ts. They used to be hand-copied into this file,
+ * alliance-dash-agents.ts and agent-roster.ts, each under a comment warning
+ * the next reader to change all three. Two of the three had already drifted.
+ * One import, one behaviour.
  */
-function normalizeAgentName(raw: string): string | null {
-  const trimmed = raw.trim().toLowerCase();
-  if (!trimmed) return null;
-  // 2026-08-15 — hyphens split words, same as spaces. The Bright feed says
-  // "Elvis Ochoa-Rosendo" while the Drive headshot label says "Elvis Ochoa
-  // Rosendo"; keeping the hyphen inside the word made those normalize to
-  // different first+last pairs ("elvis ochoa-rosendo" vs "elvis rosendo")
-  // and every hyphenated agent missed. Both sides now collapse to
-  // "elvis rosendo". Mirrored in owner-story-db.ts + alliance-dash-agents.ts
-  // — change BOTH or headshot and phone lookups drift apart.
-  const parts = trimmed
-    .split(/[\s-]+/)
-    .map((p) => p.replace(/[^a-z']/g, ""))
-    .filter(Boolean);
-  if (parts.length === 0) return null;
-  if (parts.length === 1) return parts[0];
-  return `${parts[0]} ${parts[parts.length - 1]}`;
-}
 
 /**
- * Returns true when two first-name strings have a prefix relationship —
- * either is a case-insensitive prefix of the other AND the shorter string
- * is at least 2 characters long.
+ * Resolve an agent's headshot URL from the Studio library.
  *
- * Catches abbreviation cases like "Ed" ↔ "Edward", "Liz" ↔ "Elizabeth",
- * "Beth" ↔ "Bethany". Does NOT catch nicknames with different roots:
- * "Bob" ↔ "Robert", "Bill" ↔ "William", "Dick" ↔ "Richard" — those still
- * need a manual `headshot_label_override` / `phone_override` row.
+ * 2026-08-21 — the cascade moved to lib/data/agent-headshot-resolver.ts,
+ * which `brand-asset-resolver.ts` now runs too. This file kept its own copy
+ * of the passes for months while the template path ran a different, weaker
+ * match, which is how an agent could have a photo on the Open House host
+ * block and a blank frame on the very next slide. Same cascade now, one
+ * place to change it.
  *
- * The min-2-char guard prevents single-letter inputs ("J") from matching
- * every James/John/Judith/Justin in the roster.
- */
-function firstNameMatches(a: string, b: string): boolean {
-  const x = a.trim().toLowerCase();
-  const y = b.trim().toLowerCase();
-  if (!x || !y) return false;
-  if (x === y) return true;
-  const shorter = x.length < y.length ? x : y;
-  const longer = x.length < y.length ? y : x;
-  if (shorter.length < 2) return false;
-  return longer.startsWith(shorter);
-}
-
-/**
- * Resolve an agent's headshot URL with a two-pass strategy:
- *
- *   1. Per-agent OVERRIDE — look up the agent in `mls_agents` by normalized
- *      name; if they have a `headshot_label_override` set, find a
- *      brand_assets row with `label = override` and return that URL. This
- *      handles nickname mismatches (e.g., MLS "Nicolette Gorski" → Studio
- *      "Nikki Gorski") without needing a global nickname dictionary.
- *
- *   2. Name-match FALLBACK — the prior behavior: pull active agent_headshot
- *      rows whose label contains the last name, normalize labels in memory,
- *      and match on first+last. Catches "John J. Koch" ↔ "John Koch" etc.
- *
- * Returns null when neither path finds a usable URL; the story view falls
- * back to the initials medallion.
+ * Returns null when nothing matches; callers fall back to the initials
+ * medallion or an empty frame.
  */
 export async function fetchAgentHeadshotUrl(
   agentName: string,
 ): Promise<string | null> {
-  const norm = normalizeAgentName(agentName);
-  if (!norm) return null;
-  const [first, last] = norm.split(" ");
-  if (!first) return null;
-
-  const supabase = createAdminClient();
-
-  // 1) Override path — preferred. Larissa sets these on /settings (Phase 2)
-  //    or via direct SQL when a name mismatch is spotted.
-  try {
-    const { data: agentRow } = await supabase
-      .from("mls_agents")
-      .select("headshot_label_override")
-      .ilike("full_name", agentName.trim())
-      .not("headshot_label_override", "is", null)
-      .limit(1)
-      .maybeSingle();
-    const overrideLabel = agentRow?.headshot_label_override?.trim();
-    if (overrideLabel) {
-      const { data: overrideRow } = await supabase
-        .from("brand_assets")
-        .select("public_url")
-        .eq("kind", "agent_headshot")
-        .eq("status", "active")
-        .ilike("label", overrideLabel)
-        .limit(1)
-        .maybeSingle();
-      if (overrideRow?.public_url) return overrideRow.public_url;
-    }
-  } catch {
-    // Fall through to name-match path on any failure.
-  }
-
-  // 2) Name-match fallback.
-  try {
-    const lastNeedle = last ?? first;
-    const { data, error } = await supabase
-      .from("brand_assets")
-      .select("label, public_url")
-      .eq("kind", "agent_headshot")
-      .eq("status", "active")
-      .ilike("label", `%${lastNeedle}%`)
-      .limit(50);
-    if (error || !data) return null;
-
-    for (const row of data as Array<{
-      label: string;
-      public_url: string;
-    }>) {
-      const labelNorm = normalizeAgentName(row.label);
-      if (!labelNorm) continue;
-      if (labelNorm === norm) return row.public_url;
-    }
-    // No exact-pair match; if there's exactly one row whose last name
-    // matches, accept it as a best-effort lookup (handles "Jeanne Gibbons2"
-    // style suffixes that survive normalization).
-    if (data.length === 1) {
-      return (data[0] as { public_url: string }).public_url;
-    }
-
-    // ---- Pass 4: abbreviated first-name match ----
-    // 2026-05-28 — when normalize first+last and single-result both miss,
-    // walk the brand_assets matches looking for a row whose label's first
-    // name has a prefix relationship with the input's first name. Handles
-    // "Ed Gorski" / "Edward Gorski" style label drift without requiring
-    // a headshot_label_override row.
-    for (const row of data as Array<{ label: string; public_url: string }>) {
-      const labelNorm = normalizeAgentName(row.label);
-      if (!labelNorm) continue;
-      const [labelFirst, labelLast] = labelNorm.split(" ");
-      if (!labelFirst || !labelLast) continue;
-      // Last name must match exactly (we already filtered by ILIKE last so
-      // this is mostly a sanity check); first name uses prefix match.
-      if (labelLast === (last ?? first) && firstNameMatches(first, labelFirst)) {
-        return row.public_url;
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  return resolveAgentHeadshotUrlShared(agentName);
 }
 
 export async function countOwnerStoryViewsInWindow(

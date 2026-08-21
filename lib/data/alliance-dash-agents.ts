@@ -7,6 +7,10 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAgentHeadshotUrl } from "./owner-story-db";
 import { formatPhone } from "./phone-format";
+import {
+  normalizeAgentName,
+  firstNameMatches,
+} from "@/lib/data/agent-name-match";
 
 // Re-export so callers can grab both the lookup helpers and the formatter
 // from this module's surface without a second import line.
@@ -78,56 +82,16 @@ function getAllianceDashClient(): AllianceDashClient | null {
 }
 
 /**
- * Normalize an MLS agent name for matching: lowercased, punctuation
- * stripped, first + last word only. Mirrors `normalizeAgentName` in
- * `owner-story-db.ts` so headshot + phone lookups apply identical logic
- * — "John J. Koch" normalizes to "john koch" in both directions.
+ * Name matching for phone lookups.
  *
- * Returns null when the input has no usable letters (empty, whitespace-
- * only, or all punctuation).
+ * 2026-08-21 — `normalizeAgentName` + `firstNameMatches` now live in
+ * lib/data/agent-name-match.ts. Both were hand-copies of the versions in
+ * owner-story-db.ts, kept in sync only by a comment. Sharing them is what
+ * guarantees the phone a slide prints and the headshot it prints came from
+ * the same person: the two lookups run the same passes over the same
+ * normalized name, so they can no longer disagree about who "Philip
+ * Dougherty IV" or "Chuck Meyer" is.
  */
-function normalizeAgentName(raw: string): string | null {
-  const trimmed = raw.trim().toLowerCase();
-  if (!trimmed) return null;
-  // 2026-08-15 — hyphens split words, same as spaces. The Bright feed says
-  // "Elvis Ochoa-Rosendo" while the Drive headshot label says "Elvis Ochoa
-  // Rosendo"; keeping the hyphen inside the word made those normalize to
-  // different first+last pairs ("elvis ochoa-rosendo" vs "elvis rosendo")
-  // and every hyphenated agent missed. Both sides now collapse to
-  // "elvis rosendo". Mirrored in owner-story-db.ts + alliance-dash-agents.ts
-  // — change BOTH or headshot and phone lookups drift apart.
-  const parts = trimmed
-    .split(/[\s-]+/)
-    .map((p) => p.replace(/[^a-z']/g, ""))
-    .filter(Boolean);
-  if (parts.length === 0) return null;
-  if (parts.length === 1) return parts[0];
-  return `${parts[0]} ${parts[parts.length - 1]}`;
-}
-
-/**
- * Returns true when two first-name strings have a prefix relationship —
- * either is a case-insensitive prefix of the other AND the shorter string
- * is at least 2 characters long.
- *
- * Catches abbreviation cases like "Ed" ↔ "Edward", "Liz" ↔ "Elizabeth",
- * "Beth" ↔ "Bethany". Does NOT catch nicknames with different roots:
- * "Bob" ↔ "Robert", "Bill" ↔ "William", "Dick" ↔ "Richard" — those still
- * need a manual `headshot_label_override` / `phone_override` row.
- *
- * The min-2-char guard prevents single-letter inputs ("J") from matching
- * every James/John/Judith/Justin in the roster.
- */
-function firstNameMatches(a: string, b: string): boolean {
-  const x = a.trim().toLowerCase();
-  const y = b.trim().toLowerCase();
-  if (!x || !y) return false;
-  if (x === y) return true;
-  const shorter = x.length < y.length ? x : y;
-  const longer = x.length < y.length ? y : x;
-  if (shorter.length < 2) return false;
-  return longer.startsWith(shorter);
-}
 
 /**
  * Bright office codes for the 6 C21 Alliance offices on the Bright feed —
@@ -143,6 +107,50 @@ const BRIGHT_ALLIANCE_OFFICE_IDS = [
   "YALL10",
   "C21ALLWW",
 ];
+
+/**
+ * Alliance Dash's PostgREST caps every response at 1000 rows.
+ *
+ * 2026-08-21 (John): "one of the agents named Susan Roselli was not showing
+ * up when we were trying to change the open house host Agent". She was in
+ * the roster the whole time — `cmc_active_agents` row 1,4xx of 2,147. The
+ * two bulk readers below asked for `.limit(5000)` believing 5000 was the
+ * ceiling; the server quietly returned the first 1000 and no error. Across
+ * cmc (2,147 active) + sjsr (3,439 active) that is 64% of the company
+ * roster silently absent from the hosting-agent picker AND from the phone
+ * preload the /agents page reports on.
+ *
+ * A `.limit()` larger than the server cap is not a fix, it is the bug: the
+ * response looks complete either way. So page explicitly with `.range()`
+ * and keep going until a short page proves we reached the end.
+ *
+ * `pageSize` stays at the server cap — asking for more per page is what got
+ * us here. `maxPages` is a runaway guard, not a business limit; hitting it
+ * logs loudly rather than silently truncating like the old code did.
+ */
+async function fetchAllRows<T>(
+  label: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: (from: number, to: number) => any,
+  { pageSize = 1000, maxPages = 60 }: { pageSize?: number; maxPages?: number } = {},
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const from = page * pageSize;
+    const { data, error } = await build(from, from + pageSize - 1);
+    if (error) {
+      console.error(`[alliance-dash] ${label} page ${page} failed:`, error);
+      break;
+    }
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < pageSize) return out;
+  }
+  console.warn(
+    `[alliance-dash] ${label} hit the ${maxPages}-page guard at ${out.length} rows — result may be truncated`,
+  );
+  return out;
+}
 
 /**
  * Resolve an agent's phone number against the Alliance Dash roster.
@@ -525,35 +533,39 @@ export async function loadAllianceDashPhoneIndex(): Promise<AllianceDashPhoneInd
   try {
     // 2026-08-15 — bright_active_agents joined the preload. It is scoped to
     // the 6 Alliance office codes because the full Bright roster is ~34k
-    // rows (way past the 5000 cap) and the roster page only asks about our
-    // own agents anyway. Order matters: CMC/SJSR rows land first so byNorm
+    // rows and the roster page only asks about our own agents anyway (the
+    // scoped set is ~176). Order matters: CMC/SJSR rows land first so byNorm
     // keeps their (agent-entered cell) number when the same agent also has
     // a Bright row.
-    const [cmcRes, sjsrRes, brightRes] = await Promise.all([
-      supabase
-        .from("cmc_active_agents")
-        .select("first_name, last_name, phone1")
-        .limit(5000),
-      supabase
-        .from("sjsr_active_agents")
-        .select("first_name, last_name, phone1")
-        .limit(5000),
-      supabase
-        .from("bright_active_agents")
-        .select("first_name, last_name, phone1")
-        .in("office_id", BRIGHT_ALLIANCE_OFFICE_IDS)
-        .limit(5000),
-    ]);
     type Row = {
       first_name: string | null;
       last_name: string | null;
       phone1: string | null;
     };
-    for (const r of [
-      ...(((cmcRes.data as Row[] | null) ?? [])),
-      ...(((sjsrRes.data as Row[] | null) ?? [])),
-      ...(((brightRes.data as Row[] | null) ?? [])),
-    ]) {
+    // Paged — see fetchAllRows. `.limit(5000)` here used to return exactly
+    // 1000 rows per table and call it a day.
+    const [cmcRows, sjsrRows, brightRows] = await Promise.all([
+      fetchAllRows<Row>("phone/cmc", (from, to) =>
+        supabase
+          .from("cmc_active_agents")
+          .select("first_name, last_name, phone1")
+          .range(from, to),
+      ),
+      fetchAllRows<Row>("phone/sjsr", (from, to) =>
+        supabase
+          .from("sjsr_active_agents")
+          .select("first_name, last_name, phone1")
+          .range(from, to),
+      ),
+      fetchAllRows<Row>("phone/bright", (from, to) =>
+        supabase
+          .from("bright_active_agents")
+          .select("first_name, last_name, phone1")
+          .in("office_id", BRIGHT_ALLIANCE_OFFICE_IDS)
+          .range(from, to),
+      ),
+    ]);
+    for (const r of [...cmcRows, ...sjsrRows, ...brightRows]) {
       const phone = typeof r.phone1 === "string" ? r.phone1.trim() : "";
       if (!phone) continue;
       const first = (r.first_name ?? "").trim();
@@ -642,31 +654,36 @@ export async function listAllianceCompanyAgentNames(): Promise<string[]> {
   if (!supabase) return [];
 
   try {
-    const [cmcRes, sjsrRes, brightRes] = await Promise.all([
-      supabase
-        .from("cmc_active_agents")
-        .select("first_name, last_name")
-        .eq("is_active", true)
-        .limit(5000),
-      supabase
-        .from("sjsr_active_agents")
-        .select("first_name, last_name")
-        .eq("is_active", true)
-        .limit(5000),
-      supabase
-        .from("bright_active_agents")
-        .select("first_name, last_name")
-        .eq("is_active", true)
-        .in("office_id", BRIGHT_ALLIANCE_OFFICE_IDS)
-        .limit(5000),
-    ]);
     type Row = { first_name: string | null; last_name: string | null };
+    // Paged — see fetchAllRows. This is the call that was losing Susan
+    // Roselli: cmc_active_agents holds 2,147 active rows and the old
+    // `.limit(5000)` returned the first 1000 of them.
+    const [cmcRows, sjsrRows, brightRows] = await Promise.all([
+      fetchAllRows<Row>("roster/cmc", (from, to) =>
+        supabase
+          .from("cmc_active_agents")
+          .select("first_name, last_name")
+          .eq("is_active", true)
+          .range(from, to),
+      ),
+      fetchAllRows<Row>("roster/sjsr", (from, to) =>
+        supabase
+          .from("sjsr_active_agents")
+          .select("first_name, last_name")
+          .eq("is_active", true)
+          .range(from, to),
+      ),
+      fetchAllRows<Row>("roster/bright", (from, to) =>
+        supabase
+          .from("bright_active_agents")
+          .select("first_name, last_name")
+          .eq("is_active", true)
+          .in("office_id", BRIGHT_ALLIANCE_OFFICE_IDS)
+          .range(from, to),
+      ),
+    ]);
     const seen = new Map<string, string>();
-    for (const r of [
-      ...((cmcRes.data as Row[] | null) ?? []),
-      ...((sjsrRes.data as Row[] | null) ?? []),
-      ...((brightRes.data as Row[] | null) ?? []),
-    ]) {
+    for (const r of [...cmcRows, ...sjsrRows, ...brightRows]) {
       const name = [r.first_name, r.last_name]
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
