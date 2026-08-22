@@ -1,22 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { unconfirmListingPostsAction } from "@/app/(app)/listings/actions";
 import {
-  dismissListingPromotionAction,
-  unconfirmListingPostsAction,
-  undismissListingPromotionAction,
-} from "@/app/(app)/listings/actions";
+  clearListingSkipAction,
+  setListingSkipAction,
+} from "@/app/(app)/listings/skip-actions";
 import MilestoneListingRow from "@/components/MilestoneListingRow";
 import ListingStatusRibbon from "@/components/ListingStatusRibbon";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
-
-const REASON_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "low_price", label: "Low price point" },
-  { value: "condition", label: "Property condition" },
-  { value: "owner_request", label: "Owner request" },
-  { value: "other", label: "Other..." },
-];
 
 interface NeedsPostsCardProps {
   listing: ListingNeedingPosts;
@@ -50,9 +43,6 @@ export default function NeedsPostsCard({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
-  const [skipOpen, setSkipOpen] = useState(false);
-  const [otherReason, setOtherReason] = useState("");
-  const [showOtherInput, setShowOtherInput] = useState(false);
 
   const referenceLabel =
     listing.reference_date_kind === "listing_date" ? "Listed" : "Synced";
@@ -69,28 +59,39 @@ export default function NeedsPostsCard({
       });
   }
 
-  function handleDismiss(reason: string) {
+  // 2026-08-22 (John) — "make sure it removed the property once clicked...
+  // nothing seems to happen." Skip used to open a second step (a "Skip
+  // because" reason strip) before anything was written, and no skip was
+  // ever completed. It is now ONE CLICK: write the just_listed skip mark
+  // immediately (same per-milestone model every other card uses), no
+  // reason prompt. The row leaves the Needs-attention tab on the resulting
+  // revalidation; the All tab shows it with the dismissed ribbon + Undo.
+  function handleSkip() {
     setError(null);
-    setSkipOpen(false);
-    setShowOtherInput(false);
     startTransition(async () => {
-      const result = await dismissListingPromotionAction(
+      const result = await setListingSkipAction(
         listing.mls_number,
-        reason,
+        "just_listed",
+        null,
       );
       if (!result.ok) {
-        setError(result.error ?? "Unable to dismiss.");
+        setError(result.error ?? "Unable to skip.");
       }
     });
   }
 
   function handleReset() {
     setError(null);
-    setSkipOpen(false);
     startTransition(async () => {
       // Clear whichever flag applies; idempotent server-side.
       if (listing.promotion_status === "dismissed") {
-        const r = await undismissListingPromotionAction(listing.mls_number);
+        // clearListingSkipAction removes the just_listed skip mark AND the
+        // legacy property-wide dismissal, so it undoes both the new
+        // one-click skips and anything dismissed under the old flow.
+        const r = await clearListingSkipAction(
+          listing.mls_number,
+          "just_listed",
+        );
         if (!r.ok) setError(r.error ?? "Unable to reset.");
       } else if (
         listing.promotion_status === "posted" &&
@@ -175,64 +176,8 @@ export default function NeedsPostsCard({
               </button>
             </div>
 
-            {/* 2026-08-05 (John): the skip reasons used to live in a floating
-                kebab menu that rendered OVER the section below it. They now
-                open inline, inside the row, so nothing can ever overlap. */}
-            {skipOpen ? (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-2">
-                <span className="text-[9.5px] font-bold uppercase tracking-wider text-neutral-500">
-                  Skip because
-                </span>
-                {REASON_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    disabled={isPending}
-                    onClick={() => {
-                      if (opt.value === "other") {
-                        setShowOtherInput(true);
-                      } else {
-                        handleDismiss(opt.value);
-                      }
-                    }}
-                    className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-[11px] text-neutral-700 hover:border-neutral-900 hover:bg-neutral-900 hover:text-white transition-colors disabled:opacity-50"
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSkipOpen(false);
-                    setShowOtherInput(false);
-                    setOtherReason("");
-                  }}
-                  className="ml-auto text-[10.5px] text-neutral-400 hover:text-neutral-700"
-                >
-                  Cancel
-                </button>
-                {showOtherInput ? (
-                  <div className="mt-1 flex w-full items-center gap-1.5">
-                    <input
-                      type="text"
-                      autoFocus
-                      value={otherReason}
-                      onChange={(e) => setOtherReason(e.target.value)}
-                      placeholder="Reason..."
-                      maxLength={200}
-                      className="flex-1 rounded-md border border-neutral-200 px-2 py-1 text-[11px] text-neutral-900 focus:outline-none focus:ring-2 focus:ring-gold-500/40"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleDismiss(otherReason.trim() || "other")}
-                      className="rounded bg-neutral-900 px-2 py-1 text-[10px] font-semibold text-white hover:bg-neutral-800"
-                    >
-                      Confirm
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            {/* 2026-08-22 — the inline "Skip because" reason strip that
+                rendered here is gone; skip is one click now (see handleSkip). */}
           </>
         }
         trailingAction={
@@ -248,10 +193,10 @@ export default function NeedsPostsCard({
           ) : !isDismissed ? (
             <button
               type="button"
-              onClick={() => setSkipOpen((o) => !o)}
+              onClick={handleSkip}
               disabled={isPending}
               className="text-[10.5px] text-neutral-400 hover:text-neutral-700 underline underline-offset-2 disabled:opacity-50 text-left"
-              title="Not worth a post? Skip it and say why."
+              title="Not worth a post? One click removes it from this card."
             >
               Skip this listing
             </button>

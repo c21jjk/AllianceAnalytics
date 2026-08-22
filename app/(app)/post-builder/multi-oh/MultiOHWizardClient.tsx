@@ -105,6 +105,11 @@ export interface RoundupMetaEntry {
   price_old: number | null;
   price_new: number | null;
   already_posted: boolean;
+  /** 2026-08-22 — occurrence falls inside the rolling window ("this
+   *  week"). Only in-window unposted rows are pre-ticked; the older
+   *  unposted backlog is listed unticked. Optional so any stale caller
+   *  without the flag behaves as before (treated as in-window). */
+  in_window?: boolean;
 }
 
 /**
@@ -608,9 +613,16 @@ export default function MultiOHWizardClient({
     // covered by a published post of this milestone stay unticked. Capped
     // at the carousel max. OH keeps its start-empty behavior — picking
     // the weekend's event set is the point of that flow.
+    //
+    // 2026-08-22 — the picker now also lists the OLDER unposted backlog
+    // (in_window=false); those rows stay unticked so the default post is
+    // still "this week", with the backlog one click away.
     if (roundupType !== "open_house") {
       return listings
-        .filter((l) => !roundupMeta[l.mls_number]?.already_posted)
+        .filter((l) => {
+          const meta = roundupMeta[l.mls_number];
+          return !meta?.already_posted && meta?.in_window !== false;
+        })
         .slice(0, MULTI_OH_MAX_PROPERTIES)
         .map((l) => l.mls_number);
     }

@@ -3,8 +3,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchListingsForPostBuilder } from "./listings";
 import type { PostBuilderListingWithOH } from "./listing-html-utils";
 import type { RoundupType } from "./types";
-import { ROLLING_WINDOW_DAYS } from "@/lib/dashboard-window";
-import { getAutoPostedPropertyIds } from "@/lib/data/listing-post-marks";
+import { MILESTONE_FLOOR_ISO, ROLLING_WINDOW_DAYS } from "@/lib/dashboard-window";
+import {
+  getAutoPostedPropertyIds,
+  getListingPostMarks,
+} from "@/lib/data/listing-post-marks";
+import { getListingSkipMarks } from "@/lib/data/listing-skip-marks";
 
 /**
  * 2026-08-19 — data layer for the weekly milestone roundups (John:
@@ -14,13 +18,20 @@ import { getAutoPostedPropertyIds } from "@/lib/data/listing-post-marks";
  * The roundup wizard needs two things the standard Post Builder listing
  * fetcher doesn't provide:
  *
- *   1. The WEEK'S occurrences, not the whole eligible pool. "New under
- *      contracts" = status='pending' with status_changed_at inside the
- *      dashboard's rolling window; "new price reductions" = a
- *      listing_price_changes row (new < old) inside the same window on a
- *      still-active listing. Both share the dashboard's
- *      ROLLING_WINDOW_DAYS so the wizard and the dashboard cards agree
- *      about what "this week" means.
+ *   1. The eligible occurrences. "New under contracts" = status='pending'
+ *      with a recent status_changed_at; "new price reductions" = a
+ *      listing_price_changes row (new < old) on a still-active listing.
+ *
+ *      2026-08-22 (John) — "8 are showing in the list, but when I click
+ *      to build the carousel only 6 show up." The picker used a strict
+ *      7-day window while the dashboard cards keep UNHANDLED rows visible
+ *      until someone acts on them (the 8/07 worklist rule) — so a listing
+ *      the dashboard said still needed a post could be unreachable from
+ *      the only tool that can post it. The picker now follows the SAME
+ *      rule as the cards: everything inside the rolling window, PLUS any
+ *      older occurrence since the Aug 1 floor that is neither posted
+ *      (published post of this type, or a manual dashboard tick) nor
+ *      skipped. Handled rows still age out after 7 days.
  *
  *   2. Per-property milestone metadata for the hero card + captions: the
  *      occurrence date, and for reductions the old/new price pair. The
@@ -37,15 +48,22 @@ export interface RoundupPropertyMeta {
   /** price_reduction only — price after the cut. */
   price_new: number | null;
   /**
-   * True when a PUBLISHED post of this milestone type already covers the
-   * property (anchor or linked_property_ids). The picker shows these
-   * unticked with a "posted" tag instead of pre-selecting them.
+   * True when the property already reads as posted for this milestone: a
+   * PUBLISHED post of this type covers it (anchor or linked_property_ids),
+   * or someone ticked the dashboard's Posted checkbox. The picker shows
+   * these unticked with a "posted" tag instead of pre-selecting them.
    */
   already_posted: boolean;
+  /**
+   * 2026-08-22 — true when the occurrence falls inside the rolling window
+   * ("this week"). Drives pre-selection: the wizard pre-ticks only the
+   * week's unposted rows; the older unposted backlog is offered unticked.
+   */
+  in_window: boolean;
 }
 
 export interface RoundupListingsResult {
-  /** Week's eligible listings, most recent occurrence first. */
+  /** Eligible listings, most recent occurrence first. */
   listings: PostBuilderListingWithOH[];
   /** Milestone metadata per listing, keyed by mls_number. */
   metaByMls: Record<string, RoundupPropertyMeta>;
@@ -62,12 +80,53 @@ export async function fetchRoundupListings(
     : fetchPriceReductionRoundup(cutoffIso);
 }
 
+/**
+ * Handled-state lookups for a candidate set, mirroring the dashboard
+ * cards: published post of the milestone type (anchor or linked), manual
+ * Posted tick, per-milestone skip. Three batched round trips.
+ */
+async function fetchHandledState(
+  kind: Exclude<RoundupType, "open_house">,
+  listings: readonly PostBuilderListingWithOH[],
+): Promise<{
+  isPosted: (l: PostBuilderListingWithOH) => boolean;
+  isSkipped: (l: PostBuilderListingWithOH) => boolean;
+}> {
+  const [autoPosted, manualMarks, skips] = await Promise.all([
+    getAutoPostedPropertyIds(
+      listings.map((l) => l.id),
+      kind,
+    ).catch((e) => {
+      console.error("[roundup-listings] posted lookup failed:", e);
+      return new Set<string>();
+    }),
+    getListingPostMarks(
+      listings.map((l) => l.mls_number),
+      kind,
+    ).catch((e) => {
+      console.error("[roundup-listings] manual mark lookup failed:", e);
+      return new Map<string, { marked_at: string; marked_by_name: string | null }>();
+    }),
+    getListingSkipMarks(
+      listings.map((l) => l.mls_number),
+      kind,
+    ).catch((e) => {
+      console.error("[roundup-listings] skip lookup failed:", e);
+      return new Map<string, { skipped_at: string; reason: string | null }>();
+    }),
+  ]);
+  return {
+    isPosted: (l) => autoPosted.has(l.id) || manualMarks.has(l.mls_number),
+    isSkipped: (l) => skips.has(l.mls_number),
+  };
+}
+
 async function fetchUnderContractRoundup(
   cutoffIso: string,
 ): Promise<RoundupListingsResult> {
   // Base pool: the same pending-status bucket the Post Builder used for
   // single UC posts (hero photo required, office meta attached).
-  // limit 500 (default is 200): the week's rows must never fall off the
+  // limit 500 (default is 200): the eligible rows must never fall off the
   // pool bottom just because company-wide pending inventory grew.
   const pool = await fetchListingsForPostBuilder({
     post_type: "under_contract",
@@ -76,7 +135,7 @@ async function fetchUnderContractRoundup(
   if (pool.length === 0) return { listings: [], metaByMls: {} };
 
   // status_changed_at isn't on the shared listing shape — one batched
-  // lookup for the pool, then filter to the rolling window.
+  // lookup for the pool.
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("properties")
@@ -104,41 +163,60 @@ async function fetchUnderContractRoundup(
   // serialize with "+00:00" while our cutoff uses "Z" — lexicographic
   // comparison breaks on the suffix for same-second values.
   const cutoffMs = Date.parse(cutoffIso);
-  const listings = pool.filter((l) => {
+  const floorMs = Date.parse(MILESTONE_FLOOR_ISO);
+  // Candidates: everything that flipped to pending since the Aug 1 floor.
+  // The floor mirrors the dashboard card; without it, "unhandled rows stay"
+  // would drag every pre-slate pending listing into the picker.
+  const candidates = pool.filter((l) => {
     const changed = changedAtByMls.get(l.mls_number);
     if (typeof changed !== "string") return false;
     const t = Date.parse(changed);
-    return Number.isFinite(t) && t >= cutoffMs;
+    return Number.isFinite(t) && t >= floorMs;
+  });
+  if (candidates.length === 0) return { listings: [], metaByMls: {} };
+
+  const handled = await fetchHandledState("under_contract", candidates);
+  const listings = candidates.filter((l) => {
+    const t = Date.parse(changedAtByMls.get(l.mls_number) ?? "");
+    const inWindow = Number.isFinite(t) && t >= cutoffMs;
+    // The dashboard rule: inside the window, or not yet handled.
+    return inWindow || (!handled.isPosted(l) && !handled.isSkipped(l));
   });
   // Pool order is already status_changed_at DESC (see listings.ts), so
-  // "most recent first" holds without a re-sort.
+  // "most recent first" holds without a re-sort — the week's rows lead and
+  // the older unposted backlog trails.
 
-  const metaByMls = await buildMeta(
-    "under_contract",
-    listings,
-    (mls) => ({
-      event_date: changedAtByMls.get(mls) ?? null,
+  const metaByMls: Record<string, RoundupPropertyMeta> = {};
+  for (const l of listings) {
+    const changed = changedAtByMls.get(l.mls_number) ?? null;
+    const t = changed ? Date.parse(changed) : NaN;
+    metaByMls[l.mls_number] = {
+      event_date: changed,
       price_old: null,
       price_new: null,
-    }),
-  );
+      already_posted: handled.isPosted(l),
+      in_window: Number.isFinite(t) && t >= cutoffMs,
+    };
+  }
   return { listings, metaByMls };
 }
 
 async function fetchPriceReductionRoundup(
   cutoffIso: string,
 ): Promise<RoundupListingsResult> {
-  // The week's reductions, from the dated history table the DB trigger
-  // maintains (same source as the dashboard's Price Reduced card — see
-  // lib/data/price-changes.ts for why original_list_price comparison was
-  // rejected). Latest cut per property wins.
+  // Reductions since the Aug 1 floor, from the dated history table the DB
+  // trigger maintains (same source as the dashboard's Price Reduced card —
+  // see lib/data/price-changes.ts for why original_list_price comparison
+  // was rejected). Latest cut per property wins; the 7-day window is
+  // applied later as the in_window flag, not as a fetch bound, so an older
+  // unposted cut stays reachable (2026-08-22, see header note).
   const supabase = createAdminClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const untyped = supabase as any;
   const { data, error } = await untyped
     .from("listing_price_changes")
     .select("mls_number, old_price, new_price, changed_at")
-    .gte("changed_at", cutoffIso)
+    .gte("changed_at", MILESTONE_FLOOR_ISO)
     .order("changed_at", { ascending: false });
   if (error) {
     console.error(
@@ -179,7 +257,7 @@ async function fetchPriceReductionRoundup(
   if (latestByMls.size === 0) return { listings: [], metaByMls: {} };
 
   // Join to the active-listing pool (hero photo required, office meta
-  // attached) and keep only properties with a reduction this week.
+  // attached) and keep only properties with a recorded reduction.
   // limit 500 (default 200): price cuts skew toward OLDER listings, which
   // sort to the bottom of the pool's listing_date DESC ordering — a 200
   // cap could silently drop a real reduction once active inventory grows.
@@ -187,45 +265,34 @@ async function fetchPriceReductionRoundup(
     post_type: "price_reduction",
     limit: 500,
   });
-  const listings = pool
-    .filter((l) => latestByMls.has(l.mls_number))
+  const candidates = pool.filter((l) => latestByMls.has(l.mls_number));
+  if (candidates.length === 0) return { listings: [], metaByMls: {} };
+
+  const cutoffMs = Date.parse(cutoffIso);
+  const handled = await fetchHandledState("price_reduction", candidates);
+  const listings = candidates
+    .filter((l) => {
+      const t = Date.parse(latestByMls.get(l.mls_number)?.changed_at ?? "");
+      const inWindow = Number.isFinite(t) && t >= cutoffMs;
+      return inWindow || (!handled.isPosted(l) && !handled.isSkipped(l));
+    })
     .sort((a, b) => {
       const at = latestByMls.get(a.mls_number)?.changed_at ?? "";
       const bt = latestByMls.get(b.mls_number)?.changed_at ?? "";
       return bt.localeCompare(at); // most recent cut first
     });
 
-  const metaByMls = await buildMeta("price_reduction", listings, (mls) => {
-    const change = latestByMls.get(mls);
-    return {
+  const metaByMls: Record<string, RoundupPropertyMeta> = {};
+  for (const l of listings) {
+    const change = latestByMls.get(l.mls_number);
+    const t = change ? Date.parse(change.changed_at) : NaN;
+    metaByMls[l.mls_number] = {
       event_date: change?.changed_at ?? null,
       price_old: change?.old_price ?? null,
       price_new: change?.new_price ?? null,
-    };
-  });
-  return { listings, metaByMls };
-}
-
-/** Attach the already_posted flag (published post of this milestone type
- *  covering the property, anchor or linked) to each listing's meta. */
-async function buildMeta(
-  kind: Exclude<RoundupType, "open_house">,
-  listings: PostBuilderListingWithOH[],
-  baseFor: (mls: string) => Omit<RoundupPropertyMeta, "already_posted">,
-): Promise<Record<string, RoundupPropertyMeta>> {
-  const postedIds = await getAutoPostedPropertyIds(
-    listings.map((l) => l.id),
-    kind,
-  ).catch((e) => {
-    console.error("[roundup-listings] posted lookup failed:", e);
-    return new Set<string>();
-  });
-  const out: Record<string, RoundupPropertyMeta> = {};
-  for (const l of listings) {
-    out[l.mls_number] = {
-      ...baseFor(l.mls_number),
-      already_posted: postedIds.has(l.id),
+      already_posted: handled.isPosted(l),
+      in_window: Number.isFinite(t) && t >= cutoffMs,
     };
   }
-  return out;
+  return { listings, metaByMls };
 }
