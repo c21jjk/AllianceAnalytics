@@ -882,6 +882,49 @@ function renderPropertyRow(
   </div>`;
 }
 
+/**
+ * 2026-08-22 (John) — the roundup kinds lost their slide cap (FB-only
+ * posts), but the hero card physically fits at most 9 property rows. This
+ * helper is what every hero emitter now calls instead of mapping
+ * `input.properties` directly: it renders the first {@link HERO_MAX_ROWS}
+ * rows and, when more exist, one trailing "+ N more this week" row in the
+ * same visual language. The CAROUSEL is unaffected — every property still
+ * gets its own slide; only the hero's list is elided.
+ *
+ * Pair with `heroRowCount()` when computing density / headline tiers so
+ * the type scale is chosen for the rows actually drawn.
+ */
+export const HERO_MAX_ROWS = 9;
+
+export function heroRowCount(propertyCount: number): number {
+  return Math.min(propertyCount, HERO_MAX_ROWS);
+}
+
+function renderHeroRows(
+  properties: readonly MultiOHEventProperty[],
+  density: RowDensity,
+  kind: RoundupType,
+): string {
+  const shown = properties.slice(0, HERO_MAX_ROWS);
+  const overflow = properties.length - shown.length;
+  const rows = shown
+    .map((p, i) => renderPropertyRow(p, i + 1, density, kind))
+    .join("");
+  if (overflow <= 0) return rows;
+  // Overflow row reuses the standard row classes so density styling and
+  // the compact-tier overrides apply to it automatically.
+  return (
+    rows +
+    `<div class="row">
+    <div class="row-num">+</div>
+    <div class="row-body">
+      <div class="row-address">+ ${overflow} more this week</div>
+      <div class="row-sub"><span class="row-citystate">All ${properties.length} are in this post</span></div>
+    </div>
+  </div>`
+  );
+}
+
 /** "Aug 15" style short date for the UC sub-line. Null-safe. */
 function formatEventDateShort(iso: string | null): string | null {
   if (!iso) return null;
@@ -967,9 +1010,11 @@ export function emitEventOverviewSquare(input: MultiOHEventInput): string {
   const fmt: PostFormat = "square_1x1";
   const { width, height } = PLATFORM_DIMENSIONS[fmt];
   const margin = 56;
-  const density = computeRowDensity(input.properties.length, fmt);
-
-  const n = input.properties.length;
+  // 2026-08-22 — density + headline tiers key off the rows actually DRAWN
+  // (capped at HERO_MAX_ROWS); uncapped roundups elide the rest into a
+  // "+N more" row. See renderHeroRows.
+  const n = heroRowCount(input.properties.length);
+  const density = computeRowDensity(n, fmt);
   // Headline tier curve re-balanced for the shorter frame.
   const titleSize = n <= 3 ? 60 : n <= 6 ? 50 : 42;
 
@@ -999,9 +1044,7 @@ export function emitEventOverviewSquare(input: MultiOHEventInput): string {
 
   const kind = eventKindOf(input);
   const copy = KIND_COPY[kind];
-  const rowsHtml = input.properties
-    .map((p, i) => renderPropertyRow(p, i + 1, density, kind))
-    .join("");
+  const rowsHtml = renderHeroRows(input.properties, density, kind);
   const title = deriveTitleForKind(kind, input.properties);
 
   return `<!doctype html>
@@ -1048,16 +1091,16 @@ export function emitEventOverviewPortrait(input: MultiOHEventInput): string {
   const fmt: PostFormat = "square_1x1";
   const { width, height } = PLATFORM_DIMENSIONS[fmt];
   const margin = 60;
-  const density = computeRowDensity(input.properties.length, fmt);
+  // 2026-08-22 — density + headline tier from the rows actually drawn
+  // (capped at HERO_MAX_ROWS); see renderHeroRows.
+  const nRows = heroRowCount(input.properties.length);
+  const density = computeRowDensity(nRows, fmt);
 
-  const titleSize =
-    input.properties.length <= 3 ? 72 : input.properties.length <= 6 ? 60 : 52;
+  const titleSize = nRows <= 3 ? 72 : nRows <= 6 ? 60 : 52;
 
   const kind = eventKindOf(input);
   const copy = KIND_COPY[kind];
-  const rowsHtml = input.properties
-    .map((p, i) => renderPropertyRow(p, i + 1, density, kind))
-    .join("");
+  const rowsHtml = renderHeroRows(input.properties, density, kind);
   const title = deriveTitleForKind(kind, input.properties);
 
   return `<!doctype html>
@@ -1105,16 +1148,16 @@ export function emitEventOverviewStory(input: MultiOHEventInput): string {
   const fmt: PostFormat = "story_9x16";
   const { width, height } = PLATFORM_DIMENSIONS[fmt];
   const margin = 64;
-  const density = computeRowDensity(input.properties.length, fmt);
+  // 2026-08-22 — density + headline tier from the rows actually drawn
+  // (capped at HERO_MAX_ROWS); see renderHeroRows.
+  const nRows = heroRowCount(input.properties.length);
+  const density = computeRowDensity(nRows, fmt);
 
-  const titleSize =
-    input.properties.length <= 3 ? 76 : input.properties.length <= 6 ? 64 : 56;
+  const titleSize = nRows <= 3 ? 76 : nRows <= 6 ? 64 : 56;
 
   const kind = eventKindOf(input);
   const copy = KIND_COPY[kind];
-  const rowsHtml = input.properties
-    .map((p, i) => renderPropertyRow(p, i + 1, density, kind))
-    .join("");
+  const rowsHtml = renderHeroRows(input.properties, density, kind);
 
   // why: story format pads top/bottom heavily to clear IG's UI overlays.
   // The 310px top padding = 250 safe zone + 60 visual breathing room.

@@ -164,7 +164,10 @@ const ROUNDUP_OVERRIDES: Record<"under_contract" | "price_reduction", string> =
   {
     under_contract: `\
 ROUNDUP MODE — THIS IS NOT AN OPEN HOUSE POST. This is a weekly UNDER CONTRACT roundup: the listed homes just went under contract (buyers committed; sales pending). Nobody can tour them; there are no dates or times to attend. The following rules REPLACE the corresponding rules above:
-  • Story: momentum + social proof. The brokerage's homes are selling. Speak to two audiences at once: sellers ("your home could be next") and buyers ("the market is moving — get ready before the next one").
+  • Story: momentum + productivity. Tone is MOTIVATIONAL and confident — a brokerage having a productive week — never boastful or salesy. Speak to two audiences at once: sellers ("your home could be next") and buyers ("the market is moving").
+  • Every featured home is one of the brokerage's OWN listings (2026-08-22: buyer-side deals are excluded upstream). Say so naturally — "our listings", "listings of ours" — it's the proof of productivity.
+  • KEEP IT SHORT. Opener: one or two brief sentences, then the bullet list, then a ONE-line closer. No extra paragraphs on any platform.
+  • NEVER name any individual agent — no agent names anywhere in the caption. Collective phrasing ("our team", "we") is fine.
   • NO day-grouped sections and NO 📍 day headers. Use ONE flat bullet list, one bullet per property, EXACT format: \`• {Address}, {City}\` — no dates, no times, no prices on the bullets.
   • Each property's \`oh_window\` field carries "Under contract {date}" for context — you may reference the week narratively ("this week") but do NOT put per-property dates in the bullets.
   • NEVER say "sold" — these are under contract / pending, not closed.

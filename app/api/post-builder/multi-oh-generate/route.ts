@@ -342,7 +342,14 @@ function parseBody(raw: unknown):
       error: `at least ${minProperties} propert${minProperties === 1 ? "y" : "ies"} required`,
     };
   }
-  if (r.properties.length > MULTI_OH_MAX_PROPERTIES) {
+  // 2026-08-22 (John) — the max is an OPEN HOUSE rule (IG carousel cap).
+  // The roundup kinds are uncapped: they publish to Facebook, whose
+  // multi-photo posts carry far more than 10 images; the hero card shows
+  // its first 9 rows + a "+N more" overflow line (multi-oh-render.ts).
+  if (
+    roundup_type === "open_house" &&
+    r.properties.length > MULTI_OH_MAX_PROPERTIES
+  ) {
     return {
       ok: false,
       error: `at most ${MULTI_OH_MAX_PROPERTIES} properties allowed`,

@@ -3214,7 +3214,15 @@ export default function PostBuilderClient({
     setPostNowOpen(true);
     setPostNowArmedAt(Date.now());
     setPostNowResults(null);
-    setPostNowPlatforms(new Set(["facebook", "instagram", "tiktok"]));
+    // 2026-08-22 (John) — the Under Contract / Price Reduced roundups are
+    // Facebook-only posts, so the modal opens with just FB checked for
+    // those types. IG/TT stay one click away for the rare exception.
+    // Every other post type keeps the all-platforms default.
+    setPostNowPlatforms(
+      postType === "under_contract" || postType === "price_reduction"
+        ? new Set<PostPlatform>(["facebook"])
+        : new Set<PostPlatform>(["facebook", "instagram", "tiktok"]),
+    );
   }
 
   function togglePostNowPlatform(p: PostPlatform) {

@@ -1039,27 +1039,35 @@ interface RoundupCtx {
   geoPhrase: string;
 }
 
+// 2026-08-22 (John) — UC tone spec: motivational + productive, short, no
+// individual agent names, and SAY these are OUR listings (buyer-side deals
+// are excluded upstream in roundup-listings.ts, so "our listings" is always
+// true for every featured property).
 const UC_ROUNDUP_OPENERS: ReadonlyArray<(c: RoundupCtx) => string> = [
   (c) =>
-    `✍️ Under contract! Buyers said yes to ${c.countPhrase} this week. ${
-      c.geoPhrase ? `${c.geoPhrase} — the` : "The"
-    } market is moving. 🖤💛`,
+    `✍️ Productive week: ${
+      c.count === 1
+        ? "another one of our listings is"
+        : `${c.count} of our listings are`
+    } officially under contract. 🖤💛`,
   (c) =>
-    `🤝 ${
-      c.count === 1 ? "Another home" : `${c.count} more homes`
-    } went under contract with us this week. Here's the roundup. 🖤💛`,
+    `🤝 Momentum looks like this — ${
+      c.count === 1 ? "one of our listings" : `${c.count} of our listings`
+    } went under contract this week${
+      c.geoPhrase ? ` ${lowercaseFirstLetter(c.geoPhrase)}` : ""
+    }. 🖤💛`,
   (c) =>
     `✍️ Sold signs are coming. ${
-      c.countPhrase.charAt(0).toUpperCase() + c.countPhrase.slice(1)
-    } went under contract this week${
-      c.geoPhrase ? ` — ${lowercaseFirstLetter(c.geoPhrase)}` : ""
-    }. 🖤💛`,
+      c.count === 1
+        ? "Another of our listings"
+        : `${c.count} of our own listings`
+    } went under contract this week. 🖤💛`,
 ];
 
 const UC_ROUNDUP_CLOSERS: readonly string[] = [
   "Thinking about selling? Your address could be on next week's list. 🖤💛",
-  "Whether you're buying or selling, this is what momentum looks like. 🖤💛",
-  "The market didn't slow down this week — and neither did our agents. 🖤💛",
+  "This is what a productive week looks like. Yours could be next. 🖤💛",
+  "The market didn't slow down this week — and neither did we. 🖤💛",
 ];
 
 const PR_ROUNDUP_OPENERS: ReadonlyArray<(c: RoundupCtx) => string> = [

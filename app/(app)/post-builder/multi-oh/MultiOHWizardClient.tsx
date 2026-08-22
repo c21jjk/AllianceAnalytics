@@ -138,7 +138,7 @@ const WIZARD_COPY: Record<
   },
   under_contract: {
     pickTitle: "Pick this week's new under contracts",
-    pickSub: `Everything that went under contract in the last 7 days is pre-selected (up to ${MULTI_OH_MAX_PROPERTIES}). Untick anything you don't want featured — the pick order is the carousel order.`,
+    pickSub: `Everything that went under contract in the last 7 days is pre-selected. Untick anything you don't want featured — the pick order is the carousel order.`,
     emptyTitle: "No new under contracts this week.",
     emptySub:
       "Nothing went under contract in the last 7 days. Check back after the next status change — the dashboard's Under Contract card fills this list.",
@@ -146,7 +146,7 @@ const WIZARD_COPY: Record<
   },
   price_reduction: {
     pickTitle: "Pick this week's price improvements",
-    pickSub: `Every price reduction from the last 7 days is pre-selected (up to ${MULTI_OH_MAX_PROPERTIES}). Untick anything you don't want featured — the pick order is the carousel order.`,
+    pickSub: `Every price reduction from the last 7 days is pre-selected. Untick anything you don't want featured — the pick order is the carousel order.`,
     emptyTitle: "No price reductions this week.",
     emptySub:
       "No listing dropped its price in the last 7 days. The dashboard's Reduced card fills this list as cuts come in from the feeds.",
@@ -617,13 +617,15 @@ export default function MultiOHWizardClient({
     // 2026-08-22 — the picker now also lists the OLDER unposted backlog
     // (in_window=false); those rows stay unticked so the default post is
     // still "this week", with the backlog one click away.
+    // 2026-08-22 (John) — no slide cap for the roundup kinds (FB-only
+    // posts; Facebook multi-photo posts carry far more than 10 images).
+    // The 9-property cap remains an OPEN HOUSE rule.
     if (roundupType !== "open_house") {
       return listings
         .filter((l) => {
           const meta = roundupMeta[l.mls_number];
           return !meta?.already_posted && meta?.in_window !== false;
         })
-        .slice(0, MULTI_OH_MAX_PROPERTIES)
         .map((l) => l.mls_number);
     }
     return [];
@@ -1017,8 +1019,10 @@ export default function MultiOHWizardClient({
           // Already selected — remove (and everything after stays in order).
           return prev.filter((m) => m !== mls);
         }
-        // Adding — enforce the cap.
-        if (prev.length >= MULTI_OH_MAX_PROPERTIES) return prev;
+        // Adding — enforce the cap. 2026-08-22: OPEN HOUSE ONLY. The
+        // roundup kinds are uncapped (FB-only posts; the hero card shows
+        // its first 9 rows + a "+N more" line, one slide per property).
+        if (isOH && prev.length >= MULTI_OH_MAX_PROPERTIES) return prev;
         return [...prev, mls];
       });
 
@@ -1804,6 +1808,8 @@ export default function MultiOHWizardClient({
       <StickyFooter
         step={step}
         selectedCount={selectedMls.length}
+        // 2026-08-22 — cap display is OH-only; roundups are uncapped.
+        maxProperties={isOH ? MULTI_OH_MAX_PROPERTIES : null}
         // 2026-08-21 — the "need at least N" hint follows the real gate
         // (windows for OH, properties for roundups) instead of re-deriving
         // it from the selected-property count, which went stale the moment
@@ -2033,8 +2039,10 @@ function Step1Pick({
   roundupMeta,
   minProperties,
 }: Step1Props) {
-  const atCap = selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
   const isOH = roundupType === "open_house";
+  // 2026-08-22 — the carousel cap is an OPEN HOUSE rule; roundups are
+  // uncapped (FB-only posts).
+  const atCap = isOH && selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
   const copy = WIZARD_COPY[roundupType];
 
   // 2026-08-07 (John) — the picker is batched by office division to match the
@@ -3576,6 +3584,9 @@ function EditCaptionOverlay({
 interface StickyFooterProps {
   step: StepIndex;
   selectedCount: number;
+  /** 2026-08-22 — carousel cap to display ("N of 9 selected"); null when
+   *  the kind is uncapped (roundups), rendering just "N selected". */
+  maxProperties: number | null;
   /** 2026-08-21 — "need at least …" text when the Step 1 gate isn't met;
    *  null hides it. Computed by the parent because the gate counts
    *  open-house windows for OH and properties for the roundups. */
@@ -3591,6 +3602,7 @@ interface StickyFooterProps {
 function StickyFooter({
   step,
   selectedCount,
+  maxProperties,
   gateHint,
   canContinueFromStep1,
   onBack,
@@ -3632,7 +3644,7 @@ function StickyFooter({
             <span className="font-semibold text-neutral-900">
               {selectedCount}
             </span>{" "}
-            of {MULTI_OH_MAX_PROPERTIES} selected
+            {maxProperties !== null ? ` of ${maxProperties} ` : " "}selected
             {gateHint ? (
               <span className="text-neutral-500">
                 {" "}

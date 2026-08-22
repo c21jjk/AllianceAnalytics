@@ -167,7 +167,15 @@ async function fetchUnderContractRoundup(
   // Candidates: everything that flipped to pending since the Aug 1 floor.
   // The floor mirrors the dashboard card; without it, "unhandled rows stay"
   // would drag every pre-slate pending listing into the picker.
+  //
+  // 2026-08-22 (John) — buyer-side deals are EXCLUDED: on
+  // alliance_role='buyer' the property is another brokerage's listing
+  // (we brought the buyer), and advertising its pending status as ours
+  // isn't allowed. Dual-agency ('both') stays — it's our listing too.
+  // Consequence: the UC roundup only ever shows OUR OWN listings, which
+  // the caption now says outright.
   const candidates = pool.filter((l) => {
+    if (l.alliance_role === "buyer") return false;
     const changed = changedAtByMls.get(l.mls_number);
     if (typeof changed !== "string") return false;
     const t = Date.parse(changed);
