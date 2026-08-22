@@ -103,7 +103,15 @@ export async function fetchListingsForPostBuilder(
       break;
     }
     case "under_contract": {
-      q = q.eq("status", "pending").order("status_changed_at", { ascending: false });
+      // 2026-08-22 (John) — buyer-side deals excluded at the POOL level so
+      // no UC surface (roundup picker, template previews, stale deep
+      // links) can ever offer another brokerage's listing for marketing.
+      // The is.null arm keeps rows without a recorded role (treated as
+      // listing side everywhere else).
+      q = q
+        .eq("status", "pending")
+        .or("alliance_role.neq.buyer,alliance_role.is.null")
+        .order("status_changed_at", { ascending: false });
       break;
     }
     case "open_house": {

@@ -322,6 +322,17 @@ export async function getUnderContractListings(
       "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "pending")
+    // 2026-08-22 (John) — buyer-side deals are OFF this card entirely: on
+    // alliance_role='buyer' the property is another brokerage's listing
+    // (we brought the buyer) and we can't market its pending status, so
+    // it must never sit here looking like it needs a post. Dual agency
+    // ('both') stays — our listing too. The is.null arm keeps pre-Phase-8
+    // rows (no role recorded → treated as listing side, matching
+    // coerceAllianceRole). NOTE: Recently Sold deliberately KEEPS
+    // buyer-side — celebrating a CLOSED sale we bought is standard
+    // practice (see the 8/15 co-op agent work); only pre-closing Under
+    // Contract marketing is barred.
+    .or("alliance_role.neq.buyer,alliance_role.is.null")
     .gte("status_changed_at", MILESTONE_FLOOR_ISO)
     .order("status_changed_at", { ascending: false })
     .order("updated_at", { ascending: false })
