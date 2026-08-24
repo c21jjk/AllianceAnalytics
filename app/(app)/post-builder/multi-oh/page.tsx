@@ -62,9 +62,8 @@ export default async function MultiOHPage() {
 
   // 2026-07-17 — hosting-agent roster for the Step 1 combobox. Free-hand
   // host names broke attribution (phone/photo lookups match by EXACT name),
-  // so the selector now offers the company roster: the app's mls_agents
-  // table (all 8 offices) + everyone currently listing with the company.
-  // ~250 names — small enough to ship once and filter client-side.
+  // so the selector offers a roster instead: the app's mls_agents table (all
+  // 8 offices) + everyone currently listing with the company.
   //
   // 2026-08-21 (John) — plus the Alliance Dash MLS-membership rosters
   // (cmc/sjsr/bright active agents). The two sources above are both
@@ -72,10 +71,21 @@ export default async function MultiOHPage() {
   // hosting 508 E 7th Ave's Saturday OH — was unfindable in the typeahead.
   // MLS membership starts on day one, and it's the same data the phone
   // lookup reads, so every added name resolves attribution.
+  //
+  // Same day, second pass: those Dash reads were being truncated to 1,000
+  // rows apiece by PostgREST, which is why Susan stayed missing after the
+  // first fix. Paging them properly (see fetchAllRows) takes the roster from
+  // ~2,400 names to ~5,400 — and because cmc/sjsr are whole-BOARD tables,
+  // most of the new arrivals work for other brokerages. So the roster now
+  // ships in two parts: `agentRoster` is everyone the combobox will accept,
+  // and `priorityAgents` is the Alliance subset the dropdown ranks first.
+  // Ranking, never filtering — being wrong about who is ours should cost a
+  // few dropdown places, not make somebody unpickable.
   let agentRoster: string[] = [];
+  let priorityAgents: string[] = [];
   try {
     const supabase = createAdminClient();
-    const [{ data: rosterRows }, { data: listingAgents }, dashNames] =
+    const [{ data: rosterRows }, { data: listingAgents }, dashRoster] =
       await Promise.all([
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (supabase as any)
@@ -86,17 +96,24 @@ export default async function MultiOHPage() {
         listAllianceCompanyAgentNames(),
       ]);
     const seen = new Map<string, string>();
-    const add = (raw: unknown) => {
+    const priority = new Map<string, string>();
+    const add = (raw: unknown, isOurs: boolean) => {
       if (typeof raw !== "string") return;
       const name = raw.trim();
       if (name.length < 2) return;
       const key = name.toLowerCase();
       if (!seen.has(key)) seen.set(key, name);
+      if (isOurs && !priority.has(key)) priority.set(key, name);
     };
-    for (const r of rosterRows ?? []) add(r.full_name);
-    for (const r of listingAgents ?? []) add((r as { agent_name: string | null }).agent_name);
-    for (const name of dashNames) add(name);
+    // Our own two sources are Alliance by definition, so both feed the
+    // priority tier. The Dash roster splits itself — see CompanyAgentRoster.
+    for (const r of rosterRows ?? []) add(r.full_name, true);
+    for (const r of listingAgents ?? [])
+      add((r as { agent_name: string | null }).agent_name, true);
+    for (const name of dashRoster.all) add(name, false);
+    for (const name of dashRoster.priority) add(name, true);
     agentRoster = Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+    priorityAgents = Array.from(priority.values());
   } catch (e) {
     console.warn("[multi-oh] agent roster fetch failed:", e);
   }
@@ -106,6 +123,7 @@ export default async function MultiOHPage() {
       <MultiOHWizardClient
         listings={listings}
         agentRoster={agentRoster}
+        priorityAgents={priorityAgents}
         defaultOfficeName="Century 21 Alliance"
         dbTemplatesByFormat={dbTemplatesByFormat}
       />

@@ -649,12 +649,41 @@ export async function loadAllianceDashPhoneIndex(): Promise<AllianceDashPhoneInd
  * deduped. Empty array when the client is unavailable or every query fails
  * — callers just merge, so the roster degrades to its analytics-DB sources.
  */
-export async function listAllianceCompanyAgentNames(): Promise<string[]> {
+export interface CompanyAgentRoster {
+  /** Every name the picker will accept. Nobody is ever excluded from this. */
+  all: string[];
+  /**
+   * The subset that looks like OUR agents, for ranking only.
+   *
+   * 2026-08-21 — paging the CMC/SJSR reads (see fetchAllRows) took this
+   * roster from ~2,100 truncated rows to ~5,300 real ones, which is correct
+   * and also made the typeahead worse: those two tables are whole-BOARD
+   * membership, not Alliance membership, so 97% of the names belong to other
+   * brokerages. Typing "Susan" went from 1,000-row-truncated-and-missing to
+   * present-but-25th, behind a 6-item dropdown — Susan Roselli looked just as
+   * unfindable as before, for a completely different reason.
+   *
+   * Ranking rather than filtering is the deliberate choice. Alliance's CMC /
+   * SJSR office IDs are not published anywhere this module can read (the
+   * `offices` tables are RLS-blocked to the anon key), so membership here is
+   * INFERRED — an office counts as ours when at least two of its agents also
+   * appear in our own mls_agents roster. An inference that is wrong costs
+   * somebody a few places in a dropdown. A filter that is wrong makes them
+   * unpickable, which is the exact bug this whole change exists to fix.
+   */
+  priority: string[];
+}
+
+export async function listAllianceCompanyAgentNames(): Promise<CompanyAgentRoster> {
   const supabase = getAllianceDashClient();
-  if (!supabase) return [];
+  if (!supabase) return { all: [], priority: [] };
 
   try {
-    type Row = { first_name: string | null; last_name: string | null };
+    type Row = {
+      first_name: string | null;
+      last_name: string | null;
+      office_id?: string | number | null;
+    };
     // Paged — see fetchAllRows. This is the call that was losing Susan
     // Roselli: cmc_active_agents holds 2,147 active rows and the old
     // `.limit(5000)` returned the first 1000 of them.
@@ -662,14 +691,14 @@ export async function listAllianceCompanyAgentNames(): Promise<string[]> {
       fetchAllRows<Row>("roster/cmc", (from, to) =>
         supabase
           .from("cmc_active_agents")
-          .select("first_name, last_name")
+          .select("first_name, last_name, office_id")
           .eq("is_active", true)
           .range(from, to),
       ),
       fetchAllRows<Row>("roster/sjsr", (from, to) =>
         supabase
           .from("sjsr_active_agents")
-          .select("first_name, last_name")
+          .select("first_name, last_name, office_id")
           .eq("is_active", true)
           .range(from, to),
       ),
@@ -682,19 +711,83 @@ export async function listAllianceCompanyAgentNames(): Promise<string[]> {
           .range(from, to),
       ),
     ]);
-    const seen = new Map<string, string>();
-    for (const r of [...cmcRows, ...sjsrRows, ...brightRows]) {
-      const name = [r.first_name, r.last_name]
+    const nameOf = (r: Row) =>
+      [r.first_name, r.last_name]
         .map((x) => (x ?? "").trim())
         .filter(Boolean)
         .join(" ");
-      if (!name) continue;
-      const key = name.toLowerCase();
-      if (!seen.has(key)) seen.set(key, name);
+
+    // Which CMC / SJSR offices are ours? Infer it: an office earns the badge
+    // when two or more of its agents also sit in our own mls_agents roster.
+    // Two, not one, because surnames collide across a 5,000-agent board and a
+    // single coincidental match would drag a whole rival office up the list.
+    const ourNames = await loadOwnRosterNameSet();
+    const officeHits = new Map<string, number>();
+    for (const r of [...cmcRows, ...sjsrRows]) {
+      const office = (r.office_id ?? "").toString().trim();
+      if (!office) continue;
+      if (!ourNames.has(nameOf(r).toLowerCase())) continue;
+      officeHits.set(office, (officeHits.get(office) ?? 0) + 1);
     }
-    return Array.from(seen.values());
+    const allianceOffices = new Set(
+      [...officeHits.entries()].filter(([, n]) => n >= 2).map(([id]) => id),
+    );
+
+    const all = new Map<string, string>();
+    const priority = new Map<string, string>();
+    const add = (map: Map<string, string>, name: string) => {
+      if (name.length < 2) return;
+      const key = name.toLowerCase();
+      if (!map.has(key)) map.set(key, name);
+    };
+    // Bright is already office-scoped to Alliance, so every one of its names
+    // is ours by construction.
+    for (const r of brightRows) {
+      const n = nameOf(r);
+      if (!n) continue;
+      add(all, n);
+      add(priority, n);
+    }
+    for (const r of [...cmcRows, ...sjsrRows]) {
+      const n = nameOf(r);
+      if (!n) continue;
+      add(all, n);
+      if (allianceOffices.has((r.office_id ?? "").toString().trim())) {
+        add(priority, n);
+      }
+    }
+    return {
+      all: Array.from(all.values()),
+      priority: Array.from(priority.values()),
+    };
   } catch (err) {
     console.error("[alliance-dash] company roster fetch failed:", err);
-    return [];
+    return { all: [], priority: [] };
+  }
+}
+
+/**
+ * Our own active agent names, lowercased — the seed the office inference
+ * above compares against. Reads the AllianceAnalytics project (not Alliance
+ * Dash), which is why it uses the admin client rather than the dash client.
+ * Returns an empty set on any failure: the caller then infers no offices and
+ * the roster simply ranks by Bright membership alone.
+ */
+async function loadOwnRosterNameSet(): Promise<Set<string>> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (admin as any)
+      .from("mls_agents")
+      .select("full_name")
+      .eq("is_active", true);
+    const out = new Set<string>();
+    for (const r of (data ?? []) as Array<{ full_name: string | null }>) {
+      const n = (r.full_name ?? "").trim().toLowerCase();
+      if (n) out.add(n);
+    }
+    return out;
+  } catch {
+    return new Set<string>();
   }
 }

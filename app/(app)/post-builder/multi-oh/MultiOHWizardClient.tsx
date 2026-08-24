@@ -188,6 +188,9 @@ interface Props {
    *  agent combobox restricts entry to these so attribution (phone/photo by
    *  exact-name match) always resolves. */
   agentRoster?: string[];
+  /** The subset of `agentRoster` that is an Alliance agent, for ranking the
+   *  typeahead. Everyone in agentRoster stays pickable either way. */
+  priorityAgents?: string[];
   /** Office name pre-fill (defaults to "Century 21 Alliance"). */
   defaultOfficeName: string;
   /**
@@ -512,6 +515,7 @@ function formatRelativeAgeShort(iso: string): string {
 export default function MultiOHWizardClient({
   listings,
   agentRoster = [],
+  priorityAgents = [],
   defaultOfficeName,
   dbTemplatesByFormat,
   roundupType = "open_house",
@@ -1739,6 +1743,7 @@ export default function MultiOHWizardClient({
           <Step1Pick
             listings={listings}
             agentRoster={agentRoster}
+            priorityAgents={priorityAgents}
             selectedMls={selectedMls}
             onToggle={toggleSelect}
             perPropertyHostingAgent={perPropertyHostingAgent}
@@ -1985,6 +1990,8 @@ interface Step1Props {
   /** listing.id → latest published-OH-post ISO within 7 days (see Props). */
   /** Company agent roster for the hosting-agent combobox. */
   agentRoster: readonly string[];
+  /** Alliance-agent subset of the above — ranking only, never filtering. */
+  priorityAgents: readonly string[];
   selectedMls: readonly string[];
   onToggle: (mls: string) => void;
   /**
@@ -2026,6 +2033,7 @@ interface Step1Props {
 function Step1Pick({
   listings,
   agentRoster,
+  priorityAgents,
   selectedMls,
   onToggle,
   perPropertyHostingAgent,
@@ -2290,6 +2298,7 @@ function Step1Pick({
                           value={hostingAgentValue}
                           onChange={onHostingAgentChange}
                           roster={agentRoster}
+                          priority={priorityAgents}
                         />
                       );
                     }
@@ -2353,6 +2362,7 @@ function Step1Pick({
                                   value={hostValue}
                                   onChange={onOccurrenceHostChange}
                                   roster={agentRoster}
+                                  priority={priorityAgents}
                                 />
                               ) : null}
                             </div>
@@ -2545,7 +2555,12 @@ interface HostingAgentRowProps {
   onChange: (mls: string, value: string) => void;
   /** Company roster names — the combobox restricts entry to these. */
   roster: readonly string[];
+  /** Alliance-agent subset of `roster`, used only to order the suggestions. */
+  priority: readonly string[];
 }
+
+/** How many suggestions the dropdown shows at once. */
+const HOSTING_AGENT_SUGGESTION_LIMIT = 10;
 
 /**
  * Compact per-property hosting-agent override input. Slides in below a
@@ -2560,7 +2575,13 @@ interface HostingAgentRowProps {
  * row's select toggle — the wrapper has `onClick={stop}` so a user can
  * click the input without inadvertently deselecting the row.
  */
-function HostingAgentRow({ mls, value, onChange, roster }: HostingAgentRowProps) {
+function HostingAgentRow({
+  mls,
+  value,
+  onChange,
+  roster,
+  priority,
+}: HostingAgentRowProps) {
   // 2026-07-17 — roster combobox replaces free-hand entry. Attribution
   // (phone via Alliance Dash, headshot via the Agents library) matches by
   // EXACT name, so a typo like "Barb Hunt" silently dropped the phone +
@@ -2568,11 +2589,43 @@ function HostingAgentRow({ mls, value, onChange, roster }: HostingAgentRowProps)
   // match commits the canonical spelling. A value that matches no roster
   // name gets an amber flag so Larissa knows attribution won't resolve.
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const prioritySet = useMemo(
+    () => new Set(priority.map((n) => n.toLowerCase())),
+    [priority],
+  );
+  // 2026-08-21 — ranked, not just filtered.
+  //
+  // The roster used to be ~2,100 names and a plain substring filter with a
+  // 6-item cap was fine. It is now ~5,300, because the CMC/SJSR reads that
+  // feed it were silently truncated at 1,000 rows each and now page properly
+  // — and those two tables are whole-MLS-board membership, so most of the new
+  // names work for other brokerages. Typing "Susan" matches 32 people and put
+  // Susan Roselli 25th: found by the query, invisible in the dropdown, which
+  // to whoever is building the post looks exactly like the bug we just fixed.
+  //
+  // Two tiers, then word-prefix, then the roster's existing alphabetical
+  // order. Alliance agents first because that is who hosts our open houses;
+  // a name that starts with what you typed ahead of one that merely contains
+  // it, so "Ros" reaches Roselli before Ambrosella.
   const matches = useMemo(() => {
     const q = value.trim().toLowerCase();
     if (q.length < 1) return [];
-    return roster.filter((n) => n.toLowerCase().includes(q)).slice(0, 6);
-  }, [value, roster]);
+    const scored: Array<{ name: string; score: number; order: number }> = [];
+    roster.forEach((name, order) => {
+      const lower = name.toLowerCase();
+      if (!lower.includes(q)) return;
+      const startsWord = lower.split(/[\s-]+/).some((w) => w.startsWith(q));
+      scored.push({
+        name,
+        score: (prioritySet.has(lower) ? 0 : 2) + (startsWord ? 0 : 1),
+        order,
+      });
+    });
+    scored.sort((a, b) => a.score - b.score || a.order - b.order);
+    return scored
+      .slice(0, HOSTING_AGENT_SUGGESTION_LIMIT)
+      .map((entry) => entry.name);
+  }, [value, roster, prioritySet]);
   const exactMatch = useMemo(
     () => roster.some((n) => n.toLowerCase() === value.trim().toLowerCase()),
     [value, roster],
