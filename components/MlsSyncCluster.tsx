@@ -33,10 +33,9 @@ interface MlsSyncClusterProps {
 
 type PerFeedState = "idle" | "syncing";
 
-// why: syncOneMls is currently typed as ("cmc" | "sjsr") — when Bright
-// lands the union widens. Cast here so the data-driven loop compiles
-// against today's union without forcing the cluster to re-narrow when
-// the union grows.
+// why: syncOneMls is typed against the RETS feed union (cmc | sjsr | bright
+// as of 2026-09-02). Cast here so the data-driven loop compiles against the
+// current union without re-narrowing in this component.
 type MlsFeedKey = Parameters<typeof syncOneMls>[0];
 
 export default function MlsSyncCluster({

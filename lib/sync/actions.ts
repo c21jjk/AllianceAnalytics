@@ -18,8 +18,11 @@ interface EdgeFunctionResult {
  * Result shape returned by mls-rets-sync per feed. Mirrors what the Edge
  * Function emits so the dashboard can show per-class record counts.
  */
+/** RETS feeds the sync bar can drive. cmc + sjsr = Paragon (mls-rets-sync); bright = Cornerstone (bright-rets-sync). */
+export type MlsFeedShortCode = "cmc" | "sjsr" | "bright";
+
 export interface MlsSyncResult {
-  feed_short_code: "cmc" | "sjsr";
+  feed_short_code: MlsFeedShortCode;
   feed_name: string;
   ok: boolean;
   duration_ms: number;
@@ -98,7 +101,7 @@ export async function syncOne(
  * useful inline error without a try/catch wrapper at the call site.
  */
 export async function syncOneMls(
-  feedShortCode: "cmc" | "sjsr",
+  feedShortCode: MlsFeedShortCode,
 ): Promise<MlsSyncResult> {
   await requireAdmin();
   try {
@@ -156,7 +159,7 @@ export async function runGrouperAction(): Promise<
  * syncs adds ~25s to a manual Sync All run.
  */
 async function invokeMlsSync(
-  feedShortCode: "cmc" | "sjsr",
+  feedShortCode: MlsFeedShortCode,
 ): Promise<MlsSyncResult> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -165,7 +168,10 @@ async function invokeMlsSync(
       "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars not set on Vercel",
     );
   }
-  const fnUrl = `${url}/functions/v1/mls-rets-sync`;
+  // 2026-09-02: Bright has its own Edge Function (Cornerstone RETS, flat
+  // result shape); cmc + sjsr share the Paragon one.
+  const fnName = feedShortCode === "bright" ? "bright-rets-sync" : "mls-rets-sync";
+  const fnUrl = `${url}/functions/v1/${fnName}`;
   const res = await fetch(fnUrl, {
     method: "POST",
     headers: {
@@ -178,7 +184,7 @@ async function invokeMlsSync(
   if (!res.ok) {
     const body = await res.text();
     throw new Error(
-      `mls-rets-sync ${feedShortCode} HTTP ${res.status}: ${body.slice(0, 200)}`,
+      `${fnName} ${feedShortCode} HTTP ${res.status}: ${body.slice(0, 200)}`,
     );
   }
   const raw = await res.json() as {
@@ -187,10 +193,19 @@ async function invokeMlsSync(
     feed_name?: string;
     duration_ms?: number;
     classes?: { class: string; records_seen: number; records_upserted: number; error?: string }[];
-    errors?: { message: string }[];
+    errors?: { message: string }[] | string[];
     photos_uploaded?: number;
+    // bright-rets-sync flat shape
+    records_seen?: number;
+    records_upserted?: number;
+    photos_synced?: number;
   };
-  const classes = raw.classes ?? [];
+  // bright-rets-sync returns a flat shape (no per-class breakdown) and
+  // string[] errors; adapt both to the Paragon shape the sync bar renders.
+  const classes = Array.isArray(raw.classes)
+    ? raw.classes
+    : [{ class: "ALL", records_seen: raw.records_seen ?? 0, records_upserted: raw.records_upserted ?? 0 }];
+  const errors = (raw.errors ?? []).map((e) => (typeof e === "string" ? { message: e } : e));
   const total_upserted = classes.reduce(
     (sum, c) => sum + (Number(c.records_upserted) || 0),
     0,
@@ -201,15 +216,15 @@ async function invokeMlsSync(
     ok: Boolean(raw.ok),
     duration_ms: Number(raw.duration_ms) || 0,
     classes,
-    errors: raw.errors ?? [],
-    photos_uploaded: raw.photos_uploaded,
+    errors,
+    photos_uploaded: raw.photos_uploaded ?? raw.photos_synced,
     total_upserted,
   };
 }
 
 export interface SyncAllResult {
   results: EdgeFunctionResult[];
-  /** Per-feed MLS sync results (CMC + SJSR). Empty array if neither was run. */
+  /** Per-feed MLS sync results (CMC + SJSR + Bright). Empty array if none was run. */
   mls_results: MlsSyncResult[];
   grouper: { groups_created: number; posts_assigned: number } | null;
 }
@@ -308,7 +323,7 @@ export async function syncAll(): Promise<SyncAllResult> {
     },
   );
 
-  const mlsPromises = (["cmc", "sjsr"] as const).map(
+  const mlsPromises = (["cmc", "sjsr", "bright"] as const).map(
     async (feed): Promise<MlsSyncResult> => {
       try {
         return await invokeMlsSync(feed);
