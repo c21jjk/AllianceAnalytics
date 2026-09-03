@@ -1503,6 +1503,7 @@ export type Database = {
           created_at: string
           dom_days: number | null
           hero_image_url: string | null
+          is_coming_soon: boolean
           id: string
           list_price: number | null
           listing_date: string | null
@@ -1544,6 +1545,7 @@ export type Database = {
           created_at?: string
           dom_days?: number | null
           hero_image_url?: string | null
+          is_coming_soon?: boolean
           id?: string
           list_price?: number | null
           listing_date?: string | null
@@ -1585,6 +1587,7 @@ export type Database = {
           created_at?: string
           dom_days?: number | null
           hero_image_url?: string | null
+          is_coming_soon?: boolean
           id?: string
           list_price?: number | null
           listing_date?: string | null

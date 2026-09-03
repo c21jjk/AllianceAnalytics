@@ -82,6 +82,7 @@ interface DbPropertyRow {
   original_list_price: number | null;
   listing_date: string | null;
   hero_image_url: string | null;
+  is_coming_soon: boolean | null;
   agent_name: string | null;
   office_id: string | null;
   updated_at: string;
@@ -159,7 +160,7 @@ export async function getPriceChanges(
   let propQuery = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, original_list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, status_changed_at, buyer_agent_name, alliance_role",
+      "id, mls_number, source_mls, status, address, city, state, list_price, original_list_price, listing_date, hero_image_url, is_coming_soon, agent_name, office_id, updated_at, status_changed_at, buyer_agent_name, alliance_role",
     )
     .in("id", propertyIds)
     // A reduction only matters while the listing is still on the market.
@@ -236,6 +237,7 @@ export async function getPriceChanges(
       reference_date: change.changed_at,
       reference_date_kind: "updated_at",
       hero_image_url: p.hero_image_url,
+      is_coming_soon: p.is_coming_soon === true,
       agent_name: p.agent_name,
       office_short_code: p.office_id
         ? officeShortByID.get(p.office_id) ?? null

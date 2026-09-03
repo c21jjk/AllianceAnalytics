@@ -18,6 +18,10 @@
  *      (mls_number, source_mls). Then downgrade stale actives, run the
  *      auto-linker / office-linker / owner-story RPCs, and stamp the feed row.
  *
+ * Open houses: after the listing pass, the OpenHouse resource (OPEN_HOUSE) is
+ * pulled for the same office codes and upserted into open_houses on both
+ * projects (see the OpenHouse pass section; Eastern wall-time -> UTC).
+ *
  * Photos: pulled from the separate Media resource (PROP_MEDIA), joined by
  * ResourceRecordKey == ListingKey. Media rows carry direct (watermarked) CDN
  * URLs, so we store https URLs (no binary download): hero -> properties/
@@ -270,6 +274,41 @@ class RETSClient {
     }
     return all;
   }
+
+  // Generic paged search against any resource/class with an explicit Select.
+  // Used by the OpenHouse pass. `pageKey` is the column used to detect a
+  // server that ignores Offset (same guard as searchAll / searchMedia).
+  async searchResource(resource: string, cls: string, query: string, select: string, pageKey: string): Promise<RowMap[]> {
+    const all: RowMap[] = [];
+    let offset = 1;
+    let prevFirstKey: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const url = new URL(this.absoluteUrl(this.capabilities["Search"]));
+      url.searchParams.set("SearchType", resource);
+      url.searchParams.set("Class", cls);
+      url.searchParams.set("Query", query);
+      url.searchParams.set("QueryType", "DMQL2");
+      url.searchParams.set("Format", "COMPACT-DECODED");
+      url.searchParams.set("Count", "0");
+      url.searchParams.set("StandardNames", "0");
+      url.searchParams.set("Limit", String(PAGE_LIMIT));
+      url.searchParams.set("Offset", String(offset));
+      url.searchParams.set("Select", select);
+      const res = await this.req(url.toString());
+      const text = await res.text();
+      const err = readReplyError(text);
+      if (err && !/20201/.test(err)) throw new Error(`Bright ${resource} reply: ${err}`);
+      const rows = parseCompact(text);
+      if (rows.length === 0) break;
+      const firstKey = rows[0][pageKey] ?? JSON.stringify(rows[0]);
+      if (prevFirstKey !== null && firstKey === prevFirstKey) break;
+      prevFirstKey = firstKey;
+      all.push(...rows);
+      if (rows.length < PAGE_LIMIT) break;
+      offset += rows.length;
+    }
+    return all;
+  }
 }
 
 // ------------------------------ parsing helpers ------------------------------
@@ -389,6 +428,8 @@ interface MappedListing {
   zip: string | null;
   list_price: number | null;
   status: ListingStatus;
+  /** Bright "Coming Soon" — status stays active, UI shows a banner. */
+  is_coming_soon: boolean;
   listing_date: string | null;
   list_agent_name: string | null;
   list_agent_email: string | null;
@@ -421,6 +462,7 @@ function mapRow(row: RowMap): MappedListing | null {
     zip: s(row["PostalCode"]),
     list_price: readPrice(row["ListPrice"]) ?? readPrice(row["OriginalListPrice"]),
     status: mapBrightStatus(row["StandardStatus"] || row["MlsStatus"]),
+    is_coming_soon: /COMING\s*SOON/i.test(`${row["StandardStatus"] ?? ""} ${row["MlsStatus"] ?? ""}`),
     listing_date: readDate(row["OnMarketDate"]) ?? readDate(row["ListingContractDate"]),
     list_agent_name: s(row["ListAgentFullName"]),
     list_agent_email: s(row["ListAgentEmail"]),
@@ -496,7 +538,7 @@ async function upsertActiveListings(client: SupabaseClient, rows: MappedListing[
   const now = new Date().toISOString();
   const payload = rows.map((r) => ({
     mls_number: r.mls_number, source_mls: "bright", address: r.address, city: r.city, state: r.state, zip: r.zip,
-    list_price: r.list_price, status: r.status, listing_date: r.listing_date,
+    list_price: r.list_price, status: r.status, is_coming_soon: r.is_coming_soon, listing_date: r.listing_date,
     list_agent_name: r.list_agent_name, list_agent_email: r.list_agent_email,
     list_office_id: r.list_office_id, list_office_name: r.list_office_name,
     property_type: r.property_type, dom_days: r.dom_days,
@@ -534,7 +576,7 @@ async function replicateToProperties(client: SupabaseClient, rows: MappedListing
     dom_days: r.dom_days, bedrooms: r.bedrooms, bathrooms_full: r.bathrooms_full, bathrooms_half: r.bathrooms_half,
     square_feet: r.square_feet, public_remarks: r.public_remarks, hero_image_url: heroByMls.get(r.mls_number) ?? null,
     close_date: r.close_date, close_price: r.close_price, buyer_agent_name: null, buyer_office_name: null,
-    alliance_role: "listing", status: r.status === "withdrawn" ? "expired" : r.status, updated_at: now,
+    alliance_role: "listing", status: r.status === "withdrawn" ? "expired" : r.status, is_coming_soon: r.is_coming_soon, updated_at: now,
   }));
   const { error, count } = await client.from("properties").upsert(payload, { onConflict: "mls_number,source_mls", count: "exact" });
   if (error) throw new Error(`properties upsert failed: ${error.message}`);
@@ -629,17 +671,181 @@ async function upsertListingPhotos(analytics: SupabaseClient, photoRows: PhotoRo
   return total;
 }
 
+// ------------------------------ OpenHouse pass ------------------------------
+//
+// Bright exposes public open houses on Resource=OpenHouse, Class=OPEN_HOUSE.
+// Access arrived 2026-09-02 on RETS account 3401860 (the original 3399514
+// carried a "Bright Restrict Open House" group and returned 20201 forever).
+// Each row carries ListOfficeMlsId, so the office allowlist works directly in
+// DMQL. OpenHouseKey is unique per OCCURRENCE (same listing on Sat + Sun =
+// two keys), which is exactly what open_houses.oh_unique_id wants.
+//
+// TIMEZONE: Bright OpenHouse timestamps are tz-less EASTERN wall time
+// (verified 2026-09-02: NJBL2117028 "2026-08-30T13:00:00" == the portal's
+// "Sun Aug 30, 1:00PM-3:00PM"). This is the OPPOSITE of Paragon, whose
+// tz-less OH_StartDateTime is already UTC. Convert America/New_York -> UTC.
+
+const OH_RESOURCE = "OpenHouse";
+const OH_CLASS = "OPEN_HOUSE";
+const OH_LOOKBACK_DAYS = 1; // pull from yesterday forward; prune only touches future rows
+const OH_SELECT = [
+  "OpenHouseKey", "ListingId", "OpenHouseListingKey", "ListOfficeMlsId", "MlsStatus",
+  "OpenHouseType", "OpenHouseMethod", "OpenHouseStartTime", "OpenHouseEndTime",
+  "OpenHouseRemarks", "OpenHouseCreationTimestamp", "OpenHouseModificationTimestamp",
+].join(",");
+
+interface MappedOpenHouse {
+  oh_unique_id: string;
+  mls_number: string;
+  start_at: string;
+  end_at: string | null;
+  comments: string | null;
+  rets_created_at: string | null;
+  rets_updated_at: string | null;
+}
+
+/** Offset (minutes east of UTC) that America/New_York has at the given instant. */
+function easternOffsetMinutes(atUtcMs: number): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const p: Record<string, number> = {};
+  for (const part of dtf.formatToParts(new Date(atUtcMs))) if (part.type !== "literal") p[part.type] = Number(part.value);
+  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return Math.round((asUtc - atUtcMs) / 60_000);
+}
+
+/** Parse a tz-less "YYYY-MM-DDTHH:MM:SS" Eastern wall-time string into an ISO UTC string. */
+function easternWallTimeToIso(raw: string | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!m) return null;
+  const [_, y, mo, d, hh = "0", mi = "0", ss = "0"] = m;
+  const wall = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mi), Number(ss));
+  // Two-pass: offset at the wall-time-as-UTC guess, then re-evaluate at the corrected instant (DST edges).
+  let utc = wall - easternOffsetMinutes(wall) * 60_000;
+  utc = wall - easternOffsetMinutes(utc) * 60_000;
+  const out = new Date(utc);
+  return Number.isNaN(out.getTime()) ? null : out.toISOString();
+}
+
+function easternDateString(msUtc: number): string {
+  const dtf = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+  return dtf.format(new Date(msUtc)); // en-CA gives YYYY-MM-DD
+}
+
+const OH_DEAD_STATUSES = /CLOSED|CANCEL|EXPIRED|WITHDRAWN|DELETE/i;
+
+function mapOpenHouseRow(row: RowMap): MappedOpenHouse | null {
+  const oh_unique_id = (row["OpenHouseKey"] ?? "").trim();
+  const mls_number = (row["ListingId"] ?? "").trim().toUpperCase();
+  const type = (row["OpenHouseType"] ?? "").trim().toLowerCase();
+  if (type && type !== "public") return null; // broker/agent-only opens never post
+  if (OH_DEAD_STATUSES.test(row["MlsStatus"] ?? "")) return null;
+  const start_at = easternWallTimeToIso(row["OpenHouseStartTime"]);
+  if (!oh_unique_id || !mls_number || !start_at) return null;
+  return {
+    oh_unique_id,
+    mls_number,
+    start_at,
+    end_at: easternWallTimeToIso(row["OpenHouseEndTime"]),
+    comments: (row["OpenHouseRemarks"] ?? "").trim() || null,
+    rets_created_at: easternWallTimeToIso(row["OpenHouseCreationTimestamp"]),
+    rets_updated_at: easternWallTimeToIso(row["OpenHouseModificationTimestamp"]),
+  };
+}
+
+interface OpenHouseSyncResult { seen: number; upserted: number; pruned: number; }
+
+/**
+ * Pull upcoming public open houses for the office allowlist, upsert into
+ * open_houses on BOTH projects (feed_short_code = the feed's short code), and
+ * prune FUTURE feed rows the server no longer returns (cancelled opens).
+ * Never touches feed_short_code='manual' rows. Throws on RETS failure so the
+ * caller can skip the prune; upsert/prune errors are thrown too.
+ */
+async function syncOpenHouses(
+  rets: RETSClient,
+  analytics: SupabaseClient,
+  listings: SupabaseClient,
+  feedShortCode: string,
+  officeCodes: string,
+): Promise<OpenHouseSyncResult> {
+  const fromDate = easternDateString(Date.now() - OH_LOOKBACK_DAYS * 86400_000);
+  const query = `(ListOfficeMlsId=${officeCodes}),(OpenHouseStartTime=${fromDate}T00:00:00+)`;
+  const rows = await rets.searchResource(OH_RESOURCE, OH_CLASS, query, OH_SELECT, "OpenHouseKey");
+
+  const byKey = new Map<string, MappedOpenHouse>();
+  for (const row of rows) {
+    const m = mapOpenHouseRow(row);
+    if (m) byKey.set(m.oh_unique_id, m);
+  }
+  const mapped = Array.from(byKey.values());
+  const now = new Date().toISOString();
+  const res: OpenHouseSyncResult = { seen: rows.length, upserted: 0, pruned: 0 };
+
+  if (mapped.length > 0) {
+    // Listings project: no property_id column.
+    const listingsRows = mapped.map((r) => ({
+      feed_short_code: feedShortCode, oh_unique_id: r.oh_unique_id, mls_number: r.mls_number,
+      start_at: r.start_at, end_at: r.end_at, comments: r.comments,
+      rets_created_at: r.rets_created_at, rets_updated_at: r.rets_updated_at,
+      updated_at: now, last_synced_at: now,
+    }));
+    const { error: lErr } = await listings.from("open_houses").upsert(listingsRows, { onConflict: "feed_short_code,oh_unique_id" });
+    if (lErr) throw new Error(`open_houses listings upsert: ${lErr.message}`);
+
+    // Analytics project: resolve property_id via properties (source_mls = feed).
+    const mlsNumbers = Array.from(new Set(mapped.map((r) => r.mls_number)));
+    const { data: props, error: pErr } = await analytics
+      .from("properties").select("id, mls_number").eq("source_mls", feedShortCode).in("mls_number", mlsNumbers);
+    if (pErr) throw new Error(`properties lookup: ${pErr.message}`);
+    const propIdByMls = new Map<string, string>();
+    for (const p of (props ?? []) as Array<{ id: string; mls_number: string }>) propIdByMls.set(p.mls_number, p.id);
+    const missing = mlsNumbers.filter((m) => !propIdByMls.has(m));
+    if (missing.length) console.warn(`open_houses: ${missing.length} OH listing(s) not in properties (${missing.join(",")}) — property_id left null`);
+
+    const analyticsRows = listingsRows.map((r) => ({ ...r, property_id: propIdByMls.get(r.mls_number) ?? null }));
+    const { error: aErr } = await analytics.from("open_houses").upsert(analyticsRows, { onConflict: "feed_short_code,oh_unique_id" });
+    if (aErr) throw new Error(`open_houses analytics upsert: ${aErr.message}`);
+    res.upserted = mapped.length;
+  }
+
+  // Prune future feed rows no longer returned (cancelled / rescheduled opens).
+  // Only after a successful pull; scoped to this feed's short code and the future.
+  const keep = new Set(mapped.map((r) => r.oh_unique_id));
+  for (const [label, client] of [["analytics", analytics], ["listings", listings]] as const) {
+    const { data: future, error: fErr } = await client
+      .from("open_houses").select("id, oh_unique_id").eq("feed_short_code", feedShortCode).gt("start_at", now);
+    if (fErr) { console.error(`open_houses prune select (${label}):`, fErr.message); continue; }
+    const doomed = ((future ?? []) as Array<{ id: string; oh_unique_id: string }>).filter((r) => !keep.has(r.oh_unique_id)).map((r) => r.id);
+    if (doomed.length === 0) continue;
+    const { error: dErr } = await client.from("open_houses").delete().in("id", doomed);
+    if (dErr) { console.error(`open_houses prune delete (${label}):`, dErr.message); continue; }
+    if (label === "analytics") res.pruned = doomed.length;
+  }
+  return res;
+}
+
 // ------------------------------ orchestration ------------------------------
 
 interface SyncResult {
   ok: boolean; feed_short_code: string; feed_name: string; duration_ms: number;
   records_seen: number; records_upserted: number; kept: number;
-  photos_synced: number; listings_with_hero: number; errors: string[];
+  photos_synced: number; listings_with_hero: number;
+  open_houses_seen: number; open_houses_upserted: number; open_houses_pruned: number;
+  errors: string[];
 }
 
 async function syncFeed(shortCode: string): Promise<SyncResult> {
   const start = Date.now();
-  const result: SyncResult = { ok: false, feed_short_code: shortCode, feed_name: shortCode, duration_ms: 0, records_seen: 0, records_upserted: 0, kept: 0, photos_synced: 0, listings_with_hero: 0, errors: [] };
+  const result: SyncResult = { ok: false, feed_short_code: shortCode, feed_name: shortCode, duration_ms: 0, records_seen: 0, records_upserted: 0, kept: 0, photos_synced: 0, listings_with_hero: 0, open_houses_seen: 0, open_houses_upserted: 0, open_houses_pruned: 0, errors: [] };
 
   const analytics = createAnalyticsClient();
   let listings: SupabaseClient;
@@ -729,6 +935,13 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
   if (seen.size > 0) {
     await downgradeStale(analytics, listings, seen);
   }
+
+  // Open houses (same authenticated session). Non-fatal: an OH failure is
+  // logged and skips the prune, but never fails the listing sync.
+  try {
+    const oh = await syncOpenHouses(rets, analytics, listings, feed.short_code, codes);
+    result.open_houses_seen = oh.seen; result.open_houses_upserted = oh.upserted; result.open_houses_pruned = oh.pruned;
+  } catch (e) { console.error("syncOpenHouses:", (e as Error).message); }
 
   // Post-sync RPCs (idempotent). Failures are logged, not fatal.
   for (const rpc of ["run_auto_linker", "link_property_offices", "ensure_owner_story_tokens"]) {

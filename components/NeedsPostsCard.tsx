@@ -8,6 +8,7 @@ import {
 } from "@/app/(app)/listings/skip-actions";
 import MilestoneListingRow from "@/components/MilestoneListingRow";
 import ListingStatusRibbon from "@/components/ListingStatusRibbon";
+import ComingSoonBanner from "@/components/ComingSoonBanner";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
 
@@ -129,6 +130,7 @@ export default function NeedsPostsCard({
         ? "listing_date"
         : "updated_at",
     hero_image_url: listing.hero_image_url,
+    is_coming_soon: listing.is_coming_soon,
     agent_name: listing.agent_name,
     office_short_code: listing.office_short_code,
     buyer_agent_name: null,
@@ -157,7 +159,12 @@ export default function NeedsPostsCard({
         isFirst={isFirst}
         postType="just_listed"
         dimmed={isDismissed}
-        ribbon={<ListingStatusRibbon status={listing.promotion_status} size="sm" />}
+        ribbon={
+          <>
+            {listing.is_coming_soon ? <ComingSoonBanner size="sm" /> : null}
+            <ListingStatusRibbon status={listing.promotion_status} size="sm" />
+          </>
+        }
         metaSuffix={
           <>
             <div style={{ marginTop: 4 }}>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ComingSoonBanner from "@/components/ComingSoonBanner";
 import type { PropertyDetail } from "@/lib/data/properties-db";
 import {
   formatCurrency,
@@ -166,6 +167,7 @@ export default async function LivePropertyDetail({
                 No hero photo on file
               </div>
             )}
+            {property.is_coming_soon ? <ComingSoonBanner size="md" /> : null}
           </div>
           <div className="p-5 md:p-7 flex flex-col justify-center min-w-0">
             <h1 className="text-3xl md:text-4xl font-semibold text-neutral-900 leading-tight tracking-tight">

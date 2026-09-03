@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { AllianceRole, ListingMilestone } from "@/lib/data/recently-sold";
 import { formatCurrency } from "@/lib/format";
 import OfficeThumbBadge from "./OfficeThumbBadge";
+import ComingSoonBanner from "./ComingSoonBanner";
 import PostedCheckbox, { type MilestonePostType } from "./PostedCheckbox";
 import AutoReelLaunchButton from "./AutoReelPanel";
 import {
@@ -150,6 +151,7 @@ export default function MilestoneListingRow({
           />
         ) : null}
         <OfficeThumbBadge code={listing.office_short_code} />
+        {listing.is_coming_soon && !ribbon ? <ComingSoonBanner size="sm" /> : null}
         {ribbon}
       </Link>
 

@@ -77,6 +77,8 @@ export interface ListingMilestone {
     | "status_changed_at"
     | "updated_at";
   hero_image_url: string | null;
+  /** Bright "Coming Soon" — status is active, UI shows a banner. */
+  is_coming_soon: boolean;
   /** Listing-side agent (Paragon LA1_*). NULL when only buyer-side known. */
   agent_name: string | null;
   office_short_code: string | null;
@@ -146,6 +148,7 @@ interface DbPropertyRow {
   list_price: number | null;
   listing_date: string | null;
   hero_image_url: string | null;
+  is_coming_soon: boolean | null;
   agent_name: string | null;
   office_id: string | null;
   updated_at: string;
@@ -237,6 +240,7 @@ function rowToSold(
     reference_date: p.close_date ?? p.updated_at,
     reference_date_kind: p.close_date ? "close_date" : "updated_at",
     hero_image_url: p.hero_image_url,
+    is_coming_soon: p.is_coming_soon === true,
     agent_name: p.agent_name,
     office_short_code: p.office_id
       ? officeShortByID.get(p.office_id) ?? null
@@ -282,6 +286,7 @@ function rowToPending(
         ? "listing_date"
         : "updated_at",
     hero_image_url: p.hero_image_url,
+    is_coming_soon: p.is_coming_soon === true,
     agent_name: p.agent_name,
     office_short_code: p.office_id
       ? officeShortByID.get(p.office_id) ?? null
@@ -319,7 +324,7 @@ export async function getUnderContractListings(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, is_coming_soon, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "pending")
     // 2026-08-22 (John) — buyer-side deals are OFF this card entirely: on
@@ -404,7 +409,7 @@ export async function getRecentlySoldListings(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, is_coming_soon, agent_name, office_id, updated_at, status_changed_at, close_date, close_price, buyer_agent_name, alliance_role",
     )
     .eq("status", "sold")
     .or(

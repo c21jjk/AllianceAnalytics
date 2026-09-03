@@ -241,8 +241,9 @@ function PropertyCard({ property, isAdmin, portalStrip }: PropertyCardProps) {
           )}
           {/* Subtle gradient overlay so the status pill always reads */}
           <div className="absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-black/25 to-transparent pointer-events-none" />
-          <span className="absolute top-1.5 left-1.5">
+          <span className="absolute top-1.5 left-1.5 inline-flex items-center gap-1">
             <StatusPill status={property.status} />
+            {property.is_coming_soon ? <ComingSoonPill /> : null}
           </span>
           {property.source_mls ? (
             <span className="absolute top-1.5 right-1.5 inline-flex items-center rounded-md bg-neutral-900/85 backdrop-blur px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
@@ -424,6 +425,14 @@ const STATUS_CLASS: Record<string, string> = {
   sold: "bg-neutral-100/95 text-neutral-700 ring-neutral-200",
   expired: "bg-rose-50/95 text-rose-700 ring-rose-200",
 };
+
+function ComingSoonPill() {
+  return (
+    <span className="shrink-0 inline-flex items-center rounded-full ring-1 px-1.5 py-0.5 text-[9.5px] font-semibold backdrop-blur bg-neutral-900/90 text-gold-400 ring-neutral-700">
+      Coming Soon
+    </span>
+  );
+}
 
 function StatusPill({ status }: { status: string }) {
   const cls =

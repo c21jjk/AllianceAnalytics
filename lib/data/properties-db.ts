@@ -40,6 +40,8 @@ export interface PropertySummary {
   /** Listing agent phone — Phase 5 column, consumed by SMS in Phase 6. */
   agent_phone: string | null;
   hero_image_url: string | null;
+  /** Bright "Coming Soon" — status is active, UI shows a banner. */
+  is_coming_soon: boolean;
   status: "active" | "pending" | "sold" | "expired";
   source_mls: string | null;
   /** Raw Paragon LO1_OrganizationName (e.g. "CENTURY 21 ALLIANCE wc"). UI normalizes. */
@@ -72,6 +74,7 @@ interface DbPropertyRow {
   agent_email: string | null;
   agent_phone: string | null;
   hero_image_url: string | null;
+  is_coming_soon: boolean | null;
   status: "active" | "pending" | "sold" | "expired";
   source_mls: string | null;
   listing_office_name: string | null;
@@ -126,7 +129,7 @@ export async function fetchProperties(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, agent_email, agent_phone, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, agent_email, agent_phone, hero_image_url, is_coming_soon, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
     )
     .limit(500);
 
@@ -222,6 +225,7 @@ export async function fetchProperties(
       agent_email: p.agent_email,
       agent_phone: p.agent_phone,
       hero_image_url: p.hero_image_url,
+      is_coming_soon: p.is_coming_soon === true,
       status: p.status,
       source_mls: p.source_mls,
       listing_office_name: p.listing_office_name,
@@ -351,7 +355,7 @@ export async function fetchPropertyByMls(
   const { data: propRow, error } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, agent_email, agent_phone, hero_image_url, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
+      "id, mls_number, address, city, state, zip, list_price, listing_date, agent_name, agent_email, agent_phone, hero_image_url, is_coming_soon, status, source_mls, listing_office_name, dom_days, property_type, bedrooms, bathrooms_full, bathrooms_half, public_remarks, updated_at",
     )
     .ilike("mls_number", trimmed)
     .maybeSingle();
@@ -490,6 +494,7 @@ export async function fetchPropertyByMls(
     agent_email: row.agent_email,
     agent_phone: row.agent_phone,
     hero_image_url: row.hero_image_url,
+    is_coming_soon: row.is_coming_soon === true,
     status: row.status,
     source_mls: row.source_mls,
     listing_office_name: row.listing_office_name,

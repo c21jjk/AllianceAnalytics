@@ -63,6 +63,8 @@ export interface ListingNeedingPosts {
   reference_date: string;
   reference_date_kind: "listing_date" | "created_at";
   hero_image_url: string | null;
+  /** Bright "Coming Soon" — status is active, UI shows a banner. */
+  is_coming_soon: boolean;
   agent_name: string | null;
   /** Office short code (e.g. "WWC", "OCN") or null when unmapped. */
   office_short_code: string | null;
@@ -161,6 +163,7 @@ interface DbPropertyRow {
   list_price: number | null;
   listing_date: string | null;
   hero_image_url: string | null;
+  is_coming_soon: boolean | null;
   agent_name: string | null;
   office_id: string | null;
   created_at: string;
@@ -239,7 +242,7 @@ export async function getListingsNeedingPosts(
   let query = supabase
     .from("properties")
     .select(
-      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, agent_name, office_id, created_at, posts_confirmed_at, promotion_dismissed_at, promotion_dismissed_reason, posts_confirmed_platforms",
+      "id, mls_number, source_mls, status, address, city, state, list_price, listing_date, hero_image_url, is_coming_soon, agent_name, office_id, created_at, posts_confirmed_at, promotion_dismissed_at, promotion_dismissed_reason, posts_confirmed_platforms",
     )
     .eq("status", "active")
     .or(
@@ -480,6 +483,7 @@ export async function getListingsNeedingPosts(
       reference_date: referenceDate,
       reference_date_kind: p.listing_date ? "listing_date" : "created_at",
       hero_image_url: p.hero_image_url,
+      is_coming_soon: p.is_coming_soon === true,
       agent_name: p.agent_name,
       office_short_code: p.office_id
         ? officeShortByID.get(p.office_id) ?? null
