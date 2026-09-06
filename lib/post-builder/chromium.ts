@@ -171,19 +171,65 @@ export async function screenshotHtml(args: ScreenshotArgs): Promise<Buffer> {
     if (typeof args.html === "string") {
       // HTML mode — used by legacy primitive renders. We set the page
       // content directly; no network round-trip.
-      await page.setContent(args.html, {
-        waitUntil: "domcontentloaded",
-        timeout: 15_000,
-      });
-      stage("setContent done");
+      // 2026-09-04 — blank roundup hero fix. The old wait was
+      // `domcontentloaded` + `document.fonts.ready`. When the Google Fonts
+      // <link> stylesheet hadn't arrived yet at that moment, fonts.ready
+      // resolved immediately (no @font-face registered), we snapped 150ms
+      // later, and the screenshot captured the font "block" period: text
+      // hidden, chips + dots drawn (gp d8d91cd2, Aug 29 PR roundup posted
+      // with an empty hero). Same class of race the canvas path fixed on
+      // 2026-05-28 with explicit fonts.load(). Now: wait for the network
+      // to go idle so the stylesheet + .woff2 files are fetched, then
+      // force-load every family the page declares and poll fonts.check()
+      // until each confirms, before snapping.
       try {
-        await Promise.race([
-          page.evaluate(() => (document as Document).fonts.ready),
-          new Promise((_, rej) =>
-            setTimeout(() => rej(new Error("font-timeout")), 5_000),
+        await page.setContent(args.html, {
+          waitUntil: "networkidle0",
+          timeout: 20_000,
+        });
+        stage("setContent done (networkidle0)");
+      } catch (e) {
+        // A stalled third-party request shouldn't kill the render; fall
+        // through to the explicit font wait below, which is the real gate.
+        console.warn(
+          `[${label}] setContent networkidle0 timed out, continuing: ${(e as Error).message}`,
+        );
+      }
+      try {
+        const fontsConfirmed = await Promise.race([
+          page.evaluate(async () => {
+            const doc = document as Document;
+            // Every family declared via @font-face on the page (Google
+            // Fonts stylesheet included). Falls back to nothing if the
+            // page has no custom fonts — then check() is trivially true.
+            const families = new Set<string>();
+            doc.fonts.forEach((ff) => families.add(ff.family.replace(/^"|"$/g, "")));
+            const specs = Array.from(families).flatMap((f) => [
+              `400 16px "${f}"`,
+              `700 16px "${f}"`,
+            ]);
+            const deadline = Date.now() + 8_000;
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+              await Promise.all(specs.map((s) => doc.fonts.load(s).catch(() => [])));
+              await doc.fonts.ready;
+              const ok = specs.every((s) => doc.fonts.check(s));
+              if (ok) return true;
+              if (Date.now() > deadline) return false;
+              await new Promise((r) => setTimeout(r, 100));
+            }
+          }),
+          new Promise<boolean>((_, rej) =>
+            setTimeout(() => rej(new Error("font-timeout")), 10_000),
           ),
         ]);
-        stage("fonts ready");
+        if (fontsConfirmed) {
+          stage("fonts confirmed loaded");
+        } else {
+          console.warn(
+            `[${label}] fonts not confirmed within 8s — snapping anyway (text may render in fallback)`,
+          );
+        }
       } catch (e) {
         console.warn(`[${label}] font wait skipped: ${(e as Error).message}`);
       }

@@ -220,18 +220,29 @@ export async function fetchAgentPhone(
   try {
     const adminClient = createAdminClient();
     hasAdminClient = true;
-    const { data: overrideRow, error: overrideError } = await adminClient
+    // 2026-09-04 — match the override by NORMALIZED name, not exact
+    // full_name. Feeds ship "John J. Koch" / "John J Koch III" while the
+    // override row reads "John Koch"; the old exact ilike missed every
+    // middle-initial / suffix variant, fell through to pass 1, and Bright's
+    // office-line MemberPreferredPhone won over the agent's override.
+    // Pull every override row sharing the last name, then compare
+    // normalizeAgentName (first + last token) on both sides.
+    const { data: overrideRows, error: overrideError } = await adminClient
       .from("mls_agents")
-      .select("phone_override")
-      .ilike("full_name", agentName.trim())
+      .select("full_name, phone_override")
+      .ilike("full_name", `%${last ?? first}%`)
       .not("phone_override", "is", null)
-      .limit(1)
-      .maybeSingle();
-    const override = (overrideRow as { phone_override: string | null } | null)
-      ?.phone_override?.trim();
+      .limit(50);
+    type OverrideRow = { full_name: string | null; phone_override: string | null };
+    const overrideHit = ((overrideRows as OverrideRow[] | null) ?? []).find(
+      (r) => !!r.full_name && normalizeAgentName(r.full_name) === norm,
+    );
+    const override = overrideHit?.phone_override?.trim();
     console.log("[fetchAgentPhone] override result:", {
       agentName,
       hasClient: hasAdminClient,
+      candidates: overrideRows?.length ?? 0,
+      matched: overrideHit?.full_name ?? null,
       override: override ?? null,
       error: overrideError?.message ?? null,
     });
@@ -317,11 +328,41 @@ export async function fetchAgentPhone(
       brightExact.data as { phone1: string | null } | null,
     );
     if (brightPhone) {
+      // 2026-09-04 — Bright's exact hit is only trusted when the shore
+      // feeds have NO row for this last name at all. CMC stores "John J."
+      // as the first name, so its exact match misses while Bright's plain
+      // "John" hits — and Bright's MemberPreferredPhone is often the office
+      // line. When CMC/SJSR know the surname, fall through to the
+      // normalized / prefix passes so the agent-entered cell wins, which is
+      // what the 8/15 "CMC/SJSR keep precedence" note intended.
+      const [cmcAny, sjsrAny] = await Promise.all([
+        supabase
+          .from("cmc_active_agents")
+          .select("phone1")
+          .ilike("last_name", `%${lastNeedle}%`)
+          .not("phone1", "is", null)
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("sjsr_active_agents")
+          .select("phone1")
+          .ilike("last_name", `%${lastNeedle}%`)
+          .not("phone1", "is", null)
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      const shoreKnowsSurname = !!cmcAny.data || !!sjsrAny.data;
+      if (!shoreKnowsSurname) {
+        console.log(
+          "[fetchAgentPhone] returning pass-1 Bright phone:",
+          brightPhone,
+        );
+        return brightPhone;
+      }
       console.log(
-        "[fetchAgentPhone] returning pass-1 Bright phone:",
-        brightPhone,
+        "[fetchAgentPhone] pass-1 Bright hit deferred (shore feed knows surname):",
+        { agentName, brightPhone },
       );
-      return brightPhone;
     }
   } catch (err) {
     console.error("[fetchAgentPhone] pass 1 failed:", err);

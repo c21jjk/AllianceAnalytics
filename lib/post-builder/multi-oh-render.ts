@@ -569,8 +569,14 @@ export function computeRowDensity(
 
 /**
  * <head> shared by all three formats. Preloads Inter (body) + Playfair
- * Display (headline serif) from Google Fonts — `display=block` matches the
- * V1 primitives so Chromium waits for the font swap before screenshotting.
+ * Display (headline serif) from Google Fonts.
+ *
+ * 2026-09-04 — switched `display=block` → `display=swap`. The screenshot
+ * pipeline (chromium.ts HTML mode) now force-loads + verifies every
+ * declared family before snapping, so the real fonts are there in the
+ * normal case. `swap` is the backstop: if a font ever fails to arrive the
+ * worst case is fallback-font text, not the empty hero card that `block`
+ * produced when the snap landed inside the font block period.
  */
 function eventOverviewHead(title: string): string {
   return `<head>
@@ -578,7 +584,7 @@ function eventOverviewHead(title: string): string {
 <title>${escapeHtml(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700;800&display=block" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet" />
 </head>`;
 }
 
