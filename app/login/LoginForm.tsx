@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useState, useTransition } from "react";
+import Link from "next/link";
 import { signIn } from "./actions";
 
 export default function LoginForm({
@@ -50,9 +51,17 @@ export default function LoginForm({
       </div>
 
       <div>
-        <label htmlFor="password" className="label">
-          Password
-        </label>
+        <div className="flex items-baseline justify-between">
+          <label htmlFor="password" className="label">
+            Password
+          </label>
+          <Link
+            href="/forgot-password"
+            className="text-xs text-gold-700 hover:text-gold-800 hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <input
           id="password"
           name="password"

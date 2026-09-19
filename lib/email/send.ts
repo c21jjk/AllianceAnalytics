@@ -88,6 +88,12 @@ export interface SendEmailInput {
   replyTo?: string | string[];
   /** Free-form tag for grouping in Resend's dashboard, e.g. "weekly-report". */
   tag?: string;
+  /**
+   * Skip John's global BCC. For emails that carry a one-time sign-in link
+   * (invite, password reset): a copy in a second inbox is a second way into
+   * the account.
+   */
+  skipGlobalBcc?: boolean;
 }
 
 export interface SendEmailResult {
@@ -116,7 +122,9 @@ export async function sendEmail(
       html: input.html ?? "",
       text: input.text,
       cc: input.cc,
-      bcc: withGlobalBcc(input.to, input.cc, input.bcc, input.subject),
+      bcc: input.skipGlobalBcc
+        ? input.bcc
+        : withGlobalBcc(input.to, input.cc, input.bcc, input.subject),
       replyTo: input.replyTo,
       tags: input.tag ? [{ name: "category", value: input.tag }] : undefined,
     });

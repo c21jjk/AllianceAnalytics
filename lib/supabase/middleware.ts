@@ -13,6 +13,10 @@ const PUBLIC_PATHS = new Set<string>([
   // anyone evaluating the app's data handling policy.
   "/privacy",
   "/terms",
+  // Account activation + password reset. Reached from an emailed one-time
+  // link by someone who, by definition, can't sign in yet.
+  "/set-password",
+  "/forgot-password",
 ]);
 
 // Public path prefixes — anything starting with these resolves without auth.

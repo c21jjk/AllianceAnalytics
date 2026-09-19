@@ -3,6 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { randomBytes } from "node:crypto";
+import { createAccountLink } from "@/lib/auth-links/account-links";
+import {
+  sendInviteEmail,
+  sendPasswordResetEmail,
+} from "@/lib/email/account-emails";
 
 /**
  * Admin user-management server actions.
@@ -25,8 +31,9 @@ export type UserRole = "admin" | "user";
 export interface ActionResult {
   ok: boolean;
   error?: string;
-  /** Set on inviteUser success — admin needs to share password with new user. */
   user_id?: string;
+  /** Short confirmation for the UI, e.g. "Invite sent". */
+  message?: string;
 }
 
 const VALID_ROLES: UserRole[] = ["admin", "user"];
@@ -42,25 +49,26 @@ function readBool(form: FormData, key: string): boolean {
 }
 
 /**
- * Provision a new account. Sets initial password directly (no email
- * verification round-trip — admin shares the password with the user).
+ * Provision a new account and email the invite right away.
+ *
+ * 2026-09-19 (John): "Dont create a password... I want it created when she
+ * activates her account." The auth user is created with a random throwaway
+ * password nobody ever sees; the person sets their own from the emailed
+ * one-time link (/set-password).
  */
 export async function inviteUserAction(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const me = await requireAdmin();
 
   const email = readString(form, "email").toLowerCase();
   const fullName = readString(form, "full_name");
-  const password = readString(form, "password");
+  const password = randomBytes(36).toString("base64url");
   const roleRaw = readString(form, "role");
 
   if (!email || !email.includes("@")) {
     return { ok: false, error: "A valid email address is required." };
-  }
-  if (password.length < 8) {
-    return { ok: false, error: "Password must be at least 8 characters." };
   }
   const role: UserRole = (VALID_ROLES as string[]).includes(roleRaw)
     ? (roleRaw as UserRole)
@@ -117,7 +125,92 @@ export async function inviteUserAction(
 
   revalidatePath("/settings");
   revalidatePath("/users");
-  return { ok: true, user_id: userId };
+
+  const sent = await sendAccountLink({
+    userId,
+    email,
+    fullName: fullName.length > 0 ? fullName : null,
+    kind: "invite",
+    inviter: me,
+  });
+  if (!sent.ok) {
+    return {
+      ok: false,
+      user_id: userId,
+      error: `User created, but the invite email failed: ${sent.error}. Use "Resend invite" below.`,
+    };
+  }
+  return { ok: true, user_id: userId, message: `Invite sent to ${email}.` };
+}
+
+async function sendAccountLink(args: {
+  userId: string;
+  email: string;
+  fullName: string | null;
+  kind: "invite" | "reset";
+  inviter: { id: string; full_name: string | null };
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const link = await createAccountLink({
+    userId: args.userId,
+    kind: args.kind,
+    createdBy: args.inviter.id,
+    bypassThrottle: true,
+  });
+  if (!link.ok) return { ok: false, error: link.error ?? "could not create link" };
+
+  const sent =
+    args.kind === "invite"
+      ? await sendInviteEmail({
+          to: args.email,
+          fullName: args.fullName,
+          inviterName: args.inviter.full_name,
+          url: link.url,
+        })
+      : await sendPasswordResetEmail({
+          to: args.email,
+          fullName: args.fullName,
+          url: link.url,
+        });
+  if (!sent.ok) return { ok: false, error: sent.error ?? "email send failed" };
+  return { ok: true };
+}
+
+/**
+ * Email a user their one-time link: an invite if they have never signed in,
+ * a password reset if they have.
+ */
+export async function sendAccountLinkAction(
+  userId: string,
+): Promise<ActionResult> {
+  const me = await requireAdmin();
+  if (!userId) return { ok: false, error: "Missing user id" };
+
+  const admin = createAdminClient();
+  const { data: target } = await admin
+    .from("profiles")
+    .select("id, email, full_name, is_active")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!target) return { ok: false, error: "User not found." };
+  if (target.is_active === false) {
+    return { ok: false, error: "Account is disabled." };
+  }
+
+  const { data: authUser } = await admin.auth.admin.getUserById(userId);
+  const kind = authUser?.user?.last_sign_in_at ? "reset" : "invite";
+
+  const sent = await sendAccountLink({
+    userId,
+    email: target.email,
+    fullName: target.full_name,
+    kind,
+    inviter: me,
+  });
+  if (!sent.ok) return { ok: false, error: sent.error };
+  return {
+    ok: true,
+    message: kind === "invite" ? "Invite sent." : "Reset link sent.",
+  };
 }
 
 /**

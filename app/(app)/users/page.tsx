@@ -52,7 +52,7 @@ export default async function UsersPage() {
     <div className="space-y-6">
       <PageHeader
         title="Users"
-        description="Add new accounts and manage existing access. Email is the username — there is no email-verification round-trip; you set the initial password and share it with the user."
+        description="Add new accounts and manage existing access."
       />
 
       <section className="rounded-xl border border-neutral-200 bg-white shadow-card p-6">

@@ -5,6 +5,7 @@ import clsx from "clsx";
 import {
   adminResetPasswordAction,
   deleteUserAction,
+  sendAccountLinkAction,
   setUserActiveAction,
   updateUserRoleAction,
   type UserRole,
@@ -81,6 +82,20 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetPw, setResetPw] = useState("");
   const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [linkMsg, setLinkMsg] = useState<string | null>(null);
+
+  // Never signed in = still waiting on their invite.
+  const neverSignedIn = !row.last_sign_in_at;
+
+  function emailLink() {
+    setError(null);
+    setLinkMsg(null);
+    startTransition(async () => {
+      const r = await sendAccountLinkAction(row.id);
+      if (!r.ok) setError(r.error ?? "Send failed");
+      else setLinkMsg(r.message ?? "Sent.");
+    });
+  }
 
   function changeRole(next: UserRole) {
     if (next === role) return;
@@ -228,6 +243,21 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
         </td>
         <td className="px-4 py-3">
           <div className="flex items-center justify-end gap-2">
+            {linkMsg ? (
+              <span className="text-xs text-emerald-700">{linkMsg}</span>
+            ) : (
+              <button
+                type="button"
+                onClick={emailLink}
+                disabled={isPending || !active}
+                className="text-xs text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline disabled:opacity-50"
+              >
+                {neverSignedIn ? "Resend invite" : "Email reset link"}
+              </button>
+            )}
+            <span className="text-neutral-300" aria-hidden="true">
+              ·
+            </span>
             <button
               type="button"
               onClick={() => {
