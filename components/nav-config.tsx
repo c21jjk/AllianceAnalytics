@@ -72,6 +72,9 @@ export function getNavItems(role: "admin" | "user"): NavItem[] {
         { href: "/saved-posts", label: "Posts", icon: ICON.posts },
         { href: "/reports", label: "Reports", icon: ICON.reports },
         { href: "/coach", label: "Coach", icon: ICON.coach },
+        // 2026-09-19 (John): "Under admin, I'd like to see a 'Users' tab. Want
+        // to see whoss logged in and last activity." Admin-only.
+        { href: "/users", label: "Users", icon: ICON.users, adminOnly: true },
         ];
     return base.filter(function (i) { return !i.adminOnly || role === "admin"; });
 }

@@ -6,14 +6,14 @@ import { createClient } from "@/lib/supabase/server";
  * Activity heartbeat — bumps profiles.last_active_at for the current user.
  *
  * Wired by <LastActiveBeacon /> in the authenticated layout. The beacon fires
- * once on mount + every 5 minutes while the tab is visible (visibilitychange-
+ * once on mount + every minute while the tab is visible (visibilitychange-
  * aware).
  *
  * Server-side debounce:
  *   We rewrite last_active_at only when the existing value is older than
  *   DEBOUNCE_MS. This keeps a chatty client from hammering Postgres if a tab
  *   rapidly toggles foreground/background, and it caps the write rate to
- *   roughly one per user every 2 min regardless of beacon cadence.
+ *   roughly one per user per minute regardless of beacon cadence.
  *
  * Auth + RLS:
  *   • supabase.auth.getUser() resolves the current user from the request
@@ -27,7 +27,7 @@ import { createClient } from "@/lib/supabase/server";
  * page, which is acceptable for this signal.
  */
 
-const DEBOUNCE_MS = 2 * 60 * 1000; // 2 minutes
+const DEBOUNCE_MS = 45 * 1000; // 45s, just under the 1 min client heartbeat
 
 export interface BumpLastActiveResult {
   ok: boolean;

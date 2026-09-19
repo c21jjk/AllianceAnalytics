@@ -31,7 +31,7 @@ export default async function ProtectedLayout({
       {/* @modal parallel slot: renders the post-detail drawer overlay when an
           intercepting (.)posts/[id] route is matched. Empty otherwise. */}
       {modal}
-      {/* Invisible heartbeat — bumps profiles.last_active_at every 5 min while
+      {/* Invisible heartbeat — bumps profiles.last_active_at every 1 min while
           the tab is visible so the Users page shows "Most Recent Activity"
           based on real in-app usage, not just login timestamps. */}
       <LastActiveBeacon />

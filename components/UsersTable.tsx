@@ -65,13 +65,32 @@ export default function UsersTable({ rows }: UsersTableProps) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {sortOnlineFirst(rows).map((row) => (
             <UserRowEditor key={row.id} row={row} />
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+/** Heartbeat is every 1 min while the tab is visible; 3 min rides out a miss. */
+const ONLINE_WINDOW_MS = 3 * 60_000;
+
+function isOnline(row: UsersTableRow): boolean {
+  if (!row.is_active || !row.last_active_at) return false;
+  const t = Date.parse(row.last_active_at);
+  return !Number.isNaN(t) && Date.now() - t < ONLINE_WINDOW_MS;
+}
+
+function sortOnlineFirst(rows: UsersTableRow[]): UsersTableRow[] {
+  return [...rows].sort((a, b) => {
+    const d = Number(isOnline(b)) - Number(isOnline(a));
+    if (d !== 0) return d;
+    const ta = Date.parse(a.last_active_at ?? a.last_sign_in_at ?? "") || 0;
+    const tb = Date.parse(b.last_active_at ?? b.last_sign_in_at ?? "") || 0;
+    return tb - ta;
+  });
 }
 
 function UserRowEditor({ row }: { row: UsersTableRow }) {
@@ -162,7 +181,12 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
   // Fall back to last_sign_in_at for accounts that haven't pinged the beacon
   // yet (e.g. logged in pre-deploy, or session not yet refreshed).
   const activityIso = row.last_active_at ?? row.last_sign_in_at;
-  const lastActiveLabel = formatLastActive(activityIso);
+  const online = isOnline(row);
+  const lastActiveLabel = online
+    ? "Online"
+    : !activityIso
+      ? "Invited"
+      : formatLastActive(activityIso);
 
   return (
     <>
@@ -173,6 +197,14 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
         )}
       >
         <td className="px-4 py-3 text-neutral-900">
+          <span
+            aria-hidden="true"
+            title={online ? "Online" : "Offline"}
+            className={clsx(
+              "inline-block w-2 h-2 rounded-full mr-2 align-middle",
+              online ? "bg-emerald-500" : "bg-neutral-200",
+            )}
+          />
           {row.full_name ?? "—"}
           {row.is_self ? (
             <span className="ml-2 text-[10px] uppercase tracking-wide text-neutral-400">
@@ -231,12 +263,16 @@ function UserRowEditor({ row }: { row: UsersTableRow }) {
         <td
           className={clsx(
             "px-4 py-3 text-xs",
-            activityIso ? "text-neutral-600" : "text-neutral-400",
+            online
+              ? "text-emerald-700 font-medium"
+              : activityIso
+                ? "text-neutral-600"
+                : "text-neutral-400",
           )}
           title={
             activityIso
               ? new Date(activityIso).toLocaleString()
-              : "Never signed in"
+              : "Invited, not activated"
           }
         >
           {lastActiveLabel}

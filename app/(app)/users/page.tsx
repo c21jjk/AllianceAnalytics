@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import PageHeader from "@/components/PageHeader";
 import InviteUserForm from "@/components/InviteUserForm";
 import UsersTable, { type UsersTableRow } from "@/components/UsersTable";
+import AutoRefresh from "@/components/AutoRefresh";
 
 export const metadata = { title: "Users — Alliance Social" };
 export const dynamic = "force-dynamic";
@@ -50,6 +51,8 @@ export default async function UsersPage() {
 
   return (
     <div className="space-y-6">
+      {/* Keeps the Online dots current without a manual reload. */}
+      <AutoRefresh everyMs={60_000} />
       <PageHeader
         title="Users"
         description="Add new accounts and manage existing access."

@@ -22,11 +22,13 @@ import { bumpLastActiveAction } from "@/app/(app)/activity-actions";
  *
  * Server-side debouncing:
  *   The action skips DB writes when the previous timestamp is fresher than
- *   2 min, so this component being chatty is harmless. We pick 5 min on the
+ *   45s, so this component being chatty is harmless. We pick 1 min on the
  *   client side to balance freshness vs. request volume.
  */
 
-const HEARTBEAT_MS = 5 * 60 * 1000; // 5 minutes
+// 2026-09-19 (John): "Want to see whoss logged in." 1 min so the Users page
+// Online dot is accurate; the dot's window is 3 min (see UsersTable).
+const HEARTBEAT_MS = 60 * 1000; // 1 minute
 
 export default function LastActiveBeacon() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
