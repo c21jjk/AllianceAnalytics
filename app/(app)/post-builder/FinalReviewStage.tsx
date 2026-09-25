@@ -63,7 +63,7 @@
 
 import { useEffect, useMemo, useState, type JSX } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, ChevronRight, RotateCw, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Pencil, RotateCw, XCircle } from "lucide-react";
 import type {
   PostBuilderListing,
   PostFormat,
@@ -195,6 +195,12 @@ export interface FinalReviewStageProps {
   testMode?: boolean;
   /** Returns to the build screen with all state intact. */
   onBackToEditing?: () => void;
+  /**
+   * 2026-09-25 — multi-event per-slide edit. Index into `carouselSlides`.
+   * When set, each per-property tile shows an Edit pencil that opens the
+   * slide in Studio. Absent in single mode (Back to editing covers it).
+   */
+  onEditSlide?: (slideIndex: number) => void;
 }
 
 /**
@@ -285,17 +291,20 @@ function SlideTile({
   primaryLabel,
   secondaryLabel,
   isHero,
+  onEdit,
 }: {
   imageUrl: string | null;
   primaryLabel: string;
   secondaryLabel: string;
   isHero: boolean;
+  /** 2026-09-25 — when set, an Edit pencil overlays the tile. */
+  onEdit?: () => void;
 }): JSX.Element {
   return (
     <div className="shrink-0 w-[180px]">
       <div
         className={[
-          "w-[180px] h-[180px] rounded-xl overflow-hidden bg-neutral-100 ring-1",
+          "relative w-[180px] h-[180px] rounded-xl overflow-hidden bg-neutral-100 ring-1",
           isHero ? "ring-gold-400" : "ring-neutral-200",
         ].join(" ")}
       >
@@ -312,6 +321,18 @@ function SlideTile({
             no preview
           </div>
         )}
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-label={`Edit ${primaryLabel} in Studio`}
+            title="Edit in Studio"
+            className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-neutral-900/85 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:bg-neutral-900"
+          >
+            <Pencil size={12} aria-hidden="true" />
+            Edit
+          </button>
+        ) : null}
       </div>
       <div
         className={[
@@ -727,6 +748,7 @@ export default function FinalReviewStage({
   holdNotice = null,
   testMode = false,
   onBackToEditing,
+  onEditSlide,
 }: FinalReviewStageProps): JSX.Element {
   const isSingle = mode === "single";
   // 2026-05-28 — the prior "collapsed snippet + Edit caption toggle" was
@@ -939,6 +961,7 @@ export default function FinalReviewStage({
                       primaryLabel={`Slide ${i + 2}`}
                       secondaryLabel=""
                       isHero={false}
+                      onEdit={onEditSlide ? () => onEditSlide(i) : undefined}
                     />
                   ))}
                 </div>
@@ -961,6 +984,7 @@ export default function FinalReviewStage({
                     primaryLabel={`Slide ${i + 1}`}
                     secondaryLabel={address}
                     isHero={false}
+                    onEdit={onEditSlide ? () => onEditSlide(i) : undefined}
                   />
                 );
               })}

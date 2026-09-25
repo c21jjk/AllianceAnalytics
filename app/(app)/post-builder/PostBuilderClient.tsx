@@ -1048,6 +1048,27 @@ export default function PostBuilderClient({
       // schema to reload Studio against). Without layer_tree the badge
       // would lie — the row would say "AI-designed" but Studio would
       // re-derive from the factory template.
+      // Snapshot resume's trigger values so the reset-on-intent-change
+      // useEffect doesn't immediately wipe the hydrated state after the
+      // resume setStates above flush. See resumeIntentSnapshotRef
+      // declaration for the full carve-out rationale.
+      //
+      // 2026-09-25 — moved OUT of the AI-design branch below. It used to
+      // run only for AI-designed rows, so every other resume (multi-OH
+      // + UC/PR roundups included) had its renderResult wiped by the
+      // reset effect one render later. With renderResult null,
+      // multiEventKind resolved to null, the page fell into single-post
+      // mode, Studio auto-opened on slide 1, and handleSlideEditClick's
+      // fallback bucket landed on the Open House factory template. That
+      // is the "one Just Reduced slide is an Open House" bug Cheryl hit
+      // whenever she left the wizard on the default template.
+      resumeIntentSnapshotRef.current = {
+        postType: initialResume.post_type,
+        variant: initialResume.variant,
+        format: initialResume.format,
+        mls: initialResume.mls_number,
+      };
+
       const resumeMood = initialResume.ai_design_mood;
       const resumeLayerTree = initialResume.layer_tree;
       if (
@@ -1055,16 +1076,6 @@ export default function PostBuilderClient({
         resumeLayerTree &&
         typeof resumeLayerTree === "object"
       ) {
-        // Snapshot resume's trigger values so the reset-on-intent-change
-        // useEffect doesn't immediately wipe aiDesign after the resume
-        // setStates above flush. See resumeIntentSnapshotRef declaration
-        // for the full carve-out rationale.
-        resumeIntentSnapshotRef.current = {
-          postType: initialResume.post_type,
-          variant: initialResume.variant,
-          format: initialResume.format,
-          mls: initialResume.mls_number,
-        };
         setAiDesign({
           schema: resumeLayerTree as CanvasTemplateSchema,
           provenance: {
@@ -1391,6 +1402,16 @@ export default function PostBuilderClient({
   const lastResetTupleRef = useRef<string | null>(null);
   useEffect(() => {
     const nextTuple = `${postType}|${variantId}|${format}|${selectedMls}`;
+    // 2026-09-25 — first run (mount) only records the initial tuple. On a
+    // resume, this effect fires on mount BEFORE the resume effect's
+    // setStates have flushed, so the tuple still holds the defaults and
+    // the snapshot comparison below read as "user changed something",
+    // dropped the snapshot, and the next render wiped renderResult. There
+    // is nothing to reset on mount anyway (every state is still initial).
+    if (lastResetTupleRef.current === null) {
+      lastResetTupleRef.current = nextTuple;
+      return;
+    }
     if (resumeIntentSnapshotRef.current) {
       const s = resumeIntentSnapshotRef.current;
       if (
@@ -2762,12 +2783,15 @@ export default function PostBuilderClient({
     // no-op — matching the previous bail behavior.
     // 2026-08-19 — generalized to every multi-event kind (roundups share
     // the pre-rendered-hero + per-slide-edit model exactly).
+    // 2026-09-25 — multi-event rows no longer auto-open Studio. With the
+    // resume snapshot fix (same day) the page lands on Final Review as
+    // designed; the Studio overlay now mounts there too, and each slide
+    // tile carries a pencil that routes through handleSlideEditClick. The
+    // old auto-open was only ever visible because of the bug it papered
+    // over (see the snapshot note in the resume effect).
     const resumeIsMultiOH = isMultiEventTemplateId(initialResume.template_id);
     if (resumeIsMultiOH) {
-      if (carouselSlides.length > 0 && slideMetadata.length > 0) {
-        resumeAutoOpenedRef.current = true;
-        void handleSlideEditClick(0);
-      }
+      resumeAutoOpenedRef.current = true;
       return;
     }
 
@@ -4177,6 +4201,326 @@ export default function PostBuilderClient({
     }
   }
 
+  // 2026-09-25 — Studio overlay hoisted out of the build-screen JSX so
+  // it also mounts on the multi-event Final Review branch. Until now the
+  // overlay only existed on the build screen, so per-slide Studio edits on
+  // a multi-OH / roundup post were only reachable through the resume bug
+  // fixed the same day (renderResult wiped → single mode → Studio auto-
+  // opened on slide 1 with the wrong template). Final Review now carries a
+  // pencil per slide that routes through handleSlideEditClick and this
+  // overlay; the same save path (updateGeneratedPostSlideAction) patches the
+  // slide in place.
+  const studioOverlayNode = (
+    <CanvasEditorOverlay
+      open={studioOpen}
+      onClose={handleStudioClose}
+      template={studioContext?.template ?? null}
+      listing={studioContext?.listing ?? null}
+      onSave={handleStudioSave}
+      saveLabel="Continue to Final Review"
+      onTemplateSwitched={handleStudioTemplateSwitched}
+      onResize={handleStudioResize}
+      isAdmin={isAdmin}
+      // Phase 2 AI Design — surface the badge + Revert link in the
+      // overlay shell whenever a session is on an AI design. Hydrated
+      // on resume from the row's ai_design_* columns (Phase 2.1) AND
+      // on a fresh AI Design click (Phase 2). Badge appears in both.
+      aiDesignBadge={
+        aiDesign
+          ? {
+              mood: aiDesign.provenance.mood,
+              critiquePassed: aiDesign.provenance.critique_passed,
+              onRevert: async () => {
+                // PHASE 2.1 — three-step revert flow:
+                //   1. Clear ai_design_* + layer_tree in DB (server)
+                //   2. Re-render the factory template via Chromium
+                //   3. Swap image_url + image_path on the row
+                // Step 2/3 only run when we have a persisted row AND
+                // the factory template_id is known. If the user
+                // ran AI Design but hasn't saved yet, there's no row
+                // to update — just clear local state.
+                const factoryTemplateId =
+                  aiDesign.provenance.original_template_id;
+                const hasRow = Boolean(generatedPostId);
+                const canReRender =
+                  hasRow &&
+                  Boolean(factoryTemplateId) &&
+                  Boolean(selectedListing) &&
+                  currentHeroUrls.length > 0;
+
+                // Step 1 — server-side clear of AI fields
+                if (hasRow && generatedPostId) {
+                  const res = await revertAiDesignAction({
+                    generated_post_id: generatedPostId,
+                  });
+                  if (!res.ok) {
+                    setError(`Revert failed: ${res.error}`);
+                    return;
+                  }
+                }
+
+                // Step 2 + 3 — re-render factory + swap image. Best
+                // effort: if the render fails we leave the row with
+                // the old AI image_url (Phase 2 default behavior) +
+                // warn the user, but the DB fields are already cleared
+                // so the badge won't reappear. User can hit Generate
+                // manually to get a fresh PNG.
+                if (canReRender && generatedPostId && factoryTemplateId && selectedListing) {
+                  try {
+                    const renderRes = await fetch(
+                      "/api/post-builder/render",
+                      {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({
+                          // 2026-05-24 — Revert re-render goes through
+                          // the factory canvas branch; pass post_type +
+                          // format so the route can findCanvasTemplate.
+                          template_id: factoryTemplateId,
+                          post_type: postType,
+                          format,
+                          listing: selectedListing,
+                          hero_image_urls: currentHeroUrls,
+                        }),
+                      },
+                    );
+                    const renderJson = (await renderRes
+                      .json()
+                      .catch(() => null)) as
+                      | RenderResponse
+                      | RenderErrorResponse
+                      | null;
+                    if (
+                      renderRes.ok &&
+                      renderJson &&
+                      renderJson.ok &&
+                      renderJson.image_url &&
+                      renderJson.image_path
+                    ) {
+                      // Swap the row's image pointer + update local
+                      // renderResult so the next preview / library
+                      // refresh sees the factory render.
+                      const swapRes = await updateGeneratedPostImageAction({
+                        id: generatedPostId,
+                        image_url: renderJson.image_url,
+                        image_path: renderJson.image_path,
+                      });
+                      if (swapRes.ok) {
+                        setRenderResult({
+                          image_url: renderJson.image_url,
+                          image_path: renderJson.image_path,
+                          template_id: factoryTemplateId,
+                          width: renderJson.width,
+                          height: renderJson.height,
+                          hero_image_source_url: currentHeroUrls[0] ?? "",
+                        });
+                      } else {
+                        // Image rendered but row swap failed — non-fatal,
+                        // warn so the orphan is visible.
+                        console.warn(
+                          "[revert] image swap failed:",
+                          swapRes.error,
+                        );
+                      }
+                    } else {
+                      const errMsg =
+                        (renderJson as RenderErrorResponse | null)?.error ??
+                        `HTTP ${renderRes.status}`;
+                      setError(
+                        `Reverted, but factory re-render failed: ${errMsg}. Click Generate to refresh the image.`,
+                      );
+                    }
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    setError(
+                      `Reverted, but factory re-render threw: ${msg}. Click Generate to refresh the image.`,
+                    );
+                  }
+                }
+
+                // Local cleanup — drop the AI schema + provenance and
+                // close Studio. The next "Edit in Studio" click will
+                // open against the factory template via studioTemplate.
+                setAiDesign(null);
+                // 2026-05-25 — Revert wipes the edits too. Leaving
+                // editedFabricJson set would make the next Studio
+                // open hydrate the user's now-reverted-away edits
+                // onto the factory template, which is the opposite
+                // of what Revert promises.
+                setEditedFabricJson(null);
+                setStudioOpen(false);
+              },
+            }
+          : null
+      }
+      onUploadBrandAsset={uploadBrandAssetAction}
+      onArchiveBrandAsset={async (id) =>
+        archiveBrandAssetAction({ id })
+      }
+      customTemplate={studioContext?.customTemplate}
+      initialFabricJson={studioContext?.initialFabricJson}
+      // 2026-05-28 — debounced server autosave of the design (replaces the
+      // localStorage draft + restore prompt). editingSlideIndex is the slide
+      // being edited, or null for the hero — exactly the shape the action
+      // wants. Only wired once the post has a row to write to; a brand-new
+      // unsaved post autosaves after its first explicit Save creates the row.
+      onAutosaveDesign={
+        generatedPostId
+          ? (design) => {
+              void autosaveDesignAction({
+                generated_post_id: generatedPostId,
+                slide_index: editingSlideIndex,
+                design,
+              });
+              // 2026-07-24 (John) — ALSO mirror the snapshot into local
+              // state. The server write above persists fine, but nothing
+              // updated the in-memory slideMetadata / editedFabricJson,
+              // so re-opening the same slide DURING the session hydrated
+              // from the stale page-load snapshot and the user's edits
+              // (e.g. a manually placed agent headshot) silently
+              // disappeared — "Save Changes isn't working". The explicit
+              // per-slide Save path already did this mirror (see
+              // setSlideMetadata in the slide-save handler); the
+              // autosave/Save-Changes path was the gap.
+              if (editingSlideIndex === null) {
+                setEditedFabricJson(design);
+              } else {
+                const idx = editingSlideIndex;
+                setSlideMetadata((prev) =>
+                  prev.map((m, i) =>
+                    i === idx ? { ...m, fabric_json: design } : m,
+                  ),
+                );
+              }
+            }
+          : undefined
+      }
+      // 2026-06-10: per-document session identity. Multi-OH slides share
+      // one template + listing, so without this the editor never re-ran its
+      // canvas init when switching slides: the previous slide's objects
+      // stayed on canvas (the new slide's fabric_json was ignored) and the
+      // autosave above could persist slide A's canvas under slide B's
+      // index. The key re-inits (and re-keys the canvas DOM node) per
+      // hero/slide.
+      sessionKey={
+        editingSlideIndex === null ? "hero" : `slide-${editingSlideIndex}`
+      }
+      onSaveAsTemplate={async (input) => {
+        const res = await saveCustomTemplateAction(input);
+        if (res.ok) {
+          // why: refresh the variant grid so the just-saved template
+          // appears immediately. We also patch the live studioContext
+          // when this was an INSERT, so subsequent saves from the same
+          // session UPDATE the row instead of inserting a sibling.
+          void refetchCustomTemplates();
+          if (input.id === null) {
+            setStudioContext((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    customTemplate: {
+                      id: res.id,
+                      name: input.name,
+                      isDefault: input.makeDefault,
+                      // why: this field is the legacy Fabric snapshot the
+                      // editor uses when re-mounting from a saved custom
+                      // template. New saves persist schema_json instead of
+                      // fabric_json (see saveCustomTemplateAction), but the
+                      // in-session studioContext keeps whatever was there
+                      // before — null/undefined for a fresh save is fine
+                      // because the canvas is already mounted with the
+                      // user's edits.
+                      fabricJson:
+                        prev.customTemplate?.fabricJson ?? null,
+                    },
+                  }
+                : prev,
+            );
+          } else {
+            setStudioContext((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    customTemplate: prev.customTemplate
+                      ? {
+                          ...prev.customTemplate,
+                          name: input.name,
+                          isDefault: input.makeDefault,
+                        }
+                      : prev.customTemplate,
+                  }
+                : prev,
+            );
+          }
+        }
+        return res;
+      }}
+      carousel={{
+        slides: carouselSlides,
+        onSlidesChanged: handleSlidesChanged,
+        // why: availablePhotos is already loaded on listing-pick — same
+        // source the in-canvas Photos panel reads from. Mapped to the
+        // narrower {url, sequence} shape the picker expects.
+        availableListingPhotos: availablePhotos.map((p) => ({
+          url: p.url,
+          sequence: p.sequence,
+        })),
+        // why: most-recently-saved hero render — drives the Preview
+        // overlay's slide-0. Null when the user hasn't saved yet; Preview
+        // surfaces a "Save first" placeholder in that case.
+        heroImageUrl: renderResult?.image_url ?? null,
+        // why: Multi-OH per-slide edit. Only surface the pencil
+        // affordance on slides where we actually have source metadata
+        // to drive a re-open — otherwise (single-listing carousel
+        // where slides are raw listing photos) clicking pencil would
+        // open Studio with nothing meaningful to edit.
+        onSlideEditClick:
+          slideMetadata.length > 0 ? handleSlideEditClick : undefined,
+      }}
+      // 2026-05-28 — Multi-OH "Apply layout to all slides".
+      // Wire the callback ONLY when (a) the user is editing a slide
+      // (editingSlideIndex non-null) and (b) there are ≥2 sibling slides
+      // to propagate to. Outside that scope the button has no meaning
+      // and we hide it entirely by not passing the prop.
+      onApplyLayoutToSiblings={
+        editingSlideIndex !== null &&
+        generatedPostId &&
+        carouselSlides.length >= 2
+          ? async (overrides) => {
+              const res = await propagateCarouselLayoutAction({
+                generated_post_id: generatedPostId,
+                overrides: overrides as Record<
+                  string,
+                  Record<string, unknown>
+                >,
+              });
+              if (res.ok) {
+                // why: stash the propagated overrides locally so the
+                // very next slide click in the same Studio session picks
+                // up the new layout WITHOUT a server round-trip. The DB
+                // is already updated; this is the in-memory mirror.
+                setCarouselLayoutOverrides(
+                  overrides as CarouselLayoutOverrides,
+                );
+                // 2026-05-28 — kick off the PNG re-render so Final Review
+                // + the posted carousel reflect the new layout (the
+                // overrides write alone only updates the editor view).
+                // Fire-and-forget: the success pill shows off this return
+                // immediately; the re-render streams progress on its own
+                // overlay. Guarded by generatedPostId (the outer ternary
+                // already requires it).
+                if (generatedPostId) {
+                  void runCarouselRerender(generatedPostId);
+                }
+                return { ok: true, slide_count: res.slide_count };
+              }
+              return { ok: false, error: res.error };
+            }
+          : undefined
+      }
+    />
+  );
+
   // === Multi-OH "Final Stage" branch ============================
   // why: when ?gp=<id> resolves to a multi-OH carousel, swap the entire
   // single-listing Post Builder UI (post-type picker, listing list,
@@ -4298,6 +4642,16 @@ export default function PostBuilderClient({
           }
           testMode={currentTestMode}
           onBackToEditing={() => setFinalReview(false)}
+          // 2026-09-25 — per-slide Studio edit on multi-event posts. Only
+          // when slide metadata exists (otherwise there's nothing to
+          // re-open). Single mode keeps its "Back to editing" path.
+          onEditSlide={
+            isMultiOHPost && slideMetadata.length > 0
+              ? (i) => {
+                  void handleSlideEditClick(i);
+                }
+              : undefined
+          }
         />
         {postNowOpen ? (
           <PostNowModal
@@ -4384,6 +4738,7 @@ export default function PostBuilderClient({
             AFTER the PostNowModal block but the two are never up together:
             submitPostNow / submitSchedule close the modal in the same
             state update that sets postSuccess. */}
+        {studioOverlayNode}
         {postSuccess ? (
           <PostSuccessOverlay
             kind={postSuccess.kind}
@@ -5489,314 +5844,7 @@ export default function PostBuilderClient({
           onApply={handleMagicDesignApply}
         />
       ) : null}
-      <CanvasEditorOverlay
-        open={studioOpen}
-        onClose={handleStudioClose}
-        template={studioContext?.template ?? null}
-        listing={studioContext?.listing ?? null}
-        onSave={handleStudioSave}
-        saveLabel="Continue to Final Review"
-        onTemplateSwitched={handleStudioTemplateSwitched}
-        onResize={handleStudioResize}
-        isAdmin={isAdmin}
-        // Phase 2 AI Design — surface the badge + Revert link in the
-        // overlay shell whenever a session is on an AI design. Hydrated
-        // on resume from the row's ai_design_* columns (Phase 2.1) AND
-        // on a fresh AI Design click (Phase 2). Badge appears in both.
-        aiDesignBadge={
-          aiDesign
-            ? {
-                mood: aiDesign.provenance.mood,
-                critiquePassed: aiDesign.provenance.critique_passed,
-                onRevert: async () => {
-                  // PHASE 2.1 — three-step revert flow:
-                  //   1. Clear ai_design_* + layer_tree in DB (server)
-                  //   2. Re-render the factory template via Chromium
-                  //   3. Swap image_url + image_path on the row
-                  // Step 2/3 only run when we have a persisted row AND
-                  // the factory template_id is known. If the user
-                  // ran AI Design but hasn't saved yet, there's no row
-                  // to update — just clear local state.
-                  const factoryTemplateId =
-                    aiDesign.provenance.original_template_id;
-                  const hasRow = Boolean(generatedPostId);
-                  const canReRender =
-                    hasRow &&
-                    Boolean(factoryTemplateId) &&
-                    Boolean(selectedListing) &&
-                    currentHeroUrls.length > 0;
-
-                  // Step 1 — server-side clear of AI fields
-                  if (hasRow && generatedPostId) {
-                    const res = await revertAiDesignAction({
-                      generated_post_id: generatedPostId,
-                    });
-                    if (!res.ok) {
-                      setError(`Revert failed: ${res.error}`);
-                      return;
-                    }
-                  }
-
-                  // Step 2 + 3 — re-render factory + swap image. Best
-                  // effort: if the render fails we leave the row with
-                  // the old AI image_url (Phase 2 default behavior) +
-                  // warn the user, but the DB fields are already cleared
-                  // so the badge won't reappear. User can hit Generate
-                  // manually to get a fresh PNG.
-                  if (canReRender && generatedPostId && factoryTemplateId && selectedListing) {
-                    try {
-                      const renderRes = await fetch(
-                        "/api/post-builder/render",
-                        {
-                          method: "POST",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({
-                            // 2026-05-24 — Revert re-render goes through
-                            // the factory canvas branch; pass post_type +
-                            // format so the route can findCanvasTemplate.
-                            template_id: factoryTemplateId,
-                            post_type: postType,
-                            format,
-                            listing: selectedListing,
-                            hero_image_urls: currentHeroUrls,
-                          }),
-                        },
-                      );
-                      const renderJson = (await renderRes
-                        .json()
-                        .catch(() => null)) as
-                        | RenderResponse
-                        | RenderErrorResponse
-                        | null;
-                      if (
-                        renderRes.ok &&
-                        renderJson &&
-                        renderJson.ok &&
-                        renderJson.image_url &&
-                        renderJson.image_path
-                      ) {
-                        // Swap the row's image pointer + update local
-                        // renderResult so the next preview / library
-                        // refresh sees the factory render.
-                        const swapRes = await updateGeneratedPostImageAction({
-                          id: generatedPostId,
-                          image_url: renderJson.image_url,
-                          image_path: renderJson.image_path,
-                        });
-                        if (swapRes.ok) {
-                          setRenderResult({
-                            image_url: renderJson.image_url,
-                            image_path: renderJson.image_path,
-                            template_id: factoryTemplateId,
-                            width: renderJson.width,
-                            height: renderJson.height,
-                            hero_image_source_url: currentHeroUrls[0] ?? "",
-                          });
-                        } else {
-                          // Image rendered but row swap failed — non-fatal,
-                          // warn so the orphan is visible.
-                          console.warn(
-                            "[revert] image swap failed:",
-                            swapRes.error,
-                          );
-                        }
-                      } else {
-                        const errMsg =
-                          (renderJson as RenderErrorResponse | null)?.error ??
-                          `HTTP ${renderRes.status}`;
-                        setError(
-                          `Reverted, but factory re-render failed: ${errMsg}. Click Generate to refresh the image.`,
-                        );
-                      }
-                    } catch (e) {
-                      const msg = e instanceof Error ? e.message : String(e);
-                      setError(
-                        `Reverted, but factory re-render threw: ${msg}. Click Generate to refresh the image.`,
-                      );
-                    }
-                  }
-
-                  // Local cleanup — drop the AI schema + provenance and
-                  // close Studio. The next "Edit in Studio" click will
-                  // open against the factory template via studioTemplate.
-                  setAiDesign(null);
-                  // 2026-05-25 — Revert wipes the edits too. Leaving
-                  // editedFabricJson set would make the next Studio
-                  // open hydrate the user's now-reverted-away edits
-                  // onto the factory template, which is the opposite
-                  // of what Revert promises.
-                  setEditedFabricJson(null);
-                  setStudioOpen(false);
-                },
-              }
-            : null
-        }
-        onUploadBrandAsset={uploadBrandAssetAction}
-        onArchiveBrandAsset={async (id) =>
-          archiveBrandAssetAction({ id })
-        }
-        customTemplate={studioContext?.customTemplate}
-        initialFabricJson={studioContext?.initialFabricJson}
-        // 2026-05-28 — debounced server autosave of the design (replaces the
-        // localStorage draft + restore prompt). editingSlideIndex is the slide
-        // being edited, or null for the hero — exactly the shape the action
-        // wants. Only wired once the post has a row to write to; a brand-new
-        // unsaved post autosaves after its first explicit Save creates the row.
-        onAutosaveDesign={
-          generatedPostId
-            ? (design) => {
-                void autosaveDesignAction({
-                  generated_post_id: generatedPostId,
-                  slide_index: editingSlideIndex,
-                  design,
-                });
-                // 2026-07-24 (John) — ALSO mirror the snapshot into local
-                // state. The server write above persists fine, but nothing
-                // updated the in-memory slideMetadata / editedFabricJson,
-                // so re-opening the same slide DURING the session hydrated
-                // from the stale page-load snapshot and the user's edits
-                // (e.g. a manually placed agent headshot) silently
-                // disappeared — "Save Changes isn't working". The explicit
-                // per-slide Save path already did this mirror (see
-                // setSlideMetadata in the slide-save handler); the
-                // autosave/Save-Changes path was the gap.
-                if (editingSlideIndex === null) {
-                  setEditedFabricJson(design);
-                } else {
-                  const idx = editingSlideIndex;
-                  setSlideMetadata((prev) =>
-                    prev.map((m, i) =>
-                      i === idx ? { ...m, fabric_json: design } : m,
-                    ),
-                  );
-                }
-              }
-            : undefined
-        }
-        // 2026-06-10: per-document session identity. Multi-OH slides share
-        // one template + listing, so without this the editor never re-ran its
-        // canvas init when switching slides: the previous slide's objects
-        // stayed on canvas (the new slide's fabric_json was ignored) and the
-        // autosave above could persist slide A's canvas under slide B's
-        // index. The key re-inits (and re-keys the canvas DOM node) per
-        // hero/slide.
-        sessionKey={
-          editingSlideIndex === null ? "hero" : `slide-${editingSlideIndex}`
-        }
-        onSaveAsTemplate={async (input) => {
-          const res = await saveCustomTemplateAction(input);
-          if (res.ok) {
-            // why: refresh the variant grid so the just-saved template
-            // appears immediately. We also patch the live studioContext
-            // when this was an INSERT, so subsequent saves from the same
-            // session UPDATE the row instead of inserting a sibling.
-            void refetchCustomTemplates();
-            if (input.id === null) {
-              setStudioContext((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      customTemplate: {
-                        id: res.id,
-                        name: input.name,
-                        isDefault: input.makeDefault,
-                        // why: this field is the legacy Fabric snapshot the
-                        // editor uses when re-mounting from a saved custom
-                        // template. New saves persist schema_json instead of
-                        // fabric_json (see saveCustomTemplateAction), but the
-                        // in-session studioContext keeps whatever was there
-                        // before — null/undefined for a fresh save is fine
-                        // because the canvas is already mounted with the
-                        // user's edits.
-                        fabricJson:
-                          prev.customTemplate?.fabricJson ?? null,
-                      },
-                    }
-                  : prev,
-              );
-            } else {
-              setStudioContext((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      customTemplate: prev.customTemplate
-                        ? {
-                            ...prev.customTemplate,
-                            name: input.name,
-                            isDefault: input.makeDefault,
-                          }
-                        : prev.customTemplate,
-                    }
-                  : prev,
-              );
-            }
-          }
-          return res;
-        }}
-        carousel={{
-          slides: carouselSlides,
-          onSlidesChanged: handleSlidesChanged,
-          // why: availablePhotos is already loaded on listing-pick — same
-          // source the in-canvas Photos panel reads from. Mapped to the
-          // narrower {url, sequence} shape the picker expects.
-          availableListingPhotos: availablePhotos.map((p) => ({
-            url: p.url,
-            sequence: p.sequence,
-          })),
-          // why: most-recently-saved hero render — drives the Preview
-          // overlay's slide-0. Null when the user hasn't saved yet; Preview
-          // surfaces a "Save first" placeholder in that case.
-          heroImageUrl: renderResult?.image_url ?? null,
-          // why: Multi-OH per-slide edit. Only surface the pencil
-          // affordance on slides where we actually have source metadata
-          // to drive a re-open — otherwise (single-listing carousel
-          // where slides are raw listing photos) clicking pencil would
-          // open Studio with nothing meaningful to edit.
-          onSlideEditClick:
-            slideMetadata.length > 0 ? handleSlideEditClick : undefined,
-        }}
-        // 2026-05-28 — Multi-OH "Apply layout to all slides".
-        // Wire the callback ONLY when (a) the user is editing a slide
-        // (editingSlideIndex non-null) and (b) there are ≥2 sibling slides
-        // to propagate to. Outside that scope the button has no meaning
-        // and we hide it entirely by not passing the prop.
-        onApplyLayoutToSiblings={
-          editingSlideIndex !== null &&
-          generatedPostId &&
-          carouselSlides.length >= 2
-            ? async (overrides) => {
-                const res = await propagateCarouselLayoutAction({
-                  generated_post_id: generatedPostId,
-                  overrides: overrides as Record<
-                    string,
-                    Record<string, unknown>
-                  >,
-                });
-                if (res.ok) {
-                  // why: stash the propagated overrides locally so the
-                  // very next slide click in the same Studio session picks
-                  // up the new layout WITHOUT a server round-trip. The DB
-                  // is already updated; this is the in-memory mirror.
-                  setCarouselLayoutOverrides(
-                    overrides as CarouselLayoutOverrides,
-                  );
-                  // 2026-05-28 — kick off the PNG re-render so Final Review
-                  // + the posted carousel reflect the new layout (the
-                  // overrides write alone only updates the editor view).
-                  // Fire-and-forget: the success pill shows off this return
-                  // immediately; the re-render streams progress on its own
-                  // overlay. Guarded by generatedPostId (the outer ternary
-                  // already requires it).
-                  if (generatedPostId) {
-                    void runCarouselRerender(generatedPostId);
-                  }
-                  return { ok: true, slide_count: res.slide_count };
-                }
-                return { ok: false, error: res.error };
-              }
-            : undefined
-        }
-      />
+      {studioOverlayNode}
       {/* 2026-05-28 — Carousel re-render progress. A small non-blocking
           toast in the corner while /api/post-builder/rerender-carousel
           streams. The editor stays interactive; the carousel tiles swap

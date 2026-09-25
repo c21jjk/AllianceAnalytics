@@ -30,6 +30,10 @@ import {
   createOutboxRowForPost,
   type PostUrlEntry as OutboxPostUrlEntry,
 } from "@/lib/data/agent-outbox-db";
+import {
+  coopSkipReason,
+  type RecipientPropertyRow,
+} from "@/lib/data/alliance-agent-recipient";
 
 const PLATFORM_LABELS: Record<string, string> = {
   facebook: "Facebook",
@@ -62,7 +66,7 @@ export async function sendAgentEngagementEmail(args: {
   const { data: row, error } = await supabase
     .from("agent_post_outbox")
     .select(
-      "id, agent_name, agent_email, sent_at, caption_snippet, post_urls, story_url_path, properties(address, mls_number)",
+      "id, agent_name, agent_email, sent_at, caption_snippet, post_urls, story_url_path, properties(address, mls_number, alliance_role, listing_office_name, agent_name, agent_email, agent_phone, buyer_agent_name)",
     )
     .eq("id", args.outboxRowId)
     .maybeSingle();
@@ -78,6 +82,29 @@ export async function sendAgentEngagementEmail(args: {
   const agentEmail = (row.agent_email ?? "").trim();
   if (!agentEmail) return null;
   if (args.excludeEmails?.has(agentEmail.toLowerCase())) return null;
+
+  // 2026-09-25 (John) — last line of defense, re-checked at send time
+  // regardless of how the outbox row was created: never email the listing
+  // agent of a buyer-side or non-Alliance listing. The row stays for the
+  // admin view with the reason in last_error.
+  const propGuard = row.properties as unknown as RecipientPropertyRow | null;
+  if (propGuard) {
+    const why = coopSkipReason(propGuard);
+    const role = (propGuard.alliance_role ?? "listing").toLowerCase();
+    const isListingAgentAddress =
+      !!propGuard.agent_email &&
+      propGuard.agent_email.trim().toLowerCase() === agentEmail.toLowerCase();
+    if (why && (role !== "buyer" || isListingAgentAddress)) {
+      console.error(
+        `[agent-email] BLOCKED send to ${agentEmail} on ${row.id}: ${why}`,
+      );
+      await supabase
+        .from("agent_post_outbox")
+        .update({ last_error: `blocked: ${why}`.slice(0, 500) })
+        .eq("id", row.id);
+      return null;
+    }
+  }
 
   const urls: PostUrlEntry[] = [];
   if (Array.isArray(row.post_urls)) {
@@ -276,6 +303,12 @@ export async function notifyListingAgentsForPost(args: {
         caption: args.caption,
         thumbnail_url: args.thumbnail_url,
       });
+      if ("skipped" in outbox) {
+        console.log(
+          `[agent-email] skipped property ${propertyId} on post ${args.generated_post_id}: ${outbox.skipped}`,
+        );
+        continue;
+      }
       if (!("id" in outbox)) {
         console.error(
           `[agent-email] outbox create failed for post ${args.generated_post_id} / property ${propertyId}: ${outbox.error}`,

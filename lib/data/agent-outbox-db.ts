@@ -6,6 +6,12 @@ import type {
   OutboxCounts,
   OutboxNotificationType,
 } from "./agent-outbox-shared";
+import {
+  coopSkipReason,
+  resolveAllianceRecipient,
+  RECIPIENT_PROPERTY_COLUMNS,
+  type RecipientPropertyRow,
+} from "./alliance-agent-recipient";
 
 /**
  * Server-only data layer for the agent-notification outbox (Phase 5).
@@ -69,7 +75,7 @@ export async function createOutboxRowForPost(args: {
   post_urls: PostUrlEntry[];
   caption: string | null;
   thumbnail_url: string | null;
-}): Promise<{ id: string } | { error: string }> {
+}): Promise<{ id: string } | { error: string } | { skipped: string }> {
   if (!args.generated_post_id || !args.property_id) {
     return { error: "missing generated_post_id or property_id" };
   }
@@ -81,7 +87,7 @@ export async function createOutboxRowForPost(args: {
     supabase
       .from("properties")
       .select(
-        "id, mls_number, address, agent_name, agent_email, agent_phone",
+        `id, mls_number, address, ${RECIPIENT_PROPERTY_COLUMNS}`,
       )
       .eq("id", args.property_id)
       .maybeSingle(),
@@ -97,8 +103,23 @@ export async function createOutboxRowForPost(args: {
   if (propRes.error || !propRes.data) {
     return { error: propRes.error?.message ?? "property not found" };
   }
-  const prop = propRes.data;
+  const prop = propRes.data as unknown as RecipientPropertyRow & {
+    id: string;
+    mls_number: string | null;
+    address: string | null;
+  };
   const storyToken = reportRes.data?.report_token ?? null;
+
+  // 2026-09-25 (John) — Alliance agents ONLY. A buyer-side row (or a row
+  // whose listing office isn't Alliance) never gets an outbox row keyed on
+  // the co-op listing agent. Buyer-side resolves to the Alliance buyer
+  // agent via the roster; no roster match = no row at all. See
+  // alliance-agent-recipient.ts for the rule.
+  const recipient = await resolveAllianceRecipient(prop);
+  if (!recipient) {
+    const why = coopSkipReason(prop) ?? "no Alliance recipient resolved";
+    return { skipped: why };
+  }
 
   const captionSnippet = (args.caption ?? "")
     .replace(/\s+/g, " ")
@@ -122,9 +143,9 @@ export async function createOutboxRowForPost(args: {
       .from("agent_post_outbox")
       .update({
         property_id: prop.id,
-        agent_name: prop.agent_name,
-        agent_email: prop.agent_email,
-        agent_phone: prop.agent_phone,
+        agent_name: recipient.agent_name,
+        agent_email: recipient.agent_email,
+        agent_phone: recipient.agent_phone,
         caption_snippet: captionSnippet,
         // Postgrest typing wants a Json union; the runtime accepts our array
         // of {platform,url} objects without complaint.
@@ -142,9 +163,9 @@ export async function createOutboxRowForPost(args: {
     .insert({
       generated_post_id: args.generated_post_id,
       property_id: prop.id,
-      agent_name: prop.agent_name,
-      agent_email: prop.agent_email,
-      agent_phone: prop.agent_phone,
+      agent_name: recipient.agent_name,
+      agent_email: recipient.agent_email,
+      agent_phone: recipient.agent_phone,
       caption_snippet: captionSnippet,
       post_urls: args.post_urls as unknown as Json,
       thumbnail_url: args.thumbnail_url,
@@ -294,14 +315,22 @@ export async function backfillStatusFlipOutbox(opts: {
   // Wins to Celebrate card); we
   // re-query here to keep the helper self-contained (this function will
   // also be the entry point for an eventual Vercel cron).
-  const { data: flips, error: flipErr } = await supabase
+  const { data: flipsRaw, error: flipErr } = await supabase
     .from("properties")
     .select(
-      "id, mls_number, status, status_changed_at, agent_name, agent_email, agent_phone, hero_image_url",
+      `id, mls_number, status, status_changed_at, hero_image_url, ${RECIPIENT_PROPERTY_COLUMNS}`,
     )
     .in("status", ["pending", "sold"])
     .gte("status_changed_at", cutoffIso);
-  if (flipErr || !flips || flips.length === 0) return 0;
+  if (flipErr || !flipsRaw || flipsRaw.length === 0) return 0;
+  type FlipRow = RecipientPropertyRow & {
+    id: string;
+    mls_number: string | null;
+    status: string;
+    status_changed_at: string;
+    hero_image_url: string | null;
+  };
+  const flips = flipsRaw as unknown as FlipRow[];
 
   // Pull the story tokens for those properties in one go.
   const propertyIds = flips.map((f) => f.id);
@@ -319,6 +348,10 @@ export async function backfillStatusFlipOutbox(opts: {
 
   let inserted = 0;
   for (const f of flips) {
+    // 2026-09-25 (John) — Alliance agents only; co-op listing agents never
+    // land in the Outbox, even as an unsent mailto row.
+    const recipient = await resolveAllianceRecipient(f);
+    if (!recipient) continue;
     const flipAt = f.status_changed_at;
     const flipTo = f.status === "sold" ? "sold" : "pending";
     const token = tokenByProp.get(f.id);
@@ -332,9 +365,9 @@ export async function backfillStatusFlipOutbox(opts: {
         notification_type: "status_flip",
         property_id: f.id,
         generated_post_id: null,
-        agent_name: f.agent_name,
-        agent_email: f.agent_email,
-        agent_phone: f.agent_phone,
+        agent_name: recipient.agent_name,
+        agent_email: recipient.agent_email,
+        agent_phone: recipient.agent_phone,
         caption_snippet:
           flipTo === "sold"
             ? `Listing closed on ${formatIsoShort(flipAt)}.`

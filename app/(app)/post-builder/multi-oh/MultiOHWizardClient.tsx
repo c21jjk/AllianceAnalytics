@@ -1157,6 +1157,20 @@ export default function MultiOHWizardClient({
   const dbTemplatesForFormat = dbTemplatesByFormat[format] ?? [];
   const skipStep2 = dbTemplatesForFormat.length === 0;
 
+  // 2026-09-25 — pre-select the default Template Builder card. With no
+  // card clicked the generate route rendered from the same default row
+  // anyway, but the wizard sent db_template_id = null, so the slide
+  // metadata carried no template id and Studio re-opened slides on a
+  // factory fallback (the Open House layout, for a Just Reduced roundup).
+  // Making the choice explicit keeps the wizard's state honest and the
+  // picker's highlight matches what will actually render.
+  useEffect(() => {
+    if (dbTemplateId) return;
+    const def =
+      dbTemplatesForFormat.find((t) => t.is_default) ?? dbTemplatesForFormat[0];
+    if (def) setDbTemplateId(def.id);
+  }, [dbTemplateId, dbTemplatesForFormat]);
+
   const goToStep = useCallback(
     (target: StepIndex): void => {
       // Only allow jumping BACK to a completed step (stepper-bar click).
@@ -2784,13 +2798,13 @@ function Step2FormatVariant({
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => onDbTemplateChange(active ? null : t.id)}
+                    // 2026-09-25 — radio semantics: one card is always
+                    // selected (the default pre-selects), so clicking the
+                    // active card keeps it rather than clearing to null.
+                    onClick={() => onDbTemplateChange(t.id)}
                     title={t.description ?? t.name}
-                    aria-label={
-                      active
-                        ? `Deselect admin template ${t.name}`
-                        : `Use admin template ${t.name}`
-                    }
+                    aria-label={`Use admin template ${t.name}`}
+                    aria-pressed={active}
                     className={[
                       "text-left rounded-xl border p-3 transition flex flex-col",
                       active

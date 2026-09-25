@@ -77,7 +77,7 @@ import {
 import { renderDbTemplate } from "@/lib/template-builder";
 import { formatShortName } from "@/lib/post-builder/format-meta";
 import { findCanvasTemplate } from "@/lib/post-builder/canvas-editor/templates";
-import { resolveTemplateForStatus } from "@/lib/data/custom-templates-db";
+import { resolveTemplateRowForStatus } from "@/lib/data/custom-templates-db";
 import { renderCanvasSchema } from "@/lib/post-builder/canvas-editor/render-canvas-schema";
 import {
   synthesizeMultiOHCaption,
@@ -693,6 +693,14 @@ interface PerPropertyRenderResult {
   mls_number: string;
   image_url: string;
   image_path: string;
+  /**
+   * 2026-09-25 — the DB template row the slide was ACTUALLY rendered from
+   * when the wizard sent no db_template_id and the default resolved to a
+   * Template Builder row. Persisted as slide_metadata[i].db_template_id so
+   * Studio re-opens the same design instead of a factory fallback (the
+   * "Just Reduced slide became an Open House" bug).
+   */
+  resolved_db_template_id?: string | null;
 }
 
 interface PerPropertyRenderFailure {
@@ -941,9 +949,17 @@ async function renderPerPropertyCards(
         // existing single-listing UC/PR templates double as roundup slide
         // templates with zero new designs.
         const slidePostType = postTypeForKind(input.roundup_type ?? "open_house");
+        // 2026-09-25 — keep the resolved Template Builder row id so the
+        // slide metadata records which design rendered (see
+        // PerPropertyRenderResult.resolved_db_template_id).
+        const resolvedRow = await resolveTemplateRowForStatus(
+          slidePostType,
+          input.format,
+        );
         const schema =
-          (await resolveTemplateForStatus(slidePostType, input.format)) ??
+          resolvedRow?.schema ??
           findCanvasTemplate(slidePostType, "v1", input.format);
+        const resolvedDbTemplateId = resolvedRow?.template_row_id ?? null;
         if (!schema) {
           const err = `no canvas template for ${slidePostType}/${input.format}`;
           callbacks.onSlideFailed(idx, err, prop.address ?? null);
@@ -1002,6 +1018,7 @@ async function renderPerPropertyCards(
             mls_number: prop.mls_number,
             image_url: rendered.image_url,
             image_path: rendered.image_path,
+            resolved_db_template_id: resolvedDbTemplateId,
           },
         };
       }),
@@ -1112,7 +1129,11 @@ function buildSlideMetadata(
       // db_template_id is set on the event, the field below is
       // authoritative; variant is informational only.
       variant: input.per_property_variant,
-      db_template_id: input.db_template_id ?? null,
+      // 2026-09-25 — fall back to the row the default path actually
+      // rendered from, so a "stick with the default" wizard run still
+      // re-opens the right Template Builder design in Studio.
+      db_template_id:
+        input.db_template_id ?? s.resolved_db_template_id ?? null,
       format: input.format,
       hosting_agent_name: prop.hosting_agent_name ?? null,
       layer_tree: null,
