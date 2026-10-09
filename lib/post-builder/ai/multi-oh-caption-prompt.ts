@@ -25,6 +25,7 @@
  * + exemplar after the first week of Larissa-tested output.
  */
 import "server-only";
+import type { RoundupType } from "@/lib/post-builder/types";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -60,7 +61,7 @@ export interface MultiOhCaptionPromptInput {
    * roundup kinds, each property's `oh_window` carries the pre-formatted
    * milestone detail line instead of an OH session window.
    */
-  roundupType: "open_house" | "under_contract" | "price_reduction";
+  roundupType: RoundupType;
   properties: Array<{
     address: string | null;
     city: string | null;
@@ -160,8 +161,33 @@ HASHTAGS — brand-fixed core, division tags are CONDITIONAL:
 // forking three near-identical brand blocks) keeps the voice rules in one
 // place; the delta explicitly names each rule it replaces.
 
-const ROUNDUP_OVERRIDES: Record<"under_contract" | "price_reduction", string> =
+const ROUNDUP_OVERRIDES: Record<Exclude<RoundupType, "open_house">, string> =
   {
+    // 2026-10-09 (John) — Just Listed roundup. Active listings, buyer-side
+    // excluded upstream, so "our listings" is true.
+    just_listed: `\
+ROUNDUP MODE — THIS IS NOT AN OPEN HOUSE POST. This is a weekly JUST LISTED roundup: the listed homes are new to the market this week, all of them the brokerage's OWN listings. The following rules REPLACE the corresponding rules above:
+  • Story: fresh inventory + momentum. Upbeat and confident, never salesy. Saying these are "our" new listings is accurate and welcome.
+  • KEEP IT SHORT. Opener: one or two brief sentences, then the bullet list, then a ONE-line closer. No extra paragraphs on any platform.
+  • NEVER name any individual agent — no agent names anywhere in the caption. Collective phrasing ("our team", "we") is fine.
+  • NEVER write "DM us", "message us", "link in bio", or any similar call to action.
+  • NO day-grouped sections and NO 📍 day headers. Use ONE flat bullet list, one bullet per property, EXACT format: \`• {Address}, {City} | {oh_window}\` where \`{oh_window}\` is the pre-formatted list price (e.g. \`$429,000\`) — preserve it verbatim. If \`{oh_window}\` is empty, use \`• {Address}, {City}\`.
+  • There is no event. Do NOT give dates or times; an invitation to take a look at the listings is fine.
+  • Core tail hashtag is \`#justlisted\` (NOT \`#openhouse\`). All other hashtag rules (brand lead tag, conditional division tags, one regional tag) stay the same.
+  • TikTok body: one-line opener + "Full list in the carousel." + one-line closer.`,
+    // 2026-10-09 — Just Sold roundup. Buyer-side closings are INCLUDED, so
+    // the copy must never call these "our listings".
+    just_sold: `\
+ROUNDUP MODE — THIS IS NOT AN OPEN HOUSE POST. This is a weekly JUST SOLD roundup: the listed homes closed this week. Some were the brokerage's own listings and some were sales where the brokerage represented the buyer. The following rules REPLACE the corresponding rules above:
+  • Story: celebration + results. Congratulate buyers and sellers; show a productive week. Confident, never boastful.
+  • NEVER call these "our listings" or imply every home was listed by the brokerage. Use "closings", "homes sold", "sales", or "deals closed".
+  • KEEP IT SHORT. Opener: one or two brief sentences, then the bullet list, then a ONE-line closer. No extra paragraphs on any platform.
+  • NEVER name any individual agent, buyer, or seller. Collective phrasing ("our team", "we") is fine.
+  • NEVER write "DM us", "message us", "link in bio", or any similar call to action.
+  • NO day-grouped sections and NO 📍 day headers. Use ONE flat bullet list, one bullet per property, EXACT format: \`• {Address}, {City} | {oh_window}\` where \`{oh_window}\` is the pre-formatted sold line (e.g. \`Sold $429,000\`) — preserve it verbatim, never change the number.
+  • Do NOT invite anyone to tour or visit these homes; they are sold.
+  • Core tail hashtag is \`#justsold\` (NOT \`#openhouse\`). All other hashtag rules (brand lead tag, conditional division tags, one regional tag) stay the same.
+  • TikTok body: one-line opener + "Full list in the carousel." + one-line closer.`,
     under_contract: `\
 ROUNDUP MODE — THIS IS NOT AN OPEN HOUSE POST. This is a weekly UNDER CONTRACT roundup: the listed homes just went under contract (buyers committed; sales pending). Nobody can tour them; there are no dates or times to attend. The following rules REPLACE the corresponding rules above:
   • Story: momentum + productivity. Tone is MOTIVATIONAL and confident — a brokerage having a productive week — never boastful or salesy. Speak to two audiences at once: sellers ("your home could be next") and buyers ("the market is moving").
@@ -208,7 +234,7 @@ Hashtag arrays MUST contain 3 to 5 strings each per the conditional HASHTAGS pol
  * prefix-cache can still hit on repeat generations of the same kind.
  */
 export function buildSystemPrompt(
-  roundupType: "open_house" | "under_contract" | "price_reduction" = "open_house",
+  roundupType: RoundupType = "open_house",
 ): string {
   const roundupBlock =
     roundupType === "open_house" ? "" : `\n\n${ROUNDUP_OVERRIDES[roundupType]}`;

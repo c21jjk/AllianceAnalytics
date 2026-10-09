@@ -371,6 +371,8 @@ const MULTI_EVENT_LABELS: Record<RoundupType, string> = {
   open_house: "Multi-property Open House",
   under_contract: "Under Contract Roundup",
   price_reduction: "Price Improvement Roundup",
+  just_listed: "Just Listed Roundup",
+  just_sold: "Just Sold Roundup",
 };
 
 // 2026-07-29: the FORMATS validation list went away with the format
@@ -3282,10 +3284,14 @@ export default function PostBuilderClient({
     // Facebook-only posts, so the modal opens with just FB checked for
     // those types. IG/TT stay one click away for the rare exception.
     // Every other post type keeps the all-platforms default.
+    // 2026-10-09 (John) — the Just Listed / Just Sold roundups go to
+    // Facebook + Instagram. Their singles keep the all-platforms default.
     setPostNowPlatforms(
       postType === "under_contract" || postType === "price_reduction"
         ? new Set<PostPlatform>(["facebook"])
-        : new Set<PostPlatform>(["facebook", "instagram", "tiktok"]),
+        : multiEventKind === "just_listed" || multiEventKind === "just_sold"
+          ? new Set<PostPlatform>(["facebook", "instagram"])
+          : new Set<PostPlatform>(["facebook", "instagram", "tiktok"]),
     );
   }
 

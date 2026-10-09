@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { ListingMilestone } from "@/lib/data/recently-sold";
 import MilestoneListingRow from "./MilestoneListingRow";
+import BuildRoundupLink from "./BuildRoundupLink";
 import { MILESTONE_FLOOR_EMPTY_COPY } from "@/lib/dashboard-window";
 
 interface RecentlySoldRowProps {
@@ -93,6 +94,15 @@ export default function RecentlySoldRow({
                 is this empty" case, so printing it here too said it twice. */}
           </div>
         </button>
+        {/* 2026-10-09 (John) — weekly Just Sold roundup. Singles stay; each
+            row keeps its own build button. */}
+        {listings.length >= 1 ? (
+          <BuildRoundupLink
+            href="/post-builder/roundup/just-sold"
+            label="Just Sold"
+            count={listings.filter((l) => !l.post_made && !l.skipped_at).length}
+          />
+        ) : null}
       </header>
 
       {!collapsed && hydrated ? (

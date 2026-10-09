@@ -430,8 +430,9 @@ export interface MultiOHEventProperty {
   event_date?: string | null;
   /** price_reduction only — the price BEFORE the cut. */
   price_old?: number | null;
-  /** price_reduction only — the price AFTER the cut (falls back to
-   *  list_price when absent). */
+  /** price_reduction — the price AFTER the cut (falls back to
+   *  list_price when absent). just_sold (2026-10-09) — the SOLD price
+   *  (properties.close_price), shown on the hero row instead of a date. */
   price_new?: number | null;
 }
 
@@ -519,7 +520,42 @@ export interface MultiOHEventInput {
  * REPLACED single-property posting for those milestones (John, 8/19:
  * company-wide, manual dashboard-prompted, roundup replaces singles).
  */
-export type RoundupType = "open_house" | "under_contract" | "price_reduction";
+export type RoundupType =
+  | "open_house"
+  | "under_contract"
+  | "price_reduction"
+  // 2026-10-09 (John) — Just Listed + Just Sold roundups. Unlike UC/PR these
+  // sit ALONGSIDE the single posts (singles kept), publish to FB + IG, and
+  // are capped at 9 properties so hero + slides fit IG's 10-slide carousel.
+  | "just_listed"
+  | "just_sold";
+
+/** The roundup kinds that publish Facebook-only and therefore carry no
+ *  property cap (2026-08-22). Every other kind is capped at
+ *  MULTI_OH_MAX_PROPERTIES for IG. */
+export function isUncappedRoundupKind(kind: RoundupType): boolean {
+  return kind === "under_contract" || kind === "price_reduction";
+}
+
+/** Parse an untrusted request value into a RoundupType. Absent / unknown
+ *  → "open_house" so every pre-roundup client keeps working unchanged. */
+export function parseRoundupType(raw: unknown): RoundupType {
+  return raw === "under_contract" ||
+    raw === "price_reduction" ||
+    raw === "just_listed" ||
+    raw === "just_sold"
+    ? raw
+    : "open_house";
+}
+
+/** Template_id prefix per multi-event kind. */
+const MULTI_EVENT_PREFIX: Record<RoundupType, string> = {
+  open_house: "multi_oh_event_",
+  under_contract: "uc_roundup_",
+  price_reduction: "pr_roundup_",
+  just_listed: "jl_roundup_",
+  just_sold: "js_roundup_",
+};
 
 /**
  * Resolve which multi-property event kind a generated_posts row is, from
@@ -539,9 +575,9 @@ export function multiEventKindFromTemplateId(
   templateId: string | null | undefined,
 ): RoundupType | null {
   if (!templateId) return null;
-  if (templateId.startsWith("multi_oh_event_")) return "open_house";
-  if (templateId.startsWith("uc_roundup_")) return "under_contract";
-  if (templateId.startsWith("pr_roundup_")) return "price_reduction";
+  for (const [kind, prefix] of Object.entries(MULTI_EVENT_PREFIX)) {
+    if (templateId.startsWith(prefix)) return kind as RoundupType;
+  }
   return null;
 }
 
@@ -560,13 +596,7 @@ export function multiEventTemplateId(
   kind: RoundupType,
   formatShort: string,
 ): string {
-  const prefix =
-    kind === "open_house"
-      ? "multi_oh_event_"
-      : kind === "under_contract"
-        ? "uc_roundup_"
-        : "pr_roundup_";
-  return `${prefix}${formatShort}`;
+  return `${MULTI_EVENT_PREFIX[kind]}${formatShort}`;
 }
 
 /** Max properties allowed in a single multi-OH event post. Capped so that

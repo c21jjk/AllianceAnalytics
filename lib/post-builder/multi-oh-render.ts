@@ -91,12 +91,14 @@ export async function renderMultiOHEventOverview(
   const supabase = createAdminClient();
   // 2026-08-19 — roundup heroes land in their own storage dirs so a bucket
   // listing reads cleanly; multi-OH keeps its original path untouched.
-  const kindDir =
-    (input.roundup_type ?? "open_house") === "open_house"
-      ? "multi_oh_event"
-      : input.roundup_type === "under_contract"
-        ? "uc_roundup"
-        : "pr_roundup";
+  const KIND_DIR: Record<RoundupType, string> = {
+    open_house: "multi_oh_event",
+    under_contract: "uc_roundup",
+    price_reduction: "pr_roundup",
+    just_listed: "jl_roundup",
+    just_sold: "js_roundup",
+  };
+  const kindDir = KIND_DIR[input.roundup_type ?? "open_house"];
   const path = `${kindDir}/${input.format}/${Date.now()}.png`;
   const { error: uploadError } = await supabase.storage
     .from(STORAGE_BUCKET)
@@ -187,6 +189,25 @@ const KIND_COPY: Record<RoundupType, EventKindCopy> = {
     brandTag: "This Week at Alliance",
     fallbackTitle: "New Prices This Week",
   },
+  // 2026-10-09 — Just Listed + Just Sold roundups.
+  just_listed: {
+    eyebrow: "Just Listed",
+    brandTag: "This Week at Alliance",
+    fallbackTitle: "Just Listed This Week",
+  },
+  just_sold: {
+    eyebrow: "Just Sold",
+    brandTag: "This Week at Alliance",
+    fallbackTitle: "Just Sold This Week",
+  },
+};
+
+/** Headline lead per roundup kind (the date range follows it). */
+const ROUNDUP_TITLE_LEAD: Record<Exclude<RoundupType, "open_house">, string> = {
+  under_contract: "Under Contract",
+  price_reduction: "New Price",
+  just_listed: "Just Listed",
+  just_sold: "Just Sold",
 };
 
 function eventKindOf(input: MultiOHEventInput): RoundupType {
@@ -308,7 +329,7 @@ function deriveRoundupTitle(
   properties: readonly MultiOHEventProperty[],
 ): string {
   const TZ = "America/New_York";
-  const lead = kind === "under_contract" ? "Under Contract" : "New Price";
+  const lead = ROUNDUP_TITLE_LEAD[kind];
   const dates: Date[] = [];
   for (const p of properties) {
     if (!p.event_date) continue;
@@ -860,6 +881,14 @@ function renderPropertyRow(
       );
     }
     priceChip = formatPriceChip(p.list_price);
+  } else if (kind === "just_listed") {
+    // 2026-10-09 — "city-state" + list-price chip.
+    priceChip = formatPriceChip(p.list_price);
+  } else if (kind === "just_sold") {
+    // 2026-10-09 (John) — the SOLD price is the chip, not the close date.
+    // The wizard carries close_price in price_new; no list-price fallback
+    // so an unrecorded sale price never shows the asking price as "sold".
+    priceChip = formatPriceChip(p.price_new ?? null);
   } else {
     // price_reduction — the NEW price is the chip; the old price sits
     // struck-through beneath it. Fall back to list_price when the wizard

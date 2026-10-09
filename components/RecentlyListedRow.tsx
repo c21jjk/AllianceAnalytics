@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ListingNeedingPosts } from "@/lib/data/listings-needing-posts";
 import ListingsFilterChips from "./ListingsFilterChips";
 import NeedsPostsCard from "./NeedsPostsCard";
+import BuildRoundupLink from "./BuildRoundupLink";
 import { MILESTONE_FLOOR_EMPTY_COPY } from "@/lib/dashboard-window";
 
 interface RecentlyListedRowProps {
@@ -120,17 +121,31 @@ export default function RecentlyListedRow({
                 lives in the heading; the controls explain themselves. */}
           </div>
         </button>
-        {!collapsed ? (
-          <div className="flex items-center gap-3 shrink-0">
-            <ListingsFilterChips current={statusFilter} />
-            <Link
-              href="/settings/promotions"
-              className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
-            >
-              Dismissed
-            </Link>
-          </div>
-        ) : null}
+        <div className="flex items-center gap-3 shrink-0">
+          {!collapsed ? (
+            <>
+              <ListingsFilterChips current={statusFilter} />
+              <Link
+                href="/settings/promotions"
+                className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
+              >
+                Dismissed
+              </Link>
+            </>
+          ) : null}
+          {/* 2026-10-09 (John) — weekly Just Listed roundup. Singles stay;
+              each row keeps its own build button. */}
+          {listings.length >= 1 ? (
+            <BuildRoundupLink
+              href="/post-builder/roundup/just-listed"
+              label="Just Listed"
+              count={
+                listings.filter((l) => l.promotion_status === "needs_post")
+                  .length
+              }
+            />
+          ) : null}
+        </div>
       </header>
 
       {/* Render the body only when expanded. Guard with `hydrated` so SSR's

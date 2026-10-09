@@ -272,12 +272,14 @@ function buildEventSubtitle(
 ): string {
   const count = slideMetadata.length;
   const propertyWord = count === 1 ? "property" : "properties";
-  const lead =
-    eventKind === "under_contract"
-      ? "Under Contract Roundup"
-      : eventKind === "price_reduction"
-        ? "Price Improvement Roundup"
-        : "Open House";
+  const LEADS: Record<RoundupType, string> = {
+    open_house: "Open House",
+    under_contract: "Under Contract Roundup",
+    price_reduction: "Price Improvement Roundup",
+    just_listed: "Just Listed Roundup",
+    just_sold: "Just Sold Roundup",
+  };
+  const lead = LEADS[eventKind];
   return `${lead} — ${count} ${propertyWord}`;
 }
 

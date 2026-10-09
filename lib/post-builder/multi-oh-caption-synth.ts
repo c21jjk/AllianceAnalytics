@@ -271,6 +271,8 @@ export const ROUNDUP_TAIL_TAGS: Record<RoundupType, string> = {
   open_house: CORE_TAIL_TAG,
   under_contract: "#undercontract",
   price_reduction: "#newprice",
+  just_listed: "#justlisted",
+  just_sold: "#justsold",
 };
 
 // ---------------------------------------------------------------------------
@@ -1089,6 +1091,74 @@ const PR_ROUNDUP_CLOSERS: readonly string[] = [
   "A better price on the right home beats a perfect price on the wrong one. 🖤💛",
 ];
 
+// 2026-10-09 (John) — Just Listed roundup. The pool is active listings with
+// buyer-side rows excluded, so "our listings" is true here too. Same spec
+// as UC: upbeat, short, no agent names, no "DM us" / "link in bio".
+const JL_ROUNDUP_OPENERS: ReadonlyArray<(c: RoundupCtx) => string> = [
+  (c) =>
+    `🏡 Fresh on the market: ${
+      c.count === 1 ? "a new listing" : `${c.count} new listings`
+    } from our team this week. 🖤💛`,
+  (c) =>
+    `✨ Just listed${
+      c.geoPhrase ? ` ${lowercaseFirstLetter(c.geoPhrase)}` : ""
+    }: ${
+      c.count === 1 ? "one new home" : `${c.count} new homes`
+    } hit the market with us this week. 🖤💛`,
+  (c) =>
+    `🏡 New week, new listings. ${
+      c.count === 1
+        ? "Here's the latest home"
+        : `Here are the ${c.count} homes`
+    } we just brought to market. 🖤💛`,
+];
+
+const JL_ROUNDUP_CLOSERS: readonly string[] = [
+  "Swipe through and see which one feels like home. 🖤💛",
+  "Thinking about selling? Your home could be on next week's list. 🖤💛",
+  "New listings move fast. Take a look while they're fresh. 🖤💛",
+];
+
+// 2026-10-09 — Just Sold roundup. Buyer-side closings ARE included (the
+// standing Just Sold rule), so the copy says "closings" / "sold", never
+// "our listings".
+const JS_ROUNDUP_OPENERS: ReadonlyArray<(c: RoundupCtx) => string> = [
+  (c) =>
+    `🎉 Another strong week: ${
+      c.count === 1 ? "one more closing" : `${c.count} closings`
+    } for the Century 21 Alliance team. 🖤💛`,
+  (c) =>
+    `🔑 Keys handed over${
+      c.geoPhrase ? ` ${lowercaseFirstLetter(c.geoPhrase)}` : ""
+    }: ${c.count === 1 ? "one home" : `${c.count} homes`} sold this week. 🖤💛`,
+  (c) =>
+    `🎉 Just sold! ${
+      c.count === 1
+        ? "Congratulations to the buyers and sellers on this one."
+        : `${c.count} homes closed this week. Congratulations to every buyer and seller.`
+    } 🖤💛`,
+];
+
+const JS_ROUNDUP_CLOSERS: readonly string[] = [
+  "Thinking about selling? Your home could be on next week's list. 🖤💛",
+  "This is what a productive week looks like. Yours could be next. 🖤💛",
+  "Buying or selling, we're ready when you are. 🖤💛",
+];
+
+/** Opener / closer pools per roundup kind. */
+const ROUNDUP_POOLS: Record<
+  Exclude<RoundupType, "open_house">,
+  {
+    openers: ReadonlyArray<(c: RoundupCtx) => string>;
+    closers: readonly string[];
+  }
+> = {
+  under_contract: { openers: UC_ROUNDUP_OPENERS, closers: UC_ROUNDUP_CLOSERS },
+  price_reduction: { openers: PR_ROUNDUP_OPENERS, closers: PR_ROUNDUP_CLOSERS },
+  just_listed: { openers: JL_ROUNDUP_OPENERS, closers: JL_ROUNDUP_CLOSERS },
+  just_sold: { openers: JS_ROUNDUP_OPENERS, closers: JS_ROUNDUP_CLOSERS },
+};
+
 /** "$429,000" style short price. Null on absent/invalid values. */
 function formatRoundupPrice(price: number | null | undefined): string | null {
   if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) {
@@ -1130,6 +1200,15 @@ export function formatRoundupBullet(
     if (now && was) return `• ${addressFull} | Now ${now} (was ${was})`;
     if (now) return `• ${addressFull} | Now ${now}`;
   }
+  // 2026-10-09 — JL: list price. JS: sold price (carried in price_new).
+  if (kind === "just_listed") {
+    const price = formatRoundupPrice(p.list_price);
+    if (price) return `• ${addressFull} | ${price}`;
+  }
+  if (kind === "just_sold") {
+    const sold = formatRoundupPrice(p.price_new);
+    if (sold) return `• ${addressFull} | Sold ${sold}`;
+  }
   return `• ${addressFull}`;
 }
 
@@ -1153,8 +1232,7 @@ function synthesizeRoundupCaption(
   const countPhrase = count === 1 ? "this home" : `these ${count} homes`;
   const ctx: RoundupCtx = { count, countPhrase, geoPhrase };
 
-  const openers = kind === "under_contract" ? UC_ROUNDUP_OPENERS : PR_ROUNDUP_OPENERS;
-  const closers = kind === "under_contract" ? UC_ROUNDUP_CLOSERS : PR_ROUNDUP_CLOSERS;
+  const { openers, closers } = ROUNDUP_POOLS[kind];
   const opener = openers[seed % openers.length](ctx);
   const closer = closers[(seed >>> 6) % closers.length];
 

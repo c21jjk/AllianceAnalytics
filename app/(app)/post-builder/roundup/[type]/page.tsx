@@ -14,6 +14,8 @@ export const dynamic = "force-dynamic";
  *
  *   /post-builder/roundup/under-contract
  *   /post-builder/roundup/price-reduced
+ *   /post-builder/roundup/just-listed   (2026-10-09)
+ *   /post-builder/roundup/just-sold     (2026-10-09)
  *
  * Reuses the multi-OH wizard component with a roundupType flag — the
  * FinalReviewStage lesson (2026-08-08): generalize the existing flow, do
@@ -30,11 +32,16 @@ export const dynamic = "force-dynamic";
 const SLUG_TO_KIND: Record<string, Exclude<RoundupType, "open_house">> = {
   "under-contract": "under_contract",
   "price-reduced": "price_reduction",
+  // 2026-10-09 (John) — Just Listed + Just Sold roundups (singles kept).
+  "just-listed": "just_listed",
+  "just-sold": "just_sold",
 };
 
 const KIND_TITLES: Record<Exclude<RoundupType, "open_house">, string> = {
   under_contract: "Under Contract Roundup — Alliance Social",
   price_reduction: "Price Improvement Roundup — Alliance Social",
+  just_listed: "Just Listed Roundup — Alliance Social",
+  just_sold: "Just Sold Roundup — Alliance Social",
 };
 
 export async function generateMetadata({

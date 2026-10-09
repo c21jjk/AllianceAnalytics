@@ -213,9 +213,12 @@ export async function POST(request: Request): Promise<Response> {
   // 2026-08-19 — which milestone bucket the per-slide templates resolve
   // from. Multi-OH rows carry post_type='open_house' (the historical
   // hardcode); roundup rows carry under_contract / price_reduction.
+  // 2026-10-09 — plus just_listed / just_sold roundup rows.
   const slidePostType: PostType =
     existing.post_type === "under_contract" ||
-    existing.post_type === "price_reduction"
+    existing.post_type === "price_reduction" ||
+    existing.post_type === "just_listed" ||
+    existing.post_type === "just_sold"
       ? existing.post_type
       : "open_house";
 

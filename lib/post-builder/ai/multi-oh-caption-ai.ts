@@ -200,6 +200,9 @@ const FIXED_BRAND_TAG_SET = new Set([
   // 2026-08-19 — roundup tail tags are deterministic too.
   "#undercontract",
   "#newprice",
+  // 2026-10-09 — Just Listed / Just Sold roundup tail tags.
+  "#justlisted",
+  "#justsold",
 ]);
 
 function reconcileHashtags(
@@ -285,6 +288,14 @@ function formatRoundupDetailForPrompt(
           maximumFractionDigits: 0,
         }).format(n)
       : null;
+  // 2026-10-09 — JL: list price. JS: sold price (carried in price_new).
+  if (kind === "just_listed") {
+    return money(p.list_price) ?? "";
+  }
+  if (kind === "just_sold") {
+    const sold = money(p.price_new);
+    return sold ? `Sold ${sold}` : "Sold this week";
+  }
   const now = money(p.price_new ?? p.list_price);
   const was = money(p.price_old);
   if (now && was) return `Now ${now} (was ${was})`;

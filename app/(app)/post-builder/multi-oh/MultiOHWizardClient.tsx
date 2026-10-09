@@ -20,6 +20,7 @@ import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
+  isUncappedRoundupKind,
   type MultiOHEventInput,
   type MultiOHEventProperty,
   type PostBuilderListing,
@@ -110,6 +111,11 @@ export interface RoundupMetaEntry {
    *  unposted backlog is listed unticked. Optional so any stale caller
    *  without the flag behaves as before (treated as in-window). */
   in_window?: boolean;
+  /** 2026-10-09 — skipped for this milestone; listed, never pre-ticked. */
+  skipped?: boolean;
+  /** 2026-10-09 — "Hold, don't post yet" is set; listed with a Hold badge,
+   *  never pre-ticked. */
+  on_hold?: boolean;
 }
 
 /**
@@ -152,6 +158,22 @@ const WIZARD_COPY: Record<
       "No listing dropped its price in the last 7 days. The dashboard's Reduced card fills this list as cuts come in from the feeds.",
     templateNoun: "Price Reduced",
   },
+  // 2026-10-09 (John) — Just Listed + Just Sold roundups. Capped at 9
+  // properties (FB + IG; hero + 9 = IG's 10-slide carousel).
+  just_listed: {
+    pickTitle: "Pick this week's new listings",
+    pickSub: `This week's unposted new listings are pre-selected. Up to ${MULTI_OH_MAX_PROPERTIES}; the pick order is the carousel order.`,
+    emptyTitle: "No new listings this week.",
+    emptySub: "Nothing new since Aug 1 still needs a post.",
+    templateNoun: "Just Listed",
+  },
+  just_sold: {
+    pickTitle: "Pick this week's solds",
+    pickSub: `This week's unposted solds are pre-selected. Up to ${MULTI_OH_MAX_PROPERTIES}; the pick order is the carousel order.`,
+    emptyTitle: "No new solds this week.",
+    emptySub: "Nothing sold since Aug 1 still needs a post.",
+    templateNoun: "Just Sold",
+  },
 };
 
 /** Stable default for the roundupMeta prop. A `= {}` inline default would
@@ -163,8 +185,8 @@ const EMPTY_ROUNDUP_META: Record<string, RoundupMetaEntry> = {};
 
 /**
  * 2026-10-09 — every wizard exit into Post Builder carries `studio=1`, which
- * opens slide 1 in Studio as the review step before Final Review (all three
- * kinds: open house, under contract, price reduced).
+ * opens slide 1 in Studio as the review step before Final Review (every
+ * kind: open house and all four roundups).
  */
 function withStudioReview(path: string): string {
   return `${path}${path.includes("?") ? "&" : "?"}studio=1`;
@@ -176,6 +198,8 @@ function withStudioReview(path: string): string {
 function storageKeyFor(kind: RoundupType): string {
   if (kind === "under_contract") return "uc-roundup-wizard-state-v1";
   if (kind === "price_reduction") return "pr-roundup-wizard-state-v1";
+  if (kind === "just_listed") return "jl-roundup-wizard-state-v1";
+  if (kind === "just_sold") return "js-roundup-wizard-state-v1";
   return STORAGE_KEY;
 }
 
@@ -634,12 +658,23 @@ export default function MultiOHWizardClient({
     // posts; Facebook multi-photo posts carry far more than 10 images).
     // The 9-property cap remains an OPEN HOUSE rule.
     if (roundupType !== "open_house") {
-      return listings
+      const picks = listings
         .filter((l) => {
           const meta = roundupMeta[l.mls_number];
-          return !meta?.already_posted && meta?.in_window !== false;
+          // 2026-10-09 — skipped and held rows are never pre-ticked.
+          return (
+            !meta?.already_posted &&
+            meta?.in_window !== false &&
+            !meta?.skipped &&
+            !meta?.on_hold
+          );
         })
         .map((l) => l.mls_number);
+      // 2026-10-09 — Just Listed / Just Sold publish to IG too, so their
+      // pre-tick respects the 9-property cap (newest first).
+      return isUncappedRoundupKind(roundupType)
+        ? picks
+        : picks.slice(0, MULTI_OH_MAX_PROPERTIES);
     }
     return [];
   });
@@ -1035,7 +1070,13 @@ export default function MultiOHWizardClient({
         // Adding — enforce the cap. 2026-08-22: OPEN HOUSE ONLY. The
         // roundup kinds are uncapped (FB-only posts; the hero card shows
         // its first 9 rows + a "+N more" line, one slide per property).
-        if (isOH && prev.length >= MULTI_OH_MAX_PROPERTIES) return prev;
+        // 2026-10-09 — Just Listed / Just Sold are capped like OH (IG).
+        if (
+          !isUncappedRoundupKind(roundupType) &&
+          prev.length >= MULTI_OH_MAX_PROPERTIES
+        ) {
+          return prev;
+        }
         return [...prev, mls];
       });
 
@@ -1074,7 +1115,7 @@ export default function MultiOHWizardClient({
         return next;
       });
     },
-    [listingsByMls, isOH],
+    [listingsByMls, isOH, roundupType],
   );
 
   /**
@@ -1837,7 +1878,9 @@ export default function MultiOHWizardClient({
         step={step}
         selectedCount={selectedMls.length}
         // 2026-08-22 — cap display is OH-only; roundups are uncapped.
-        maxProperties={isOH ? MULTI_OH_MAX_PROPERTIES : null}
+        maxProperties={
+          isUncappedRoundupKind(roundupType) ? null : MULTI_OH_MAX_PROPERTIES
+        }
         // 2026-08-21 — the "need at least N" hint follows the real gate
         // (windows for OH, properties for roundups) instead of re-deriving
         // it from the selected-property count, which went stale the moment
@@ -2073,7 +2116,10 @@ function Step1Pick({
   const isOH = roundupType === "open_house";
   // 2026-08-22 — the carousel cap is an OPEN HOUSE rule; roundups are
   // uncapped (FB-only posts).
-  const atCap = isOH && selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
+  // 2026-10-09 — Just Listed / Just Sold are capped too (FB + IG).
+  const atCap =
+    !isUncappedRoundupKind(roundupType) &&
+    selectedMls.length >= MULTI_OH_MAX_PROPERTIES;
   const copy = WIZARD_COPY[roundupType];
 
   // 2026-08-07 (John) — the picker is batched by office division to match the
@@ -2266,7 +2312,8 @@ function Step1Pick({
                       </span>
                     ) : null}
                     {typeof l.list_price === "number" &&
-                    roundupType !== "price_reduction" ? (
+                    roundupType !== "price_reduction" &&
+                    roundupType !== "just_sold" ? (
                       <span className="text-gold-700 font-medium">
                         ${l.list_price.toLocaleString()}
                       </span>
@@ -2292,6 +2339,18 @@ function Step1Pick({
                     {!isOH && roundupMeta[l.mls_number]?.already_posted ? (
                       <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 font-medium text-neutral-600">
                         Posted
+                      </span>
+                    ) : null}
+                    {/* 2026-10-09 — skipped / held rows stay selectable but
+                        are never pre-ticked; the badge says why. */}
+                    {!isOH && roundupMeta[l.mls_number]?.skipped ? (
+                      <span className="inline-flex items-center rounded-md bg-neutral-100 ring-1 ring-neutral-200 px-1.5 py-0.5 font-medium text-neutral-600">
+                        Skipped
+                      </span>
+                    ) : null}
+                    {!isOH && roundupMeta[l.mls_number]?.on_hold ? (
+                      <span className="inline-flex items-center rounded-md bg-red-50 ring-1 ring-red-200 px-1.5 py-0.5 font-semibold text-red-700">
+                        Hold
                       </span>
                     ) : null}
                   </div>
@@ -4055,6 +4114,26 @@ function formatRoundupRowBadge(
   kind: RoundupType,
   meta: RoundupMetaEntry,
 ): string {
+  // 2026-10-09 — JL: "Listed Oct 6". JS: "Sold Oct 6 · $429,000".
+  if (kind === "just_listed" || kind === "just_sold") {
+    const verb = kind === "just_listed" ? "Listed" : "Sold";
+    const d = meta.event_date ? new Date(meta.event_date) : null;
+    const date =
+      d && !Number.isNaN(d.getTime())
+        ? d.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            timeZone: "America/New_York",
+          })
+        : null;
+    const sold =
+      kind === "just_sold" &&
+      typeof meta.price_new === "number" &&
+      meta.price_new > 0
+        ? `$${meta.price_new.toLocaleString()}`
+        : null;
+    return [date ? `${verb} ${date}` : verb, sold].filter(Boolean).join(" · ");
+  }
   if (kind === "under_contract") {
     if (!meta.event_date) return "Under contract";
     const d = new Date(meta.event_date);

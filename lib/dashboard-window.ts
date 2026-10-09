@@ -27,6 +27,17 @@ export const MILESTONE_FLOOR_DATE = "2026-08-01";
 /** Same instant as an ISO timestamp, for timestamptz columns. */
 export const MILESTONE_FLOOR_ISO = `${MILESTONE_FLOOR_DATE}T00:00:00.000Z`;
 
+/** 2026-10-09 — whole days from the floor to now (+1 so the floor day
+ *  itself is inside). For fetchers with a "last N days" window that must
+ *  still reach back to the slate, e.g. the Just Listed / Just Sold roundup
+ *  pools (the Post Builder default of 60 days fell short of Aug 1 on
+ *  Sep 30). */
+export function daysSinceMilestoneFloor(): number {
+  return (
+    Math.ceil((Date.now() - Date.parse(MILESTONE_FLOOR_ISO)) / 86_400_000) + 1
+  );
+}
+
 /**
  * The date a milestone fetcher should query back to.
  *

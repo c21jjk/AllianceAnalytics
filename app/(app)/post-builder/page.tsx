@@ -19,8 +19,10 @@ import { FileText } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import AutoReelLaunchButton from "@/components/AutoReelPanel";
 import PostBuilderClient from "./PostBuilderClient";
+import { daysSinceMilestoneFloor } from "@/lib/dashboard-window";
 import {
   isMultiEventTemplateId,
+  multiEventKindFromTemplateId,
   type PostBuilderListing,
   type PostFormat,
   type PostType,
@@ -107,9 +109,32 @@ export default async function PostBuilderPage({
   // design today, so this is usually 0-1 fetch).
   const dbTemplatesForSlides = await fetchDbTemplatesForSlides(resume);
 
+  // 2026-10-09 — a Just Listed / Just Sold ROUNDUP can feature backlog
+  // listings from as far back as the Aug 1 floor, older than this pool's
+  // default 60-day window. Studio's per-slide edit (and the auto-open review
+  // step) resolve each slide's listing from these pools, so when resuming
+  // one of those roundups the matching pool reaches back to the floor.
+  // Every other arrival keeps the default window.
+  const resumeKind = multiEventKindFromTemplateId(resume?.template_id);
   const [justListed, justSold, underContract, openHouse, priceReduction] = await Promise.all([
-    fetchListingsForPostBuilder({ post_type: "just_listed" }),
-    fetchListingsForPostBuilder({ post_type: "just_sold" }),
+    fetchListingsForPostBuilder(
+      resumeKind === "just_listed"
+        ? {
+            post_type: "just_listed",
+            windowDays: daysSinceMilestoneFloor(),
+            limit: 500,
+          }
+        : { post_type: "just_listed" },
+    ),
+    fetchListingsForPostBuilder(
+      resumeKind === "just_sold"
+        ? {
+            post_type: "just_sold",
+            windowDays: daysSinceMilestoneFloor(),
+            limit: 500,
+          }
+        : { post_type: "just_sold" },
+    ),
     fetchListingsForPostBuilder({ post_type: "under_contract" }),
     fetchListingsForPostBuilder({ post_type: "open_house" }),
     fetchListingsForPostBuilder({ post_type: "price_reduction" }),

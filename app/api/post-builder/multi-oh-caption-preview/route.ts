@@ -32,7 +32,11 @@ import {
   type MultiOHCaptionProperty,
   type MultiOHCaptionResult,
 } from "@/lib/post-builder/multi-oh-caption-synth";
-import type { RoundupType, SourceMls } from "@/lib/post-builder/types";
+import {
+  parseRoundupType,
+  type RoundupType,
+  type SourceMls,
+} from "@/lib/post-builder/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -165,11 +169,7 @@ function parseBody(raw: unknown): {
   }
 
   // 2026-08-19 — roundup kind pass-through (absent/unknown → open_house).
-  const roundupType: RoundupType =
-    body.roundup_type === "under_contract" ||
-    body.roundup_type === "price_reduction"
-      ? body.roundup_type
-      : "open_house";
+  const roundupType: RoundupType = parseRoundupType(body.roundup_type);
 
   let tone: CaptionTone = "auto";
   if (typeof body.tone === "string") {

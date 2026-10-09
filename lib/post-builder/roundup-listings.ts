@@ -3,12 +3,18 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchListingsForPostBuilder } from "./listings";
 import type { PostBuilderListingWithOH } from "./listing-html-utils";
 import type { RoundupType } from "./types";
-import { MILESTONE_FLOOR_ISO, ROLLING_WINDOW_DAYS } from "@/lib/dashboard-window";
+import {
+  MILESTONE_FLOOR_ISO,
+  ROLLING_WINDOW_DAYS,
+  daysSinceMilestoneFloor,
+} from "@/lib/dashboard-window";
 import {
   getAutoPostedPropertyIds,
   getListingPostMarks,
 } from "@/lib/data/listing-post-marks";
 import { getListingSkipMarks } from "@/lib/data/listing-skip-marks";
+import { getListingsNeedingPosts } from "@/lib/data/listings-needing-posts";
+import { getListingNoteStates } from "@/lib/data/listing-notes";
 
 /**
  * 2026-08-19 — data layer for the weekly milestone roundups (John:
@@ -45,7 +51,7 @@ export interface RoundupPropertyMeta {
   event_date: string | null;
   /** price_reduction only — price before the cut. */
   price_old: number | null;
-  /** price_reduction only — price after the cut. */
+  /** price_reduction — price after the cut. just_sold — the sold price. */
   price_new: number | null;
   /**
    * True when the property already reads as posted for this milestone: a
@@ -60,6 +66,17 @@ export interface RoundupPropertyMeta {
    * week's unposted rows; the older unposted backlog is offered unticked.
    */
   in_window: boolean;
+  /**
+   * 2026-10-09 — skipped for this milestone (dashboard Skip). Listed but
+   * never pre-ticked, even inside the window.
+   */
+  skipped?: boolean;
+  /**
+   * 2026-10-09 — "Hold, don't post yet" is set on the listing (team
+   * notes). Listed with a Hold badge but never pre-ticked, so a held
+   * listing can't ride into a roundup unnoticed.
+   */
+  on_hold?: boolean;
 }
 
 export interface RoundupListingsResult {
@@ -75,9 +92,190 @@ export async function fetchRoundupListings(
   kind: Exclude<RoundupType, "open_house">,
 ): Promise<RoundupListingsResult> {
   const cutoffIso = new Date(Date.now() - WINDOW_MS).toISOString();
-  return kind === "under_contract"
-    ? fetchUnderContractRoundup(cutoffIso)
-    : fetchPriceReductionRoundup(cutoffIso);
+  let result: RoundupListingsResult;
+  switch (kind) {
+    case "under_contract":
+      result = await fetchUnderContractRoundup(cutoffIso);
+      break;
+    case "price_reduction":
+      result = await fetchPriceReductionRoundup(cutoffIso);
+      break;
+    case "just_listed":
+      result = await fetchJustListedRoundup(cutoffIso);
+      break;
+    case "just_sold":
+      result = await fetchJustSoldRoundup(cutoffIso);
+      break;
+    default: {
+      const _never: never = kind;
+      throw new Error(`Unknown roundup kind: ${String(_never)}`);
+    }
+  }
+  // 2026-10-09 — hold flags for every kind, one batched lookup.
+  if (result.listings.length > 0) {
+    const notes = await getListingNoteStates(
+      result.listings.map((l) => l.mls_number),
+    ).catch((e) => {
+      console.error("[roundup-listings] hold lookup failed:", e);
+      return new Map<string, { on_hold: unknown }>();
+    });
+    for (const [mls, meta] of Object.entries(result.metaByMls)) {
+      if (notes.get(mls)?.on_hold) meta.on_hold = true;
+    }
+  }
+  return result;
+}
+
+/** Split an id list so no single PostgREST `in.(...)` / `ov.{...}` filter
+ *  grows a URL past what the gateway accepts. The Aug 1 floor is fixed, so
+ *  the since-floor candidate sets only grow over time. */
+const HANDLED_CHUNK = 100;
+function chunk<T>(arr: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/** listing_date / close_date are DATE columns ("2026-10-06"). Parsed bare
+ *  they land on UTC midnight, which every America/New_York formatter (hero
+ *  title, caption, picker badge) renders as the PREVIOUS day. Pin date-only
+ *  values to noon UTC so they read as the same calendar day everywhere. */
+function dateOnlyToNoonIso(v: string | null | undefined): string | null {
+  if (!v) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T12:00:00.000Z` : v;
+}
+
+
+/**
+ * 2026-10-09 (John) — Just Listed roundup. Same picker rule as UC / PR
+ * (inside the 7-day window, or unhandled since the Aug 1 floor), but the
+ * handled state comes straight from the Recently Listed card's own fetcher
+ * (getListingsNeedingPosts). That card also credits DEDICATED posts found
+ * in the synced social feed (externally created posts), which the generic
+ * fetchHandledState can't see; using it keeps the picker and the card in
+ * lockstep. Buyer-side rows are excluded: a just-listed home is another
+ * brokerage's listing when we only represent the buyer.
+ */
+async function fetchJustListedRoundup(
+  cutoffIso: string,
+): Promise<RoundupListingsResult> {
+  const [pool, cardRows] = await Promise.all([
+    fetchListingsForPostBuilder({
+      post_type: "just_listed",
+      windowDays: daysSinceMilestoneFloor(),
+      limit: 500,
+    }),
+    // limit 100 (x3 overfetch inside): active listings since the floor run
+    // ~50; the cap only keeps the card fetcher's id lists modest.
+    getListingsNeedingPosts({ status_filter: "all", limit: 100 }).catch((e) => {
+      console.error("[roundup-listings] recently-listed lookup failed:", e);
+      return [];
+    }),
+  ]);
+  if (pool.length === 0) return { listings: [], metaByMls: {} };
+  const cardByMls = new Map(cardRows.map((r) => [r.mls_number, r]));
+
+  const cutoffMs = Date.parse(cutoffIso);
+  const floorMs = Date.parse(MILESTONE_FLOOR_ISO);
+  const listings = pool.filter((l) => {
+    if (l.alliance_role === "buyer") return false;
+    const t = Date.parse(l.listing_date ?? "");
+    if (!Number.isFinite(t) || t < floorMs) return false;
+    const inWindow = t >= cutoffMs;
+    // The card fetcher drops handled rows once they age out, so a row it
+    // doesn't return is either handled-and-old or outside its pool.
+    const card = cardByMls.get(l.mls_number);
+    return inWindow || card?.promotion_status === "needs_post";
+  });
+  // Pool order is listing_date DESC already (newest first).
+
+  const metaByMls: Record<string, RoundupPropertyMeta> = {};
+  for (const l of listings) {
+    const t = Date.parse(l.listing_date ?? "");
+    metaByMls[l.mls_number] = {
+      event_date: dateOnlyToNoonIso(l.listing_date),
+      price_old: null,
+      price_new: null,
+      already_posted: cardByMls.get(l.mls_number)?.promotion_status === "posted",
+      in_window: Number.isFinite(t) && t >= cutoffMs,
+      skipped: cardByMls.get(l.mls_number)?.promotion_status === "dismissed",
+    };
+  }
+  return { listings, metaByMls };
+}
+
+/**
+ * 2026-10-09 (John) — Just Sold roundup. Buyer-side closings are INCLUDED
+ * (the standing Just Sold rule: celebrating a closed sale we bought is
+ * fine; only pre-closing marketing of another brokerage's listing is not).
+ * Handled state matches the Recently Sold card: published Just Sold post
+ * (anchor or linked), manual Posted tick, or skip. The sold price rides in
+ * price_new for the hero chip and caption bullets.
+ */
+async function fetchJustSoldRoundup(
+  cutoffIso: string,
+): Promise<RoundupListingsResult> {
+  const pool = await fetchListingsForPostBuilder({
+    post_type: "just_sold",
+    windowDays: daysSinceMilestoneFloor(),
+    limit: 500,
+  });
+  if (pool.length === 0) return { listings: [], metaByMls: {} };
+
+  // close_date isn't on the shared listing shape — one batched lookup.
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("properties")
+    .select("mls_number, close_date")
+    .in(
+      "mls_number",
+      pool.map((l) => l.mls_number),
+    );
+  if (error) {
+    console.error("[roundup-listings] close_date lookup failed:", error.message);
+    return { listings: [], metaByMls: {} };
+  }
+  const closeDateByMls = new Map<string, string | null>();
+  for (const row of (data ?? []) as Array<{
+    mls_number: string;
+    close_date: string | null;
+  }>) {
+    closeDateByMls.set(row.mls_number, row.close_date);
+  }
+
+  const cutoffMs = Date.parse(cutoffIso);
+  const floorMs = Date.parse(MILESTONE_FLOOR_ISO);
+  const candidates = pool.filter((l) => {
+    const t = Date.parse(closeDateByMls.get(l.mls_number) ?? "");
+    return Number.isFinite(t) && t >= floorMs;
+  });
+  if (candidates.length === 0) return { listings: [], metaByMls: {} };
+
+  const handled = await fetchHandledState("just_sold", candidates);
+  const listings = candidates.filter((l) => {
+    const t = Date.parse(closeDateByMls.get(l.mls_number) ?? "");
+    const inWindow = Number.isFinite(t) && t >= cutoffMs;
+    return inWindow || (!handled.isPosted(l) && !handled.isSkipped(l));
+  });
+  // Pool order is close_date DESC already (newest first).
+
+  const metaByMls: Record<string, RoundupPropertyMeta> = {};
+  for (const l of listings) {
+    const closed = closeDateByMls.get(l.mls_number) ?? null;
+    const t = closed ? Date.parse(closed) : NaN;
+    metaByMls[l.mls_number] = {
+      event_date: dateOnlyToNoonIso(closed),
+      price_old: null,
+      price_new:
+        typeof l.close_price === "number" && l.close_price > 0
+          ? l.close_price
+          : null,
+      already_posted: handled.isPosted(l),
+      in_window: Number.isFinite(t) && t >= cutoffMs,
+      skipped: handled.isSkipped(l),
+    };
+  }
+  return { listings, metaByMls };
 }
 
 /**
@@ -92,29 +290,40 @@ async function fetchHandledState(
   isPosted: (l: PostBuilderListingWithOH) => boolean;
   isSkipped: (l: PostBuilderListingWithOH) => boolean;
 }> {
-  const [autoPosted, manualMarks, skips] = await Promise.all([
-    getAutoPostedPropertyIds(
-      listings.map((l) => l.id),
-      kind,
-    ).catch((e) => {
-      console.error("[roundup-listings] posted lookup failed:", e);
-      return new Set<string>();
+  // 2026-10-09 — chunked (see HANDLED_CHUNK); results merged.
+  const autoPosted = new Set<string>();
+  const manualMarks = new Set<string>();
+  const skips = new Set<string>();
+  await Promise.all(
+    chunk(listings, HANDLED_CHUNK).map(async (part) => {
+      const [a, m, s] = await Promise.all([
+        getAutoPostedPropertyIds(
+          part.map((l) => l.id),
+          kind,
+        ).catch((e) => {
+          console.error("[roundup-listings] posted lookup failed:", e);
+          return new Set<string>();
+        }),
+        getListingPostMarks(
+          part.map((l) => l.mls_number),
+          kind,
+        ).catch((e) => {
+          console.error("[roundup-listings] manual mark lookup failed:", e);
+          return new Map<string, unknown>();
+        }),
+        getListingSkipMarks(
+          part.map((l) => l.mls_number),
+          kind,
+        ).catch((e) => {
+          console.error("[roundup-listings] skip lookup failed:", e);
+          return new Map<string, unknown>();
+        }),
+      ]);
+      for (const id of a) autoPosted.add(id);
+      for (const k of m.keys()) manualMarks.add(k);
+      for (const k of s.keys()) skips.add(k);
     }),
-    getListingPostMarks(
-      listings.map((l) => l.mls_number),
-      kind,
-    ).catch((e) => {
-      console.error("[roundup-listings] manual mark lookup failed:", e);
-      return new Map<string, { marked_at: string; marked_by_name: string | null }>();
-    }),
-    getListingSkipMarks(
-      listings.map((l) => l.mls_number),
-      kind,
-    ).catch((e) => {
-      console.error("[roundup-listings] skip lookup failed:", e);
-      return new Map<string, { skipped_at: string; reason: string | null }>();
-    }),
-  ]);
+  );
   return {
     isPosted: (l) => autoPosted.has(l.id) || manualMarks.has(l.mls_number),
     isSkipped: (l) => skips.has(l.mls_number),
@@ -204,6 +413,7 @@ async function fetchUnderContractRoundup(
       price_new: null,
       already_posted: handled.isPosted(l),
       in_window: Number.isFinite(t) && t >= cutoffMs,
+      skipped: handled.isSkipped(l),
     };
   }
   return { listings, metaByMls };
@@ -300,6 +510,7 @@ async function fetchPriceReductionRoundup(
       price_new: change?.new_price ?? null,
       already_posted: handled.isPosted(l),
       in_window: Number.isFinite(t) && t >= cutoffMs,
+      skipped: handled.isSkipped(l),
     };
   }
   return { listings, metaByMls };

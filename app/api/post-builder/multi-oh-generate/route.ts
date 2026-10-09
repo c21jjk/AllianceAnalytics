@@ -89,7 +89,9 @@ import { synthesizeMultiOHCaptionAI } from "@/lib/post-builder/ai/multi-oh-capti
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
+  isUncappedRoundupKind,
   multiEventTemplateId,
+  parseRoundupType,
   type MultiOHEventInput,
   type MultiOHEventProperty,
   type MultiOHGenerateErr,
@@ -209,6 +211,11 @@ interface PropertyRow {
   listing_office_name: string | null;
   agent_name: string | null;
   listing_date: string | null;
+  /** 2026-10-09 — Just Sold roundup slides need the same buyer-side swap
+   *  the single Post Builder applies (lib/post-builder/listings.ts). */
+  alliance_role: "listing" | "buyer" | "both" | null;
+  buyer_agent_name: string | null;
+  buyer_office_name: string | null;
 }
 
 /**
@@ -302,11 +309,8 @@ function parseBody(raw: unknown):
 
   // 2026-08-19 — milestone roundups. Absent/unknown → "open_house" so
   // every pre-roundup client keeps working unchanged.
-  const rawRoundup = r.roundup_type;
-  const roundup_type: RoundupType =
-    rawRoundup === "under_contract" || rawRoundup === "price_reduction"
-      ? rawRoundup
-      : "open_house";
+  // 2026-10-09 — parseRoundupType also accepts just_listed / just_sold.
+  const roundup_type: RoundupType = parseRoundupType(r.roundup_type);
 
   // why: stale clients in the wild may still send "v1" (Hero Editorial,
   // retired from the registry on 2026-05-17). Silently upgrade to v2 —
@@ -342,12 +346,13 @@ function parseBody(raw: unknown):
       error: `at least ${minProperties} propert${minProperties === 1 ? "y" : "ies"} required`,
     };
   }
-  // 2026-08-22 (John) — the max is an OPEN HOUSE rule (IG carousel cap).
-  // The roundup kinds are uncapped: they publish to Facebook, whose
-  // multi-photo posts carry far more than 10 images; the hero card shows
-  // its first 9 rows + a "+N more" overflow line (multi-oh-render.ts).
+  // 2026-08-22 (John) — the max is an IG carousel rule. UC / PR are
+  // uncapped: they publish to Facebook, whose multi-photo posts carry far
+  // more than 10 images; the hero card shows its first 9 rows + a "+N
+  // more" overflow line (multi-oh-render.ts). 2026-10-09 — Just Listed /
+  // Just Sold publish to FB + IG, so they keep the cap like open house.
   if (
-    roundup_type === "open_house" &&
+    !isUncappedRoundupKind(roundup_type) &&
     r.properties.length > MULTI_OH_MAX_PROPERTIES
   ) {
     return {
@@ -536,7 +541,8 @@ async function fetchListingRows(
     .select(
       // 2026-07-29: square_feet added (was omitted, so Square Ft
       // placeholders on per-property slides rendered blank).
-      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, unit_number",
+      // 2026-10-09: alliance_role + buyer_* added for Just Sold roundups.
+      "id, mls_number, source_mls, status, address, city, state, zip, list_price, close_price, bedrooms, bathrooms_full, bathrooms_half, square_feet, property_type, public_remarks, hero_image_url, listing_office_name, agent_name, listing_date, unit_number, alliance_role, buyer_agent_name, buyer_office_name",
     )
     .in("mls_number", [...mlsNumbers]);
   if (error) {
@@ -576,6 +582,20 @@ function toRenderListing(
       ? `${baseAddress} · ${unit}`
       : unit
     : baseAddress;
+  // 2026-10-09 — Just Sold roundups include buyer-side closings. On those
+  // rows properties.agent_name / listing_office_name are the CO-OP side;
+  // the Alliance agent is buyer_agent_name. Same swap as toListing in
+  // lib/post-builder/listings.ts (8/15 rule: co-op agents are never
+  // featured). 'both' and listing-side rows are unchanged.
+  const allianceBuyerSide = row?.alliance_role === "buyer";
+  const rowAgent =
+    allianceBuyerSide && row?.buyer_agent_name?.trim()
+      ? row.buyer_agent_name
+      : row?.agent_name ?? null;
+  const rowOffice =
+    allianceBuyerSide && row?.buyer_office_name?.trim()
+      ? row.buyer_office_name
+      : row?.listing_office_name ?? null;
   return {
     id: row?.id ?? prop.listing_id ?? prop.mls_number,
     mls_number: prop.mls_number,
@@ -595,11 +615,13 @@ function toRenderListing(
     property_type: prop.property_type ?? row?.property_type ?? null,
     public_remarks: row?.public_remarks ?? null,
     hero_image_url: prop.hero_image_url ?? row?.hero_image_url ?? null,
-    listing_office_name: row?.listing_office_name ?? null,
+    listing_office_name: rowOffice,
     // why: the per-property card shows the hosting agent, not the listing
     // agent. The hosting agent is who'll be at THIS open house — that's the
     // contact Larissa wants on the slide.
-    agent_name: prop.hosting_agent_name ?? row?.agent_name ?? null,
+    agent_name: prop.hosting_agent_name ?? rowAgent,
+    // 2026-10-09 — drives agent_role_label on Just Sold templates.
+    alliance_role: row?.alliance_role ?? null,
     listing_date: row?.listing_date ?? null,
     status: row?.status ?? "active",
     oh_start_at: prop.oh_start_at,
