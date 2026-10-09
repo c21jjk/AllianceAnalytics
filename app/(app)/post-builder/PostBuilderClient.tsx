@@ -161,6 +161,13 @@ interface Props {
    */
   initialResume?: CreatedPostResumeRow | null;
   /**
+   * 2026-10-09 — true when a multi-event row (multi-OH / UC / PR roundup)
+   * arrives straight from the wizard's Generate (`?studio=1`). Studio opens
+   * on slide 1 as the review step before Final Review. False on every other
+   * arrival (saved-post reopen, refresh), which lands on Final Review.
+   */
+  openStudioOnArrival?: boolean;
+  /**
    * Optional fresh-build context from /post-builder?mls=X&postType=Y.
    * Used by the dashboard's "Build post" CTA so Larissa lands directly on
    * the right post_type with the right listing already selected. Validated
@@ -406,6 +413,7 @@ export default function PostBuilderClient({
   formatMeta,
   isAdmin,
   initialResume,
+  openStudioOnArrival = false,
   initialPick,
   globalTestModeDefault = true,
   globalTestModeOn = false,
@@ -2756,6 +2764,38 @@ export default function PostBuilderClient({
   useEffect(() => {
     if (!initialResume) return;
     if (resumeAutoOpenedRef.current) return;
+    // 2026-10-09 — Studio review step restored for multi-event rows fresh
+    // from the wizard (Cheryl, 10/09). The 9/25 change removed the old
+    // auto-open along with the bug it rode in on, leaving Final Review's
+    // per-slide Edit tags as the only way into Studio, and they were
+    // missed: three multi-OH posts went out with no slide review. Only a
+    // `?studio=1` arrival opens slide 1 here; reopening a saved draft lands
+    // on Final Review. The flag is stripped from the URL so a refresh does
+    // not reopen Studio. Sits ahead of the selectedListing / photos guards
+    // because handleSlideEditClick resolves each slide's own listing and
+    // needs neither. Closing Studio (or Continue to Final Review) reveals
+    // Final Review, which is already mounted underneath.
+    if (isMultiEventTemplateId(initialResume.template_id)) {
+      if (!openStudioOnArrival) {
+        resumeAutoOpenedRef.current = true;
+        return;
+      }
+      // Wait for the resume parse to hydrate the slide arrays and for
+      // renderResult to put the page in multi-event mode.
+      if (multiEventKind === null) return;
+      if (carouselSlides.length === 0 || slideMetadata.length === 0) return;
+      resumeAutoOpenedRef.current = true;
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("studio");
+        // null state lets Next sync its router to the new URL.
+        window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+      } catch {
+        // URL cleanup is cosmetic; never block the Studio open on it.
+      }
+      void handleSlideEditClick(0);
+      return;
+    }
     if (!selectedListing) return;
     if (photosLoading) return;
     // 2026-05-21 — multi-OH carousels have a pre-rendered hero image and
@@ -2789,11 +2829,8 @@ export default function PostBuilderClient({
     // tile carries a pencil that routes through handleSlideEditClick. The
     // old auto-open was only ever visible because of the bug it papered
     // over (see the snapshot note in the resume effect).
-    const resumeIsMultiOH = isMultiEventTemplateId(initialResume.template_id);
-    if (resumeIsMultiOH) {
-      resumeAutoOpenedRef.current = true;
-      return;
-    }
+    // 2026-10-09 — multi-event rows are now handled at the top of this
+    // effect (Studio review step on wizard arrival only).
 
     // Resolve the template: saved layer_tree wins; factory template is the
     // fallback so older rows still open in a usable state.
@@ -2848,6 +2885,9 @@ export default function PostBuilderClient({
     slideMetadata,
     handleSlideEditClick,
     agentCtxFor,
+    // 2026-10-09 — wizard-arrival Studio review step.
+    openStudioOnArrival,
+    multiEventKind,
   ]);
 
   // Fetch photos when the selected listing changes.

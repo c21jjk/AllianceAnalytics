@@ -161,6 +161,15 @@ const WIZARD_COPY: Record<
  *  (tab switches, banner dismissals) in the plain multi-OH flow. */
 const EMPTY_ROUNDUP_META: Record<string, RoundupMetaEntry> = {};
 
+/**
+ * 2026-10-09 — every wizard exit into Post Builder carries `studio=1`, which
+ * opens slide 1 in Studio as the review step before Final Review (all three
+ * kinds: open house, under contract, price reduced).
+ */
+function withStudioReview(path: string): string {
+  return `${path}${path.includes("?") ? "&" : "?"}studio=1`;
+}
+
 /** sessionStorage key per kind. OH keeps its historical key so in-flight
  *  snapshots survive this deploy; the roundups get their own so the three
  *  wizards never cross-restore each other's picks. */
@@ -1580,7 +1589,7 @@ export default function MultiOHWizardClient({
         // "restored" banner + Start-fresh button. The 24h age-out still
         // guarantees tomorrow starts clean.
         markPersistedCompleted();
-        router.push(completedEvent.redirectPath);
+        router.push(withStudioReview(completedEvent.redirectPath));
         return;
       }
 
@@ -1668,7 +1677,7 @@ export default function MultiOHWizardClient({
     // snapshot completed (2026-07-24, was clearPersistedState) so a
     // back-navigation restores the picks instead of an empty wizard.
     markPersistedCompleted();
-    router.push(partialResult.redirectPath);
+    router.push(withStudioReview(partialResult.redirectPath));
   }, [partialResult, router, markPersistedCompleted]);
 
   /**

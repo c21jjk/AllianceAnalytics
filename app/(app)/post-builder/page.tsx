@@ -35,6 +35,12 @@ interface SearchParamsShape {
   mls?: string | string[];
   /** Optional post type to default into ("just_listed", "open_house", etc.). */
   postType?: string | string[];
+  /**
+   * 2026-10-09 — "1" when the multi-OH / roundup wizard redirects here right
+   * after Generate. Opens slide 1 in Studio so the slides get reviewed
+   * before Final Review. Ignored on every other row.
+   */
+  studio?: string | string[];
 }
 
 const POST_TYPES: PostType[] = [
@@ -331,6 +337,9 @@ export default async function PostBuilderPage({
         formatMeta={formatMeta}
         isAdmin={isAdmin}
         initialResume={resume}
+        openStudioOnArrival={
+          isMultiOHResume && asStringParam(sp.studio) === "1"
+        }
         initialPick={initialPick}
         globalTestModeDefault={systemConfig.publish_test_mode}
         globalTestModeOn={systemConfig.publish_test_mode}
