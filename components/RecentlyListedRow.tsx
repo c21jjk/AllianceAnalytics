@@ -98,7 +98,7 @@ export default function RecentlyListedRow({
           onClick={handleToggle}
           aria-expanded={!collapsed}
           aria-controls="recent-listings-body"
-          className="group min-w-0 flex items-start gap-2 text-left -ml-1 rounded-md px-1 py-0.5 hover:bg-gold-100/60 transition-colors"
+          className="group min-w-0 flex items-start gap-2 text-left -ml-1 rounded-md px-1 py-0.5 hover:bg-gold-100/60 transition-colors flex-1"
         >
           <ChevronIcon collapsed={collapsed} />
           <div className="min-w-0">
@@ -121,31 +121,31 @@ export default function RecentlyListedRow({
                 lives in the heading; the controls explain themselves. */}
           </div>
         </button>
-        <div className="flex items-center gap-3 shrink-0">
-          {!collapsed ? (
-            <>
-              <ListingsFilterChips current={statusFilter} />
-              <Link
-                href="/settings/promotions"
-                className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
-              >
-                Dismissed
-              </Link>
-            </>
-          ) : null}
-          {/* 2026-10-09 (John) — weekly Just Listed roundup. Singles stay;
-              each row keeps its own build button. */}
-          {listings.length >= 1 ? (
-            <BuildRoundupLink
-              href="/post-builder/roundup/just-listed"
-              label="Just Listed"
-              count={
-                listings.filter((l) => l.promotion_status === "needs_post")
-                  .length
-              }
-            />
-          ) : null}
-        </div>
+        {/* 2026-10-09 (John) — weekly Just Listed roundup. Singles stay;
+            each row keeps its own build button. Sits on the title row at the
+            right edge so it lines up with Recently Sold's Build Roundup. */}
+        {listings.length >= 1 ? (
+          <BuildRoundupLink
+            href="/post-builder/roundup/just-listed"
+            label="Just Listed"
+            count={
+              listings.filter((l) => l.promotion_status === "needs_post")
+                .length
+            }
+          />
+        ) : null}
+        {/* Filter chips on their own row under the title. */}
+        {!collapsed ? (
+          <div className="w-full flex items-center gap-3">
+            <ListingsFilterChips current={statusFilter} />
+            <Link
+              href="/settings/promotions"
+              className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline"
+            >
+              Dismissed
+            </Link>
+          </div>
+        ) : null}
       </header>
 
       {/* Render the body only when expanded. Guard with `hydrated` so SSR's
