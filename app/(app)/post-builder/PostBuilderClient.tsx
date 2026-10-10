@@ -2787,15 +2787,28 @@ export default function PostBuilderClient({
       if (multiEventKind === null) return;
       if (carouselSlides.length === 0 || slideMetadata.length === 0) return;
       resumeAutoOpenedRef.current = true;
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("studio");
-        // null state lets Next sync its router to the new URL.
-        window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-      } catch {
-        // URL cleanup is cosmetic; never block the Studio open on it.
-      }
-      void handleSlideEditClick(0);
+      // 2026-10-09 (live test) — deferred, and the URL is cleaned AFTER the
+      // open. Arriving from the wizard is a client-side navigation, and
+      // this effect can fire before Next has finished committing it. Calling
+      // handleSlideEditClick then (it awaits a server action) and rewriting
+      // the URL in the same tick lost the open intermittently: Just Listed
+      // test runs landed on Final Review with no Studio, while a hard load
+      // of the same URL opened fine. Waiting a beat lets the navigation
+      // settle first.
+      const openSlide = handleSlideEditClick;
+      window.setTimeout(() => {
+        void openSlide(0).finally(() => {
+          try {
+            const url = new URL(window.location.href);
+            if (!url.searchParams.has("studio")) return;
+            url.searchParams.delete("studio");
+            // null state lets Next sync its router to the new URL.
+            window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+          } catch {
+            // URL cleanup is cosmetic; never block anything on it.
+          }
+        });
+      }, 300);
       return;
     }
     if (!selectedListing) return;

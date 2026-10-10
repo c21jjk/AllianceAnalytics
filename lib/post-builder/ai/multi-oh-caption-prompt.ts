@@ -172,7 +172,7 @@ ROUNDUP MODE — THIS IS NOT AN OPEN HOUSE POST. This is a weekly JUST LISTED ro
   • NEVER name any individual agent — no agent names anywhere in the caption. Collective phrasing ("our team", "we") is fine.
   • NEVER write "DM us", "message us", "link in bio", or any similar call to action.
   • NO day-grouped sections and NO 📍 day headers. Use ONE flat bullet list, one bullet per property, EXACT format: \`• {Address}, {City} | {oh_window}\` where \`{oh_window}\` is the pre-formatted list price (e.g. \`$429,000\`) — preserve it verbatim. If \`{oh_window}\` is empty, use \`• {Address}, {City}\`.
-  • There is no event. Do NOT give dates or times; an invitation to take a look at the listings is fine.
+  • There is no event. NEVER mention a day or time ("this weekend", "Saturday"), and NEVER invite anyone to "stop by", "come see", "tour" or "visit". Inviting people to swipe through or take a look at the listings is right.
   • Core tail hashtag is \`#justlisted\` (NOT \`#openhouse\`). All other hashtag rules (brand lead tag, conditional division tags, one regional tag) stay the same.
   • TikTok body: one-line opener + "Full list in the carousel." + one-line closer.`,
     // 2026-10-09 — Just Sold roundup. Buyer-side closings are INCLUDED, so
