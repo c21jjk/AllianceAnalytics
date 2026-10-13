@@ -485,6 +485,12 @@ export default function PostBuilderClient({
   // null as "no data", which is the pre-2026-08-06 behavior.
   const [agentAttribution, setAgentAttribution] =
     useState<AgentAttributionResponse | null>(null);
+  // 2026-10-13 — per-slide agent lookups for roundup slides, memoized by
+  // normalized name so paging through a carousel hits the route once per
+  // agent. See handleSlideEditClick.
+  const slideAgentLookupRef = useRef(
+    new Map<string, Promise<AgentAttributionResponse | null>>(),
+  );
   // === Canvas Editor (Path C) — overlay open + cached hydrated context ===
   // why: studioContext is set at open-time so the overlay receives stable
   // template + listing references rather than re-deriving them on every render
@@ -2473,6 +2479,48 @@ export default function PostBuilderClient({
           phone: hostEntry.phone,
           photo_url: hostEntry.photo_url,
         };
+      }
+
+      // ---- Agent headshot + phone for roundup slides ----
+      // 2026-10-13 (Cheryl) — Just Sold roundup slides opened in Studio with
+      // no agent photo on any Shore slide (and Brenda Smith's on South
+      // Jersey), even though the server-rendered PNGs had them. Roundup
+      // slides carry no hosting agent, so the photo comes from the listing
+      // agent's `agentPhotoUrl` — which only the single-listing path ever
+      // filled (agentCtxFor is keyed to selectedListing). Left null, Studio
+      // dropped the agent_photo layer and the exported slide went out
+      // without a headshot. Resolve it per slide through the same route the
+      // single path uses, so the editor matches the render. A miss leaves
+      // the fields null, which is the old behavior.
+      if (!payload.hosting_agent) {
+        const agentName = payload.agentName?.trim();
+        if (agentName) {
+          const key = agentName.toLowerCase();
+          let lookup = slideAgentLookupRef.current.get(key);
+          if (!lookup) {
+            lookup = fetch(
+              `/api/agents/attribution?name=${encodeURIComponent(agentName)}`,
+            )
+              .then((r) => r.json() as Promise<AgentAttributionResponse>)
+              .then((json) => (json.ok ? json : null))
+              .catch((e) => {
+                // why: forget a failed lookup so the next open retries.
+                console.error("[edit-slide] agent lookup failed:", e);
+                slideAgentLookupRef.current.delete(key);
+                return null;
+              });
+            slideAgentLookupRef.current.set(key, lookup);
+          }
+          const attribution = await lookup;
+          if (attribution) {
+            if (!payload.agentPhotoUrl && attribution.photo_url) {
+              payload.agentPhotoUrl = attribution.photo_url;
+            }
+            if (!payload.agentPhone && attribution.phone) {
+              payload.agentPhone = attribution.phone;
+            }
+          }
+        }
       }
 
       // ---- Inject the open-house window so the editor matches the render ----
