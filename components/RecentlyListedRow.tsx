@@ -51,10 +51,10 @@ export default function RecentlyListedRow({
   freshCount = 0,
   className,
 }: RecentlyListedRowProps) {
-  // Hide entirely when there's nothing to show in "needs_only" view —
-  // dashboard doesn't grow a permanent empty section. In "all" view we
-  // always render the chrome so the toggle stays accessible.
-  const renderEarly = statusFilter === "needs_only" && listings.length === 0;
+  // 2026-10-16 (John): the card always renders, even with nothing left to
+  // post, so an empty card reads as "all caught up" instead of vanishing.
+  const emptyCopy =
+    statusFilter === "needs_only" ? "All caught up." : MILESTONE_FLOOR_EMPTY_COPY;
 
   // Collapsed state — Recently Listed defaults to EXPANDED so new listings
   // stay in Larissa's eye line. localStorage "1" means the user explicitly
@@ -82,8 +82,6 @@ export default function RecentlyListedRow({
       // ignore — see above
     }
   }
-
-  if (renderEarly) return null;
 
   const scope = officeShortCode ? ` (${officeShortCode})` : "";
 
@@ -155,7 +153,7 @@ export default function RecentlyListedRow({
         <div id="recent-listings-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              {MILESTONE_FLOOR_EMPTY_COPY}
+              {emptyCopy}
             </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -175,7 +173,7 @@ export default function RecentlyListedRow({
         <div id="recent-listings-body" className="mt-3">
           {listings.length === 0 ? (
             <div className="rounded-md bg-white/60 border border-dashed border-neutral-300 px-3 py-4 text-center text-xs text-neutral-500">
-              {MILESTONE_FLOOR_EMPTY_COPY}
+              {emptyCopy}
             </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
