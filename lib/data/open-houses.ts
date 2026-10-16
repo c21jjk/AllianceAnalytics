@@ -28,6 +28,9 @@ export interface UpcomingOpenHouse {
   start_at: string;
   end_at: string | null;
   comments: string | null;
+  /** 2026-10-16 (John) — host picked on the dashboard for THIS occurrence.
+   *  Null means "use the MLS notes / listing agent". */
+  host_agent_name: string | null;
   /** Joined from properties — null when the OH arrived before the property
    *  replicated (rare; resolves on next sync). */
   address: string | null;
@@ -86,6 +89,7 @@ interface DbOpenHouseRow {
   start_at: string;
   end_at: string | null;
   comments: string | null;
+  host_agent_name: string | null;
   created_at: string;
 }
 
@@ -144,7 +148,9 @@ export async function getUpcomingOpenHouses(
 
   const { data: ohRows, error: ohErr } = await supabase
     .from("open_houses")
-    .select("id, mls_number, property_id, start_at, end_at, comments, created_at")
+    .select(
+      "id, mls_number, property_id, start_at, end_at, comments, host_agent_name, created_at",
+    )
     .gte("start_at", startCutoff)
     .lte("start_at", endCutoff)
     .order("start_at", { ascending: true })
@@ -304,6 +310,7 @@ export async function getUpcomingOpenHouses(
       start_at: oh.start_at,
       end_at: oh.end_at,
       comments: oh.comments,
+      host_agent_name: oh.host_agent_name ?? null,
       address: property?.address ?? null,
       unit_number: property?.unit_number ?? null,
       city: property?.city ?? null,
@@ -500,7 +507,9 @@ export async function getOpenHousesForProperty(
 
   const { data: ohRows, error } = await supabase
     .from("open_houses")
-    .select("id, mls_number, property_id, start_at, end_at, comments, created_at")
+    .select(
+      "id, mls_number, property_id, start_at, end_at, comments, host_agent_name, created_at",
+    )
     .eq("property_id", propertyId)
     .gte("start_at", startCutoff)
     .lte("start_at", endCutoff)
@@ -539,6 +548,7 @@ export async function getOpenHousesForProperty(
     start_at: oh.start_at,
     end_at: oh.end_at,
     comments: oh.comments,
+    host_agent_name: oh.host_agent_name ?? null,
     address: property?.address ?? null,
     unit_number: property?.unit_number ?? null,
     city: property?.city ?? null,

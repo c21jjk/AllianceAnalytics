@@ -44,3 +44,19 @@ export function resolveHostingAgent(
   }
   return (listingAgentName ?? "").trim();
 }
+
+/**
+ * 2026-10-16 (John) — full host order for an open-house occurrence:
+ *   1. the host saved on the dashboard (open_houses.host_agent_name)
+ *   2. a "Hosted by …" line in the MLS open-house notes
+ *   3. the listing agent
+ */
+export function resolveOpenHouseHost(
+  savedHost: string | null | undefined,
+  notes: string | null | undefined,
+  listingAgentName: string | null | undefined,
+): string {
+  const saved = (savedHost ?? "").trim();
+  if (saved) return saved;
+  return resolveHostingAgent(notes, listingAgentName);
+}

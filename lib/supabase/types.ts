@@ -1025,6 +1025,9 @@ export type Database = {
           created_at: string
           end_at: string | null
           feed_short_code: string
+          host_agent_name: string | null
+          host_set_at: string | null
+          host_set_by: string | null
           id: string
           last_synced_at: string
           mls_number: string
@@ -1040,6 +1043,9 @@ export type Database = {
           created_at?: string
           end_at?: string | null
           feed_short_code: string
+          host_agent_name?: string | null
+          host_set_at?: string | null
+          host_set_by?: string | null
           id?: string
           last_synced_at?: string
           mls_number: string
@@ -1055,6 +1061,9 @@ export type Database = {
           created_at?: string
           end_at?: string | null
           feed_short_code?: string
+          host_agent_name?: string | null
+          host_set_at?: string | null
+          host_set_by?: string | null
           id?: string
           last_synced_at?: string
           mls_number?: string

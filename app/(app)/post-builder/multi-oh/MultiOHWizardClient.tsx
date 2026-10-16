@@ -16,7 +16,7 @@ import {
   Pencil,
   X,
 } from "lucide-react";
-import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
+import { resolveOpenHouseHost } from "@/lib/open-houses/host-resolution";
 import {
   MULTI_OH_MAX_PROPERTIES,
   MULTI_OH_MIN_PROPERTIES,
@@ -462,6 +462,9 @@ function mlsKeyOf(mls: readonly string[]): string {
 interface OhOccurrence {
   start_at: string;
   end_at: string | null;
+  /** 2026-10-16 — host picked on the dashboard for this occurrence. Used as
+   *  the occurrence's default host ahead of the property-level value. */
+  host_name?: string | null;
 }
 
 /** Stable key for one occurrence of one listing. start_at (not a DB id)
@@ -481,10 +484,17 @@ function occurrencesOf(l: PostBuilderListing): OhOccurrence[] {
     return l.oh_occurrences.map((o) => ({
       start_at: o.start_at,
       end_at: o.end_at ?? null,
+      host_name: o.host_name?.trim() || null,
     }));
   }
   if (l.oh_start_at) {
-    return [{ start_at: l.oh_start_at, end_at: l.oh_end_at ?? null }];
+    return [
+      {
+        start_at: l.oh_start_at,
+        end_at: l.oh_end_at ?? null,
+        host_name: l.oh_host_name?.trim() || null,
+      },
+    ];
   }
   return [];
 }
@@ -1002,6 +1012,7 @@ export default function MultiOHWizardClient({
         pickCount += 1;
         const host = (
           occurrenceOverrides[occKey(l.mls_number, o.start_at)]?.host ??
+          o.host_name ??
           propertyHost
         )
           .trim()
@@ -1056,7 +1067,13 @@ export default function MultiOHWizardClient({
       // `public_remarks` (the property's MLS description) — the hosting
       // pattern only lives on the open_houses row.
       const listing = listingsByMls.get(mls);
-      const defaultAgent = resolveHostingAgent(
+      // 2026-10-16 (John) — a host picked on the dashboard wins. For a
+      // multi-window property each occurrence carries its own saved host
+      // (see occurrencesOf), so the property-level default stays the MLS one
+      // and an unsaved Sunday doesn't inherit Saturday's pick.
+      const singleWindow = listing ? occurrencesOf(listing).length <= 1 : true;
+      const defaultAgent = resolveOpenHouseHost(
+        singleWindow ? listing?.oh_host_name : null,
         listing?.oh_comments,
         listing?.agent_name,
       );
@@ -1354,7 +1371,7 @@ export default function MultiOHWizardClient({
       return use.map((o) => {
         const override =
           occurrenceOverrides[occKey(l.mls_number, o.start_at)]?.host;
-        const host = (override ?? propertyHost).trim();
+        const host = (override ?? o.host_name ?? propertyHost).trim();
         return {
           ...base,
           oh_start_at: o.start_at,
@@ -2399,7 +2416,7 @@ function Step1Pick({
                           // value so the common same-host case needs no
                           // extra typing.
                           const hostValue =
-                            override?.host ?? hostingAgentValue;
+                            override?.host ?? o.host_name ?? hostingAgentValue;
                           const lockLastTick = included && includedCount <= 1;
                           return (
                             <div

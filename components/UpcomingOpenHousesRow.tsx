@@ -6,7 +6,8 @@ import type { UpcomingOpenHouse } from "@/lib/data/open-houses";
 import { formatCurrency } from "@/lib/format";
 import OfficeThumbBadge from "./OfficeThumbBadge";
 import SyncOpenHousesButton from "./SyncOpenHousesButton";
-import { resolveHostingAgent } from "@/lib/open-houses/host-resolution";
+import { resolveOpenHouseHost } from "@/lib/open-houses/host-resolution";
+import OpenHouseHostPicker from "./OpenHouseHostPicker";
 import {
   ListingHoldChip,
   ListingNoteButton,
@@ -502,36 +503,20 @@ function OpenHouseRow({
             </>
           ) : null}
         </div>
-        {(() => {
-          // Comments override listing agent: an OH's "Hosted by …" line in
-          // the Paragon notes (e.g. "Hosted by PJ Dougherty") wins over the
-          // listing agent attribution. Falls back to the listing agent when
-          // the notes don't mention a host explicitly.
-          const displayHost = resolveHostingAgent(
+      </Link>
+        {/* 2026-10-16 (John) — host is pickable here, so it sits OUTSIDE the
+            address link (a button inside an <a> swallows the click). Order:
+            dashboard pick, then a "Hosted by" line in the MLS notes, then the
+            listing agent. */}
+        <OpenHouseHostPicker
+          openHouseId={openHouse.id}
+          savedHost={openHouse.host_agent_name}
+          displayHost={resolveOpenHouseHost(
+            openHouse.host_agent_name,
             openHouse.comments,
             openHouse.agent_name,
-          );
-          if (!displayHost) return null;
-          return (
-            <div
-              style={{
-                marginTop: 2,
-                fontSize: 11,
-                color: "#737373",
-                fontWeight: 400,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              <span style={{ color: "#a3a3a3" }}>Hosted by </span>
-              <span style={{ color: "#171717", fontWeight: 500 }}>
-                {displayHost}
-              </span>
-            </div>
-          );
-        })()}
-      </Link>
+          )}
+        />
         <ListingNoteLine />
       </div>
 

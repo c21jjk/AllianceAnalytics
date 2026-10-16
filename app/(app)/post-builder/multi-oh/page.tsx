@@ -1,8 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { fetchListingsForPostBuilder } from "@/lib/post-builder/listings";
 import { listTemplatesForPostType } from "@/lib/template-builder";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { listAllianceCompanyAgentNames } from "@/lib/data/alliance-dash-agents";
+import { getHostRoster } from "@/lib/data/host-roster";
 import MultiOHWizardClient from "./MultiOHWizardClient";
 
 // why: requireUser is still called here even though we no longer thread
@@ -81,42 +80,9 @@ export default async function MultiOHPage() {
   // and `priorityAgents` is the Alliance subset the dropdown ranks first.
   // Ranking, never filtering — being wrong about who is ours should cost a
   // few dropdown places, not make somebody unpickable.
-  let agentRoster: string[] = [];
-  let priorityAgents: string[] = [];
-  try {
-    const supabase = createAdminClient();
-    const [{ data: rosterRows }, { data: listingAgents }, dashRoster] =
-      await Promise.all([
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (supabase as any)
-          .from("mls_agents")
-          .select("full_name")
-          .eq("is_active", true),
-        supabase.from("properties").select("agent_name").not("agent_name", "is", null),
-        listAllianceCompanyAgentNames(),
-      ]);
-    const seen = new Map<string, string>();
-    const priority = new Map<string, string>();
-    const add = (raw: unknown, isOurs: boolean) => {
-      if (typeof raw !== "string") return;
-      const name = raw.trim();
-      if (name.length < 2) return;
-      const key = name.toLowerCase();
-      if (!seen.has(key)) seen.set(key, name);
-      if (isOurs && !priority.has(key)) priority.set(key, name);
-    };
-    // Our own two sources are Alliance by definition, so both feed the
-    // priority tier. The Dash roster splits itself — see CompanyAgentRoster.
-    for (const r of rosterRows ?? []) add(r.full_name, true);
-    for (const r of listingAgents ?? [])
-      add((r as { agent_name: string | null }).agent_name, true);
-    for (const name of dashRoster.all) add(name, false);
-    for (const name of dashRoster.priority) add(name, true);
-    agentRoster = Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
-    priorityAgents = Array.from(priority.values());
-  } catch (e) {
-    console.warn("[multi-oh] agent roster fetch failed:", e);
-  }
+  // Built in lib/data/host-roster.ts (shared with the dashboard host picker).
+  const { roster: agentRoster, priority: priorityAgents } =
+    await getHostRoster();
 
   return (
     <div>

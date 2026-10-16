@@ -175,9 +175,41 @@ async function maybeResolveHostingAttribution(
   explicitName: string | null | undefined,
 ): Promise<AgentAttribution | null> {
   if (postType !== "open_house") return null;
-  const name = (explicitName ?? listing.agent_name ?? "").trim();
+  // 2026-10-16 (John) — a host picked on the dashboard beats the listing
+  // agent. Explicit body value first, then the listing payload's soonest
+  // occurrence, then a direct read in case the payload predates the field.
+  const savedHost =
+    (listing.oh_host_name ?? "").trim() ||
+    (await readSavedOpenHouseHost(listing.id));
+  const name = (
+    explicitName ||
+    savedHost ||
+    listing.agent_name ||
+    ""
+  ).trim();
   if (!name) return null;
   return getAgentAttribution(name);
+}
+
+/** Host saved on the dashboard for the property's next open house, or "". */
+async function readSavedOpenHouseHost(
+  propertyId: string | null | undefined,
+): Promise<string> {
+  if (!propertyId || !looksLikeUuid(propertyId)) return "";
+  try {
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("open_houses")
+      .select("host_agent_name")
+      .eq("property_id", propertyId)
+      .gt("start_at", new Date(Date.now() - 6 * 3600_000).toISOString())
+      .order("start_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return (data?.host_agent_name ?? "").trim();
+  } catch {
+    return "";
+  }
 }
 
 export async function POST(request: Request) {

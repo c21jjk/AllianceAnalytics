@@ -97,6 +97,9 @@ export interface PostBuilderListing {
   /** Open House comments/notes from Paragon — used to parse "Hosted by …"
    *  patterns that override the listing agent attribution. */
   oh_comments?: string | null;
+  /** 2026-10-16 (John) — host saved on the dashboard for the SOONEST
+   *  occurrence (open_houses.host_agent_name). Wins over oh_comments. */
+  oh_host_name?: string | null;
   /**
    * 2026-08-21 (John) — ALL upcoming open-house windows for this listing
    * (next 14 days, chronological), not just the soonest. 508 E 7th Ave had
@@ -109,6 +112,8 @@ export interface PostBuilderListing {
   oh_occurrences?: ReadonlyArray<{
     start_at: string;
     end_at: string | null;
+    /** 2026-10-16 — dashboard-saved host for this occurrence, if any. */
+    host_name?: string | null;
   }>;
   /**
    * 2026-08-07 (John): the Multi-OH wizard needs to batch its picker by
