@@ -31,6 +31,7 @@ import {
   buildGeoPhrase,
   detectTone,
   sortPropertiesByOpenHouse,
+  synthesizeMultiOHCaption,
   type CaptionTone,
   type MultiOHCaptionInput,
   type MultiOHCaptionProperty,
@@ -356,6 +357,15 @@ function resolveTone(
 export async function synthesizeMultiOHCaptionAI(
   input: MultiOHCaptionInput,
 ): Promise<MultiOHCaptionResult> {
+  // 2026-10-16 (John) — an edited caption is final wording. The prompt asked
+  // Claude to keep it verbatim, but a live run showed the model rewriting
+  // the tail of the override (text after the hashtags was dropped), so the
+  // edit never reached Final Review. Skip the model entirely: the
+  // deterministic synth uses the override as-is and only adds hashtags when
+  // the override has none.
+  if ((input.caption_override ?? "").trim().length > 0) {
+    return synthesizeMultiOHCaption(input);
+  }
   // 2026-08-19 — roundup kinds preserve the wizard's carousel order (there
   // are no OH dates to sort by); open_house keeps the chronological sort.
   const roundupType: RoundupType = input.roundup_type ?? "open_house";
