@@ -49,6 +49,18 @@ const MAX_PAGES = 30;
 const RETS_FETCH_TIMEOUT_MS = 60_000;
 const RECENT_SOLD_DAYS = 90;
 
+// Rentals are not tracked or promoted. Bright ships them as PropertyType
+// "Residential Lease" / "Commercial Lease" (subtype often blank or "Office",
+// so the stored property_type can hide it). Skip any lease type, plus anything
+// priced under the floor as a backstop. DB triggers on properties and
+// active_listings enforce the same rule for every feed.
+const MIN_LISTING_PRICE = 25_000;
+function isExcludedListing(row: RowMap, m: { list_price: number | null; close_price: number | null }): boolean {
+  if (/lease|rental/i.test(`${row["PropertyType"] ?? ""} ${row["PropertySubType"] ?? ""}`)) return true;
+  const price = m.close_price ?? m.list_price;
+  return price !== null && price < MIN_LISTING_PRICE;
+}
+
 // Photos live in a separate RESO Media resource (PROP_MEDIA), joined to a
 // listing by ResourceRecordKey == Property ListingKey. Rows carry direct CDN
 // URLs (no GetObject / binary download needed). URLs are http; we upgrade to
@@ -897,12 +909,15 @@ async function syncFeed(shortCode: string): Promise<SyncResult> {
   }
 
   const byMls = new Map<string, MappedListing>();
+  let excluded = 0;
   for (const row of raw.rows) {
     const m = mapRow(row);
+    if (m && isExcludedListing(row, m)) { excluded += 1; continue; }
     if (passesFilter(m)) byMls.set(m.mls_number, m);
   }
   const mapped = Array.from(byMls.values());
   result.kept = mapped.length;
+  if (excluded > 0) console.log(`[bright] skipped ${excluded} lease / under-floor listing(s)`);
   const seen = new Set(mapped.map((m) => m.mls_number));
 
   const officeMap = await loadOfficeMap(analytics);
