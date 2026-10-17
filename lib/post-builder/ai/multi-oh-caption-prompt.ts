@@ -72,6 +72,13 @@ export interface MultiOhCaptionPromptInput {
   captionOverride: string | null;
   geoHint: string;
   resolvedTone: "coastal" | "family" | "investor" | "cozy" | "editorial";
+  /**
+   * 2026-10-16 (John) — open_house only. Pre-computed statement of WHEN the
+   * event happens so the opener never says "this weekend" for a post whose
+   * dates span two weekends (the Oct-16 post mixed Sun Oct 18 with Sat Oct
+   * 24 and still opened with "this weekend"). Null for the roundup kinds.
+   */
+  dateSpanNote?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +108,7 @@ Hard rules — NON-NEGOTIABLE:
   • NEVER invent property details that weren't provided. If the input says "115 W 6th Avenue, North Wildwood | 10-12" that's all you know about that property — do not add beds, baths, price, features.
   • Address bullets use the EXACT format: \`• {Address}, {City} | {TimeRange}\` — preserve verbatim. No AM/PM suffix on the time, no agent attribution after the time, no period at the end of the bullet.
   • Day headers use the EXACT format: \`📍 {Weekday}, {Month} {Day}\` — e.g., \`📍 Saturday, May 16\`. Always include the 📍 emoji.
+  • The EVENT DATES line in the user message states exactly which days the open houses fall on and whether they sit within ONE weekend. Say "this weekend" ONLY when that line says they do. When the dates span more than one weekend, the opener must name the dates or say "over the next two weekends" — never "this weekend".
 
 Output shape — match this exemplar closely:
 
@@ -290,11 +298,16 @@ export function buildUserPrompt(input: MultiOhCaptionPromptInput): string {
     ? `GEOGRAPHIC HINT: "${input.geoHint.trim()}" — feel free to use this phrasing in the opener, or rework it into something more natural for the tone.`
     : `GEOGRAPHIC HINT: (none — pick your own opener geography phrase)`;
 
+  const datesBlock = input.dateSpanNote
+    ? `EVENT DATES: ${input.dateSpanNote}`
+    : null;
+
   return [
     `EVENT DATA (do NOT invent properties or details outside this list):`,
     "",
     eventJson,
     "",
+    ...(datesBlock ? [datesBlock, ""] : []),
     toneBlock,
     "",
     geoBlock,

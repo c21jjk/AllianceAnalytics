@@ -25,7 +25,7 @@
  *   the right factory per layer kind, signal done.
  */
 
-import { Canvas } from "fabric";
+import { Canvas, type Textbox } from "fabric";
 import {
   isImageLayer,
   isShapeLayer,
@@ -113,25 +113,44 @@ export async function renderSchemaHeadless(
   // side.) Timeout bumped from 5s → 8s to absorb cold-start latency on
   // headless Chromium.
   const fontFamilies = collectFontFamilies(schema);
+  // 2026-10-16 — the font gate is now a HARD gate. Two things were wrong:
+  //   (a) collectFontFamilies returned the whole CSS stack
+  //       ('Allura", "Brush Script MT", cursive'), so document.fonts.load()
+  //       threw a syntax error, the catch below logged a "timeout" and the
+  //       render carried on. The gate never worked for stacked families.
+  //   (b) a timeout only produced a warning, so the slide was published in
+  //       the fallback font (511 Wrightstown Sykesville, Oct-16 OH post),
+  //       and because Fabric measured line wraps with fallback metrics the
+  //       Allura slides wrapped "Open House" onto two lines over the
+  //       address. A missing font is a failed slide, never a published one.
+  const fontSpecs = fontFamilies.map((family) => `16px "${family}"`);
+  let fontsSettled = false;
   try {
     await Promise.race([
-      Promise.all([
-        document.fonts.ready,
-        ...fontFamilies.map((family) =>
-          document.fonts.load(`16px "${family}"`),
-        ),
-      ]),
+      (async () => {
+        await Promise.all(fontSpecs.map((spec) => document.fonts.load(spec)));
+        await document.fonts.ready;
+      })(),
       new Promise((_, rej) =>
         setTimeout(() => rej(new Error("font-timeout")), 8_000),
       ),
     ]);
-  } catch {
-    console.warn(
-      "[headless-render] font load timed out — drawing in fallback for families:",
-      fontFamilies,
-    );
-    warnings.push(
-      `font-timeout (drew in fallback for: ${fontFamilies.join(", ")})`,
+    fontsSettled = true;
+  } catch (e) {
+    console.warn("[headless-render] font load failed:", e);
+  }
+  // Only families the page actually declares (@font-face via fonts.css)
+  // can be verified; system fallbacks (Arial, Georgia) trivially pass.
+  const declared = new Set<string>();
+  document.fonts.forEach((ff) =>
+    declared.add(ff.family.replace(/^['"]|['"]$/g, "")),
+  );
+  const missing = fontFamilies.filter(
+    (family) => declared.has(family) && !document.fonts.check(`16px "${family}"`),
+  );
+  if (!fontsSettled || missing.length > 0) {
+    throw new Error(
+      `font-timeout: ${(missing.length > 0 ? missing : fontFamilies).join(", ")} did not load; refusing to render in a fallback font`,
     );
   }
 
@@ -233,7 +252,13 @@ export async function renderSchemaHeadless(
         shrinkTextToIntendedLines(tb, layer.fontSize, layer.height, layer.lineHeight);
         canvas.add(tb);
       } else {
-        canvas.add(createFabricTextbox(layer, layer.text));
+        // 2026-10-16 — free text gets the same shrink-to-fit as bound text.
+        // A template's fixed text ("Open House" eyebrow) can still wrap when
+        // the authored box is tight for the real font; wrapping past the
+        // authored line count collides with whatever sits below.
+        const tb = createFabricTextbox(layer, layer.text);
+        shrinkTextToIntendedLines(tb, layer.fontSize, layer.height, layer.lineHeight);
+        canvas.add(tb);
       }
     } else if (isImageLayer(layer)) {
       const resolvedSrc = layer.boundField
@@ -275,6 +300,16 @@ export async function renderSchemaHeadless(
   // Force a single render tick so toDataURL/screenshot sees the result.
   canvas.renderAll();
 
+  // 2026-10-16 — layout guard. If two text layers' ink rectangles collide
+  // the slide is wrong no matter why (wrap, oversized data, bad template),
+  // and it must not publish. Throwing here surfaces as a failed slide in
+  // the wizard with the two layer names, so whoever is building the post
+  // sees exactly what to fix instead of discovering it on Facebook.
+  const collision = findTextCollision(canvas, warnings);
+  if (collision) {
+    throw new Error(`layout-overlap: "${collision.a}" overlaps "${collision.b}"`);
+  }
+
   return { canvas, warnings };
 }
 
@@ -295,9 +330,13 @@ function collectFontFamilies(schema: CanvasTemplateSchema): string[] {
     if (!layer.visible) continue;
     const family = (layer.fontFamily ?? "").trim();
     if (!family) continue;
-    // Strip surrounding quotes if the schema stored a CSS-style
-    // quoted family — `document.fonts.load` wants the bare name.
-    const unquoted = family.replace(/^['"]|['"]$/g, "");
+    // The schema stores a CSS stack ('"Allura", "Brush Script MT", cursive').
+    // `document.fonts.load` wants ONE bare family name, so take the primary
+    // (first) entry and strip its quotes. Passing the whole stack threw a
+    // syntax error and silently disabled the font gate (fixed 2026-10-16).
+    const primary = family.split(",")[0]?.trim() ?? "";
+    const unquoted = primary.replace(/^['"]|['"]$/g, "").trim();
+    if (!unquoted) continue;
     seen.add(unquoted);
   }
   return Array.from(seen);
@@ -306,3 +345,145 @@ function collectFontFamilies(schema: CanvasTemplateSchema): string[] {
 // shrinkTextToIntendedLines moved to fabric-factory.ts (2026-07-24) so
 // CanvasEditor.tsx (the live Studio editor) can share the same fix — see
 // that file for the full doc comment.
+
+// ---------------------------------------------------------------------------
+// Text collision guard (2026-10-16)
+// ---------------------------------------------------------------------------
+//
+// Measures REAL glyph pixels, not boxes. Larissa's designs deliberately tuck
+// a date line inside the em-box of a 240px script "Open" (the glyphs don't
+// touch, the boxes do), so a box-overlap test would fail the default Open
+// House template on every render. Each text object is drawn alone onto an
+// offscreen canvas and its opaque pixels become a mask. Two texts collide
+// when the TIGHT bounding boxes of their ink overlap by more than
+// BBOX_FRACTION of the smaller box (letters interleaving, like "ROAD" run
+// into "Philip"), or when the glyph pixels themselves share more than
+// PIXEL_FRACTION of the smaller text's ink (one word printed over another).
+
+const BBOX_FRACTION = 0.15;
+const PIXEL_FRACTION = 0.08;
+const COLLISION_MIN_PX = 150;
+const INK_ALPHA = 96;
+
+interface InkMask {
+  mask: Uint8Array;
+  count: number;
+  /** Tight bounds of the ink, inclusive. */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+function inkMaskOf(
+  obj: Textbox,
+  width: number,
+  height: number,
+): InkMask | null {
+  const off = document.createElement("canvas");
+  off.width = width;
+  off.height = height;
+  const ctx = off.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, width, height);
+  obj.render(ctx);
+  const data = ctx.getImageData(0, 0, width, height).data;
+  const mask = new Uint8Array(width * height);
+  let count = 0;
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let i = 0, px = 0; i < data.length; i += 4, px++) {
+    if (data[i + 3] > INK_ALPHA) {
+      mask[px] = 1;
+      count++;
+      const x = px % width;
+      const y = (px - x) / width;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  return { mask, count, x0, y0, x1, y1 };
+}
+
+/**
+ * Returns the first pair of visible, non-empty text objects whose glyphs
+ * actually overlap, or null when the slide is clean. Any failure inside
+ * the measurement itself is reported as a warning and treated as clean
+ * (the guard must never be the thing that blocks a post).
+ */
+export function findTextCollision(
+  canvas: Canvas,
+  warnings: string[],
+): { a: string; b: string } | null {
+  try {
+    const width = canvas.getWidth();
+    const height = canvas.getHeight();
+    const texts = canvas
+      .getObjects()
+      .filter(
+        (o): o is Textbox =>
+          o.visible !== false &&
+          (o as { type?: string }).type?.toLowerCase() === "textbox" &&
+          typeof (o as Textbox).text === "string" &&
+          (o as Textbox).text.trim().length > 0,
+      );
+    const nameOf = (o: Textbox): string => {
+      const data = (o as { data?: { displayName?: string; layerId?: string } })
+        .data;
+      return data?.displayName || data?.layerId || o.text.slice(0, 24);
+    };
+    const masks = texts.map((t) => inkMaskOf(t, width, height));
+    for (let i = 0; i < texts.length; i++) {
+      const a = masks[i];
+      if (!a || a.count === 0) continue;
+      for (let j = i + 1; j < texts.length; j++) {
+        const b = masks[j];
+        if (!b || b.count === 0) continue;
+        // Tight-bbox test first (cheap).
+        const ix = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
+        const iy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1;
+        // Side-by-side run-in: two texts on the same line whose ink shares
+        // 20px+ horizontally and touches (or nearly touches) vertically is
+        // one word running into another ("…SYKESVILLE ROAD" into "Philip").
+        // Only for texts of comparable height: a 170px script line sitting
+        // right above a 14px address line is layout, not a run-in.
+        const hA = a.y1 - a.y0 + 1;
+        const hB = b.y1 - b.y0 + 1;
+        const sameLine = Math.min(hA, hB) >= 0.5 * Math.max(hA, hB);
+        if (sameLine && ix >= 20 && iy >= -2) {
+          return { a: nameOf(texts[i]), b: nameOf(texts[j]) };
+        }
+        if (ix < 6 || iy < 6) continue;
+        const areaA = (a.x1 - a.x0 + 1) * (a.y1 - a.y0 + 1);
+        const areaB = (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1);
+        if (ix * iy > BBOX_FRACTION * Math.min(areaA, areaB)) {
+          return { a: nameOf(texts[i]), b: nameOf(texts[j]) };
+        }
+        // Glyph-pixel test for the stacked case (one word over another
+        // where the boxes are similar and the fraction test is borderline).
+        let shared = 0;
+        const am = a.mask;
+        const bm = b.mask;
+        for (let k = 0; k < am.length; k++) {
+          if (am[k] === 1 && bm[k] === 1) shared++;
+        }
+        if (
+          shared >= COLLISION_MIN_PX &&
+          shared > PIXEL_FRACTION * Math.min(a.count, b.count)
+        ) {
+          return { a: nameOf(texts[i]), b: nameOf(texts[j]) };
+        }
+      }
+    }
+    return null;
+  } catch (e) {
+    warnings.push(
+      `collision guard skipped: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return null;
+  }
+}

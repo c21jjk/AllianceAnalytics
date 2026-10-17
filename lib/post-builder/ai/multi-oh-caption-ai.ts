@@ -304,6 +304,62 @@ function formatRoundupDetailForPrompt(
   return "New price this week";
 }
 
+/**
+ * 2026-10-16 (John) — "EVENT DATES" line for the prompt. Lists each distinct
+ * open-house day and says whether they all fall within one weekend, so the
+ * model can't open with "this weekend" when they don't. A weekend is
+ * keyed by its Saturday: Sunday belongs to the Saturday before it; a
+ * weekday window belongs to the Saturday after it.
+ */
+function buildDateSpanNote(properties: MultiOHCaptionProperty[]): string | null {
+  const days = new Map<string, string>(); // yyyy-mm-dd → "Sunday, October 18"
+  const weekends = new Set<string>();
+  for (const p of properties) {
+    const sessions =
+      p.oh_sessions && p.oh_sessions.length > 0
+        ? p.oh_sessions
+        : [{ start_at: p.oh_start_at ?? null, end_at: p.oh_end_at ?? null }];
+    for (const s of sessions) {
+      if (!s.start_at) continue;
+      const d = new Date(s.start_at);
+      if (Number.isNaN(d.getTime())) continue;
+      const ymd = d.toLocaleDateString("en-CA", { timeZone: PROMPT_TZ });
+      if (!days.has(ymd)) {
+        days.set(
+          ymd,
+          d.toLocaleDateString("en-US", {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+            timeZone: PROMPT_TZ,
+          }),
+        );
+      }
+      weekends.add(weekendKeyOf(ymd));
+    }
+  }
+  if (days.size === 0) return null;
+  const labels = Array.from(days.entries())
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([, label]) => label);
+  const oneWeekend = weekends.size === 1;
+  return `${labels.join("; ")}. ${
+    oneWeekend
+      ? "All within ONE weekend — \"this weekend\" is accurate."
+      : `These span ${weekends.size} different weekends — do NOT say "this weekend"; name the dates instead.`
+  }`;
+}
+
+/** Saturday (yyyy-mm-dd) that anchors the weekend a local date belongs to. */
+function weekendKeyOf(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dow = dt.getUTCDay(); // 0 Sun … 6 Sat
+  const shift = dow === 0 ? -1 : dow === 6 ? 0 : 6 - dow;
+  dt.setUTCDate(dt.getUTCDate() + shift);
+  return dt.toISOString().slice(0, 10);
+}
+
 function formatCompactHour(d: Date): string {
   const hour12 = d.toLocaleString("en-US", {
     timeZone: PROMPT_TZ,
@@ -409,6 +465,7 @@ export async function synthesizeMultiOHCaptionAI(
     captionOverride: input.caption_override ?? null,
     geoHint,
     resolvedTone,
+    dateSpanNote: isOH ? buildDateSpanNote(properties) : null,
   };
 
   const systemPrompt = buildSystemPrompt(roundupType);

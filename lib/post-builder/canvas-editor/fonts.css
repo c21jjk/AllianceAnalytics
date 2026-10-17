@@ -55,10 +55,14 @@
 @import url("https://fonts.googleapis.com/css2?family=Pacifico&display=block");
 
 /*
- * Inter is already loaded at the app level via next/font/google in
- * app/layout.tsx — we don't re-import it here. Georgia and SF Mono are
- * system fonts; no @import needed.
+ * 2026-10-16 — Inter is NOT loaded at the app level any more (app/layout.tsx
+ * loads Barlow), yet five published templates (Just Listed 1-3, Just Sold 1,
+ * Under Contract 1) set text layers in Inter. Without this import the
+ * headless render drew those layers in whatever sans the Chromium host had,
+ * and the font gate couldn't tell because nothing declared the family.
+ * Georgia and SF Mono are system fonts; no @import needed.
  */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=block");
 
 /* ===========================================================================
  * 2026-05-24 EXPANSION — 50 curated Google Fonts + 5 needed for Larissa's

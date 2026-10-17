@@ -499,6 +499,53 @@ function occurrencesOf(l: PostBuilderListing): OhOccurrence[] {
   return [];
 }
 
+const WEEKEND_TZ = "America/New_York";
+
+/**
+ * 2026-10-16 (John) — the Oct-16 post mixed four Sunday Oct 18 open houses
+ * with one on Saturday Oct 24 and went out captioned "this weekend". Group
+ * the included windows by the weekend they belong to (keyed by Saturday;
+ * Sunday belongs to the Saturday before it, a weekday to the Saturday
+ * after) so the wizard can say so before anything renders.
+ */
+interface WeekendGroup {
+  key: string;
+  label: string;
+  count: number;
+}
+function weekendKeyOf(startIso: string): string | null {
+  const d = new Date(startIso);
+  if (Number.isNaN(d.getTime())) return null;
+  const ymd = d.toLocaleDateString("en-CA", { timeZone: WEEKEND_TZ });
+  const [y, m, day] = ymd.split("-").map(Number);
+  const anchor = new Date(Date.UTC(y, m - 1, day));
+  const dow = anchor.getUTCDay();
+  anchor.setUTCDate(anchor.getUTCDate() + (dow === 0 ? -1 : dow === 6 ? 0 : 6 - dow));
+  return anchor.toISOString().slice(0, 10);
+}
+function groupWindowsByWeekend(
+  starts: ReadonlyArray<string>,
+): WeekendGroup[] {
+  const groups = new Map<string, WeekendGroup>();
+  for (const iso of starts) {
+    const key = weekendKeyOf(iso);
+    if (!key) continue;
+    const g = groups.get(key);
+    if (g) {
+      g.count += 1;
+      continue;
+    }
+    const [y, m, d] = key.split("-").map(Number);
+    const sat = new Date(Date.UTC(y, m - 1, d, 12));
+    groups.set(key, {
+      key,
+      label: `weekend of ${sat.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`,
+      count: 1,
+    });
+  }
+  return Array.from(groups.values()).sort((a, b) => (a.key < b.key ? -1 : 1));
+}
+
 /**
  * Compact "5m ago" / "2h ago" formatter for the restored-picks banner.
  * Coarse on purpose — the banner only needs enough precision for the
@@ -1216,6 +1263,32 @@ export default function MultiOHWizardClient({
 
   const canContinueFromStep1 = selectedWindowCount >= minProperties;
 
+  // 2026-10-16 — which weekends the included windows fall on. More than
+  // one group = the post can't honestly be captioned "this weekend", so
+  // the wizard warns on every step and asks before generating.
+  const weekendGroups = useMemo<WeekendGroup[]>(() => {
+    if (!isOH) return [];
+    const starts: string[] = [];
+    for (const l of selectedListings) {
+      const occs = occurrencesOf(l);
+      if (occs.length === 0) continue;
+      const included =
+        occs.length === 1
+          ? occs
+          : occs.filter(
+              (o) =>
+                occurrenceOverrides[occKey(l.mls_number, o.start_at)]
+                  ?.included !== false,
+            );
+      for (const o of included.length > 0 ? included : [occs[0]]) {
+        starts.push(o.start_at);
+      }
+    }
+    return groupWindowsByWeekend(starts);
+  }, [isOH, selectedListings, occurrenceOverrides]);
+  const weekendSplit = weekendGroups.length > 1;
+  const [weekendConfirmOpen, setWeekendConfirmOpen] = useState(false);
+
   // 2026-05-28 — Bug 5 auto-skip: when no DB templates are published for
   // the active format, Step 2's only choice is "use the default Open
   // House template" which is what would happen anyway. Skip it to save
@@ -1680,6 +1753,7 @@ export default function MultiOHWizardClient({
    * fresh payload, resets every overlay slot, and runs the stream.
    */
   const generate = useCallback(async (): Promise<void> => {
+    setWeekendConfirmOpen(false);
     setGenerating(true);
     setError(null);
     setPartialResult(null);
@@ -1809,6 +1883,19 @@ export default function MultiOHWizardClient({
               <X size={14} aria-hidden="true" />
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {weekendSplit ? (
+        <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span className="font-semibold">
+            Your picks span {weekendGroups.length} weekends
+          </span>{" "}
+          <span>
+            ({weekendGroups
+              .map((g) => `${g.label}: ${g.count}`)
+              .join(" · ")}). One post per weekend keeps the caption honest.
+          </span>
         </div>
       ) : null}
 
@@ -1949,9 +2036,63 @@ export default function MultiOHWizardClient({
             setStep(skipStep2 ? 3 : 2);
           } else if (step === 2) setStep(3);
         }}
-        onGenerate={() => void generate()}
+        onGenerate={() => {
+          // 2026-10-16 — mixed-weekend selections need a deliberate yes.
+          if (weekendSplit) {
+            setWeekendConfirmOpen(true);
+            return;
+          }
+          void generate();
+        }}
         generating={generating}
       />
+
+      {weekendConfirmOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/60 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setWeekendConfirmOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-5">
+            <h3 className="text-base font-semibold text-neutral-900">
+              These open houses are on different weekends
+            </h3>
+            <ul className="mt-3 space-y-1 text-sm text-neutral-700">
+              {weekendGroups.map((g) => (
+                <li key={g.key}>
+                  {g.label}: {g.count} open house{g.count === 1 ? "" : "s"}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-sm text-neutral-600">
+              One post per weekend is the norm. Go back and uncheck the odd
+              ones out, or generate anyway.
+            </p>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setWeekendConfirmOpen(false);
+                  setStep(1);
+                }}
+                className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 transition"
+              >
+                Go back
+              </button>
+              <button
+                type="button"
+                onClick={() => void generate()}
+                className="rounded-md bg-[#C9A84C] hover:bg-[#B89540] px-3 py-1.5 text-sm font-semibold text-white transition"
+              >
+                Generate anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {generating || partialResult ? (
         <GeneratingOverlay
@@ -3873,6 +4014,18 @@ interface GeneratingOverlayProps {
  * though `generating` has flipped false) so the user can act on the
  * failures without the modal disappearing.
  */
+/**
+ * 2026-10-16 — plain-language reason for a failed slide. The render page
+ * now refuses to draw a slide whose font never loaded or whose text layers
+ * collide; name that so the person building the post knows what to fix.
+ */
+function describeSlideError(error: string): string {
+  const m = error.match(/layout-overlap: (.+)$/);
+  if (m) return `text overlaps (${m[1]})`;
+  if (error.includes("font-timeout")) return "font didn't load, retry";
+  return "couldn't render";
+}
+
 function GeneratingOverlay({
   statusText,
   heroTile,
@@ -3980,7 +4133,7 @@ function GeneratingOverlay({
                   key={f.index}
                   className="text-xs text-neutral-600"
                 >
-                  Slide {f.index + 1} — {f.address ?? "address unknown"} couldn&apos;t render
+                  Slide {f.index + 1} — {f.address ?? "address unknown"}: {describeSlideError(f.error)}
                 </li>
               ))}
               {extraFailures > 0 ? (
